@@ -51,8 +51,9 @@ export function LoginScreen() {
     <div className="flex h-dvh w-full items-center justify-center bg-background paper-grain px-6">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center text-center">
-          <div style={{ backgroundColor: "#FCF1DE" }}>
-            <Image src="/companion.png" alt="" width={72} height={72} priority className="size-16 select-none" style={{ mixBlendMode: "multiply" }} />
+          <div className="avatar-box">
+            <Image src="/companion.png" alt="" width={72} height={72} priority className="avatar-light size-16 select-none" style={{ mixBlendMode: "multiply" }} />
+            <Image src="/companion-dark.png" alt="" width={72} height={72} priority className="avatar-dark size-16 select-none" />
           </div>
           <h1 className="mt-4 font-heading text-2xl tracking-wide text-foreground">笺</h1>
           <p className="mt-1.5 text-xs italic tracking-wider text-muted-foreground">

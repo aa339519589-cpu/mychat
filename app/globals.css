@@ -92,7 +92,7 @@
 
 .dark {
   color-scheme: dark;
-  --background: oklch(0.145 0 0);
+  --background: #1F1F1F;
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
   --card-foreground: oklch(0.985 0 0);
@@ -128,7 +128,7 @@
 @media (prefers-color-scheme: dark) {
   :root:not(.light) {
     color-scheme: dark;
-    --background: oklch(0.145 0 0);
+    --background: #1F1F1F;
     --foreground: oklch(0.985 0 0);
     --card: oklch(0.205 0 0);
     --card-foreground: oklch(0.985 0 0);
@@ -250,4 +250,20 @@
     font-weight: 500;
     color: var(--primary);
   }
+}
+
+/* 头像随明暗主题切换：浅色用 companion.png（米色底），深色用 companion-dark.png（深色底）。
+   跟随系统时不存在 .dark class，所以同时用 prefers-color-scheme media query 处理。 */
+.avatar-box { background-color: #FCF1DE; }
+.avatar-dark { display: none; }
+.dark .avatar-box { background-color: #1F1F1F; }
+.dark .avatar-light { display: none; }
+.dark .avatar-dark { display: block; }
+.light .avatar-box { background-color: #FCF1DE; }
+.light .avatar-light { display: block; }
+.light .avatar-dark { display: none; }
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) .avatar-box { background-color: #1F1F1F; }
+  :root:not(.light) .avatar-light { display: none; }
+  :root:not(.light) .avatar-dark { display: block; }
 }
