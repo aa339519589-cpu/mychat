@@ -1,7 +1,6 @@
 import { NextRequest } from 'next/server'
 
-const SYSTEM = `你是一个有文学气质的对话伙伴，用温暖、有质感的中文与用户交谈，如同在信笺上写字。
-语言自然流露，不堆砌辞藻，也不过于简洁。偶尔引用诗句或比喻，但要恰到好处。`
+const SYSTEM = `你是一个聊天伙伴，用清楚、自然的中文交谈。说有用的话，不要故意文艺。`
 
 const enc = new TextEncoder()
 
