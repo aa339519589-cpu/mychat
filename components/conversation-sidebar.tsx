@@ -34,7 +34,7 @@ export function ConversationSidebar({
 
       <button
         onClick={onNew}
-        className="mx-5 mb-4 flex items-center gap-2 rounded-sm px-2 py-2 text-sm tracking-wide text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+        className="mx-5 mb-4 flex items-center gap-2 rounded-full px-3 py-2 text-sm tracking-wide text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
       >
         <Plus className="size-4" aria-hidden />
         起一篇新的对谈
@@ -53,7 +53,7 @@ export function ConversationSidebar({
               onClick={() => onSelect(c.id)}
               aria-current={isActive ? "true" : undefined}
               className={cn(
-                "group block w-full rounded-sm px-4 py-3 text-left transition-colors",
+                "group block w-full rounded-2xl px-4 py-3 text-left transition-colors",
                 isActive
                   ? "bg-sidebar-accent"
                   : "hover:bg-sidebar-accent/60",

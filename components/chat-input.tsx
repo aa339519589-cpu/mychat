@@ -31,7 +31,7 @@ export function ChatInput({
 
   return (
     <div className="mx-auto w-full max-w-[44rem] px-6 pb-8 pt-4 md:px-10">
-      <div className="rounded-sm border border-border bg-card/80 px-5 py-4 shadow-[0_1px_0_oklch(0.4_0.04_50_/_0.06)]">
+      <div className="rounded-[1.75rem] border border-border bg-card/80 px-5 py-4 shadow-[0_1px_0_oklch(0.4_0.04_50_/_0.06)]">
         <textarea
           ref={ref}
           rows={1}
@@ -58,7 +58,7 @@ export function ChatInput({
             onClick={submit}
             disabled={!value.trim()}
             className={cn(
-              "flex items-center gap-2 rounded-sm px-4 py-1.5 text-sm tracking-wide transition-colors",
+              "flex items-center gap-2 rounded-full px-5 py-1.5 text-sm tracking-wide transition-colors",
               value.trim()
                 ? "bg-primary text-primary-foreground hover:opacity-90"
                 : "cursor-not-allowed bg-secondary text-muted-foreground",

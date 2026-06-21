@@ -7,8 +7,8 @@ export type Model = {
 }
 
 export const MODELS: Model[] = [
-  { id: "claude", name: "Claude", subtitle: "沉静 · 善思辨" },
-  { id: "gpt", name: "GPT", subtitle: "敏捷 · 多才情" },
+  { id: "claude", name: "笔友", subtitle: "沉静 · 善思辨" },
+  { id: "gpt", name: "笔友", subtitle: "敏捷 · 多才情" },
 ]
 
 export type Message = {

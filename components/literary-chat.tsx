@@ -6,9 +6,7 @@ import {
   MODELS,
   type Conversation,
   type Message,
-  type ModelId,
 } from "@/lib/chat-data"
-import { ModelSwitcher } from "@/components/model-switcher"
 import { ConversationSidebar } from "@/components/conversation-sidebar"
 import { MessageList } from "@/components/message-list"
 import { ChatInput } from "@/components/chat-input"
@@ -22,13 +20,15 @@ const REPLIES = [
 ]
 
 export function LiteraryChat() {
-  const [model, setModel] = useState<ModelId>("claude")
   const [conversations, setConversations] =
     useState<Conversation[]>(CONVERSATIONS)
   const [activeId, setActiveId] = useState(CONVERSATIONS[0].id)
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  // 移动端抽屉开合
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  // 桌面端侧栏展开/收起
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
-  const activeModel = MODELS.find((m) => m.id === model)!
+  const activeModel = MODELS[0]
   const active = useMemo(
     () => conversations.find((c) => c.id === activeId)!,
     [conversations, activeId],
@@ -36,7 +36,10 @@ export function LiteraryChat() {
 
   const scrollRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })
+    scrollRef.current?.scrollTo({
+      top: scrollRef.current.scrollHeight,
+      behavior: "smooth",
+    })
   }, [active.messages.length, activeId])
 
   function handleSend(text: string) {
@@ -73,46 +76,24 @@ export function LiteraryChat() {
     }
     setConversations((prev) => [fresh, ...prev])
     setActiveId(id)
-    setSidebarOpen(false)
+    setDrawerOpen(false)
   }
 
   function selectConversation(id: string) {
     setActiveId(id)
-    setSidebarOpen(false)
+    setDrawerOpen(false)
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background paper-grain">
-      {/* 侧栏 - 桌面 */}
-      <div className="hidden w-[20rem] shrink-0 border-r border-border md:block">
-        <ConversationSidebar
-          conversations={conversations}
-          activeId={activeId}
-          onSelect={selectConversation}
-          onNew={handleNew}
-        />
-      </div>
-
-      {/* 侧栏 - 移动抽屉 */}
+    <div className="flex h-screen overflow-hidden bg-background paper-grain p-3 md:p-4">
+      {/* 侧栏 - 桌面：可展开/收起 */}
       <div
         className={cn(
-          "fixed inset-0 z-40 md:hidden",
-          sidebarOpen ? "pointer-events-auto" : "pointer-events-none",
+          "hidden shrink-0 overflow-hidden transition-[width] duration-300 ease-in-out md:block",
+          sidebarCollapsed ? "w-0" : "w-[20rem]",
         )}
       >
-        <div
-          onClick={() => setSidebarOpen(false)}
-          className={cn(
-            "absolute inset-0 bg-foreground/30 transition-opacity",
-            sidebarOpen ? "opacity-100" : "opacity-0",
-          )}
-        />
-        <div
-          className={cn(
-            "absolute left-0 top-0 h-full w-[18rem] border-r border-border shadow-xl transition-transform",
-            sidebarOpen ? "translate-x-0" : "-translate-x-full",
-          )}
-        >
+        <div className="h-full w-[20rem] overflow-hidden rounded-3xl border border-border/70 bg-sidebar/70 shadow-sm">
           <ConversationSidebar
             conversations={conversations}
             activeId={activeId}
@@ -122,23 +103,68 @@ export function LiteraryChat() {
         </div>
       </div>
 
+      {/* 侧栏 - 移动抽屉 */}
+      <div
+        className={cn(
+          "fixed inset-0 z-40 md:hidden",
+          drawerOpen ? "pointer-events-auto" : "pointer-events-none",
+        )}
+      >
+        <div
+          onClick={() => setDrawerOpen(false)}
+          className={cn(
+            "absolute inset-0 bg-foreground/30 transition-opacity",
+            drawerOpen ? "opacity-100" : "opacity-0",
+          )}
+        />
+        <div
+          className={cn(
+            "absolute left-0 top-0 h-full w-[18rem] rounded-r-3xl border-r border-border bg-sidebar shadow-xl transition-transform",
+            drawerOpen ? "translate-x-0" : "-translate-x-full",
+          )}
+        >
+          <ConversationSidebar
+            conversations={conversations}
+            activeId={activeId}
+            onSelect={selectConversation}
+            onNew={handleNew}
+          />
+        </div>
+        {drawerOpen && (
+          <button
+            onClick={() => setDrawerOpen(false)}
+            className="absolute right-4 top-4 z-50 rounded-full bg-card p-2 text-foreground shadow"
+            aria-label="关闭对话历史"
+          >
+            <X className="size-5" aria-hidden />
+          </button>
+        )}
+      </div>
+
       {/* 主区 */}
-      <div className="flex min-w-0 flex-1 flex-col page-vignette">
+      <div className="ml-0 flex min-w-0 flex-1 flex-col overflow-hidden rounded-3xl border border-border/70 bg-card/40 page-vignette md:ml-4">
         {/* 顶栏 */}
-        <header className="flex items-center justify-between gap-4 border-b border-border px-5 py-4 md:px-8">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setSidebarOpen(true)}
-              className="rounded-sm p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground md:hidden"
-              aria-label="打开对话历史"
-            >
-              <PanelLeft className="size-5" aria-hidden />
-            </button>
-            <span className="hidden text-sm italic tracking-wider text-muted-foreground sm:inline">
-              今日由谁执笔——
-            </span>
-          </div>
-          <ModelSwitcher active={model} onChange={setModel} />
+        <header className="flex items-center gap-3 border-b border-border/60 px-5 py-4 md:px-8">
+          {/* 桌面收起/展开 */}
+          <button
+            onClick={() => setSidebarCollapsed((v) => !v)}
+            className="hidden rounded-full p-2 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground md:inline-flex"
+            aria-label={sidebarCollapsed ? "展开对话历史" : "收起对话历史"}
+            aria-pressed={!sidebarCollapsed}
+          >
+            <PanelLeft className="size-5" aria-hidden />
+          </button>
+          {/* 移动端打开抽屉 */}
+          <button
+            onClick={() => setDrawerOpen(true)}
+            className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground md:hidden"
+            aria-label="打开对话历史"
+          >
+            <PanelLeft className="size-5" aria-hidden />
+          </button>
+          <span className="text-sm italic tracking-wider text-muted-foreground">
+            {active.title}
+          </span>
         </header>
 
         {/* 消息卷轴 */}
@@ -151,21 +177,10 @@ export function LiteraryChat() {
         </div>
 
         {/* 输入 */}
-        <div className="border-t border-border bg-background/60">
+        <div className="border-t border-border/60 bg-background/40">
           <ChatInput onSend={handleSend} modelName={activeModel.name} />
         </div>
       </div>
-
-      {/* 移动端关闭按钮浮层（无障碍冗余）*/}
-      {sidebarOpen && (
-        <button
-          onClick={() => setSidebarOpen(false)}
-          className="fixed right-4 top-4 z-50 rounded-sm bg-card p-2 text-foreground shadow md:hidden"
-          aria-label="关闭对话历史"
-        >
-          <X className="size-5" aria-hidden />
-        </button>
-      )}
     </div>
   )
 }

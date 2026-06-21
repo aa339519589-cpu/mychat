@@ -58,7 +58,7 @@ export function MessageList({
               <span className="mb-2 text-[11px] italic tracking-widest text-muted-foreground">
                 我 · {m.time}
               </span>
-              <div className="max-w-[85%] rounded-sm border-r-2 border-primary/50 bg-secondary/70 px-5 py-3.5">
+              <div className="max-w-[85%] rounded-[1.5rem] rounded-tr-md bg-secondary/70 px-5 py-3.5">
                 <p className="text-[15px] italic leading-[1.9] tracking-wide text-secondary-foreground text-pretty">
                   {m.content}
                 </p>
