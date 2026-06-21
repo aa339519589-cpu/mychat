@@ -1,5 +1,4 @@
 import { NextRequest } from 'next/server'
-import type { MemoryConfig } from '@/lib/chat-data'
 
 const SYSTEM = `你是一个有文学气质的对话伙伴，用温暖、有质感的中文与用户交谈，如同在信笺上写字。
 语言自然流露，不堆砌辞藻，也不过于简洁。偶尔引用诗句或比喻，但要恰到好处。`
@@ -119,58 +118,7 @@ async function streamAnthropic(upstream: Response, controller: ReadableStreamDef
 }
 
 export async function POST(req: NextRequest) {
-  const { protocol, baseUrl, apiKey, model, messages, memory } = await req.json()
-  const memoryConfig = memory as MemoryConfig | undefined
-  const memoryBaseUrl = process.env.MEMORY_BASE_URL?.trim() ?? ''
-  const memoryEnabled = Boolean(memoryConfig?.enabled && memoryBaseUrl)
-
-  if (memoryEnabled) {
-    const memoryUrl = chatCompletionsUrl(memoryBaseUrl)
-    const memoryModel = process.env.MEMORY_MODEL?.trim() || 'ebbingflow'
-    const memoryApiKey = process.env.MEMORY_API_KEY?.trim() ?? ''
-    const memoryUserToken = process.env.MEMORY_USER_TOKEN?.trim() ?? ''
-    const memoryHeaders: Record<string, string> = { 'Content-Type': 'application/json' }
-    if (memoryApiKey) {
-      memoryHeaders.Authorization = `Bearer ${memoryApiKey}`
-    }
-
-    const stream = new ReadableStream({
-      async start(controller) {
-        try {
-          const res = await fetch(memoryUrl, {
-            method: 'POST',
-            headers: memoryHeaders,
-            body: JSON.stringify({
-              model: memoryModel,
-              messages: [{ role: 'system', content: SYSTEM }, ...messages],
-              stream: true,
-              user: memoryConfig!.userId,
-              user_id: memoryConfig!.userId,
-              user_token: memoryUserToken,
-              metadata: {
-                user_id: memoryConfig!.userId,
-                user_token: memoryUserToken,
-              },
-            }),
-          })
-          if (!res.ok) {
-            const txt = await res.text()
-            send(controller, { error: upstreamError(res.status, txt, '记忆系统') })
-          } else {
-            await streamOpenAI(res, controller)
-          }
-        } catch (error) {
-          send(controller, { error: networkError(error, '记忆系统') })
-        } finally {
-          done(controller)
-        }
-      }
-    })
-
-    return new Response(stream, {
-      headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
-    })
-  }
+  const { protocol, baseUrl, apiKey, model, messages } = await req.json()
 
   const cleanApiKey = String(apiKey ?? '').trim()
   const cleanBaseUrl = String(baseUrl ?? '').trim()

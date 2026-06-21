@@ -1,19 +1,14 @@
 "use client"
 
 import { useMemo, useRef, useState, useEffect } from "react"
-import { CONVERSATIONS, DEFAULT_MEMORY_CONFIG, type Conversation, type Message, type Endpoint, type MemoryConfig } from "@/lib/chat-data"
+import { CONVERSATIONS, type Conversation, type Message, type Endpoint } from "@/lib/chat-data"
 import { ConversationSidebar } from "@/components/conversation-sidebar"
 import { MessageList } from "@/components/message-list"
 import { ChatInput } from "@/components/chat-input"
 import { cn } from "@/lib/utils"
 import { PanelLeft, X } from "lucide-react"
 
-function createMemoryUserId() {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID()
-  return `browser-${Date.now()}-${Math.random().toString(36).slice(2)}`
-}
-
-export function LiteraryChat({ memoryAvailable }: { memoryAvailable: boolean }) {
+export function LiteraryChat() {
   const [conversations, setConversations] = useState<Conversation[]>(CONVERSATIONS)
   const [activeId, setActiveId] = useState(CONVERSATIONS[0].id)
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -22,7 +17,6 @@ export function LiteraryChat({ memoryAvailable }: { memoryAvailable: boolean }) 
 
   const [endpoints, setEndpoints] = useState<Endpoint[]>([])
   const [activeEndpointId, setActiveEndpointId] = useState("")
-  const [memoryConfig, setMemoryConfig] = useState<MemoryConfig>(DEFAULT_MEMORY_CONFIG)
 
   useEffect(() => {
     try {
@@ -49,19 +43,8 @@ export function LiteraryChat({ memoryAvailable }: { memoryAvailable: boolean }) 
         : loadedEndpoints[0]?.id ?? ""
       setActiveEndpointId(nextActive)
       if (nextActive) localStorage.setItem("chat_active_endpoint", nextActive)
-
-      const savedMemory = localStorage.getItem("chat_memory_config")
-      const parsedMemory = savedMemory ? JSON.parse(savedMemory) : {}
-      const nextMemory: MemoryConfig = {
-        enabled: memoryAvailable && Boolean(parsedMemory.enabled),
-        userId: String(parsedMemory.userId ?? "").trim() || createMemoryUserId(),
-      }
-      setMemoryConfig(nextMemory)
-      localStorage.setItem("chat_memory_config", JSON.stringify(nextMemory))
-    } catch {
-      setMemoryConfig({ enabled: false, userId: createMemoryUserId() })
-    }
-  }, [memoryAvailable])
+    } catch { /* storage unavailable */ }
+  }, [])
 
   function handleEndpointsChange(eps: Endpoint[]) {
     setEndpoints(eps)
@@ -73,14 +56,8 @@ export function LiteraryChat({ memoryAvailable }: { memoryAvailable: boolean }) 
     try { localStorage.setItem("chat_active_endpoint", id) } catch { /* storage unavailable */ }
   }
 
-  function handleMemoryConfigChange(next: MemoryConfig) {
-    setMemoryConfig(next)
-    try { localStorage.setItem("chat_memory_config", JSON.stringify(next)) } catch { /* storage unavailable */ }
-  }
-
   const activeEndpoint = endpoints.find(e => e.id === activeEndpointId)
-  const memoryReady = Boolean(memoryAvailable && memoryConfig.enabled)
-  const activeName = memoryReady ? "记忆笔友" : (activeEndpoint?.name ?? "笔友")
+  const activeName = activeEndpoint?.name ?? "笔友"
 
   const active = useMemo(
     () => conversations.find(c => c.id === activeId)!,
@@ -98,7 +75,7 @@ export function LiteraryChat({ memoryAvailable }: { memoryAvailable: boolean }) 
   async function handleSend(text: string) {
     const userMsg: Message = { id: `u-${Date.now()}`, role: "user", content: text, time: "此刻" }
 
-    if (!activeEndpoint && !memoryReady) {
+    if (!activeEndpoint) {
       setConversations(prev => prev.map(c => c.id === activeId ? {
         ...c, messages: [...c.messages, userMsg, { id: `e-${Date.now()}`, role: "assistant", content: "请先点击左下角齿轮图标，添加一个 API 端点。", time: "此刻", isError: true }]
       } : c))
@@ -117,12 +94,11 @@ export function LiteraryChat({ memoryAvailable }: { memoryAvailable: boolean }) 
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          protocol: activeEndpoint?.protocol,
-          baseUrl: activeEndpoint?.baseUrl,
-          apiKey: activeEndpoint?.apiKey,
-          model: activeEndpoint?.model,
+          protocol: activeEndpoint.protocol,
+          baseUrl: activeEndpoint.baseUrl,
+          apiKey: activeEndpoint.apiKey,
+          model: activeEndpoint.model,
           messages: history,
-          memory: memoryReady ? memoryConfig : undefined,
         }),
       })
 
@@ -190,9 +166,6 @@ export function LiteraryChat({ memoryAvailable }: { memoryAvailable: boolean }) 
     endpoints, activeEndpointId,
     onEndpointsChange: handleEndpointsChange,
     onActiveEndpointChange: handleActiveEndpointChange,
-    memoryConfig,
-    memoryAvailable,
-    onMemoryConfigChange: handleMemoryConfigChange,
   }
 
   function renderChatPane(mobile: boolean) {
@@ -235,7 +208,6 @@ export function LiteraryChat({ memoryAvailable }: { memoryAvailable: boolean }) 
           endpoints={endpoints}
           activeEndpointId={activeEndpointId}
           onEndpointChange={handleActiveEndpointChange}
-          memoryEnabled={memoryReady}
           mobile={mobile}
         />
       </main>

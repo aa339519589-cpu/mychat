@@ -6,13 +6,12 @@ import { ChevronDown } from "lucide-react"
 import type { Endpoint } from "@/lib/chat-data"
 
 export function ChatInput({
-  onSend, endpoints, activeEndpointId, onEndpointChange, memoryEnabled, mobile,
+  onSend, endpoints, activeEndpointId, onEndpointChange, mobile,
 }: {
   onSend: (text: string) => void
   endpoints: Endpoint[]
   activeEndpointId: string
   onEndpointChange: (id: string) => void
-  memoryEnabled: boolean
   mobile: boolean
 }) {
   const [value, setValue] = useState("")
@@ -41,13 +40,7 @@ export function ChatInput({
         : "max-w-[44rem] px-10 pb-8 pt-2",
     )}>
       {/* 模型选择器 */}
-      {memoryEnabled ? (
-        <div className="mb-2 flex items-center gap-2 px-1">
-          <span className="rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-xs italic text-primary">
-            记忆系统已接管对话
-          </span>
-        </div>
-      ) : endpoints.length > 0 && (
+      {endpoints.length > 0 && (
         <div className="mb-2 flex items-center gap-2 px-1">
           <div className="relative">
             <select

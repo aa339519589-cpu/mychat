@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import type { Conversation, Endpoint, MemoryConfig, Protocol } from "@/lib/chat-data"
+import type { Conversation, Endpoint, Protocol } from "@/lib/chat-data"
 import { PROTOCOL_LABELS, PROTOCOL_DEFAULTS } from "@/lib/chat-data"
 import { cn } from "@/lib/utils"
 import { Feather, Plus, Settings, ChevronLeft, Trash2, ChevronDown, ChevronRight } from "lucide-react"
@@ -27,7 +27,6 @@ function emptyDraft(protocol: Protocol): Draft {
 export function ConversationSidebar({
   conversations, activeId, onSelect, onNew,
   endpoints, activeEndpointId, onEndpointsChange, onActiveEndpointChange,
-  memoryConfig, memoryAvailable, onMemoryConfigChange,
 }: {
   conversations: Conversation[]
   activeId: string
@@ -37,9 +36,6 @@ export function ConversationSidebar({
   activeEndpointId: string
   onEndpointsChange: (eps: Endpoint[]) => void
   onActiveEndpointChange: (id: string) => void
-  memoryConfig: MemoryConfig
-  memoryAvailable: boolean
-  onMemoryConfigChange: (next: MemoryConfig) => void
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [expanded, setExpanded] = useState<Record<Protocol, boolean>>({ anthropic: false, openai: true, gemini: false })
@@ -85,11 +81,6 @@ export function ConversationSidebar({
     if (activeEndpointId === id) onActiveEndpointChange(next[0]?.id ?? "")
   }
 
-  function toggleMemory() {
-    if (!memoryAvailable) return
-    onMemoryConfigChange({ ...memoryConfig, enabled: !memoryConfig.enabled })
-  }
-
   function applyOpenAIPreset(preset: (typeof OPENAI_PRESETS)[number]) {
     setDrafts(prev => {
       const current = prev.openai
@@ -105,8 +96,6 @@ export function ConversationSidebar({
       }
     })
   }
-
-  const memoryReady = memoryAvailable && memoryConfig.enabled
 
   return (
     <aside className="relative flex h-full w-full flex-col bg-sidebar text-sidebar-foreground overflow-hidden">
@@ -124,13 +113,7 @@ export function ConversationSidebar({
         <div className="mx-7 mb-4 border-t border-sidebar-border" />
 
         {/* 当前端点选择 */}
-        {memoryReady ? (
-          <div className="mx-5 mb-3 rounded-xl border border-sidebar-primary/25 bg-sidebar-primary/10 px-4 py-3">
-            <p className="mb-1 text-[11px] tracking-widest text-muted-foreground">当前使用</p>
-            <p className="text-sm text-sidebar-primary">记忆笔友</p>
-            <p className="mt-1 text-[11px] text-muted-foreground">长期记忆已开启</p>
-          </div>
-        ) : endpoints.length > 0 ? (
+        {endpoints.length > 0 ? (
           <div className="mx-5 mb-3 px-2">
             <p className="mb-1.5 text-[11px] tracking-widest text-muted-foreground">当前使用</p>
             <select
@@ -208,32 +191,6 @@ export function ConversationSidebar({
           <p className="px-2 text-[11px] italic text-muted-foreground leading-relaxed">
             模型 Key 只保存在当前浏览器，发送时由本站后端转发。
           </p>
-
-          <div className="rounded-2xl border border-sidebar-border overflow-hidden">
-            <button
-              type="button"
-              role="switch"
-              aria-checked={memoryReady}
-              disabled={!memoryAvailable}
-              onClick={toggleMemory}
-              className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-sidebar-accent/40 disabled:cursor-not-allowed disabled:opacity-65"
-            >
-              <div>
-                <span className="text-sm font-medium tracking-wide">长期记忆</span>
-                <p className="mt-1 text-[11px] text-muted-foreground">
-                  {memoryAvailable ? "记住跨篇对谈中的偏好" : "服务端配置后即可使用"}
-                </p>
-              </div>
-              <span className={cn(
-                "rounded-full border px-2.5 py-1 text-[11px]",
-                memoryReady
-                  ? "border-sidebar-primary/40 bg-sidebar-primary/10 text-sidebar-primary"
-                  : "border-sidebar-border text-muted-foreground",
-              )}>
-                {!memoryAvailable ? "暂未启用" : memoryReady ? "已开启" : "已关闭"}
-              </span>
-            </button>
-          </div>
 
           {PROTOCOLS.map(protocol => (
             <div key={protocol} className="rounded-2xl border border-sidebar-border overflow-hidden">
