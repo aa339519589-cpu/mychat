@@ -22,30 +22,75 @@ function chatCompletionsUrl(baseUrl: string) {
   return `${base}/v1/chat/completions`
 }
 
+function readErrorMessage(raw: string) {
+  try {
+    const parsed = JSON.parse(raw)
+    return parsed?.error?.message ?? parsed?.message ?? raw
+  } catch {
+    return raw
+  }
+}
+
+function upstreamError(status: number, raw: string, source = '模型服务') {
+  const message = String(readErrorMessage(raw)).replace(/\s+/g, ' ').trim()
+  const modelMismatch = message.match(/supported API model names are (.+?),?\s+but you passed\s+(.+?)(?:[."']|$)/i)
+
+  if (modelMismatch) {
+    const supported = modelMismatch[1].replace(/\s+or\s+/gi, ' 或 ')
+    const current = modelMismatch[2].trim()
+    return `模型名不匹配。该服务支持 ${supported}；当前填写的是 ${current}。请在设置的高级配置里修改模型名。`
+  }
+  if (status === 401 || status === 403) return `${source}拒绝了 API Key，请检查 Key 或权限。`
+  if (status === 429) return `${source}请求过于频繁，或账户余额不足。`
+
+  return `${source}请求失败（${status}）：${message.slice(0, 180) || '未返回原因'}`
+}
+
+function networkError(error: unknown, source = '模型服务') {
+  const message = error instanceof Error ? error.message : String(error)
+  if (message === 'fetch failed') return `无法连接${source}，请检查服务地址。`
+  return `${source}请求失败：${message}`
+}
+
+function emitOpenAIJson(data: any, controller: ReadableStreamDefaultController) {
+  const choice = data?.choices?.[0]
+  const delta = choice?.delta
+  if (delta?.reasoning_content) send(controller, { thinking: delta.reasoning_content })
+  if (delta?.content) send(controller, { text: delta.content })
+  if (!delta && choice?.message?.reasoning_content) send(controller, { thinking: choice.message.reasoning_content })
+  if (!delta && choice?.message?.content) send(controller, { text: choice.message.content })
+}
+
 // 解析 OpenAI / DeepSeek 流
 async function streamOpenAI(upstream: Response, controller: ReadableStreamDefaultController) {
+  if (upstream.headers.get('content-type')?.includes('application/json')) {
+    emitOpenAIJson(await upstream.json(), controller)
+    return
+  }
+
   const reader = upstream.body!.getReader()
   const dec = new TextDecoder()
   let buf = ''
+
+  function processLine(raw: string) {
+    const line = raw.trim()
+    if (!line || line === 'data: [DONE]') return
+    const payload = line.startsWith('data:') ? line.slice(5).trim() : line
+    if (!payload) return
+    try {
+      emitOpenAIJson(JSON.parse(payload), controller)
+    } catch { /* skip malformed */ }
+  }
+
   while (true) {
     const { done: d, value } = await reader.read()
     if (d) break
     buf += dec.decode(value, { stream: true })
-    const parts = buf.split('\n\n')
+    const parts = buf.split(/\r?\n/)
     buf = parts.pop() ?? ''
-    for (const part of parts) {
-      const line = part.trim()
-      if (!line || line === 'data: [DONE]') continue
-      if (line.startsWith('data: ')) {
-        try {
-          const j = JSON.parse(line.slice(6))
-          const delta = j.choices?.[0]?.delta
-          if (delta?.reasoning_content) send(controller, { thinking: delta.reasoning_content })
-          if (delta?.content) send(controller, { text: delta.content })
-        } catch { /* skip malformed */ }
-      }
-    }
+    for (const part of parts) processLine(part)
   }
+  processLine(buf)
 }
 
 // 解析 Anthropic 流
@@ -76,14 +121,17 @@ async function streamAnthropic(upstream: Response, controller: ReadableStreamDef
 export async function POST(req: NextRequest) {
   const { protocol, baseUrl, apiKey, model, messages, memory } = await req.json()
   const memoryConfig = memory as MemoryConfig | undefined
-  const memoryEnabled = Boolean(memoryConfig?.enabled && memoryConfig.baseUrl?.trim())
+  const memoryBaseUrl = process.env.MEMORY_BASE_URL?.trim() ?? ''
+  const memoryEnabled = Boolean(memoryConfig?.enabled && memoryBaseUrl)
 
   if (memoryEnabled) {
-    const memoryUrl = chatCompletionsUrl(memoryConfig!.baseUrl)
-    const memoryModel = memoryConfig!.model?.trim() || 'ebbingflow'
+    const memoryUrl = chatCompletionsUrl(memoryBaseUrl)
+    const memoryModel = process.env.MEMORY_MODEL?.trim() || 'ebbingflow'
+    const memoryApiKey = process.env.MEMORY_API_KEY?.trim() ?? ''
+    const memoryUserToken = process.env.MEMORY_USER_TOKEN?.trim() ?? ''
     const memoryHeaders: Record<string, string> = { 'Content-Type': 'application/json' }
-    if (memoryConfig!.apiKey?.trim()) {
-      memoryHeaders.Authorization = `Bearer ${memoryConfig!.apiKey.trim()}`
+    if (memoryApiKey) {
+      memoryHeaders.Authorization = `Bearer ${memoryApiKey}`
     }
 
     const stream = new ReadableStream({
@@ -98,22 +146,21 @@ export async function POST(req: NextRequest) {
               stream: true,
               user: memoryConfig!.userId,
               user_id: memoryConfig!.userId,
-              user_token: memoryConfig!.userToken,
+              user_token: memoryUserToken,
               metadata: {
                 user_id: memoryConfig!.userId,
-                user_token: memoryConfig!.userToken,
+                user_token: memoryUserToken,
               },
             }),
           })
           if (!res.ok) {
             const txt = await res.text()
-            send(controller, { error: `记忆系统请求失败 (${res.status}): ${txt.slice(0, 200)}` })
+            send(controller, { error: upstreamError(res.status, txt, '记忆系统') })
           } else {
             await streamOpenAI(res, controller)
           }
-        } catch (e: any) {
-          const message = e?.message ?? String(e)
-          send(controller, { error: `记忆系统请求失败：${message}` })
+        } catch (error) {
+          send(controller, { error: networkError(error, '记忆系统') })
         } finally {
           done(controller)
         }
@@ -125,11 +172,16 @@ export async function POST(req: NextRequest) {
     })
   }
 
-  if (!apiKey) return new Response(JSON.stringify({ error: '请先填写 API Key' }), { status: 400 })
-  if (!baseUrl) return new Response(JSON.stringify({ error: '请填写 Base URL' }), { status: 400 })
-  if (!/^[\x00-\xFF]*$/.test(apiKey)) return new Response(JSON.stringify({ error: 'API Key 包含非法字符' }), { status: 400 })
+  const cleanApiKey = String(apiKey ?? '').trim()
+  const cleanBaseUrl = String(baseUrl ?? '').trim()
+  const cleanModel = String(model ?? '').trim()
 
-  const base = baseUrl.replace(/\/(v1|v1beta)(\/.*)?$/, '').replace(/\/$/, '')
+  if (!cleanApiKey) return new Response(JSON.stringify({ error: '请先填写 API Key' }), { status: 400 })
+  if (!cleanBaseUrl) return new Response(JSON.stringify({ error: '请填写服务地址' }), { status: 400 })
+  if (!cleanModel) return new Response(JSON.stringify({ error: '请填写模型名' }), { status: 400 })
+  if (!/^[\x00-\xFF]*$/.test(cleanApiKey)) return new Response(JSON.stringify({ error: 'API Key 包含非法字符' }), { status: 400 })
+
+  const base = cleanBaseUrl.replace(/\/(v1|v1beta)(\/.*)?$/, '').replace(/\/$/, '')
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -137,42 +189,42 @@ export async function POST(req: NextRequest) {
         if (protocol === 'anthropic') {
           const res = await fetch(`${base}/v1/messages`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-            body: JSON.stringify({ model, max_tokens: 16000, system: SYSTEM, messages, stream: true, thinking: { type: 'enabled', budget_tokens: 10000 } }),
+            headers: { 'Content-Type': 'application/json', 'x-api-key': cleanApiKey, 'anthropic-version': '2023-06-01' },
+            body: JSON.stringify({ model: cleanModel, max_tokens: 16000, system: SYSTEM, messages, stream: true, thinking: { type: 'enabled', budget_tokens: 10000 } }),
           })
           if (!res.ok) {
             const txt = await res.text()
-            send(controller, { error: `请求失败 (${res.status}): ${txt.slice(0, 200)}` })
+            send(controller, { error: upstreamError(res.status, txt) })
           } else {
             await streamAnthropic(res, controller)
           }
         } else if (protocol === 'gemini') {
           const res = await fetch(`${base}/v1beta/openai/chat/completions`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-            body: JSON.stringify({ model, messages: [{ role: 'system', content: SYSTEM }, ...messages], stream: true }),
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cleanApiKey}` },
+            body: JSON.stringify({ model: cleanModel, messages: [{ role: 'system', content: SYSTEM }, ...messages], stream: true }),
           })
           if (!res.ok) {
             const txt = await res.text()
-            send(controller, { error: `请求失败 (${res.status}): ${txt.slice(0, 200)}` })
+            send(controller, { error: upstreamError(res.status, txt) })
           } else {
             await streamOpenAI(res, controller)
           }
         } else {
-          const res = await fetch(`${base}/v1/chat/completions`, {
+          const res = await fetch(chatCompletionsUrl(cleanBaseUrl), {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-            body: JSON.stringify({ model, messages: [{ role: 'system', content: SYSTEM }, ...messages], stream: true }),
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cleanApiKey}` },
+            body: JSON.stringify({ model: cleanModel, messages: [{ role: 'system', content: SYSTEM }, ...messages], stream: true }),
           })
           if (!res.ok) {
             const txt = await res.text()
-            send(controller, { error: `请求失败 (${res.status}): ${txt.slice(0, 200)}` })
+            send(controller, { error: upstreamError(res.status, txt) })
           } else {
             await streamOpenAI(res, controller)
           }
         }
-      } catch (e: any) {
-        send(controller, { error: e?.message ?? String(e) })
+      } catch (error) {
+        send(controller, { error: networkError(error) })
       } finally {
         done(controller)
       }

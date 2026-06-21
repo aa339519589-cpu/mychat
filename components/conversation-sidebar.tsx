@@ -8,6 +8,11 @@ import { Feather, Plus, Settings, ChevronLeft, Trash2, ChevronDown, ChevronRight
 
 const PROTOCOLS: Protocol[] = ["anthropic", "openai", "gemini"]
 
+const OPENAI_PRESETS = [
+  { label: "DeepSeek", baseUrl: "https://api.deepseek.com", model: "deepseek-chat" },
+  { label: "OpenAI", baseUrl: "https://api.openai.com", model: "gpt-4o-mini" },
+] as const
+
 type Draft = { name: string; baseUrl: string; apiKey: string; model: string }
 
 function emptyDraft(protocol: Protocol): Draft {
@@ -22,7 +27,7 @@ function emptyDraft(protocol: Protocol): Draft {
 export function ConversationSidebar({
   conversations, activeId, onSelect, onNew,
   endpoints, activeEndpointId, onEndpointsChange, onActiveEndpointChange,
-  memoryConfig, onMemoryConfigChange,
+  memoryConfig, memoryAvailable, onMemoryConfigChange,
 }: {
   conversations: Conversation[]
   activeId: string
@@ -33,10 +38,11 @@ export function ConversationSidebar({
   onEndpointsChange: (eps: Endpoint[]) => void
   onActiveEndpointChange: (id: string) => void
   memoryConfig: MemoryConfig
+  memoryAvailable: boolean
   onMemoryConfigChange: (next: MemoryConfig) => void
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [expanded, setExpanded] = useState<Record<Protocol, boolean>>({ anthropic: true, openai: true, gemini: false })
+  const [expanded, setExpanded] = useState<Record<Protocol, boolean>>({ anthropic: false, openai: true, gemini: false })
   // 每种协议独立的草稿，null 表示未展开添加表单
   const [drafts, setDrafts] = useState<Record<Protocol, Draft | null>>({ anthropic: null, openai: null, gemini: null })
 
@@ -57,7 +63,16 @@ export function ConversationSidebar({
     if (!draft) return
     if (!draft.name.trim()) { alert("请填写名称"); return }
     if (!draft.apiKey.trim()) { alert("请填写 API Key"); return }
-    const ep: Endpoint = { id: `ep-${Date.now()}`, protocol, ...draft }
+    if (!draft.baseUrl.trim()) { alert("请填写服务地址"); return }
+    if (!draft.model.trim()) { alert("请填写模型名"); return }
+    const ep: Endpoint = {
+      id: `ep-${Date.now()}`,
+      protocol,
+      name: draft.name.trim(),
+      baseUrl: draft.baseUrl.trim(),
+      apiKey: draft.apiKey.trim(),
+      model: draft.model.trim(),
+    }
     const next = [...endpoints, ep]
     onEndpointsChange(next)
     if (!activeEndpointId) onActiveEndpointChange(ep.id)
@@ -70,18 +85,35 @@ export function ConversationSidebar({
     if (activeEndpointId === id) onActiveEndpointChange(next[0]?.id ?? "")
   }
 
-  function updateMemory(field: keyof MemoryConfig, value: string | boolean) {
-    onMemoryConfigChange({ ...memoryConfig, [field]: value })
+  function toggleMemory() {
+    if (!memoryAvailable) return
+    onMemoryConfigChange({ ...memoryConfig, enabled: !memoryConfig.enabled })
   }
 
-  const memoryReady = memoryConfig.enabled && memoryConfig.baseUrl.trim()
+  function applyOpenAIPreset(preset: (typeof OPENAI_PRESETS)[number]) {
+    setDrafts(prev => {
+      const current = prev.openai
+      if (!current) return prev
+      return {
+        ...prev,
+        openai: {
+          ...current,
+          name: preset.label,
+          baseUrl: preset.baseUrl,
+          model: preset.model,
+        },
+      }
+    })
+  }
+
+  const memoryReady = memoryAvailable && memoryConfig.enabled
 
   return (
     <aside className="relative flex h-full w-full flex-col bg-sidebar text-sidebar-foreground overflow-hidden">
 
       {/* ── 主视图 ── */}
       <div className="flex h-full flex-col">
-        <div className="px-7 pb-5 pt-8">
+        <div className="px-7 pb-5 pt-[max(2rem,env(safe-area-inset-top))]">
           <div className="flex items-center gap-2.5">
             <Feather className="size-5 text-sidebar-primary" />
             <h1 className="font-heading text-2xl tracking-wide">笺</h1>
@@ -95,8 +127,8 @@ export function ConversationSidebar({
         {memoryReady ? (
           <div className="mx-5 mb-3 rounded-xl border border-sidebar-primary/25 bg-sidebar-primary/10 px-4 py-3">
             <p className="mb-1 text-[11px] tracking-widest text-muted-foreground">当前使用</p>
-            <p className="text-sm text-sidebar-primary">记忆系统</p>
-            <p className="mt-1 truncate text-[11px] text-muted-foreground">{memoryConfig.model || "ebbingflow"}</p>
+            <p className="text-sm text-sidebar-primary">记忆笔友</p>
+            <p className="mt-1 text-[11px] text-muted-foreground">长期记忆已开启</p>
           </div>
         ) : endpoints.length > 0 ? (
           <div className="mx-5 mb-3 px-2">
@@ -148,7 +180,7 @@ export function ConversationSidebar({
         </nav>
 
         <div className="mx-7 border-t border-sidebar-border" />
-        <div className="flex items-center justify-between px-7 py-4">
+        <div className="flex items-center justify-between px-7 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4">
           <p className="text-[11px] italic leading-relaxed tracking-wider text-muted-foreground">「文字是缓慢的，<br />正因如此才值得珍藏。」</p>
           <button
             onClick={() => setSettingsOpen(true)}
@@ -165,64 +197,42 @@ export function ConversationSidebar({
         "absolute inset-0 z-10 flex flex-col bg-sidebar transition-transform duration-300",
         settingsOpen ? "translate-x-0" : "translate-x-full",
       )}>
-        <div className="flex items-center gap-3 px-6 py-6 shrink-0">
+        <div className="flex shrink-0 items-center gap-3 px-6 pb-6 pt-[max(1.5rem,env(safe-area-inset-top))]">
           <button onClick={() => setSettingsOpen(false)} className="rounded-full p-1.5 text-muted-foreground hover:text-foreground">
             <ChevronLeft className="size-5" />
           </button>
-          <h3 className="font-heading text-lg tracking-wide">API 配置</h3>
+          <h3 className="font-heading text-lg tracking-wide">设置</h3>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-4 pb-8 space-y-3">
+        <div className="flex-1 space-y-3 overflow-y-auto px-4 pb-[max(2rem,env(safe-area-inset-bottom))]">
           <p className="px-2 text-[11px] italic text-muted-foreground leading-relaxed">
-            Key 存于浏览器本地，发送时由本站后端转发。<br />
-            每种协议下可添加多个端点。
+            模型 Key 只保存在当前浏览器，发送时由本站后端转发。
           </p>
 
           <div className="rounded-2xl border border-sidebar-border overflow-hidden">
             <button
               type="button"
-              onClick={() => updateMemory("enabled", !memoryConfig.enabled)}
-              className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-sidebar-accent/40 transition-colors"
+              role="switch"
+              aria-checked={memoryReady}
+              disabled={!memoryAvailable}
+              onClick={toggleMemory}
+              className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-sidebar-accent/40 disabled:cursor-not-allowed disabled:opacity-65"
             >
               <div>
-                <span className="text-sm font-medium tracking-wide">记忆系统</span>
-                <p className="mt-1 text-[11px] text-muted-foreground">EbbingFlow / OpenAI 兼容记忆后端</p>
+                <span className="text-sm font-medium tracking-wide">长期记忆</span>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  {memoryAvailable ? "记住跨篇对谈中的偏好" : "服务端配置后即可使用"}
+                </p>
               </div>
               <span className={cn(
                 "rounded-full border px-2.5 py-1 text-[11px]",
-                memoryConfig.enabled
+                memoryReady
                   ? "border-sidebar-primary/40 bg-sidebar-primary/10 text-sidebar-primary"
                   : "border-sidebar-border text-muted-foreground",
               )}>
-                {memoryConfig.enabled ? "已开启" : "已关闭"}
+                {!memoryAvailable ? "暂未启用" : memoryReady ? "已开启" : "已关闭"}
               </span>
             </button>
-
-            {memoryConfig.enabled && (
-              <div className="border-t border-sidebar-border/50 px-3 py-3 space-y-2.5">
-                {[
-                  { field: "baseUrl" as const, label: "后端地址", placeholder: "https://your-ebbingflow.onrender.com/v1", type: "text" },
-                  { field: "apiKey" as const, label: "API Key（可选）", placeholder: "local 或 Bearer token", type: "password" },
-                  { field: "model" as const, label: "模型名", placeholder: "ebbingflow", type: "text" },
-                  { field: "userId" as const, label: "用户 ID", placeholder: "user_001", type: "text" },
-                  { field: "userToken" as const, label: "用户 Token（可选）", placeholder: "用于隔离访问", type: "password" },
-                ].map(({ field, label, placeholder, type }) => (
-                  <div key={field}>
-                    <p className="mb-1 text-[11px] tracking-widest text-muted-foreground">{label}</p>
-                    <input
-                      type={type}
-                      value={String(memoryConfig[field] ?? "")}
-                      onChange={e => updateMemory(field, e.target.value)}
-                      placeholder={placeholder}
-                      className="w-full rounded-lg border border-sidebar-border bg-background/50 px-2.5 py-1.5 text-xs outline-none focus:border-sidebar-primary/50 placeholder:text-muted-foreground/40"
-                    />
-                  </div>
-                ))}
-                <p className="px-1 text-[11px] italic leading-relaxed text-muted-foreground">
-                  开启后，本轮对话会先交给记忆后端，由它负责长期记忆与模型调用。
-                </p>
-              </div>
-            )}
           </div>
 
           {PROTOCOLS.map(protocol => (
@@ -263,11 +273,35 @@ export function ConversationSidebar({
                   {/* 添加表单 */}
                   {drafts[protocol] !== null ? (
                     <div className="rounded-xl border border-sidebar-border bg-background/30 p-3 space-y-2.5">
+                      {protocol === "openai" && (
+                        <div>
+                          <p className="mb-1.5 text-[11px] tracking-widest text-muted-foreground">快速选择</p>
+                          <div className="grid grid-cols-2 gap-2">
+                            {OPENAI_PRESETS.map(preset => {
+                              const selected = drafts.openai?.baseUrl.trim() === preset.baseUrl
+                                && drafts.openai?.model.trim() === preset.model
+                              return (
+                                <button
+                                  key={preset.label}
+                                  type="button"
+                                  onClick={() => applyOpenAIPreset(preset)}
+                                  className={cn(
+                                    "rounded-lg border px-2 py-1.5 text-xs transition-colors",
+                                    selected
+                                      ? "border-sidebar-primary/40 bg-sidebar-primary/10 text-sidebar-primary"
+                                      : "border-sidebar-border text-muted-foreground hover:text-foreground",
+                                  )}
+                                >
+                                  {preset.label}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
                       {[
-                        { field: "name" as const, label: "名称", placeholder: "随便起个名字", type: "text" },
-                        { field: "baseUrl" as const, label: "Base URL", placeholder: PROTOCOL_DEFAULTS[protocol].baseUrl, type: "text" },
+                        { field: "name" as const, label: "名称", placeholder: "例如：我的 DeepSeek", type: "text" },
                         { field: "apiKey" as const, label: "API Key", placeholder: "sk-...", type: "password" },
-                        { field: "model" as const, label: "模型名", placeholder: PROTOCOL_DEFAULTS[protocol].model, type: "text" },
                       ].map(({ field, label, placeholder, type }) => (
                         <div key={field}>
                           <p className="mb-1 text-[11px] tracking-widest text-muted-foreground">{label}</p>
@@ -280,6 +314,28 @@ export function ConversationSidebar({
                           />
                         </div>
                       ))}
+                      <details className="group rounded-lg border border-sidebar-border/70 px-2.5 py-2">
+                        <summary className="cursor-pointer list-none text-[11px] tracking-wider text-muted-foreground">
+                          高级配置：服务地址与模型
+                        </summary>
+                        <div className="mt-2.5 space-y-2.5">
+                          {[
+                            { field: "baseUrl" as const, label: "服务地址", placeholder: PROTOCOL_DEFAULTS[protocol].baseUrl },
+                            { field: "model" as const, label: "模型名", placeholder: PROTOCOL_DEFAULTS[protocol].model },
+                          ].map(({ field, label, placeholder }) => (
+                            <div key={field}>
+                              <p className="mb-1 text-[11px] tracking-widest text-muted-foreground">{label}</p>
+                              <input
+                                type="text"
+                                value={drafts[protocol]?.[field] ?? ""}
+                                onChange={e => updateDraftField(protocol, field, e.target.value)}
+                                placeholder={placeholder}
+                                className="w-full rounded-lg border border-sidebar-border bg-background/50 px-2.5 py-1.5 text-xs outline-none focus:border-sidebar-primary/50 placeholder:text-muted-foreground/40"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </details>
                       <div className="flex gap-2 pt-1">
                         <button
                           type="button"
