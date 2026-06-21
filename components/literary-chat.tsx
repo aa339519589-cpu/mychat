@@ -1,8 +1,13 @@
 "use client"
 
 import { useMemo, useRef, useState, useEffect } from "react"
-import { CONVERSATIONS, type Conversation, type Message, type Endpoint } from "@/lib/chat-data"
-import { loadMemories, saveMemories, type Memory } from "@/lib/memory-data"
+import { type Conversation, type Message, type Endpoint } from "@/lib/chat-data"
+import { type Memory } from "@/lib/memory-data"
+import {
+  fetchMemories, insertMemory, updateMemory, deleteMemoryRow,
+  fetchConversations, insertConversation, updateConversationTitle, touchConversation, deleteConversationRow,
+  fetchMessages, insertMessage, lastExcerpt,
+} from "@/lib/db"
 import { ConversationSidebar } from "@/components/conversation-sidebar"
 import { MessageList } from "@/components/message-list"
 import { ChatInput } from "@/components/chat-input"
@@ -17,14 +22,19 @@ type GithubContext = { repo: string; context: string }
 export function LiteraryChat() {
   const [user, setUser] = useState<User | null>(null)
   const [authChecked, setAuthChecked] = useState(false)
-  const [conversations, setConversations] = useState<Conversation[]>(CONVERSATIONS)
-  const [activeId, setActiveId] = useState(CONVERSATIONS[0].id)
+  const [conversations, setConversations] = useState<Conversation[]>([])
+  const [activeId, setActiveId] = useState("")
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [githubContext, setGithubContext] = useState<GithubContext | null>(null)
   const [memories, setMemories] = useState<Memory[]>([])
   const [webSearch, setWebSearch] = useState(false)
+  const [endpoints, setEndpoints] = useState<Endpoint[]>([])
+  const [activeEndpointId, setActiveEndpointId] = useState("")
+
+  // 已经从数据库拉过消息的对话 id，避免重复拉取
+  const loadedRef = useRef<Set<string>>(new Set())
 
   // 检查登录状态，并监听登录/登出
   useEffect(() => {
@@ -40,13 +50,39 @@ export function LiteraryChat() {
     return () => sub.subscription.unsubscribe()
   }, [])
 
-  const [endpoints, setEndpoints] = useState<Endpoint[]>([])
-  const [activeEndpointId, setActiveEndpointId] = useState("")
-
+  // 登录后从云端加载记忆 + 对话；登出则清空
   useEffect(() => {
-    setMemories(loadMemories())
-  }, [])
+    if (!user) {
+      setConversations([])
+      setMemories([])
+      setActiveId("")
+      loadedRef.current = new Set()
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      const [convs, mems] = await Promise.all([fetchConversations(), fetchMemories()])
+      if (cancelled) return
+      setMemories(mems)
+      if (convs.length === 0) {
+        const id = await insertConversation(user.id, "未命名的篇章")
+        if (cancelled || !id) return
+        loadedRef.current.add(id)
+        setConversations([{ id, title: "未命名的篇章", excerpt: "", date: "今日", messages: [] }])
+        setActiveId(id)
+      } else {
+        setConversations(convs)
+        setActiveId(convs[0].id)
+        const msgs = await fetchMessages(convs[0].id)
+        if (cancelled) return
+        loadedRef.current.add(convs[0].id)
+        setConversations(prev => prev.map(c => c.id === convs[0].id ? { ...c, messages: msgs, excerpt: lastExcerpt(msgs) } : c))
+      }
+    })()
+    return () => { cancelled = true }
+  }, [user])
 
+  // 模型端点仍保存在本地浏览器（含 API Key，不上云）
   useEffect(() => {
     try {
       let loadedEndpoints: Endpoint[] = []
@@ -54,18 +90,20 @@ export function LiteraryChat() {
       if (saved) {
         const parsed = JSON.parse(saved)
         if (Array.isArray(parsed)) {
-          loadedEndpoints = parsed.map((endpoint: Endpoint) => ({
-            ...endpoint,
-            name: String(endpoint.name ?? "").trim(),
-            baseUrl: String(endpoint.baseUrl ?? "").trim(),
-            apiKey: String(endpoint.apiKey ?? "").trim(),
-            model: String(endpoint.model ?? "").trim(),
-          }))
+          // 只保留协议合法的端点，顺手清除老数据里协议非法、删不掉的"幽灵端点"
+          loadedEndpoints = parsed
+            .filter((endpoint: Endpoint) => endpoint && ["anthropic", "openai", "gemini"].includes(endpoint.protocol))
+            .map((endpoint: Endpoint) => ({
+              ...endpoint,
+              name: String(endpoint.name ?? "").trim(),
+              baseUrl: String(endpoint.baseUrl ?? "").trim(),
+              apiKey: String(endpoint.apiKey ?? "").trim(),
+              model: String(endpoint.model ?? "").trim(),
+            }))
           setEndpoints(loadedEndpoints)
           localStorage.setItem("chat_endpoints", JSON.stringify(loadedEndpoints))
         }
       }
-
       const savedActive = localStorage.getItem("chat_active_endpoint")
       const nextActive = savedActive && loadedEndpoints.some(endpoint => endpoint.id === savedActive)
         ? savedActive
@@ -89,7 +127,7 @@ export function LiteraryChat() {
   const activeName = activeEndpoint?.name ?? "笔友"
 
   const active = useMemo(
-    () => conversations.find(c => c.id === activeId)!,
+    () => conversations.find(c => c.id === activeId),
     [conversations, activeId],
   )
 
@@ -100,6 +138,16 @@ export function LiteraryChat() {
       if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
     }
   }, [active?.messages?.length, activeId])
+
+  // 切换对话：未加载过消息则从云端拉取
+  async function handleSelect(id: string) {
+    setActiveId(id)
+    setDrawerOpen(false)
+    if (loadedRef.current.has(id)) return
+    loadedRef.current.add(id)
+    const msgs = await fetchMessages(id)
+    setConversations(prev => prev.map(c => c.id === id ? { ...c, messages: msgs, excerpt: lastExcerpt(msgs) } : c))
+  }
 
   async function generateTitle(convId: string, userText: string, aiText: string) {
     if (!activeEndpoint) return
@@ -134,12 +182,15 @@ export function LiteraryChat() {
         }
       }
       const clean = title.trim().replace(/^["'「『]|["'」』]$/g, "").slice(0, 20)
-      if (clean) setConversations(prev => prev.map(c => c.id === convId ? { ...c, title: clean } : c))
+      if (clean) {
+        setConversations(prev => prev.map(c => c.id === convId ? { ...c, title: clean } : c))
+        updateConversationTitle(convId, clean)
+      }
     } catch { /* 标题生成失败不影响主流程 */ }
   }
 
   async function updateMemories(userText: string, aiText: string, currentMemories: Memory[]) {
-    if (!activeEndpoint) return
+    if (!activeEndpoint || !user) return
     try {
       const existing = currentMemories.length
         ? currentMemories.map(m => `[${m.id}] ${m.content}`).join('\n')
@@ -196,36 +247,36 @@ AI：${aiText.slice(0, 300)}
       const ops: { action: string; content?: string; id?: string }[] = JSON.parse(jsonMatch[0])
       if (!Array.isArray(ops) || ops.length === 0) return
 
-      setMemories(prev => {
-        let next = [...prev]
-        for (const op of ops) {
-          if (op.action === "create" && op.content?.trim()) {
-            next.push({ id: `m-${Date.now()}-${Math.random().toString(36).slice(2,6)}`, content: op.content.trim() })
-          } else if (op.action === "delete" && op.id) {
-            next = next.filter(m => m.id !== op.id)
-          }
+      for (const op of ops) {
+        if (op.action === "create" && op.content?.trim()) {
+          const mem = await insertMemory(user.id, op.content.trim())
+          if (mem) setMemories(prev => [...prev, mem])
+        } else if (op.action === "delete" && op.id) {
+          setMemories(prev => prev.filter(m => m.id !== op.id))
+          deleteMemoryRow(op.id)
         }
-        saveMemories(next)
-        return next
-      })
+      }
     } catch { /* 记忆更新失败不影响主流程 */ }
   }
 
   async function handleSend(text: string, images?: string[]) {
-    const userMsg: Message = { id: `u-${Date.now()}`, role: "user", content: text, time: "此刻", images }
+    if (!user || !active) return
+    const userMsg: Message = { id: crypto.randomUUID(), role: "user", content: text, time: "此刻", images }
 
     if (!activeEndpoint) {
       setConversations(prev => prev.map(c => c.id === activeId ? {
-        ...c, messages: [...c.messages, userMsg, { id: `e-${Date.now()}`, role: "assistant", content: "请先点击左下角齿轮图标，添加一个 API 端点。", time: "此刻", isError: true }]
+        ...c, messages: [...c.messages, userMsg, { id: crypto.randomUUID(), role: "assistant", content: "请先点击左下角齿轮图标，添加一个 API 端点。", time: "此刻", isError: true }]
       } : c))
       return
     }
 
-    const msgId = `a-${Date.now()}`
+    const convId = activeId
+    const msgId = crypto.randomUUID()
     const isFirstExchange = active.messages.length === 0
-    setConversations(prev => prev.map(c => c.id === activeId ? {
+    setConversations(prev => prev.map(c => c.id === convId ? {
       ...c, messages: [...c.messages, userMsg, { id: msgId, role: "assistant", content: "", thinking: "", time: "此刻" }]
     } : c))
+    insertMessage(user.id, convId, userMsg)
 
     setIsLoading(true)
     try {
@@ -284,6 +335,7 @@ AI：${aiText.slice(0, 300)}
       const dec = new TextDecoder()
       let buf = ""
       let fullReply = ""
+      let fullThinking = ""
 
       while (true) {
         const { done, value } = await reader.read()
@@ -299,7 +351,8 @@ AI：${aiText.slice(0, 300)}
             try {
               const data = JSON.parse(line.slice(6))
               if (data.text) fullReply += data.text
-              setConversations(prev => prev.map(c => c.id !== activeId ? c : {
+              if (data.thinking) fullThinking += data.thinking
+              setConversations(prev => prev.map(c => c.id !== convId ? c : {
                 ...c,
                 messages: c.messages.map(m => m.id !== msgId ? m : {
                   ...m,
@@ -313,16 +366,22 @@ AI：${aiText.slice(0, 300)}
         }
       }
 
+      // 把完整回复写入云端，并更新列表预览与时间
+      if (fullReply) {
+        insertMessage(user.id, convId, { id: msgId, role: "assistant", content: fullReply, thinking: fullThinking || undefined, time: "" })
+        touchConversation(convId)
+        setConversations(prev => prev.map(c => c.id === convId ? { ...c, excerpt: fullReply.slice(0, 60), date: "今日" } : c))
+      }
       // 第一次对话完成后自动生成标题
       if (isFirstExchange && fullReply) {
-        generateTitle(activeId, text, fullReply)
+        generateTitle(convId, text, fullReply)
       }
       // 后台更新记忆
       if (fullReply) {
         updateMemories(text, fullReply, memories)
       }
     } catch (e: any) {
-      setConversations(prev => prev.map(c => c.id !== activeId ? c : {
+      setConversations(prev => prev.map(c => c.id !== convId ? c : {
         ...c,
         messages: c.messages.map((m, i, arr) =>
           i === arr.length - 1 && m.role === "assistant"
@@ -335,24 +394,54 @@ AI：${aiText.slice(0, 300)}
     }
   }
 
-  function handleDelete(id: string) {
-    setConversations(prev => {
-      const next = prev.filter(c => c.id !== id)
-      if (next.length === 0) {
-        const fresh = { id: `c-${Date.now()}`, title: "未命名的篇章", excerpt: "一页尚待书写的空白……", date: "今日", messages: [] }
-        if (activeId === id) setActiveId(fresh.id)
-        return [fresh]
+  async function handleDelete(id: string) {
+    deleteConversationRow(id)
+    loadedRef.current.delete(id)
+    const remaining = conversations.filter(c => c.id !== id)
+    if (remaining.length === 0) {
+      if (!user) return
+      const newId = await insertConversation(user.id, "未命名的篇章")
+      if (!newId) return
+      loadedRef.current.add(newId)
+      setConversations([{ id: newId, title: "未命名的篇章", excerpt: "", date: "今日", messages: [] }])
+      setActiveId(newId)
+      return
+    }
+    setConversations(remaining)
+    if (activeId === id) {
+      const nextId = remaining[0].id
+      setActiveId(nextId)
+      if (!loadedRef.current.has(nextId)) {
+        loadedRef.current.add(nextId)
+        const msgs = await fetchMessages(nextId)
+        setConversations(prev => prev.map(c => c.id === nextId ? { ...c, messages: msgs, excerpt: lastExcerpt(msgs) } : c))
       }
-      if (activeId === id) setActiveId(next[0].id)
-      return next
-    })
+    }
   }
 
-  function handleNew() {
-    const id = `c-${Date.now()}`
-    setConversations(prev => [{ id, title: "未命名的篇章", excerpt: "一页尚待书写的空白……", date: "今日", messages: [] }, ...prev])
+  async function handleNew() {
+    if (!user) return
+    const id = await insertConversation(user.id, "未命名的篇章")
+    if (!id) return
+    loadedRef.current.add(id)
+    setConversations(prev => [{ id, title: "未命名的篇章", excerpt: "", date: "今日", messages: [] }, ...prev])
     setActiveId(id)
     setDrawerOpen(false)
+  }
+
+  // 记忆：手动增删改，立即写云端
+  async function handleMemoryAdd(content: string) {
+    if (!user) return
+    const mem = await insertMemory(user.id, content)
+    if (mem) setMemories(prev => [...prev, mem])
+  }
+  async function handleMemoryEdit(id: string, content: string) {
+    setMemories(prev => prev.map(m => m.id === id ? { ...m, content } : m))
+    updateMemory(id, content)
+  }
+  async function handleMemoryDelete(id: string) {
+    setMemories(prev => prev.filter(m => m.id !== id))
+    deleteMemoryRow(id)
   }
 
   async function handleLogout() {
@@ -363,14 +452,16 @@ AI：${aiText.slice(0, 300)}
 
   const sidebarProps = {
     conversations, activeId,
-    onSelect: (id: string) => { setActiveId(id); setDrawerOpen(false) },
+    onSelect: handleSelect,
     onNew: handleNew,
     onDelete: handleDelete,
     endpoints, activeEndpointId,
     onEndpointsChange: handleEndpointsChange,
     onActiveEndpointChange: handleActiveEndpointChange,
     memories,
-    onMemoriesChange: (mems: Memory[]) => setMemories(mems),
+    onMemoryAdd: handleMemoryAdd,
+    onMemoryEdit: handleMemoryEdit,
+    onMemoryDelete: handleMemoryDelete,
     userEmail: user?.email ?? "",
     onLogout: handleLogout,
   }
@@ -398,7 +489,7 @@ AI：${aiText.slice(0, 300)}
           ref={mobile ? mobileScrollRef : desktopScrollRef}
           className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain"
         >
-          {active?.messages?.length > 0 ? (
+          {active && active.messages.length > 0 ? (
             <MessageList conversation={active} endpointName={activeName} />
           ) : (
             <EmptyState endpointName={activeName} />

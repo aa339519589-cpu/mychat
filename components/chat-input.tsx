@@ -4,6 +4,7 @@ import { useRef, useState } from "react"
 import { cn } from "@/lib/utils"
 import { ChevronDown, GitBranch, X, Loader2, Plus, ImageIcon, FileText, Globe } from "lucide-react"
 import type { Endpoint } from "@/lib/chat-data"
+import { extractFileText, type ExtractedFile } from "@/lib/file-extract"
 
 type GithubContext = { repo: string; context: string }
 
@@ -29,6 +30,9 @@ export function ChatInput({
   const [githubLoading, setGithubLoading] = useState(false)
   const [plusOpen, setPlusOpen] = useState(false)
   const [images, setImages] = useState<string[]>([])
+  const [files, setFiles] = useState<ExtractedFile[]>([])
+  const [fileLoading, setFileLoading] = useState(false)
+  const [fileError, setFileError] = useState("")
   const imageInputRef = useRef<HTMLInputElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [githubError, setGithubError] = useState("")
@@ -42,16 +46,23 @@ export function ChatInput({
 
   function submit() {
     const text = value.trim()
-    if (!text && images.length === 0) return
-    onSend(text, images.length > 0 ? images : undefined)
+    if (!text && images.length === 0 && files.length === 0) return
+    let full = text
+    if (files.length > 0) {
+      const blocks = files.map(f => `［附件：${f.name}］\n${f.text}`).join("\n\n")
+      full = text ? `${text}\n\n${blocks}` : blocks
+    }
+    onSend(full, images.length > 0 ? images : undefined)
     setValue("")
     setImages([])
+    setFiles([])
+    setFileError("")
     if (ref.current) ref.current.style.height = "auto"
   }
 
-  function readFilesAsBase64(files: FileList | null) {
-    if (!files) return
-    Array.from(files).forEach(file => {
+  function readImagesAsBase64(fileList: FileList | null) {
+    if (!fileList) return
+    Array.from(fileList).forEach(file => {
       const reader = new FileReader()
       reader.onload = e => {
         const result = e.target?.result as string
@@ -60,6 +71,25 @@ export function ChatInput({
       reader.readAsDataURL(file)
     })
     setPlusOpen(false)
+  }
+
+  async function handleFiles(fileList: FileList | null) {
+    if (!fileList || fileList.length === 0) return
+    setPlusOpen(false)
+    setFileError("")
+    setFileLoading(true)
+    try {
+      for (const file of Array.from(fileList)) {
+        try {
+          const extracted = await extractFileText(file)
+          setFiles(prev => [...prev, extracted])
+        } catch (e: any) {
+          setFileError(e?.message ?? "文件解析失败")
+        }
+      }
+    } finally {
+      setFileLoading(false)
+    }
   }
 
   async function connectGithub() {
@@ -176,9 +206,9 @@ export function ChatInput({
 
       {/* 隐藏的文件输入 */}
       <input ref={imageInputRef} type="file" accept="image/*" multiple capture="environment" className="hidden"
-        onChange={e => readFilesAsBase64(e.target.files)} />
-      <input ref={fileInputRef} type="file" accept="image/*,application/pdf,.doc,.docx,.txt" multiple className="hidden"
-        onChange={e => readFilesAsBase64(e.target.files)} />
+        onChange={e => { readImagesAsBase64(e.target.files); e.currentTarget.value = "" }} />
+      <input ref={fileInputRef} type="file" accept=".pdf,.txt,.md,.csv,.json,.log,.xml,.html,.yaml,.yml,text/*,application/pdf" multiple className="hidden"
+        onChange={e => { handleFiles(e.target.files); e.currentTarget.value = "" }} />
 
       {/* 图片预览条 */}
       {images.length > 0 && (
@@ -197,6 +227,28 @@ export function ChatInput({
           ))}
         </div>
       )}
+
+      {/* 文件预览条 */}
+      {(files.length > 0 || fileLoading) && (
+        <div className="mb-2 flex flex-wrap gap-2 px-1">
+          {files.map((f, i) => (
+            <div key={i} className="flex items-center gap-1.5 rounded-xl border border-border/50 bg-secondary/50 px-2.5 py-1.5">
+              <FileText className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="max-w-[140px] truncate text-xs text-muted-foreground">{f.name}</span>
+              <button onClick={() => setFiles(prev => prev.filter((_, j) => j !== i))} className="rounded-full p-0.5 hover:bg-muted transition-colors">
+                <X className="size-3 text-muted-foreground" />
+              </button>
+            </div>
+          ))}
+          {fileLoading && (
+            <div className="flex items-center gap-1.5 rounded-xl border border-border/50 bg-secondary/50 px-2.5 py-1.5">
+              <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+              <span className="text-xs text-muted-foreground">解析中……</span>
+            </div>
+          )}
+        </div>
+      )}
+      {fileError && <p className="mb-2 px-2 text-xs text-destructive">{fileError}</p>}
 
       {/* + 号菜单 */}
       {plusOpen && (
@@ -248,11 +300,11 @@ export function ChatInput({
         />
         <button
           onClick={submit}
-          disabled={!value.trim() && images.length === 0}
+          disabled={!value.trim() && images.length === 0 && files.length === 0}
           aria-label="发送"
           className={cn(
             "mb-0.5 flex size-9 shrink-0 items-center justify-center rounded-full border transition-colors font-heading text-base",
-            (value.trim() || images.length > 0)
+            (value.trim() || images.length > 0 || files.length > 0)
               ? "border-primary/50 bg-primary/10 text-primary hover:bg-primary/20"
               : "cursor-not-allowed border-border/40 text-muted-foreground/30",
           )}

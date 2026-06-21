@@ -4,7 +4,6 @@ import { useState } from "react"
 import type { Conversation, Endpoint, Protocol } from "@/lib/chat-data"
 import { PROTOCOL_LABELS, PROTOCOL_DEFAULTS } from "@/lib/chat-data"
 import type { Memory } from "@/lib/memory-data"
-import { saveMemories } from "@/lib/memory-data"
 import { cn } from "@/lib/utils"
 import { Feather, Plus, Settings, ChevronLeft, Trash2, ChevronDown, ChevronRight, Brain, LogOut } from "lucide-react"
 
@@ -29,7 +28,7 @@ function emptyDraft(protocol: Protocol): Draft {
 export function ConversationSidebar({
   conversations, activeId, onSelect, onNew, onDelete,
   endpoints, activeEndpointId, onEndpointsChange, onActiveEndpointChange,
-  memories, onMemoriesChange, userEmail, onLogout,
+  memories, onMemoryAdd, onMemoryEdit, onMemoryDelete, userEmail, onLogout,
 }: {
   conversations: Conversation[]
   activeId: string
@@ -41,7 +40,9 @@ export function ConversationSidebar({
   onEndpointsChange: (eps: Endpoint[]) => void
   onActiveEndpointChange: (id: string) => void
   memories: Memory[]
-  onMemoriesChange: (mems: Memory[]) => void
+  onMemoryAdd: (content: string) => void
+  onMemoryEdit: (id: string, content: string) => void
+  onMemoryDelete: (id: string) => void
   userEmail: string
   onLogout: () => void
 }) {
@@ -322,7 +323,7 @@ export function ConversationSidebar({
           ))}
 
           {/* 记忆管理 */}
-          <MemorySection memories={memories} onMemoriesChange={onMemoriesChange} />
+          <MemorySection memories={memories} onAdd={onMemoryAdd} onEdit={onMemoryEdit} onDelete={onMemoryDelete} />
 
           {/* 账号 */}
           <div className="rounded-2xl border border-sidebar-border overflow-hidden">
@@ -345,17 +346,16 @@ export function ConversationSidebar({
   )
 }
 
-function MemorySection({ memories, onMemoriesChange }: { memories: Memory[]; onMemoriesChange: (m: Memory[]) => void }) {
+function MemorySection({ memories, onAdd, onEdit, onDelete }: {
+  memories: Memory[]
+  onAdd: (content: string) => void
+  onEdit: (id: string, content: string) => void
+  onDelete: (id: string) => void
+}) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState("")
   const [newValue, setNewValue] = useState("")
   const [adding, setAdding] = useState(false)
-
-  function deleteMemory(id: string) {
-    const next = memories.filter(m => m.id !== id)
-    saveMemories(next)
-    onMemoriesChange(next)
-  }
 
   function startEdit(m: Memory) {
     setEditingId(m.id)
@@ -364,17 +364,13 @@ function MemorySection({ memories, onMemoriesChange }: { memories: Memory[]; onM
 
   function saveEdit() {
     if (!editingId || !editValue.trim()) return
-    const next = memories.map(m => m.id === editingId ? { ...m, content: editValue.trim() } : m)
-    saveMemories(next)
-    onMemoriesChange(next)
+    onEdit(editingId, editValue.trim())
     setEditingId(null)
   }
 
   function addMemory() {
     if (!newValue.trim()) return
-    const next = [...memories, { id: `m-${Date.now()}`, content: newValue.trim() }]
-    saveMemories(next)
-    onMemoriesChange(next)
+    onAdd(newValue.trim())
     setNewValue("")
     setAdding(false)
   }
@@ -412,7 +408,7 @@ function MemorySection({ memories, onMemoriesChange }: { memories: Memory[]; onM
                     <button onClick={() => startEdit(m)} className="p-1 text-muted-foreground hover:text-foreground transition-colors">
                       <svg className="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                     </button>
-                    <button onClick={() => deleteMemory(m.id)} className="p-1 text-muted-foreground hover:text-destructive transition-colors">
+                    <button onClick={() => onDelete(m.id)} className="p-1 text-muted-foreground hover:text-destructive transition-colors">
                       <Trash2 className="size-3" />
                     </button>
                   </div>
