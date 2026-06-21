@@ -371,7 +371,7 @@ function MemorySection({ memories, onAdd, onEdit, onDelete }: {
         <span className="text-[11px] text-muted-foreground">{memories.length} 条</span>
       </div>
       {memories.length > 0 && (
-        <div className="border-t border-sidebar-border/50 divide-y divide-sidebar-border/30">
+        <div className="max-h-64 overflow-y-auto border-t border-sidebar-border/50 divide-y divide-sidebar-border/30">
           {memories.map(m => (
             <div key={m.id} className="px-3 py-2">
               {editingId === m.id ? (

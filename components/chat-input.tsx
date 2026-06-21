@@ -2,9 +2,9 @@
 
 import { useRef, useState } from "react"
 import { cn } from "@/lib/utils"
-import { ChevronDown, GitBranch, X, Loader2, Plus, ImageIcon, FileText, Globe } from "lucide-react"
+import { ChevronDown, GitBranch, X, Loader2, Plus, ImageIcon, FileText, Globe, ArrowUp } from "lucide-react"
 import type { Endpoint } from "@/lib/chat-data"
-import { extractFileText, type ExtractedFile } from "@/lib/file-extract"
+import { prepareFile, type AttachedFile } from "@/lib/file-extract"
 
 type GithubContext = { repo: string; context: string }
 
@@ -13,7 +13,7 @@ export function ChatInput({
   githubContext, onGithubConnect,
   webSearch, onWebSearchChange,
 }: {
-  onSend: (text: string, images?: string[]) => void
+  onSend: (text: string, images?: string[], files?: AttachedFile[]) => void
   endpoints: Endpoint[]
   activeEndpointId: string
   onEndpointChange: (id: string) => void
@@ -30,7 +30,7 @@ export function ChatInput({
   const [githubLoading, setGithubLoading] = useState(false)
   const [plusOpen, setPlusOpen] = useState(false)
   const [images, setImages] = useState<string[]>([])
-  const [files, setFiles] = useState<ExtractedFile[]>([])
+  const [files, setFiles] = useState<AttachedFile[]>([])
   const [fileLoading, setFileLoading] = useState(false)
   const [fileError, setFileError] = useState("")
   const imageInputRef = useRef<HTMLInputElement>(null)
@@ -47,12 +47,7 @@ export function ChatInput({
   function submit() {
     const text = value.trim()
     if (!text && images.length === 0 && files.length === 0) return
-    let full = text
-    if (files.length > 0) {
-      const blocks = files.map(f => `［附件：${f.name}］\n${f.text}`).join("\n\n")
-      full = text ? `${text}\n\n${blocks}` : blocks
-    }
-    onSend(full, images.length > 0 ? images : undefined)
+    onSend(text, images.length > 0 ? images : undefined, files.length > 0 ? files : undefined)
     setValue("")
     setImages([])
     setFiles([])
@@ -81,8 +76,8 @@ export function ChatInput({
     try {
       for (const file of Array.from(fileList)) {
         try {
-          const extracted = await extractFileText(file)
-          setFiles(prev => [...prev, extracted])
+          const prepared = await prepareFile(file)
+          setFiles(prev => [...prev, prepared])
         } catch (e: any) {
           setFileError(e?.message ?? "文件解析失败")
         }
@@ -303,13 +298,13 @@ export function ChatInput({
           disabled={!value.trim() && images.length === 0 && files.length === 0}
           aria-label="发送"
           className={cn(
-            "mb-0.5 flex size-9 shrink-0 items-center justify-center rounded-full border transition-colors font-heading text-base",
+            "mb-0.5 flex size-9 shrink-0 items-center justify-center rounded-full border transition-colors",
             (value.trim() || images.length > 0 || files.length > 0)
-              ? "border-primary/50 bg-primary/10 text-primary hover:bg-primary/20"
+              ? "border-primary/50 bg-primary text-primary-foreground hover:opacity-90"
               : "cursor-not-allowed border-border/40 text-muted-foreground/30",
           )}
         >
-          发
+          <ArrowUp className="size-4" />
         </button>
       </div>
     </div>

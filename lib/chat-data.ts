@@ -30,6 +30,7 @@ export type Message = {
   thinking?: string   // 思考链文本
   images?: string[]   // base64 data URLs
   memoryNotes?: string[]   // 本次回复中模型对记忆做的操作（仅当次显示）
+  files?: string[]   // 附件文件名（只显示成卡片，全文由后端注入给模型）
 }
 
 export type Conversation = {

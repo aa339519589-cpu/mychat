@@ -1,5 +1,7 @@
-// 把上传的文件提取成纯文本：PDF 走后端解析，文本类文件直接在浏览器读取
-export type ExtractedFile = { name: string; text: string }
+// 把上传的文件转成可发送的附件：
+// - PDF 保留原始数据（base64），交给模型原生解析，质量最好
+// - 文本类文件直接在浏览器读取内容
+export type AttachedFile = { name: string; dataUrl: string; isPdf: boolean; text?: string }
 
 const TEXT_EXTS = [
   ".txt", ".md", ".markdown", ".csv", ".json", ".log", ".xml", ".yaml", ".yml",
@@ -12,25 +14,26 @@ function hasExt(name: string, exts: string[]) {
   return exts.some(e => lower.endsWith(e))
 }
 
-export async function extractFileText(file: File): Promise<ExtractedFile> {
+function readAsDataURL(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve(r.result as string)
+    r.onerror = () => reject(new Error("读取文件失败"))
+    r.readAsDataURL(file)
+  })
+}
+
+export async function prepareFile(file: File): Promise<AttachedFile> {
   const name = file.name
   const isPdf = file.type === "application/pdf" || name.toLowerCase().endsWith(".pdf")
-
   if (isPdf) {
-    const form = new FormData()
-    form.append("file", file)
-    const res = await fetch("/api/extract", { method: "POST", body: form })
-    const data = await res.json().catch(() => null)
-    if (!res.ok) throw new Error(data?.error ?? "PDF 解析失败")
-    return { name, text: String(data?.text ?? "") }
+    const dataUrl = await readAsDataURL(file)
+    return { name, dataUrl, isPdf: true }
   }
-
-  // 文本类文件直接读
   if (file.type.startsWith("text/") || hasExt(name, TEXT_EXTS)) {
     const text = await file.text()
-    return { name, text }
+    return { name, dataUrl: "", isPdf: false, text }
   }
-
   const ext = name.includes(".") ? name.split(".").pop()!.toUpperCase() : "该"
-  throw new Error(`暂不支持解析 ${ext} 文件，请上传 PDF 或文本文件`)
+  throw new Error(`暂不支持 ${ext} 文件，请上传 PDF 或文本文件`)
 }

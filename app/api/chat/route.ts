@@ -1,13 +1,14 @@
 import { NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { extractText, getDocumentProxy } from 'unpdf'
 
-const BASE_SYSTEM = `你是一个聊天伙伴，用清楚、自然的中文交谈。说有用的话，不要故意文艺。
+const BASE_SYSTEM = `你叫小克，是一个聊天伙伴，用清楚、自然的中文交谈。说有用的话，不要故意文艺。不要使用 emoji，必要时可以用颜文字。
 
 你拥有长期记忆，可以调用工具来管理对这位用户的记忆：
 - 当用户透露了值得长期记住的信息（姓名、身份、职业、喜好、习惯、目标、计划、重要经历或事实）时，调用 remember 保存。
 - 当已有的某条记忆需要修正或补充时，调用 update_memory。
 - 当某条记忆已经过时、错误，或用户明确要求忘记时，调用 forget。
-只在真正有意义时调用，不要为了调用而调用，也不要把闲聊里的临时信息当成长期记忆。调用工具后照常自然地继续回答，不必特意声明你记住了什么。`
+只在真正有意义时调用，不要为了调用而调用，也不要把闲聊里的临时信息当成长期记忆。如果用户一次性让你记住多件事，必须为每一件分别调用一次 remember，逐条都记下来，绝不能只在回复里口头罗列却没有真正调用工具。调用工具后照常自然地继续回答，不必特意声明你记住了什么。`
 
 type MemoryItem = { id: string; content: string }
 
@@ -136,6 +137,59 @@ function toOpenAI(msgs: RawMsg[]) {
       ],
     }
   })
+}
+
+type Attachment = { name: string; dataUrl: string; isPdf: boolean; text?: string }
+
+// 把附件注入最后一条用户消息：Anthropic 用原生 PDF document（解析质量最佳），文本直接附上
+function injectAttachmentsAnthropic(msgs: any[], attachments?: Attachment[]) {
+  if (!attachments?.length) return
+  const last = msgs[msgs.length - 1]
+  if (!last || last.role !== 'user') return
+  const extra: any[] = []
+  for (const f of attachments) {
+    if (f.isPdf && f.dataUrl) {
+      const data = f.dataUrl.split(',')[1] ?? ''
+      if (data) extra.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data }, title: f.name })
+    } else if (f.text) {
+      extra.push({ type: 'text', text: `［附件：${f.name}］\n${f.text}` })
+    }
+  }
+  if (!extra.length) return
+  last.content = typeof last.content === 'string'
+    ? [...extra, { type: 'text', text: last.content || ' ' }]
+    : [...extra, ...last.content]
+}
+
+// OpenAI/DeepSeek 不支持原生 PDF，后端用 unpdf 提取文字再附上
+async function injectAttachmentsOpenAI(msgs: any[], attachments?: Attachment[]) {
+  if (!attachments?.length) return
+  const last = msgs[msgs.length - 1]
+  if (!last || last.role !== 'user') return
+  const blocks: string[] = []
+  for (const f of attachments) {
+    if (f.isPdf && f.dataUrl) {
+      try {
+        const data = f.dataUrl.split(',')[1] ?? ''
+        const buf = new Uint8Array(Buffer.from(data, 'base64'))
+        const pdf = await getDocumentProxy(buf)
+        const { text } = await extractText(pdf, { mergePages: true })
+        const out = Array.isArray(text) ? text.join('\n\n') : text
+        blocks.push(`［附件：${f.name}］\n${out || '（未能提取文字，可能是扫描件）'}`)
+      } catch {
+        blocks.push(`［附件：${f.name}］（解析失败）`)
+      }
+    } else if (f.text) {
+      blocks.push(`［附件：${f.name}］\n${f.text}`)
+    }
+  }
+  if (!blocks.length) return
+  const joined = blocks.join('\n\n')
+  if (typeof last.content === 'string') {
+    last.content = `${last.content}\n\n${joined}`.trim()
+  } else if (Array.isArray(last.content)) {
+    last.content.push({ type: 'text', text: joined })
+  }
 }
 
 // ───────────── 工具执行（在用户身份下写 memories 表，受 RLS 隔离） ─────────────
@@ -310,7 +364,7 @@ async function runOpenAITurn(
 }
 
 export async function POST(req: NextRequest) {
-  const { protocol, baseUrl, apiKey, model, messages, memories } = await req.json()
+  const { protocol, baseUrl, apiKey, model, messages, memories, attachments } = await req.json()
 
   const cleanApiKey = String(apiKey ?? '').trim()
   const cleanBaseUrl = String(baseUrl ?? '').trim()
@@ -339,6 +393,7 @@ export async function POST(req: NextRequest) {
       try {
         if (protocol === 'anthropic') {
           const msgs = toAnthropic(messages)
+          injectAttachmentsAnthropic(msgs, attachments)
           for (let round = 0; round < 6; round++) {
             const { assistantContent, toolUses, failed } = await runAnthropicTurn(base, cleanApiKey, cleanModel, SYSTEM, msgs, useTools, controller)
             if (failed || !toolUses.length) break
@@ -354,6 +409,7 @@ export async function POST(req: NextRequest) {
         } else {
           const url = protocol === 'gemini' ? `${base}/v1beta/openai/chat/completions` : chatCompletionsUrl(cleanBaseUrl)
           const msgs: any[] = [{ role: 'system', content: SYSTEM }, ...toOpenAI(messages)]
+          await injectAttachmentsOpenAI(msgs, attachments)
           for (let round = 0; round < 6; round++) {
             const { assistantMessage, toolCalls, failed } = await runOpenAITurn(url, cleanApiKey, cleanModel, msgs, useTools, controller)
             if (failed || !toolCalls.length) break

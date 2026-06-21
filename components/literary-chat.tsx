@@ -9,6 +9,7 @@ import {
   fetchMessages, insertMessage, lastExcerpt,
   fetchEndpoints, insertEndpoint, deleteEndpointRow,
 } from "@/lib/db"
+import { type AttachedFile } from "@/lib/file-extract"
 import { ConversationSidebar } from "@/components/conversation-sidebar"
 import { MessageList } from "@/components/message-list"
 import { ChatInput } from "@/components/chat-input"
@@ -188,9 +189,9 @@ export function LiteraryChat() {
     } catch { /* 标题生成失败不影响主流程 */ }
   }
 
-  async function handleSend(text: string, images?: string[]) {
+  async function handleSend(text: string, images?: string[], files?: AttachedFile[]) {
     if (!user || !active) return
-    const userMsg: Message = { id: crypto.randomUUID(), role: "user", content: text, time: "此刻", images }
+    const userMsg: Message = { id: crypto.randomUUID(), role: "user", content: text, time: "此刻", images, files: files?.map(f => f.name) }
 
     if (!activeEndpoint) {
       setConversations(prev => prev.map(c => c.id === activeId ? {
@@ -251,6 +252,7 @@ export function LiteraryChat() {
           model: activeEndpoint.model,
           messages: history,
           memories: memories.length > 0 ? memories : undefined,
+          attachments: files && files.length > 0 ? files : undefined,
         }),
       })
 

@@ -3,7 +3,7 @@
 import Image from "next/image"
 import { useState } from "react"
 import type { Conversation } from "@/lib/chat-data"
-import { ChevronDown, ChevronRight, Brain } from "lucide-react"
+import { ChevronDown, ChevronRight, Brain, FileText } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkMath from "remark-math"
 import rehypeKatex from "rehype-katex"
@@ -64,6 +64,16 @@ export function MessageList({
                   {m.images.map((img, i) => (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img key={i} src={img} alt="" className="max-h-48 max-w-[240px] rounded-2xl object-cover border border-border/30" />
+                  ))}
+                </div>
+              )}
+              {m.files && m.files.length > 0 && (
+                <div className="mb-2 flex flex-wrap justify-end gap-2">
+                  {m.files.map((name, i) => (
+                    <div key={i} className="flex items-center gap-1.5 rounded-2xl border border-border/40 bg-secondary/60 px-3.5 py-2.5">
+                      <FileText className="size-4 shrink-0 text-muted-foreground" />
+                      <span className="max-w-[180px] truncate text-sm text-secondary-foreground">{name}</span>
+                    </div>
                   ))}
                 </div>
               )}
