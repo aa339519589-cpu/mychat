@@ -2,14 +2,13 @@
 
 import { useRef, useState } from "react"
 import { cn } from "@/lib/utils"
-import { Send } from "lucide-react"
+import { ArrowUp, Plus } from "lucide-react"
 
 export function ChatInput({
   onSend,
-  modelName,
 }: {
   onSend: (text: string) => void
-  modelName: string
+  modelName?: string
 }) {
   const [value, setValue] = useState("")
   const ref = useRef<HTMLTextAreaElement>(null)
@@ -18,7 +17,7 @@ export function ChatInput({
     const el = ref.current
     if (!el) return
     el.style.height = "auto"
-    el.style.height = Math.min(el.scrollHeight, 200) + "px"
+    el.style.height = Math.min(el.scrollHeight, 180) + "px"
   }
 
   function submit() {
@@ -30,8 +29,15 @@ export function ChatInput({
   }
 
   return (
-    <div className="mx-auto w-full max-w-[44rem] px-6 pb-8 pt-4 md:px-10">
-      <div className="rounded-[1.75rem] border border-border bg-card/80 px-5 py-4 shadow-[0_1px_0_oklch(0.4_0.04_50_/_0.06)]">
+    <div className="mx-auto w-full max-w-[44rem] px-6 pb-8 pt-2 md:px-10">
+      <div className="flex items-end gap-3 rounded-full border border-border/70 bg-card/70 py-2 pl-4 pr-2">
+        <button
+          type="button"
+          className="mb-0.5 shrink-0 rounded-full p-1.5 text-muted-foreground transition-colors hover:text-foreground"
+          aria-label="添加附件"
+        >
+          <Plus className="size-5" aria-hidden />
+        </button>
         <textarea
           ref={ref}
           rows={1}
@@ -46,28 +52,23 @@ export function ChatInput({
               submit()
             }
           }}
-          placeholder={`提笔写下，与 ${modelName} 对谈……`}
-          aria-label="书写你的话语"
-          className="block w-full resize-none bg-transparent text-[16px] leading-[1.9] tracking-wide text-foreground outline-none placeholder:italic placeholder:text-muted-foreground"
+          placeholder="说点什么……"
+          aria-label="说点什么"
+          className="block max-h-[180px] flex-1 resize-none bg-transparent py-1.5 text-[16px] leading-[1.7] tracking-wide text-foreground outline-none placeholder:italic placeholder:text-muted-foreground"
         />
-        <div className="mt-3 flex items-center justify-between border-t border-border/70 pt-3">
-          <span className="text-[11px] italic tracking-wider text-muted-foreground">
-            Enter 落笔 · Shift + Enter 换行
-          </span>
-          <button
-            onClick={submit}
-            disabled={!value.trim()}
-            className={cn(
-              "flex items-center gap-2 rounded-full px-5 py-1.5 text-sm tracking-wide transition-colors",
-              value.trim()
-                ? "bg-primary text-primary-foreground hover:opacity-90"
-                : "cursor-not-allowed bg-secondary text-muted-foreground",
-            )}
-          >
-            落笔
-            <Send className="size-3.5" aria-hidden />
-          </button>
-        </div>
+        <button
+          onClick={submit}
+          disabled={!value.trim()}
+          aria-label="发送"
+          className={cn(
+            "mb-0.5 flex size-9 shrink-0 items-center justify-center rounded-full transition-colors",
+            value.trim()
+              ? "bg-primary text-primary-foreground hover:opacity-90"
+              : "cursor-not-allowed bg-secondary text-muted-foreground",
+          )}
+        >
+          <ArrowUp className="size-5" aria-hidden />
+        </button>
       </div>
     </div>
   )

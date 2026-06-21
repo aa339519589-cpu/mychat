@@ -93,7 +93,7 @@ export function LiteraryChat() {
           sidebarCollapsed ? "w-0" : "w-[20rem]",
         )}
       >
-        <div className="h-full w-[20rem] overflow-hidden rounded-3xl border border-border/70 bg-sidebar/70 shadow-sm">
+        <div className="h-full w-[20rem] overflow-hidden border-r border-border/50 bg-sidebar/40">
           <ConversationSidebar
             conversations={conversations}
             activeId={activeId}
@@ -142,9 +142,9 @@ export function LiteraryChat() {
       </div>
 
       {/* 主区 */}
-      <div className="ml-0 flex min-w-0 flex-1 flex-col overflow-hidden rounded-3xl border border-border/70 bg-card/40 page-vignette md:ml-4">
+      <div className="ml-0 flex min-w-0 flex-1 flex-col overflow-hidden md:ml-2">
         {/* 顶栏 */}
-        <header className="flex items-center gap-3 border-b border-border/60 px-5 py-4 md:px-8">
+        <header className="flex items-center gap-3 px-5 py-4 md:px-8">
           {/* 桌面收起/展开 */}
           <button
             onClick={() => setSidebarCollapsed((v) => !v)}
@@ -177,7 +177,7 @@ export function LiteraryChat() {
         </div>
 
         {/* 输入 */}
-        <div className="border-t border-border/60 bg-background/40">
+        <div>
           <ChatInput onSend={handleSend} modelName={activeModel.name} />
         </div>
       </div>

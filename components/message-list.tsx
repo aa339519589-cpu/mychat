@@ -69,8 +69,10 @@ export function MessageList({
               <span className="mb-2.5 text-[11px] tracking-widest text-muted-foreground">
                 {model.name} · {m.time}
               </span>
-              <div className="space-y-4 text-[17px] text-foreground/90">
-                <Paragraphs text={m.content} dropCap />
+              <div className="border-l border-border/70 pl-5 md:pl-6">
+                <div className="space-y-4 text-[17px] text-foreground/90">
+                  <Paragraphs text={m.content} dropCap />
+                </div>
               </div>
             </div>
           ),
