@@ -40,7 +40,7 @@ export function ConversationSidebar({
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [expanded, setExpanded] = useState<Record<Protocol, boolean>>({ anthropic: false, openai: true, gemini: false })
   // 每种协议独立的草稿，null 表示未展开添加表单
-  const [drafts, setDrafts] = useState<Record<Protocol, Draft | null>>({ anthropic: null, openai: null, gemini: null })
+  const [drafts, setDrafts] = useState<Record<Protocol, Draft | null>>({ anthropic: null, openai: null, gemini: null, "claude-web": null })
 
   function setDraft(protocol: Protocol, d: Draft | null) {
     setDrafts(prev => ({ ...prev, [protocol]: d }))
