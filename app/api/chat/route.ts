@@ -1,6 +1,20 @@
 import { NextRequest } from 'next/server'
 
-const SYSTEM = `你是一个聊天伙伴，用清楚、自然的中文交谈。说有用的话，不要故意文艺。`
+const BASE_SYSTEM = `你是一个聊天伙伴，用清楚、自然的中文交谈。说有用的话，不要故意文艺。`
+
+type MemoryItem = { id: string; content: string }
+
+function buildSystem(memories?: MemoryItem[]): string {
+  if (!memories?.length) return BASE_SYSTEM
+  const memBlock = memories.map(m => `<record id="${m.id}">${m.content}</record>`).join('\n')
+  return `${BASE_SYSTEM}
+
+## 关于用户的记忆
+以下是你记住的关于这位用户的信息，可在对话中自然地运用：
+<memories>
+${memBlock}
+</memories>`
+}
 
 const enc = new TextEncoder()
 
@@ -149,7 +163,7 @@ function toOpenAI(msgs: RawMsg[]) {
 }
 
 export async function POST(req: NextRequest) {
-  const { protocol, baseUrl, apiKey, model, messages } = await req.json()
+  const { protocol, baseUrl, apiKey, model, messages, memories } = await req.json()
 
   const cleanApiKey = String(apiKey ?? '').trim()
   const cleanBaseUrl = String(baseUrl ?? '').trim()
@@ -161,6 +175,7 @@ export async function POST(req: NextRequest) {
   if (!/^[\x00-\xFF]*$/.test(cleanApiKey)) return new Response(JSON.stringify({ error: 'API Key 包含非法字符' }), { status: 400 })
 
   const base = cleanBaseUrl.replace(/\/(v1|v1beta)(\/.*)?$/, '').replace(/\/$/, '')
+  const SYSTEM = buildSystem(memories)
 
   const stream = new ReadableStream({
     async start(controller) {

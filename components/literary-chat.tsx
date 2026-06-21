@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState, useEffect } from "react"
 import { CONVERSATIONS, type Conversation, type Message, type Endpoint } from "@/lib/chat-data"
+import { loadMemories, saveMemories, type Memory } from "@/lib/memory-data"
 import { ConversationSidebar } from "@/components/conversation-sidebar"
 import { MessageList } from "@/components/message-list"
 import { ChatInput } from "@/components/chat-input"
@@ -17,9 +18,14 @@ export function LiteraryChat() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [githubContext, setGithubContext] = useState<GithubContext | null>(null)
+  const [memories, setMemories] = useState<Memory[]>([])
 
   const [endpoints, setEndpoints] = useState<Endpoint[]>([])
   const [activeEndpointId, setActiveEndpointId] = useState("")
+
+  useEffect(() => {
+    setMemories(loadMemories())
+  }, [])
 
   useEffect(() => {
     try {
@@ -112,6 +118,79 @@ export function LiteraryChat() {
     } catch { /* 标题生成失败不影响主流程 */ }
   }
 
+  async function updateMemories(userText: string, aiText: string, currentMemories: Memory[]) {
+    if (!activeEndpoint) return
+    try {
+      const existing = currentMemories.length
+        ? currentMemories.map(m => `[${m.id}] ${m.content}`).join('\n')
+        : '（空）'
+      const prompt = `你是记忆管理助手。根据下面的对话内容，判断是否有值得长期记住的用户信息（姓名、兴趣、偏好、计划、习惯等）。
+
+当前记忆：
+${existing}
+
+对话：
+用户：${userText.slice(0, 300)}
+AI：${aiText.slice(0, 300)}
+
+请以JSON数组格式输出需要执行的操作。如果没有需要更新的，输出空数组 []。
+格式：
+[
+  {"action":"create","content":"用户叫小明"},
+  {"action":"delete","id":"abc123"}
+]
+只输出JSON，不要任何其他文字。`
+
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          protocol: activeEndpoint.protocol,
+          baseUrl: activeEndpoint.baseUrl,
+          apiKey: activeEndpoint.apiKey,
+          model: activeEndpoint.model,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      })
+      if (!res.body) return
+      const reader = res.body.getReader()
+      const dec = new TextDecoder()
+      let raw = ""
+      let buf = ""
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += dec.decode(value, { stream: true })
+        const parts = buf.split("\n\n")
+        buf = parts.pop() ?? ""
+        for (const part of parts) {
+          const line = part.trim()
+          if (line.startsWith("data: ") && line !== "data: [DONE]") {
+            try { const d = JSON.parse(line.slice(6)); if (d.text) raw += d.text } catch {}
+          }
+        }
+      }
+
+      const jsonMatch = raw.match(/\[[\s\S]*\]/)
+      if (!jsonMatch) return
+      const ops: { action: string; content?: string; id?: string }[] = JSON.parse(jsonMatch[0])
+      if (!Array.isArray(ops) || ops.length === 0) return
+
+      setMemories(prev => {
+        let next = [...prev]
+        for (const op of ops) {
+          if (op.action === "create" && op.content?.trim()) {
+            next.push({ id: `m-${Date.now()}-${Math.random().toString(36).slice(2,6)}`, content: op.content.trim() })
+          } else if (op.action === "delete" && op.id) {
+            next = next.filter(m => m.id !== op.id)
+          }
+        }
+        saveMemories(next)
+        return next
+      })
+    } catch { /* 记忆更新失败不影响主流程 */ }
+  }
+
   async function handleSend(text: string, images?: string[]) {
     const userMsg: Message = { id: `u-${Date.now()}`, role: "user", content: text, time: "此刻", images }
 
@@ -148,6 +227,7 @@ export function LiteraryChat() {
           apiKey: activeEndpoint.apiKey,
           model: activeEndpoint.model,
           messages: history,
+          memories: memories.length > 0 ? memories : undefined,
         }),
       })
 
@@ -194,6 +274,10 @@ export function LiteraryChat() {
       if (isFirstExchange && fullReply) {
         generateTitle(activeId, text, fullReply)
       }
+      // 后台更新记忆
+      if (fullReply) {
+        updateMemories(text, fullReply, memories)
+      }
     } catch (e: any) {
       setConversations(prev => prev.map(c => c.id !== activeId ? c : {
         ...c,
@@ -236,6 +320,8 @@ export function LiteraryChat() {
     endpoints, activeEndpointId,
     onEndpointsChange: handleEndpointsChange,
     onActiveEndpointChange: handleActiveEndpointChange,
+    memories,
+    onMemoriesChange: (mems: Memory[]) => setMemories(mems),
   }
 
   function renderChatPane(mobile: boolean) {

@@ -3,8 +3,10 @@
 import { useState } from "react"
 import type { Conversation, Endpoint, Protocol } from "@/lib/chat-data"
 import { PROTOCOL_LABELS, PROTOCOL_DEFAULTS } from "@/lib/chat-data"
+import type { Memory } from "@/lib/memory-data"
+import { saveMemories } from "@/lib/memory-data"
 import { cn } from "@/lib/utils"
-import { Feather, Plus, Settings, ChevronLeft, Trash2, ChevronDown, ChevronRight } from "lucide-react"
+import { Feather, Plus, Settings, ChevronLeft, Trash2, ChevronDown, ChevronRight, Brain } from "lucide-react"
 
 const PROTOCOLS: Protocol[] = ["anthropic", "openai", "gemini"]
 
@@ -27,6 +29,7 @@ function emptyDraft(protocol: Protocol): Draft {
 export function ConversationSidebar({
   conversations, activeId, onSelect, onNew, onDelete,
   endpoints, activeEndpointId, onEndpointsChange, onActiveEndpointChange,
+  memories, onMemoriesChange,
 }: {
   conversations: Conversation[]
   activeId: string
@@ -37,6 +40,8 @@ export function ConversationSidebar({
   activeEndpointId: string
   onEndpointsChange: (eps: Endpoint[]) => void
   onActiveEndpointChange: (id: string) => void
+  memories: Memory[]
+  onMemoriesChange: (mems: Memory[]) => void
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [expanded, setExpanded] = useState<Record<Protocol, boolean>>({ anthropic: false, openai: true, gemini: false })
@@ -313,8 +318,115 @@ export function ConversationSidebar({
               )}
             </div>
           ))}
+
+          {/* 记忆管理 */}
+          <MemorySection memories={memories} onMemoriesChange={onMemoriesChange} />
         </div>
       </div>
     </aside>
+  )
+}
+
+function MemorySection({ memories, onMemoriesChange }: { memories: Memory[]; onMemoriesChange: (m: Memory[]) => void }) {
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editValue, setEditValue] = useState("")
+  const [newValue, setNewValue] = useState("")
+  const [adding, setAdding] = useState(false)
+
+  function deleteMemory(id: string) {
+    const next = memories.filter(m => m.id !== id)
+    saveMemories(next)
+    onMemoriesChange(next)
+  }
+
+  function startEdit(m: Memory) {
+    setEditingId(m.id)
+    setEditValue(m.content)
+  }
+
+  function saveEdit() {
+    if (!editingId || !editValue.trim()) return
+    const next = memories.map(m => m.id === editingId ? { ...m, content: editValue.trim() } : m)
+    saveMemories(next)
+    onMemoriesChange(next)
+    setEditingId(null)
+  }
+
+  function addMemory() {
+    if (!newValue.trim()) return
+    const next = [...memories, { id: `m-${Date.now()}`, content: newValue.trim() }]
+    saveMemories(next)
+    onMemoriesChange(next)
+    setNewValue("")
+    setAdding(false)
+  }
+
+  return (
+    <div className="rounded-2xl border border-sidebar-border overflow-hidden">
+      <div className="flex items-center gap-2 px-4 py-3">
+        <Brain className="size-4 text-muted-foreground" />
+        <span className="flex-1 text-sm font-medium tracking-wide">记忆</span>
+        <span className="text-[11px] text-muted-foreground">{memories.length} 条</span>
+      </div>
+      {memories.length > 0 && (
+        <div className="border-t border-sidebar-border/50 divide-y divide-sidebar-border/30">
+          {memories.map(m => (
+            <div key={m.id} className="px-3 py-2">
+              {editingId === m.id ? (
+                <div className="space-y-1.5">
+                  <textarea
+                    autoFocus
+                    value={editValue}
+                    onChange={e => setEditValue(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveEdit() } if (e.key === "Escape") setEditingId(null) }}
+                    className="w-full rounded-lg border border-sidebar-border bg-background/50 px-2.5 py-1.5 text-xs outline-none focus:border-sidebar-primary/50 resize-none"
+                    rows={2}
+                  />
+                  <div className="flex gap-1.5">
+                    <button onClick={saveEdit} className="flex-1 rounded-lg bg-sidebar-primary px-2 py-1 text-xs text-sidebar-primary-foreground">保存</button>
+                    <button onClick={() => setEditingId(null)} className="flex-1 rounded-lg border border-sidebar-border px-2 py-1 text-xs text-muted-foreground">取消</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-start gap-2">
+                  <p className="flex-1 text-xs text-foreground/80 leading-relaxed">{m.content}</p>
+                  <div className="flex shrink-0 gap-1">
+                    <button onClick={() => startEdit(m)} className="p-1 text-muted-foreground hover:text-foreground transition-colors">
+                      <svg className="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    </button>
+                    <button onClick={() => deleteMemory(m.id)} className="p-1 text-muted-foreground hover:text-destructive transition-colors">
+                      <Trash2 className="size-3" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="border-t border-sidebar-border/50 px-3 py-2">
+        {adding ? (
+          <div className="space-y-1.5">
+            <textarea
+              autoFocus
+              value={newValue}
+              onChange={e => setNewValue(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addMemory() } if (e.key === "Escape") setAdding(false) }}
+              placeholder="输入要记住的内容……"
+              className="w-full rounded-lg border border-sidebar-border bg-background/50 px-2.5 py-1.5 text-xs outline-none focus:border-sidebar-primary/50 resize-none placeholder:text-muted-foreground/40"
+              rows={2}
+            />
+            <div className="flex gap-1.5">
+              <button onClick={addMemory} className="flex-1 rounded-lg bg-sidebar-primary px-2 py-1 text-xs text-sidebar-primary-foreground">添加</button>
+              <button onClick={() => setAdding(false)} className="flex-1 rounded-lg border border-sidebar-border px-2 py-1 text-xs text-muted-foreground">取消</button>
+            </div>
+          </div>
+        ) : (
+          <button onClick={() => setAdding(true)} className="flex w-full items-center gap-1.5 rounded-xl px-1 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
+            <Plus className="size-3.5" />手动添加记忆
+          </button>
+        )}
+      </div>
+    </div>
   )
 }
