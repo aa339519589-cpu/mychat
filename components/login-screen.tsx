@@ -3,7 +3,6 @@
 import { useState } from "react"
 import Image from "next/image"
 import { createClient } from "@/lib/supabase/client"
-import { cn } from "@/lib/utils"
 import { Loader2 } from "lucide-react"
 
 export function LoginScreen() {
@@ -11,6 +10,7 @@ export function LoginScreen() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
+  const [guestLoading, setGuestLoading] = useState(false)
   const [message, setMessage] = useState("")
   const [error, setError] = useState("")
 
@@ -36,7 +36,6 @@ export function LoginScreen() {
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password })
         if (error) { setError(translateError(error.message)); return }
-        // 登录成功后页面会自动刷新进入聊天
       }
     } catch {
       setError("网络错误，请重试")
@@ -45,6 +44,17 @@ export function LoginScreen() {
     }
   }
 
+  async function handleGuest() {
+    setGuestLoading(true)
+    try {
+      const { error } = await supabase.auth.signInAnonymously()
+      if (error) setError("游客登录失败，请重试")
+    } catch {
+      setError("网络错误，请重试")
+    } finally {
+      setGuestLoading(false)
+    }
+  }
 
   return (
     <div className="flex h-dvh w-full items-center justify-center bg-background paper-grain px-6">
@@ -85,13 +95,30 @@ export function LoginScreen() {
 
           <button
             onClick={handleEmailAuth}
-            disabled={loading}
+            disabled={loading || guestLoading}
             className="flex w-full items-center justify-center gap-2 rounded-2xl bg-primary px-4 py-3 text-sm text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
           >
             {loading && <Loader2 className="size-4 animate-spin" />}
             {mode === "signin" ? "登录" : "注册"}
           </button>
         </div>
+
+        {/* 分隔线 */}
+        <div className="my-5 flex items-center gap-3">
+          <div className="h-px flex-1 bg-border/60" />
+          <span className="text-[11px] tracking-wider text-muted-foreground">或</span>
+          <div className="h-px flex-1 bg-border/60" />
+        </div>
+
+        {/* 游客登录 */}
+        <button
+          onClick={handleGuest}
+          disabled={loading || guestLoading}
+          className="flex w-full items-center justify-center gap-2 rounded-2xl border border-border/70 bg-card/50 px-4 py-3 text-sm text-muted-foreground transition-colors hover:border-border hover:text-foreground disabled:opacity-60"
+        >
+          {guestLoading && <Loader2 className="size-4 animate-spin" />}
+          以游客身份继续
+        </button>
 
         {/* 切换登录/注册 */}
         <p className="mt-6 text-center text-xs text-muted-foreground">
