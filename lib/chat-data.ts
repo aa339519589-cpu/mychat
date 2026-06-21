@@ -1,4 +1,4 @@
-export type Protocol = "anthropic" | "openai" | "gemini"
+export type Protocol = "anthropic" | "openai" | "gemini" | "claude-web"
 
 export type Endpoint = {
   id: string
@@ -13,12 +13,14 @@ export const PROTOCOL_LABELS: Record<Protocol, string> = {
   anthropic: "Anthropic 协议",
   openai: "DeepSeek / OpenAI 兼容",
   gemini: "Gemini 协议",
+  "claude-web": "Claude 网页订阅",
 }
 
 export const PROTOCOL_DEFAULTS: Record<Protocol, { baseUrl: string; model: string }> = {
   anthropic: { baseUrl: "https://api.anthropic.com", model: "claude-sonnet-4-6" },
   openai: { baseUrl: "https://api.deepseek.com", model: "deepseek-chat" },
   gemini: { baseUrl: "https://generativelanguage.googleapis.com", model: "gemini-2.0-flash" },
+  "claude-web": { baseUrl: "https://claude.ai", model: "claude-opus-4-5-20251101" },
 }
 
 export type Message = {

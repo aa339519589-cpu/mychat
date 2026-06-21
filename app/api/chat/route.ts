@@ -116,8 +116,103 @@ async function streamAnthropic(upstream: Response, controller: ReadableStreamDef
   }
 }
 
+async function streamClaudeWeb(sessionKey: string, messages: any[], controller: ReadableStreamDefaultController) {
+  const headers: Record<string, string> = {
+    'Cookie': `sessionKey=${sessionKey}`,
+    'Content-Type': 'application/json',
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+    'Referer': 'https://claude.ai/',
+    'Origin': 'https://claude.ai',
+  }
+
+  // 获取组织 ID
+  const orgRes = await fetch('https://claude.ai/api/organizations', { headers })
+  if (!orgRes.ok) {
+    send(controller, { error: `sessionKey 无效或已过期，请重新获取 (${orgRes.status})` })
+    return
+  }
+  const orgs = await orgRes.json()
+  const orgId = orgs[0]?.uuid
+  if (!orgId) {
+    send(controller, { error: '无法获取账号组织 ID，请检查登录状态' })
+    return
+  }
+
+  // 创建对话
+  const convId = crypto.randomUUID()
+  const convRes = await fetch(`https://claude.ai/api/organizations/${orgId}/chat_conversations`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ uuid: convId, name: '' })
+  })
+  if (!convRes.ok) {
+    send(controller, { error: `创建对话失败 (${convRes.status})` })
+    return
+  }
+
+  // 发送消息（流式）
+  const lastMsg = messages[messages.length - 1]
+  const streamRes = await fetch(`https://claude.ai/api/organizations/${orgId}/chat_conversations/${convId}/completion`, {
+    method: 'POST',
+    headers: { ...headers, 'Accept': 'text/event-stream' },
+    body: JSON.stringify({
+      prompt: lastMsg.content,
+      timezone: 'Asia/Shanghai',
+      personalized_styles: null,
+      tools: [],
+      model: { provider: 'claude_ai', name: 'claude-opus-4-5-20251101' },
+    })
+  })
+
+  if (!streamRes.ok) {
+    const txt = await streamRes.text()
+    send(controller, { error: `请求失败 (${streamRes.status}): ${txt.slice(0, 120)}` })
+    return
+  }
+
+  const reader = streamRes.body!.getReader()
+  const dec = new TextDecoder()
+  let buf = ''
+
+  while (true) {
+    const { done: d, value } = await reader.read()
+    if (d) break
+    buf += dec.decode(value, { stream: true })
+    const parts = buf.split('\n\n')
+    buf = parts.pop() ?? ''
+
+    for (const part of parts) {
+      for (const line of part.split('\n')) {
+        if (!line.startsWith('data: ')) continue
+        const payload = line.slice(6).trim()
+        if (payload === '[DONE]') return
+        try {
+          const j = JSON.parse(payload)
+          if (j.type === 'content_block_delta' && j.delta?.text) send(controller, { text: j.delta.text })
+          else if (j.delta?.type === 'text_delta' && j.delta.text) send(controller, { text: j.delta.text })
+          else if (j.completion) send(controller, { text: j.completion })
+        } catch { /* skip */ }
+      }
+    }
+  }
+}
+
 export async function POST(req: NextRequest) {
   const { protocol, baseUrl, apiKey, model, messages } = await req.json()
+
+  // Claude 网页订阅协议
+  if (protocol === 'claude-web') {
+    const sessionKey = String(apiKey ?? '').trim()
+    if (!sessionKey) return new Response(JSON.stringify({ error: '请填写 sessionKey' }), { status: 400 })
+    const stream = new ReadableStream({
+      async start(controller) {
+        try { await streamClaudeWeb(sessionKey, messages, controller) }
+        catch (error) { send(controller, { error: networkError(error) }) }
+        finally { done(controller) }
+      }
+    })
+    return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } })
+  }
 
   const cleanApiKey = String(apiKey ?? '').trim()
   const cleanBaseUrl = String(baseUrl ?? '').trim()
