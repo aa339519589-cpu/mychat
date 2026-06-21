@@ -56,21 +56,7 @@ export function MessageList({
   endpointName: string
 }) {
   return (
-    <article className="mx-auto w-full min-w-0 max-w-[44rem] overflow-x-hidden px-4 py-6 md:px-10 md:py-16">
-      <header className="mb-8 text-center md:mb-12">
-        <p className="text-xs uppercase tracking-[0.35em] text-muted-foreground">
-          {conversation.date} · 与 {endpointName} 对谈
-        </p>
-        <h2 className="mt-4 font-heading text-3xl font-medium tracking-wide text-foreground md:text-4xl text-balance">
-          {conversation.title}
-        </h2>
-        <div className="mx-auto mt-6 flex items-center justify-center gap-3 text-primary">
-          <span className="h-px w-10 bg-border" />
-          <span className="text-sm">❧</span>
-          <span className="h-px w-10 bg-border" />
-        </div>
-      </header>
-
+    <article className="mx-auto w-full min-w-0 max-w-[44rem] overflow-x-hidden px-4 py-6 md:px-10 md:py-8">
       <div className="min-w-0 space-y-8 md:space-y-10">
         {conversation.messages.map(m =>
           m.role === "user" ? (
@@ -82,7 +68,6 @@ export function MessageList({
             </div>
           ) : (
             <div key={m.id} className="flex min-w-0 items-start gap-3 md:gap-4">
-              {/* 小克 */}
               <div className="flex-shrink-0 self-start mt-1" style={{ backgroundColor: '#FCF1DE' }}>
                 <Image src="/companion.png" alt="" width={56} height={56} className="size-11 select-none md:size-14" style={{ mixBlendMode: "multiply" }} />
               </div>
@@ -104,12 +89,6 @@ export function MessageList({
             </div>
           )
         )}
-      </div>
-
-      <div className="mt-12 flex items-center justify-center gap-3 text-muted-foreground md:mt-16">
-        <span className="h-px w-8 bg-border" />
-        <span className="text-xs tracking-[0.3em]">· 完 ·</span>
-        <span className="h-px w-8 bg-border" />
       </div>
     </article>
   )
