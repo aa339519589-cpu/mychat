@@ -1,4 +1,4 @@
-export type ModelId = "claude" | "gpt"
+export type ModelId = "claude" | "gpt" | "gemini" | "deepseek"
 
 export type Model = {
   id: ModelId
@@ -7,8 +7,10 @@ export type Model = {
 }
 
 export const MODELS: Model[] = [
-  { id: "claude", name: "笔友", subtitle: "沉静 · 善思辨" },
-  { id: "gpt", name: "笔友", subtitle: "敏捷 · 多才情" },
+  { id: "claude", name: "Claude", subtitle: "Anthropic · 沉静善思" },
+  { id: "gpt", name: "GPT", subtitle: "OpenAI · 敏捷多才" },
+  { id: "gemini", name: "Gemini", subtitle: "Google · 博学广识" },
+  { id: "deepseek", name: "DeepSeek", subtitle: "深度求索 · 中文尤佳" },
 ]
 
 export type Message = {

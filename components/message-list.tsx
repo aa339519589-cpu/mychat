@@ -1,6 +1,5 @@
 "use client"
 
-import Image from "next/image"
 import type { Conversation, Model } from "@/lib/chat-data"
 
 function Paragraphs({
@@ -67,16 +66,9 @@ export function MessageList({
             </div>
           ) : (
             <div key={m.id} className="flex gap-4 items-start">
-              {/* 陪伴小人 */}
-              <div className="flex-shrink-0 self-end mb-[-4px]">
-                <Image
-                  src="/companion.png"
-                  alt=""
-                  width={56}
-                  height={56}
-                  className="w-14 h-14 select-none"
-                  style={{ mixBlendMode: "multiply" }}
-                />
+              {/* 陪伴头像 */}
+              <div className="flex-shrink-0 self-end mb-[-4px] w-12 h-12 rounded-full bg-primary/10 border border-primary/25 flex items-center justify-center text-primary text-xl select-none">
+                ✒
               </div>
               {/* 消息内容 */}
               <div className="flex-1 min-w-0">
