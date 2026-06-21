@@ -184,7 +184,7 @@ export function ConversationSidebar({
 
         <div className="flex-1 space-y-3 overflow-y-auto px-4 pb-[max(2rem,env(safe-area-inset-bottom))]">
           <p className="px-2 text-[11px] italic text-muted-foreground leading-relaxed">
-            模型 Key 只保存在当前浏览器，发送时由本站后端转发。
+            模型配置存在你的账号里，换设备登录自动带过来，只有你本人能读取。
           </p>
 
           {PROTOCOLS.map(protocol => (
