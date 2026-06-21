@@ -2,8 +2,8 @@ services:
   - type: web
     name: mychat
     runtime: node
-    buildCommand: pnpm install && pnpm build
-    startCommand: pnpm start
+    buildCommand: npm install && npm run build
+    startCommand: npm start
     envVars:
       - key: NODE_VERSION
         value: 20
