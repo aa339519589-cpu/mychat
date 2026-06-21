@@ -58,6 +58,9 @@ export default function RootLayout({
       lang="zh-CN"
       className={`${spectral.variable} ${notoSerifSC.variable} bg-background`}
     >
+      <head>
+        <link rel="preload" href="/companion.png" as="image" />
+      </head>
       <body className="font-serif antialiased">
         {children}
         {process.env.NODE_ENV === 'production' && <Analytics />}
