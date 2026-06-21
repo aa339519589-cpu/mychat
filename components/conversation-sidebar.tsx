@@ -6,7 +6,7 @@ import { PROTOCOL_LABELS, PROTOCOL_DEFAULTS } from "@/lib/chat-data"
 import { cn } from "@/lib/utils"
 import { Feather, Plus, Settings, ChevronLeft, Trash2, ChevronDown, ChevronRight } from "lucide-react"
 
-const PROTOCOLS: Protocol[] = ["anthropic", "openai", "gemini", "claude-web"]
+const PROTOCOLS: Protocol[] = ["anthropic", "openai", "gemini"]
 
 const OPENAI_PRESETS = [
   { label: "DeepSeek", baseUrl: "https://api.deepseek.com", model: "deepseek-chat" },
@@ -40,7 +40,7 @@ export function ConversationSidebar({
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [expanded, setExpanded] = useState<Record<Protocol, boolean>>({ anthropic: false, openai: true, gemini: false })
   // 每种协议独立的草稿，null 表示未展开添加表单
-  const [drafts, setDrafts] = useState<Record<Protocol, Draft | null>>({ anthropic: null, openai: null, gemini: null, "claude-web": null })
+  const [drafts, setDrafts] = useState<Record<Protocol, Draft | null>>({ anthropic: null, openai: null, gemini: null })
 
   function setDraft(protocol: Protocol, d: Draft | null) {
     setDrafts(prev => ({ ...prev, [protocol]: d }))
