@@ -16,6 +16,10 @@ export type Message = {
   role: "user" | "assistant"
   content: string
   time: string
+  thinking?: {
+    isThinking: boolean
+    duration?: number // 秒数
+  }
 }
 
 export type Conversation = {
@@ -46,6 +50,7 @@ export const CONVERSATIONS: Conversation[] = [
         content:
           "独处并非孤独，而是一种与自己重新熟络的方式。喧嚣会让人误以为热闹即充实，可真正的丰盈，往往诞生于无人打扰的片刻。\n\n不妨这样想：独处是给灵魂留出的留白，正如一幅好的书法，墨色之外的空白同样是作品的一部分。你不必急着填满它，只需安然坐在其中，听一听自己内心真正的声音。",
         time: "上午 9:14",
+        thinking: { isThinking: true, duration: 3 },
       },
       {
         id: "m3",

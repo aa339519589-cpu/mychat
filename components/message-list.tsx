@@ -1,5 +1,6 @@
 "use client"
 
+import Image from "next/image"
 import type { Conversation, Model } from "@/lib/chat-data"
 
 function Paragraphs({
@@ -65,13 +66,32 @@ export function MessageList({
               </div>
             </div>
           ) : (
-            <div key={m.id} className="flex flex-col items-start">
-              <span className="mb-2.5 text-[11px] tracking-widest text-muted-foreground">
-                {model.name} · {m.time}
-              </span>
-              <div className="border-l border-border/70 pl-5 md:pl-6">
-                <div className="space-y-4 text-[17px] text-foreground/90">
-                  <Paragraphs text={m.content} dropCap />
+            <div key={m.id} className="flex gap-4 items-start">
+              {/* 头像 */}
+              <div className="flex-shrink-0 mt-1">
+                <Image
+                  src="/companion.png"
+                  alt="companion"
+                  width={48}
+                  height={48}
+                  className="w-12 h-12 rounded-full"
+                />
+              </div>
+              {/* 消息内容 */}
+              <div className="flex-1 min-w-0">
+                <span className="mb-2.5 text-[11px] tracking-widest text-muted-foreground">
+                  {model.name} · {m.time}
+                </span>
+                {/* 思考链指示 */}
+                {m.thinking?.isThinking && (
+                  <div className="mb-3 text-xs text-muted-foreground">
+                    <span>💭 Thinking ({m.thinking.duration || 3}s)</span>
+                  </div>
+                )}
+                <div className="border-l border-border/70 pl-5 md:pl-6">
+                  <div className="space-y-4 text-[17px] text-foreground/90">
+                    <Paragraphs text={m.content} dropCap />
+                  </div>
                 </div>
               </div>
             </div>
