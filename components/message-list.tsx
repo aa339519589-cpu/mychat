@@ -50,10 +50,8 @@ function ThinkingBlock({ thinking }: { thinking: string }) {
 
 export function MessageList({
   conversation,
-  endpointName,
 }: {
   conversation: Conversation
-  endpointName: string
 }) {
   return (
     <article className="mx-auto w-full min-w-0 max-w-[44rem] overflow-x-hidden px-4 py-6 md:px-6 md:py-8">
@@ -61,7 +59,6 @@ export function MessageList({
         {conversation.messages.map(m =>
           m.role === "user" ? (
             <div key={m.id} className="flex flex-col items-end">
-              <span className="mb-2 text-[11px] italic tracking-widest text-muted-foreground">我 · {m.time}</span>
               {m.images && m.images.length > 0 && (
                 <div className="mb-2 flex flex-wrap justify-end gap-2">
                   {m.images.map((img, i) => (
@@ -83,9 +80,6 @@ export function MessageList({
                 <Image src="/companion-dark.png" alt="" width={40} height={40} priority className="avatar-dark size-8 select-none md:size-10" />
               </div>
               <div className="min-w-0 flex-1">
-                <span className="mb-2 block text-[11px] tracking-widest text-muted-foreground">
-                  {endpointName} · {m.time}
-                </span>
                 {m.thinking && <ThinkingBlock thinking={m.thinking} />}
                 {m.memoryNotes && m.memoryNotes.length > 0 && (
                   <div className="mb-3 space-y-1">

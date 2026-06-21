@@ -18,7 +18,7 @@ const notoSerifSC = Noto_Serif_SC({
 })
 
 export const metadata: Metadata = {
-  title: '笺 · 文字对谈',
+  title: '简 · 文字对谈',
   description: '一个像翻阅书页、书写日记般的 AI 对谈空间',
   generator: 'v0.app',
   icons: {

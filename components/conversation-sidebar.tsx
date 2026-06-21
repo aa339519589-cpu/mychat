@@ -110,17 +110,8 @@ export function ConversationSidebar({
       <div className="flex h-full flex-col">
         <div className="flex items-center gap-2 px-5 pb-3 pt-[max(1rem,env(safe-area-inset-top))]">
           <Feather className="size-4 text-sidebar-primary" />
-          <span className="font-heading text-base tracking-wide text-sidebar-foreground">笺</span>
+          <span className="font-heading text-base tracking-wide text-sidebar-foreground">简</span>
         </div>
-
-        {endpoints.length === 0 && (
-          <button
-            onClick={() => setSettingsOpen(true)}
-            className="mx-5 mb-3 rounded-xl border border-dashed border-sidebar-border px-4 py-3 text-center text-xs italic text-muted-foreground hover:border-sidebar-primary/40 hover:text-sidebar-primary transition-colors"
-          >
-            点击右下角齿轮配置 API 端点
-          </button>
-        )}
 
         <button
           onClick={onNew}

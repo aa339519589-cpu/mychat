@@ -121,7 +121,7 @@ export function ChatInput({
     <div className={cn(
       "relative z-10 mx-auto w-full shrink-0",
       mobile
-        ? "border-t border-border/30 bg-background/95 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur-sm"
+        ? "bg-background px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2"
         : "max-w-[44rem] px-10 pb-8 pt-2",
     )}>
       {/* 工具栏 */}

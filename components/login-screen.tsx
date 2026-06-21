@@ -55,7 +55,7 @@ export function LoginScreen() {
             <Image src="/companion.png" alt="" width={72} height={72} priority className="avatar-light size-16 select-none" style={{ mixBlendMode: "multiply" }} />
             <Image src="/companion-dark.png" alt="" width={72} height={72} priority className="avatar-dark size-16 select-none" />
           </div>
-          <h1 className="mt-4 font-heading text-2xl tracking-wide text-foreground">笺</h1>
+          <h1 className="mt-4 font-heading text-2xl tracking-wide text-foreground">简</h1>
           <p className="mt-1.5 text-xs italic tracking-wider text-muted-foreground">
             {mode === "signin" ? "回来了，先登录吧" : "新朋友，先注册一个"}
           </p>
