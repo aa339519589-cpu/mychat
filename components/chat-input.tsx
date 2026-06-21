@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react"
 import { cn } from "@/lib/utils"
-import { ChevronDown, GitBranch, X, Loader2, Plus, ImageIcon, FileText } from "lucide-react"
+import { ChevronDown, GitBranch, X, Loader2, Plus, ImageIcon, FileText, Globe } from "lucide-react"
 import type { Endpoint } from "@/lib/chat-data"
 
 type GithubContext = { repo: string; context: string }
@@ -10,6 +10,7 @@ type GithubContext = { repo: string; context: string }
 export function ChatInput({
   onSend, endpoints, activeEndpointId, onEndpointChange, mobile,
   githubContext, onGithubConnect,
+  webSearch, onWebSearchChange,
 }: {
   onSend: (text: string, images?: string[]) => void
   endpoints: Endpoint[]
@@ -18,6 +19,8 @@ export function ChatInput({
   mobile: boolean
   githubContext: GithubContext | null
   onGithubConnect: (ctx: GithubContext | null) => void
+  webSearch: boolean
+  onWebSearchChange: (on: boolean) => void
 }) {
   const [value, setValue] = useState("")
   const ref = useRef<HTMLTextAreaElement>(null)
@@ -82,7 +85,7 @@ export function ChatInput({
     }
   }
 
-  const showToolbar = endpoints.length > 0 || githubContext
+  const showToolbar = endpoints.length > 0 || githubContext || true
 
   return (
     <div className={cn(
@@ -109,6 +112,20 @@ export function ChatInput({
               <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 size-3 text-muted-foreground" />
             </div>
           )}
+
+          {/* 联网开关 */}
+          <button
+            onClick={() => onWebSearchChange(!webSearch)}
+            className={cn(
+              "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors",
+              webSearch
+                ? "border-primary/50 bg-primary/10 text-primary"
+                : "border-border/50 bg-secondary/50 text-muted-foreground hover:border-border",
+            )}
+          >
+            <Globe className="size-3" />
+            <span>联网</span>
+          </button>
 
           {/* GitHub 连接器 */}
           {githubContext ? (

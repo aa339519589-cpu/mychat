@@ -9,3 +9,5 @@ services:
         value: 20
       - key: PORT
         value: 3000
+      - key: TAVILY_API_KEY
+        value: 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

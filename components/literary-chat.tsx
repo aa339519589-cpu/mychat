@@ -19,6 +19,7 @@ export function LiteraryChat() {
   const [isLoading, setIsLoading] = useState(false)
   const [githubContext, setGithubContext] = useState<GithubContext | null>(null)
   const [memories, setMemories] = useState<Memory[]>([])
+  const [webSearch, setWebSearch] = useState(false)
 
   const [endpoints, setEndpoints] = useState<Endpoint[]>([])
   const [activeEndpointId, setActiveEndpointId] = useState("")
@@ -209,14 +210,37 @@ AI：${aiText.slice(0, 300)}
 
     setIsLoading(true)
     try {
+      // 联网搜索：先获取搜索结果，作为上下文注入
+      let searchContext = ""
+      if (webSearch && text.trim()) {
+        try {
+          const sr = await fetch("/api/search", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ query: text }),
+          })
+          if (sr.ok) {
+            const sd = await sr.json()
+            if (sd.context) searchContext = sd.context
+          }
+        } catch { /* 搜索失败不阻断对话 */ }
+      }
+
       const baseHistory = [...active.messages, userMsg].map(m => ({
         role: m.role,
         content: m.content,
         ...(m.images?.length ? { images: m.images } : {}),
       }))
-      const history = githubContext
-        ? [{ role: "user" as const, content: `GitHub 仓库上下文 (${githubContext.repo}):\n${githubContext.context.slice(0, 2000)}` }, { role: "assistant" as const, content: "已了解仓库信息。" }, ...baseHistory]
-        : baseHistory
+      const prefixMessages: { role: "user" | "assistant"; content: string }[] = []
+      if (githubContext) {
+        prefixMessages.push({ role: "user", content: `GitHub 仓库上下文 (${githubContext.repo}):\n${githubContext.context.slice(0, 2000)}` })
+        prefixMessages.push({ role: "assistant", content: "已了解仓库信息。" })
+      }
+      if (searchContext) {
+        prefixMessages.push({ role: "user", content: `以下是联网搜索的最新结果，请在回答时参考：\n${searchContext}` })
+        prefixMessages.push({ role: "assistant", content: "好的，我已参考搜索结果。" })
+      }
+      const history = [...prefixMessages, ...baseHistory]
 
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -367,6 +391,8 @@ AI：${aiText.slice(0, 300)}
           mobile={mobile}
           githubContext={githubContext}
           onGithubConnect={setGithubContext}
+          webSearch={webSearch}
+          onWebSearchChange={setWebSearch}
         />
       </main>
     )
