@@ -210,22 +210,6 @@ export function LiteraryChat() {
 
     setIsLoading(true)
     try {
-      // 联网搜索：先获取搜索结果，作为上下文注入
-      let searchContext = ""
-      if (webSearch && text.trim()) {
-        try {
-          const sr = await fetch("/api/search", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ query: text }),
-          })
-          if (sr.ok) {
-            const sd = await sr.json()
-            if (sd.context) searchContext = sd.context
-          }
-        } catch { /* 搜索失败不阻断对话 */ }
-      }
-
       const baseHistory = [...active.messages, userMsg].map(m => ({
         role: m.role,
         content: m.content,
@@ -235,10 +219,6 @@ export function LiteraryChat() {
       if (githubContext) {
         prefixMessages.push({ role: "user", content: `GitHub 仓库上下文 (${githubContext.repo}):\n${githubContext.context.slice(0, 2000)}` })
         prefixMessages.push({ role: "assistant", content: "已了解仓库信息。" })
-      }
-      if (searchContext) {
-        prefixMessages.push({ role: "user", content: `以下是联网搜索的最新结果，请在回答时参考：\n${searchContext}` })
-        prefixMessages.push({ role: "assistant", content: "好的，我已参考搜索结果。" })
       }
       const history = [...prefixMessages, ...baseHistory]
 
@@ -253,6 +233,7 @@ export function LiteraryChat() {
           messages: history,
           memories: memories.length > 0 ? memories : undefined,
           attachments: files && files.length > 0 ? files : undefined,
+          webSearch,
         }),
       })
 
@@ -295,6 +276,14 @@ export function LiteraryChat() {
                   else if (mem.action === "update" && mem.id) setMemories(prev => prev.map(x => x.id === mem.id ? { ...x, content: mem.content ?? x.content } : x))
                   else if (mem.action === "delete" && mem.id) setMemories(prev => prev.filter(x => x.id !== mem.id))
                 }
+                continue
+              }
+              if (data.search) {
+                const s = data.search
+                setConversations(prev => prev.map(c => c.id !== convId ? c : {
+                  ...c,
+                  messages: c.messages.map(m => m.id !== msgId ? m : { ...m, searchNotes: [...(m.searchNotes ?? []), s] }),
+                }))
                 continue
               }
               if (data.text) fullReply += data.text

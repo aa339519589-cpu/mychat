@@ -59,6 +59,49 @@ const MEMORY_TOOLS_OPENAI = MEMORY_TOOLS_ANTHROPIC.map(t => ({
   function: { name: t.name, description: t.description, parameters: t.input_schema },
 }))
 
+const WEB_SEARCH_TOOL_ANTHROPIC = {
+  name: 'web_search',
+  description: '联网搜索互联网上的最新信息。当问题涉及实时信息、最新事件、近期数据，或你不确定、可能已过时的事实时调用。',
+  input_schema: {
+    type: 'object',
+    properties: { query: { type: 'string', description: '搜索关键词' } },
+    required: ['query'],
+  },
+}
+
+const WEB_SEARCH_TOOL_OPENAI = {
+  type: 'function',
+  function: {
+    name: WEB_SEARCH_TOOL_ANTHROPIC.name,
+    description: WEB_SEARCH_TOOL_ANTHROPIC.description,
+    parameters: WEB_SEARCH_TOOL_ANTHROPIC.input_schema,
+  },
+}
+
+// 调用 Tavily 联网搜索，返回给模型的文字 + 给前端展示的来源列表
+async function tavilySearch(query: string): Promise<{ text: string; results: { title: string; url: string }[] }> {
+  const apiKey = process.env.TAVILY_API_KEY
+  const q = String(query ?? '').trim()
+  if (!apiKey || !q) return { text: '联网搜索当前不可用。', results: [] }
+  try {
+    const res = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key: apiKey, query: q, search_depth: 'basic', max_results: 5, include_answer: true }),
+    })
+    if (!res.ok) return { text: '搜索失败，请稍后再试。', results: [] }
+    const data = await res.json()
+    const results = (data.results ?? []).map((r: any) => ({ title: r.title ?? '', url: r.url ?? '' }))
+    const text = [
+      data.answer ? `摘要：${data.answer}` : '',
+      ...(data.results ?? []).map((r: any, i: number) => `[${i + 1}] ${r.title}\n${r.url}\n${(r.content ?? '').slice(0, 500)}`),
+    ].filter(Boolean).join('\n\n')
+    return { text: text || '没有找到相关结果。', results }
+  } catch {
+    return { text: '搜索出错。', results: [] }
+  }
+}
+
 const enc = new TextEncoder()
 
 function send(controller: ReadableStreamDefaultController, data: object) {
@@ -226,14 +269,29 @@ async function execMemoryTool(
   return { action: 'create', ok: false }
 }
 
+// 统一工具分发：记忆工具写库并回报 memory 事件；web_search 联网并回报 search 事件
+async function execTool(
+  supabase: Awaited<ReturnType<typeof createClient>> | null,
+  userId: string | null,
+  name: string,
+  input: any,
+): Promise<{ result: string; event: object | null }> {
+  if (name === 'web_search') {
+    const { text, results } = await tavilySearch(input?.query)
+    return { result: text, event: { search: { query: String(input?.query ?? ''), results } } }
+  }
+  const r = await execMemoryTool(supabase, userId, name, input)
+  return { result: r.ok ? '操作成功' : '操作失败', event: { memory: r } }
+}
+
 // ───────────── 单轮请求：Anthropic ─────────────
 
 async function runAnthropicTurn(
   base: string, apiKey: string, model: string, system: string,
-  messages: any[], useTools: boolean, controller: ReadableStreamDefaultController,
+  messages: any[], tools: any[], controller: ReadableStreamDefaultController,
 ): Promise<{ assistantContent: any[]; toolUses: { id: string; name: string; input: any }[]; failed: boolean }> {
   const body: any = { model, max_tokens: 16000, system, messages, stream: true }
-  if (useTools) body.tools = MEMORY_TOOLS_ANTHROPIC
+  if (tools.length) body.tools = tools
 
   const res = await fetch(`${base}/v1/messages`, {
     method: 'POST',
@@ -294,10 +352,10 @@ async function runAnthropicTurn(
 
 async function runOpenAITurn(
   url: string, apiKey: string, model: string,
-  messages: any[], useTools: boolean, controller: ReadableStreamDefaultController,
+  messages: any[], tools: any[], controller: ReadableStreamDefaultController,
 ): Promise<{ assistantMessage: any; toolCalls: { id: string; name: string; args: string }[]; failed: boolean }> {
   const body: any = { model, messages, stream: true }
-  if (useTools) { body.tools = MEMORY_TOOLS_OPENAI; body.tool_choice = 'auto' }
+  if (tools.length) { body.tools = tools; body.tool_choice = 'auto' }
 
   const res = await fetch(url, {
     method: 'POST',
@@ -364,7 +422,7 @@ async function runOpenAITurn(
 }
 
 export async function POST(req: NextRequest) {
-  const { protocol, baseUrl, apiKey, model, messages, memories, attachments } = await req.json()
+  const { protocol, baseUrl, apiKey, model, messages, memories, attachments, webSearch } = await req.json()
 
   const cleanApiKey = String(apiKey ?? '').trim()
   const cleanBaseUrl = String(baseUrl ?? '').trim()
@@ -383,10 +441,14 @@ export async function POST(req: NextRequest) {
     const { data } = await supabase.auth.getUser()
     userId = data.user?.id ?? null
   } catch { supabase = null }
-  const useTools = !!userId
+  const useMemory = !!userId
+  const useSearch = !!webSearch
+  const anthropicTools = [...(useMemory ? MEMORY_TOOLS_ANTHROPIC : []), ...(useSearch ? [WEB_SEARCH_TOOL_ANTHROPIC] : [])]
+  const openaiTools = [...(useMemory ? MEMORY_TOOLS_OPENAI : []), ...(useSearch ? [WEB_SEARCH_TOOL_OPENAI] : [])]
 
   const base = cleanBaseUrl.replace(/\/(v1|v1beta)(\/.*)?$/, '').replace(/\/$/, '')
-  const SYSTEM = buildSystem(memories)
+  let SYSTEM = buildSystem(memories)
+  if (useSearch) SYSTEM += `\n\n你可以调用 web_search 工具联网搜索。当问题涉及实时信息、最新事件或你不确定的事实时，先搜索再回答。`
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -395,14 +457,14 @@ export async function POST(req: NextRequest) {
           const msgs = toAnthropic(messages)
           injectAttachmentsAnthropic(msgs, attachments)
           for (let round = 0; round < 6; round++) {
-            const { assistantContent, toolUses, failed } = await runAnthropicTurn(base, cleanApiKey, cleanModel, SYSTEM, msgs, useTools, controller)
+            const { assistantContent, toolUses, failed } = await runAnthropicTurn(base, cleanApiKey, cleanModel, SYSTEM, msgs, anthropicTools, controller)
             if (failed || !toolUses.length) break
             msgs.push({ role: 'assistant', content: assistantContent })
             const results: any[] = []
             for (const tu of toolUses) {
-              const r = await execMemoryTool(supabase, userId, tu.name, tu.input)
-              send(controller, { memory: r })
-              results.push({ type: 'tool_result', tool_use_id: tu.id, content: r.ok ? '操作成功' : '操作失败' })
+              const { result, event } = await execTool(supabase, userId, tu.name, tu.input)
+              if (event) send(controller, event)
+              results.push({ type: 'tool_result', tool_use_id: tu.id, content: result })
             }
             msgs.push({ role: 'user', content: results })
           }
@@ -411,15 +473,15 @@ export async function POST(req: NextRequest) {
           const msgs: any[] = [{ role: 'system', content: SYSTEM }, ...toOpenAI(messages)]
           await injectAttachmentsOpenAI(msgs, attachments)
           for (let round = 0; round < 6; round++) {
-            const { assistantMessage, toolCalls, failed } = await runOpenAITurn(url, cleanApiKey, cleanModel, msgs, useTools, controller)
+            const { assistantMessage, toolCalls, failed } = await runOpenAITurn(url, cleanApiKey, cleanModel, msgs, openaiTools, controller)
             if (failed || !toolCalls.length) break
             msgs.push(assistantMessage)
             for (const tc of toolCalls) {
               let input: any = {}
               try { input = JSON.parse(tc.args || '{}') } catch {}
-              const r = await execMemoryTool(supabase, userId, tc.name, input)
-              send(controller, { memory: r })
-              msgs.push({ role: 'tool', tool_call_id: tc.id, content: r.ok ? '操作成功' : '操作失败' })
+              const { result, event } = await execTool(supabase, userId, tc.name, input)
+              if (event) send(controller, event)
+              msgs.push({ role: 'tool', tool_call_id: tc.id, content: result })
             }
           }
         }

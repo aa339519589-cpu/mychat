@@ -1,9 +1,9 @@
 "use client"
 
 import Image from "next/image"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import type { Conversation } from "@/lib/chat-data"
-import { ChevronDown, ChevronRight, Brain, FileText } from "lucide-react"
+import { ChevronDown, ChevronRight, Brain, FileText, Globe } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkMath from "remark-math"
 import rehypeKatex from "rehype-katex"
@@ -42,6 +42,40 @@ function ThinkingBlock({ thinking }: { thinking: string }) {
       {open && (
         <div className="mt-2 break-words whitespace-pre-wrap rounded-xl border border-border/40 bg-muted/20 px-4 py-3 text-[13px] italic leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
           {thinking}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// 联网搜索来源：搜索时默认展开，模型开始回复后自动收起（仿 Claude）
+function SearchBlock({ searches, replying }: { searches: { query: string; results: { title: string; url: string }[] }[]; replying: boolean }) {
+  const [open, setOpen] = useState(true)
+  useEffect(() => { if (replying) setOpen(false) }, [replying])
+  if (!searches.length) return null
+  const total = searches.reduce((n, s) => n + s.results.length, 0)
+  return (
+    <div className="mb-3">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="flex items-center gap-1.5 text-xs italic text-muted-foreground/70 hover:text-muted-foreground transition-colors"
+      >
+        {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+        <Globe className="size-3" />
+        <span>搜索了 {total} 个来源</span>
+      </button>
+      {open && (
+        <div className="mt-2 space-y-2.5 rounded-xl border border-border/40 bg-muted/20 px-4 py-3">
+          {searches.map((s, i) => (
+            <div key={i} className="space-y-1">
+              <div className="text-xs italic text-muted-foreground">搜索：{s.query}</div>
+              {s.results.map((r, j) => (
+                <a key={j} href={r.url} target="_blank" rel="noreferrer" className="block truncate text-xs text-primary/80 underline underline-offset-2 hover:text-primary">
+                  {r.title || r.url}
+                </a>
+              ))}
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -91,6 +125,7 @@ export function MessageList({
               </div>
               <div className="min-w-0 flex-1">
                 {m.thinking && <ThinkingBlock thinking={m.thinking} />}
+                {m.searchNotes && m.searchNotes.length > 0 && <SearchBlock searches={m.searchNotes} replying={!!m.content} />}
                 {m.memoryNotes && m.memoryNotes.length > 0 && (
                   <div className="mb-3 space-y-1">
                     {m.memoryNotes.map((note, i) => (
