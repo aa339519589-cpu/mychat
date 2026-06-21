@@ -128,7 +128,8 @@ async function streamClaudeWeb(sessionKey: string, messages: any[], controller: 
   // 获取组织 ID
   const orgRes = await fetch('https://claude.ai/api/organizations', { headers })
   if (!orgRes.ok) {
-    send(controller, { error: `sessionKey 无效或已过期，请重新获取 (${orgRes.status})` })
+    const txt = await orgRes.text().catch(() => '')
+    send(controller, { error: `获取账号失败 (${orgRes.status}): ${txt.slice(0, 120)}` })
     return
   }
   const orgs = await orgRes.json()
