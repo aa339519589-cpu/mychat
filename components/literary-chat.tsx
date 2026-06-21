@@ -6,12 +6,17 @@ import { loadMemories, saveMemories, type Memory } from "@/lib/memory-data"
 import { ConversationSidebar } from "@/components/conversation-sidebar"
 import { MessageList } from "@/components/message-list"
 import { ChatInput } from "@/components/chat-input"
+import { LoginScreen } from "@/components/login-screen"
+import { createClient } from "@/lib/supabase/client"
+import type { User } from "@supabase/supabase-js"
 import { cn } from "@/lib/utils"
 import { PanelLeft, X } from "lucide-react"
 
 type GithubContext = { repo: string; context: string }
 
 export function LiteraryChat() {
+  const [user, setUser] = useState<User | null>(null)
+  const [authChecked, setAuthChecked] = useState(false)
   const [conversations, setConversations] = useState<Conversation[]>(CONVERSATIONS)
   const [activeId, setActiveId] = useState(CONVERSATIONS[0].id)
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -20,6 +25,20 @@ export function LiteraryChat() {
   const [githubContext, setGithubContext] = useState<GithubContext | null>(null)
   const [memories, setMemories] = useState<Memory[]>([])
   const [webSearch, setWebSearch] = useState(false)
+
+  // 检查登录状态，并监听登录/登出
+  useEffect(() => {
+    const supabase = createClient()
+    supabase.auth.getUser().then(({ data }) => {
+      setUser(data.user)
+      setAuthChecked(true)
+    })
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null)
+      setAuthChecked(true)
+    })
+    return () => sub.subscription.unsubscribe()
+  }, [])
 
   const [endpoints, setEndpoints] = useState<Endpoint[]>([])
   const [activeEndpointId, setActiveEndpointId] = useState("")
@@ -336,6 +355,12 @@ AI：${aiText.slice(0, 300)}
     setDrawerOpen(false)
   }
 
+  async function handleLogout() {
+    const supabase = createClient()
+    await supabase.auth.signOut()
+    setUser(null)
+  }
+
   const sidebarProps = {
     conversations, activeId,
     onSelect: (id: string) => { setActiveId(id); setDrawerOpen(false) },
@@ -346,6 +371,8 @@ AI：${aiText.slice(0, 300)}
     onActiveEndpointChange: handleActiveEndpointChange,
     memories,
     onMemoriesChange: (mems: Memory[]) => setMemories(mems),
+    userEmail: user?.email ?? "",
+    onLogout: handleLogout,
   }
 
   function renderChatPane(mobile: boolean) {
@@ -396,6 +423,15 @@ AI：${aiText.slice(0, 300)}
         />
       </main>
     )
+  }
+
+  // 还没查完登录状态：显示空白过渡，避免闪烁
+  if (!authChecked) {
+    return <div className="h-dvh w-full bg-background paper-grain" />
+  }
+  // 未登录：显示登录页
+  if (!user) {
+    return <LoginScreen />
   }
 
   return (

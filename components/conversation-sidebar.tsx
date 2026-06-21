@@ -6,7 +6,7 @@ import { PROTOCOL_LABELS, PROTOCOL_DEFAULTS } from "@/lib/chat-data"
 import type { Memory } from "@/lib/memory-data"
 import { saveMemories } from "@/lib/memory-data"
 import { cn } from "@/lib/utils"
-import { Feather, Plus, Settings, ChevronLeft, Trash2, ChevronDown, ChevronRight, Brain } from "lucide-react"
+import { Feather, Plus, Settings, ChevronLeft, Trash2, ChevronDown, ChevronRight, Brain, LogOut } from "lucide-react"
 
 const PROTOCOLS: Protocol[] = ["anthropic", "openai", "gemini"]
 
@@ -29,7 +29,7 @@ function emptyDraft(protocol: Protocol): Draft {
 export function ConversationSidebar({
   conversations, activeId, onSelect, onNew, onDelete,
   endpoints, activeEndpointId, onEndpointsChange, onActiveEndpointChange,
-  memories, onMemoriesChange,
+  memories, onMemoriesChange, userEmail, onLogout,
 }: {
   conversations: Conversation[]
   activeId: string
@@ -42,6 +42,8 @@ export function ConversationSidebar({
   onActiveEndpointChange: (id: string) => void
   memories: Memory[]
   onMemoriesChange: (mems: Memory[]) => void
+  userEmail: string
+  onLogout: () => void
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [expanded, setExpanded] = useState<Record<Protocol, boolean>>({ anthropic: false, openai: true, gemini: false })
@@ -321,6 +323,22 @@ export function ConversationSidebar({
 
           {/* 记忆管理 */}
           <MemorySection memories={memories} onMemoriesChange={onMemoriesChange} />
+
+          {/* 账号 */}
+          <div className="rounded-2xl border border-sidebar-border overflow-hidden">
+            <div className="flex items-center gap-2 px-4 py-3">
+              <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-sidebar-primary/15 text-xs text-sidebar-primary">
+                {userEmail.slice(0, 1).toUpperCase() || "我"}
+              </div>
+              <span className="min-w-0 flex-1 truncate text-sm text-foreground">{userEmail || "已登录"}</span>
+            </div>
+            <button
+              onClick={onLogout}
+              className="flex w-full items-center gap-2 border-t border-sidebar-border/50 px-4 py-2.5 text-xs text-muted-foreground hover:bg-sidebar-accent/40 hover:text-destructive transition-colors"
+            >
+              <LogOut className="size-3.5" />退出登录
+            </button>
+          </div>
         </div>
       </div>
     </aside>
