@@ -56,27 +56,37 @@ export function MessageList({
   endpointName: string
 }) {
   return (
-    <article className="mx-auto w-full min-w-0 max-w-[44rem] overflow-x-hidden px-4 py-6 md:px-10 md:py-8">
+    <article className="mx-auto w-full min-w-0 max-w-[44rem] overflow-x-hidden px-4 py-6 md:px-6 md:py-8">
       <div className="min-w-0 space-y-8 md:space-y-10">
         {conversation.messages.map(m =>
           m.role === "user" ? (
             <div key={m.id} className="flex flex-col items-end">
               <span className="mb-2 text-[11px] italic tracking-widest text-muted-foreground">我 · {m.time}</span>
-              <div className="max-w-[85%] min-w-0 rounded-[1.5rem] rounded-tr-md bg-secondary/70 px-5 py-3.5">
-                <p className="break-words text-[15px] italic leading-[1.9] tracking-wide text-secondary-foreground [overflow-wrap:anywhere]">{m.content}</p>
-              </div>
+              {m.images && m.images.length > 0 && (
+                <div className="mb-2 flex flex-wrap justify-end gap-2">
+                  {m.images.map((img, i) => (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img key={i} src={img} alt="" className="max-h-48 max-w-[240px] rounded-2xl object-cover border border-border/30" />
+                  ))}
+                </div>
+              )}
+              {m.content && (
+                <div className="max-w-[85%] min-w-0 rounded-[1.5rem] rounded-tr-md bg-secondary/70 px-5 py-3.5">
+                  <p className="break-words text-[15px] italic leading-[1.9] tracking-wide text-secondary-foreground [overflow-wrap:anywhere]">{m.content}</p>
+                </div>
+              )}
             </div>
           ) : (
-            <div key={m.id} className="flex min-w-0 items-start gap-3 md:gap-4">
-              <div className="flex-shrink-0 self-start mt-1" style={{ backgroundColor: '#FCF1DE' }}>
-                <Image src="/companion.png" alt="" width={56} height={56} className="size-11 select-none md:size-14" style={{ mixBlendMode: "multiply" }} />
+            <div key={m.id} className="flex min-w-0 items-start gap-2">
+              <div className="flex-shrink-0 self-start mt-0.5" style={{ backgroundColor: '#FCF1DE' }}>
+                <Image src="/companion.png" alt="" width={40} height={40} priority className="size-8 select-none md:size-10" style={{ mixBlendMode: "multiply" }} />
               </div>
               <div className="min-w-0 flex-1">
-                <span className="mb-2.5 block text-[11px] tracking-widest text-muted-foreground">
+                <span className="mb-2 block text-[11px] tracking-widest text-muted-foreground">
                   {endpointName} · {m.time}
                 </span>
                 {m.thinking && <ThinkingBlock thinking={m.thinking} />}
-                <div className="min-w-0 border-l border-border/70 pl-4 md:pl-6">
+                <div className="min-w-0 border-l border-border/70 pl-3">
                   {m.isError ? (
                     <p className="break-words whitespace-pre-wrap text-sm italic leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">{m.content}</p>
                   ) : (

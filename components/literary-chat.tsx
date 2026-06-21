@@ -8,12 +8,15 @@ import { ChatInput } from "@/components/chat-input"
 import { cn } from "@/lib/utils"
 import { PanelLeft, X } from "lucide-react"
 
+type GithubContext = { repo: string; context: string }
+
 export function LiteraryChat() {
   const [conversations, setConversations] = useState<Conversation[]>(CONVERSATIONS)
   const [activeId, setActiveId] = useState(CONVERSATIONS[0].id)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [githubContext, setGithubContext] = useState<GithubContext | null>(null)
 
   const [endpoints, setEndpoints] = useState<Endpoint[]>([])
   const [activeEndpointId, setActiveEndpointId] = useState("")
@@ -72,8 +75,45 @@ export function LiteraryChat() {
     }
   }, [active?.messages?.length, activeId])
 
-  async function handleSend(text: string) {
-    const userMsg: Message = { id: `u-${Date.now()}`, role: "user", content: text, time: "此刻" }
+  async function generateTitle(convId: string, userText: string, aiText: string) {
+    if (!activeEndpoint) return
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          protocol: activeEndpoint.protocol,
+          baseUrl: activeEndpoint.baseUrl,
+          apiKey: activeEndpoint.apiKey,
+          model: activeEndpoint.model,
+          messages: [{ role: "user", content: `根据下面这段对话，给出一个10字以内的标题，只输出标题本身，不要引号和标点：\n用户：${userText.slice(0, 80)}\nAI：${aiText.slice(0, 80)}` }],
+        }),
+      })
+      if (!res.body) return
+      const reader = res.body.getReader()
+      const dec = new TextDecoder()
+      let title = ""
+      let buf = ""
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += dec.decode(value, { stream: true })
+        const parts = buf.split("\n\n")
+        buf = parts.pop() ?? ""
+        for (const part of parts) {
+          const line = part.trim()
+          if (line.startsWith("data: ") && line !== "data: [DONE]") {
+            try { const d = JSON.parse(line.slice(6)); if (d.text) title += d.text } catch {}
+          }
+        }
+      }
+      const clean = title.trim().replace(/^["'「『]|["'」』]$/g, "").slice(0, 20)
+      if (clean) setConversations(prev => prev.map(c => c.id === convId ? { ...c, title: clean } : c))
+    } catch { /* 标题生成失败不影响主流程 */ }
+  }
+
+  async function handleSend(text: string, images?: string[]) {
+    const userMsg: Message = { id: `u-${Date.now()}`, role: "user", content: text, time: "此刻", images }
 
     if (!activeEndpoint) {
       setConversations(prev => prev.map(c => c.id === activeId ? {
@@ -83,13 +123,22 @@ export function LiteraryChat() {
     }
 
     const msgId = `a-${Date.now()}`
+    const isFirstExchange = active.messages.length === 0
     setConversations(prev => prev.map(c => c.id === activeId ? {
       ...c, messages: [...c.messages, userMsg, { id: msgId, role: "assistant", content: "", thinking: "", time: "此刻" }]
     } : c))
 
     setIsLoading(true)
     try {
-      const history = [...active.messages, userMsg].map(m => ({ role: m.role, content: m.content }))
+      const baseHistory = [...active.messages, userMsg].map(m => ({
+        role: m.role,
+        content: m.content,
+        ...(m.images?.length ? { images: m.images } : {}),
+      }))
+      const history = githubContext
+        ? [{ role: "user" as const, content: `GitHub 仓库上下文 (${githubContext.repo}):\n${githubContext.context.slice(0, 2000)}` }, { role: "assistant" as const, content: "已了解仓库信息。" }, ...baseHistory]
+        : baseHistory
+
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -111,6 +160,7 @@ export function LiteraryChat() {
       const reader = res.body.getReader()
       const dec = new TextDecoder()
       let buf = ""
+      let fullReply = ""
 
       while (true) {
         const { done, value } = await reader.read()
@@ -125,6 +175,7 @@ export function LiteraryChat() {
           if (line.startsWith("data: ")) {
             try {
               const data = JSON.parse(line.slice(6))
+              if (data.text) fullReply += data.text
               setConversations(prev => prev.map(c => c.id !== activeId ? c : {
                 ...c,
                 messages: c.messages.map(m => m.id !== msgId ? m : {
@@ -137,6 +188,11 @@ export function LiteraryChat() {
             } catch { /* skip */ }
           }
         }
+      }
+
+      // 第一次对话完成后自动生成标题
+      if (isFirstExchange && fullReply) {
+        generateTitle(activeId, text, fullReply)
       }
     } catch (e: any) {
       setConversations(prev => prev.map(c => c.id !== activeId ? c : {
@@ -152,6 +208,19 @@ export function LiteraryChat() {
     }
   }
 
+  function handleDelete(id: string) {
+    setConversations(prev => {
+      const next = prev.filter(c => c.id !== id)
+      if (next.length === 0) {
+        const fresh = { id: `c-${Date.now()}`, title: "未命名的篇章", excerpt: "一页尚待书写的空白……", date: "今日", messages: [] }
+        if (activeId === id) setActiveId(fresh.id)
+        return [fresh]
+      }
+      if (activeId === id) setActiveId(next[0].id)
+      return next
+    })
+  }
+
   function handleNew() {
     const id = `c-${Date.now()}`
     setConversations(prev => [{ id, title: "未命名的篇章", excerpt: "一页尚待书写的空白……", date: "今日", messages: [] }, ...prev])
@@ -163,6 +232,7 @@ export function LiteraryChat() {
     conversations, activeId,
     onSelect: (id: string) => { setActiveId(id); setDrawerOpen(false) },
     onNew: handleNew,
+    onDelete: handleDelete,
     endpoints, activeEndpointId,
     onEndpointsChange: handleEndpointsChange,
     onActiveEndpointChange: handleActiveEndpointChange,
@@ -209,6 +279,8 @@ export function LiteraryChat() {
           activeEndpointId={activeEndpointId}
           onEndpointChange={handleActiveEndpointChange}
           mobile={mobile}
+          githubContext={githubContext}
+          onGithubConnect={setGithubContext}
         />
       </main>
     )
@@ -258,12 +330,8 @@ export function LiteraryChat() {
 function EmptyState({ endpointName }: { endpointName?: string }) {
   return (
     <div className="mx-auto flex h-full max-w-[40rem] flex-col items-center justify-center px-8 text-center">
-      <span className="text-3xl text-primary">❦</span>
-      <h2 className="mt-6 font-heading text-3xl tracking-wide text-foreground text-balance">空白的一页，正等你落墨</h2>
-      <p className="mt-4 text-[15px] italic leading-[2] tracking-wide text-muted-foreground text-pretty">
-        无需匆忙，也无需修饰。<br />
-        把心里的念头，原原本本地写下来，<br />
-        {endpointName ?? "笔友"} 会以同样的从容，与你慢慢对谈。
+      <p className="text-[15px] italic text-muted-foreground/60">
+        {endpointName && endpointName !== "笔友" ? `与 ${endpointName} 对谈` : "说点什么开始对谈"}
       </p>
     </div>
   )

@@ -28,6 +28,7 @@ export type Message = {
   time: string
   isError?: boolean
   thinking?: string   // 思考链文本
+  images?: string[]   // base64 data URLs
 }
 
 export type Conversation = {

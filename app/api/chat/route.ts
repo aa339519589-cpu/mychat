@@ -116,6 +116,38 @@ async function streamAnthropic(upstream: Response, controller: ReadableStreamDef
   }
 }
 
+type RawMsg = { role: string; content: string; images?: string[] }
+
+function toAnthropic(msgs: RawMsg[]) {
+  return msgs.map(m => {
+    if (!m.images?.length) return { role: m.role, content: m.content }
+    return {
+      role: m.role,
+      content: [
+        ...m.images.map(img => {
+          const [header, data] = img.split(',')
+          const mediaType = (header.match(/data:(.*?);/) ?? [])[1] ?? 'image/jpeg'
+          return { type: 'image', source: { type: 'base64', media_type: mediaType, data } }
+        }),
+        { type: 'text', text: m.content || ' ' },
+      ],
+    }
+  })
+}
+
+function toOpenAI(msgs: RawMsg[]) {
+  return msgs.map(m => {
+    if (!m.images?.length) return { role: m.role, content: m.content }
+    return {
+      role: m.role,
+      content: [
+        ...m.images.map(img => ({ type: 'image_url', image_url: { url: img } })),
+        { type: 'text', text: m.content || ' ' },
+      ],
+    }
+  })
+}
+
 export async function POST(req: NextRequest) {
   const { protocol, baseUrl, apiKey, model, messages } = await req.json()
 
@@ -137,7 +169,7 @@ export async function POST(req: NextRequest) {
           const res = await fetch(`${base}/v1/messages`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-api-key': cleanApiKey, 'anthropic-version': '2023-06-01' },
-            body: JSON.stringify({ model: cleanModel, max_tokens: 16000, system: SYSTEM, messages, stream: true, thinking: { type: 'enabled', budget_tokens: 10000 } }),
+            body: JSON.stringify({ model: cleanModel, max_tokens: 16000, system: SYSTEM, messages: toAnthropic(messages), stream: true, thinking: { type: 'enabled', budget_tokens: 10000 } }),
           })
           if (!res.ok) {
             const txt = await res.text()
@@ -149,7 +181,7 @@ export async function POST(req: NextRequest) {
           const res = await fetch(`${base}/v1beta/openai/chat/completions`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cleanApiKey}` },
-            body: JSON.stringify({ model: cleanModel, messages: [{ role: 'system', content: SYSTEM }, ...messages], stream: true }),
+            body: JSON.stringify({ model: cleanModel, messages: [{ role: 'system', content: SYSTEM }, ...toOpenAI(messages)], stream: true }),
           })
           if (!res.ok) {
             const txt = await res.text()
@@ -161,7 +193,7 @@ export async function POST(req: NextRequest) {
           const res = await fetch(chatCompletionsUrl(cleanBaseUrl), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cleanApiKey}` },
-            body: JSON.stringify({ model: cleanModel, messages: [{ role: 'system', content: SYSTEM }, ...messages], stream: true }),
+            body: JSON.stringify({ model: cleanModel, messages: [{ role: 'system', content: SYSTEM }, ...toOpenAI(messages)], stream: true }),
           })
           if (!res.ok) {
             const txt = await res.text()

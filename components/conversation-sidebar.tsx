@@ -25,13 +25,14 @@ function emptyDraft(protocol: Protocol): Draft {
 }
 
 export function ConversationSidebar({
-  conversations, activeId, onSelect, onNew,
+  conversations, activeId, onSelect, onNew, onDelete,
   endpoints, activeEndpointId, onEndpointsChange, onActiveEndpointChange,
 }: {
   conversations: Conversation[]
   activeId: string
   onSelect: (id: string) => void
   onNew: () => void
+  onDelete: (id: string) => void
   endpoints: Endpoint[]
   activeEndpointId: string
   onEndpointsChange: (eps: Endpoint[]) => void
@@ -102,31 +103,12 @@ export function ConversationSidebar({
 
       {/* ── 主视图 ── */}
       <div className="flex h-full flex-col">
-        <div className="px-7 pb-5 pt-[max(2rem,env(safe-area-inset-top))]">
-          <div className="flex items-center gap-2.5">
-            <Feather className="size-5 text-sidebar-primary" />
-            <h1 className="font-heading text-2xl tracking-wide">笺</h1>
-          </div>
-          <p className="mt-2 text-xs leading-relaxed tracking-wider text-muted-foreground">文字对谈集 · 卷一</p>
+        <div className="flex items-center gap-2 px-5 pb-3 pt-[max(1rem,env(safe-area-inset-top))]">
+          <Feather className="size-4 text-sidebar-primary" />
+          <span className="font-heading text-base tracking-wide text-sidebar-foreground">笺</span>
         </div>
 
-        <div className="mx-7 mb-4 border-t border-sidebar-border" />
-
-        {/* 当前端点选择 */}
-        {endpoints.length > 0 ? (
-          <div className="mx-5 mb-3 px-2">
-            <p className="mb-1.5 text-[11px] tracking-widest text-muted-foreground">当前使用</p>
-            <select
-              value={activeEndpointId}
-              onChange={e => onActiveEndpointChange(e.target.value)}
-              className="w-full rounded-xl border border-sidebar-border bg-background/40 px-3 py-2 text-sm text-foreground outline-none"
-            >
-              {endpoints.map(ep => (
-                <option key={ep.id} value={ep.id}>{ep.name}</option>
-              ))}
-            </select>
-          </div>
-        ) : (
+        {endpoints.length === 0 && (
           <button
             onClick={() => setSettingsOpen(true)}
             className="mx-5 mb-3 rounded-xl border border-dashed border-sidebar-border px-4 py-3 text-center text-xs italic text-muted-foreground hover:border-sidebar-primary/40 hover:text-sidebar-primary transition-colors"
@@ -147,17 +129,25 @@ export function ConversationSidebar({
           {conversations.map(c => {
             const isActive = c.id === activeId
             return (
-              <button
-                key={c.id}
-                onClick={() => onSelect(c.id)}
-                className={cn("group block w-full rounded-2xl px-4 py-3 text-left transition-colors", isActive ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60")}
-              >
-                <div className="flex items-baseline justify-between gap-3">
-                  <span className={cn("font-heading text-[15px] leading-snug tracking-wide", isActive ? "text-sidebar-primary" : "text-sidebar-foreground")}>{c.title}</span>
-                  <span className="shrink-0 text-[11px] tracking-wider text-muted-foreground">{c.date}</span>
-                </div>
-                <p className="mt-1.5 line-clamp-2 text-[13px] leading-relaxed text-muted-foreground">{c.excerpt}</p>
-              </button>
+              <div key={c.id} className="group relative">
+                <button
+                  onClick={() => onSelect(c.id)}
+                  className={cn("block w-full rounded-2xl px-4 py-3 text-left transition-colors pr-9", isActive ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60")}
+                >
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className={cn("font-heading text-[15px] leading-snug tracking-wide", isActive ? "text-sidebar-primary" : "text-sidebar-foreground")}>{c.title}</span>
+                    <span className="shrink-0 text-[11px] tracking-wider text-muted-foreground">{c.date}</span>
+                  </div>
+                  <p className="mt-1.5 line-clamp-2 text-[13px] leading-relaxed text-muted-foreground">{c.excerpt}</p>
+                </button>
+                <button
+                  onClick={e => { e.stopPropagation(); onDelete(c.id) }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:bg-sidebar-accent hover:text-foreground"
+                  aria-label="删除对话"
+                >
+                  <Trash2 className="size-3.5" />
+                </button>
+              </div>
             )
           })}
         </nav>

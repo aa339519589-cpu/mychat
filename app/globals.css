@@ -187,6 +187,35 @@
   }
 }
 
+/* KaTeX 公式保护：防止 Tailwind reset 破坏数学字体和布局 */
+.katex {
+  font-size: 1.1em !important;
+  font-family: KaTeX_Main, 'Times New Roman', serif !important;
+  line-height: 1.4 !important;
+  text-indent: 0 !important;
+  color: inherit !important;
+}
+.katex * {
+  font-family: inherit;
+  box-sizing: content-box !important;
+}
+.katex-display {
+  display: block !important;
+  margin: 0.8em 0 !important;
+  text-align: center !important;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.katex-display > .katex {
+  display: block !important;
+  text-align: center !important;
+  white-space: nowrap !important;
+}
+.katex .base {
+  display: inline-flex !important;
+  align-items: baseline;
+}
+
 @layer utilities {
   /* 羊皮纸纹理：极淡的暖色斑驳 */
   .paper-grain {
