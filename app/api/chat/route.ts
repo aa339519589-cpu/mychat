@@ -112,7 +112,8 @@ export async function POST(req: NextRequest) {
             await streamOpenAI(res, controller)
           }
         } catch (e: any) {
-          send(controller, { error: e?.message ?? String(e) })
+          const message = e?.message ?? String(e)
+          send(controller, { error: `记忆系统请求失败：${message}` })
         } finally {
           done(controller)
         }
