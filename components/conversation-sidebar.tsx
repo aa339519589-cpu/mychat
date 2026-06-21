@@ -147,7 +147,7 @@ export function ConversationSidebar({
                 </button>
                 <button
                   onClick={e => { e.stopPropagation(); onDelete(c.id) }}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:bg-sidebar-accent hover:text-foreground"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-muted-foreground/40 hover:bg-sidebar-accent hover:text-destructive transition-colors"
                   aria-label="删除对话"
                 >
                   <Trash2 className="size-3.5" />

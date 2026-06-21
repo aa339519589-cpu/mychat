@@ -28,6 +28,7 @@ export function ChatInput({
   const [images, setImages] = useState<string[]>([])
   const imageInputRef = useRef<HTMLInputElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [githubError, setGithubError] = useState("")
 
   function resize() {
     const el = ref.current
@@ -61,36 +62,21 @@ export function ChatInput({
   async function connectGithub() {
     const raw = githubUrl.trim()
     if (!raw) return
+    setGithubError("")
     setGithubLoading(true)
     try {
-      let owner = "", repo = ""
-      const urlMatch = raw.match(/github\.com\/([^/]+)\/([^/\s]+)/)
-      if (urlMatch) {
-        owner = urlMatch[1]
-        repo = urlMatch[2].replace(/\.git$/, "")
-      } else {
-        const parts = raw.split("/")
-        if (parts.length >= 2) { owner = parts[0]; repo = parts[1] }
+      const res = await fetch(`/api/github?repo=${encodeURIComponent(raw)}`)
+      const data = await res.json()
+      if (!res.ok) {
+        setGithubError(data.error ?? "连接失败")
+        return
       }
-      if (!owner || !repo) { alert("格式不对，请输入 owner/repo 或 GitHub 链接"); return }
-
-      const repoRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`)
-      if (!repoRes.ok) { alert(`找不到仓库 ${owner}/${repo}`); return }
-      const repoData = await repoRes.json()
-
-      let readmeText = ""
-      const readmeRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/readme`)
-      if (readmeRes.ok) {
-        const readmeData = await readmeRes.json()
-        readmeText = atob(readmeData.content.replace(/\n/g, ""))
-      }
-
-      const context = `仓库：${repoData.full_name}\n描述：${repoData.description || "无"}\n语言：${repoData.language || "未知"}\nREADME：\n${readmeText.slice(0, 3000)}`
-      onGithubConnect({ repo: repoData.full_name, context })
+      onGithubConnect({ repo: data.repo, context: data.context })
       setGithubOpen(false)
       setGithubUrl("")
+      setGithubError("")
     } catch {
-      alert("获取失败，请检查网络或仓库名")
+      setGithubError("网络错误，请重试")
     } finally {
       setGithubLoading(false)
     }
@@ -147,24 +133,27 @@ export function ChatInput({
 
       {/* GitHub 输入弹出框 */}
       {githubOpen && (
-        <div className="mb-2 flex items-center gap-2 rounded-2xl border border-border/70 bg-card/80 px-3 py-2">
-          <GitBranch className="size-4 shrink-0 text-muted-foreground" />
-          <input
-            autoFocus
-            type="text"
-            value={githubUrl}
-            onChange={e => setGithubUrl(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter") connectGithub(); if (e.key === "Escape") setGithubOpen(false) }}
-            placeholder="owner/repo 或 GitHub 链接"
-            className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/50"
-          />
-          {githubLoading
-            ? <Loader2 className="size-4 animate-spin text-muted-foreground" />
-            : <button onClick={connectGithub} className="rounded-full bg-primary/10 px-2.5 py-0.5 text-xs text-primary hover:bg-primary/20 transition-colors">连接</button>
-          }
-          <button onClick={() => setGithubOpen(false)} className="text-muted-foreground hover:text-foreground">
-            <X className="size-4" />
-          </button>
+        <div className="mb-2 space-y-1.5">
+          <div className="flex items-center gap-2 rounded-2xl border border-border/70 bg-card/80 px-3 py-2">
+            <GitBranch className="size-4 shrink-0 text-muted-foreground" />
+            <input
+              autoFocus
+              type="text"
+              value={githubUrl}
+              onChange={e => { setGithubUrl(e.target.value); setGithubError("") }}
+              onKeyDown={e => { if (e.key === "Enter") connectGithub(); if (e.key === "Escape") { setGithubOpen(false); setGithubError("") } }}
+              placeholder="owner/repo 或 GitHub 链接"
+              className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/50"
+            />
+            {githubLoading
+              ? <Loader2 className="size-4 animate-spin text-muted-foreground" />
+              : <button onClick={connectGithub} className="rounded-full bg-primary/10 px-2.5 py-0.5 text-xs text-primary hover:bg-primary/20 transition-colors">连接</button>
+            }
+            <button onClick={() => { setGithubOpen(false); setGithubError("") }} className="text-muted-foreground hover:text-foreground">
+              <X className="size-4" />
+            </button>
+          </div>
+          {githubError && <p className="px-3 text-xs text-destructive">{githubError}</p>}
         </div>
       )}
 
