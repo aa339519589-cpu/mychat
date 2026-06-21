@@ -1,20 +1,62 @@
 import { NextRequest } from 'next/server'
+import { createClient } from '@/lib/supabase/server'
 
-const BASE_SYSTEM = `你是一个聊天伙伴，用清楚、自然的中文交谈。说有用的话，不要故意文艺。`
+const BASE_SYSTEM = `你是一个聊天伙伴，用清楚、自然的中文交谈。说有用的话，不要故意文艺。
+
+你拥有长期记忆，可以调用工具来管理对这位用户的记忆：
+- 当用户透露了值得长期记住的信息（姓名、身份、职业、喜好、习惯、目标、计划、重要经历或事实）时，调用 remember 保存。
+- 当已有的某条记忆需要修正或补充时，调用 update_memory。
+- 当某条记忆已经过时、错误，或用户明确要求忘记时，调用 forget。
+只在真正有意义时调用，不要为了调用而调用，也不要把闲聊里的临时信息当成长期记忆。调用工具后照常自然地继续回答，不必特意声明你记住了什么。`
 
 type MemoryItem = { id: string; content: string }
 
 function buildSystem(memories?: MemoryItem[]): string {
   if (!memories?.length) return BASE_SYSTEM
-  const memBlock = memories.map(m => `<record id="${m.id}">${m.content}</record>`).join('\n')
+  const memBlock = memories.map(m => `<memory id="${m.id}">${m.content}</memory>`).join('\n')
   return `${BASE_SYSTEM}
 
-## 关于用户的记忆
-以下是你记住的关于这位用户的信息，可在对话中自然地运用：
-<memories>
-${memBlock}
-</memories>`
+## 你已经记住的关于这位用户的信息
+（需要修改或删除某条时，使用对应的 id）
+${memBlock}`
 }
+
+// ───────────── 记忆工具定义 ─────────────
+
+const MEMORY_TOOLS_ANTHROPIC = [
+  {
+    name: 'remember',
+    description: '保存一条关于用户的长期记忆。当用户透露值得长期记住的信息时调用。',
+    input_schema: {
+      type: 'object',
+      properties: { content: { type: 'string', description: "要记住的内容，用简洁的第三人称陈述，例如'用户是一名前端工程师'" } },
+      required: ['content'],
+    },
+  },
+  {
+    name: 'update_memory',
+    description: '修正或补充一条已有的记忆，需要提供该记忆的 id。',
+    input_schema: {
+      type: 'object',
+      properties: { id: { type: 'string', description: '要更新的记忆 id' }, content: { type: 'string', description: '更新后的完整内容' } },
+      required: ['id', 'content'],
+    },
+  },
+  {
+    name: 'forget',
+    description: '删除一条过时、错误或用户要求忘记的记忆，需要提供该记忆的 id。',
+    input_schema: {
+      type: 'object',
+      properties: { id: { type: 'string', description: '要删除的记忆 id' } },
+      required: ['id'],
+    },
+  },
+]
+
+const MEMORY_TOOLS_OPENAI = MEMORY_TOOLS_ANTHROPIC.map(t => ({
+  type: 'function',
+  function: { name: t.name, description: t.description, parameters: t.input_schema },
+}))
 
 const enc = new TextEncoder()
 
@@ -64,72 +106,6 @@ function networkError(error: unknown, source = '模型服务') {
   return `${source}请求失败：${message}`
 }
 
-function emitOpenAIJson(data: any, controller: ReadableStreamDefaultController) {
-  const choice = data?.choices?.[0]
-  const delta = choice?.delta
-  if (delta?.reasoning_content) send(controller, { thinking: delta.reasoning_content })
-  if (delta?.content) send(controller, { text: delta.content })
-  if (!delta && choice?.message?.reasoning_content) send(controller, { thinking: choice.message.reasoning_content })
-  if (!delta && choice?.message?.content) send(controller, { text: choice.message.content })
-}
-
-// 解析 OpenAI / DeepSeek 流
-async function streamOpenAI(upstream: Response, controller: ReadableStreamDefaultController) {
-  if (upstream.headers.get('content-type')?.includes('application/json')) {
-    emitOpenAIJson(await upstream.json(), controller)
-    return
-  }
-
-  const reader = upstream.body!.getReader()
-  const dec = new TextDecoder()
-  let buf = ''
-
-  function processLine(raw: string) {
-    const line = raw.trim()
-    if (!line || line === 'data: [DONE]') return
-    const payload = line.startsWith('data:') ? line.slice(5).trim() : line
-    if (!payload) return
-    try {
-      emitOpenAIJson(JSON.parse(payload), controller)
-    } catch { /* skip malformed */ }
-  }
-
-  while (true) {
-    const { done: d, value } = await reader.read()
-    if (d) break
-    buf += dec.decode(value, { stream: true })
-    const parts = buf.split(/\r?\n/)
-    buf = parts.pop() ?? ''
-    for (const part of parts) processLine(part)
-  }
-  processLine(buf)
-}
-
-// 解析 Anthropic 流
-async function streamAnthropic(upstream: Response, controller: ReadableStreamDefaultController) {
-  const reader = upstream.body!.getReader()
-  const dec = new TextDecoder()
-  let buf = ''
-  while (true) {
-    const { done: d, value } = await reader.read()
-    if (d) break
-    buf += dec.decode(value, { stream: true })
-    const parts = buf.split('\n\n')
-    buf = parts.pop() ?? ''
-    for (const part of parts) {
-      const lines = part.split('\n')
-      const dataLine = lines.find(l => l.startsWith('data: '))
-      if (!dataLine) continue
-      try {
-        const j = JSON.parse(dataLine.slice(6))
-        const delta = j.delta
-        if (delta?.type === 'text_delta' && delta.text) send(controller, { text: delta.text })
-        if (delta?.type === 'thinking_delta' && delta.thinking) send(controller, { thinking: delta.thinking })
-      } catch { /* skip */ }
-    }
-  }
-}
-
 type RawMsg = { role: string; content: string; images?: string[] }
 
 function toAnthropic(msgs: RawMsg[]) {
@@ -162,6 +138,177 @@ function toOpenAI(msgs: RawMsg[]) {
   })
 }
 
+// ───────────── 工具执行（在用户身份下写 memories 表，受 RLS 隔离） ─────────────
+
+type MemoryResult = { action: 'create' | 'update' | 'delete'; id?: string; content?: string; ok: boolean }
+
+async function execMemoryTool(
+  supabase: Awaited<ReturnType<typeof createClient>> | null,
+  userId: string | null,
+  name: string,
+  input: any,
+): Promise<MemoryResult> {
+  if (!supabase || !userId) return { action: 'create', ok: false }
+  try {
+    if (name === 'remember') {
+      const content = String(input?.content ?? '').trim()
+      if (!content) return { action: 'create', ok: false }
+      const id = crypto.randomUUID()
+      const { error } = await supabase.from('memories').insert({ id, user_id: userId, content })
+      return { action: 'create', id, content, ok: !error }
+    }
+    if (name === 'update_memory') {
+      const id = String(input?.id ?? '')
+      const content = String(input?.content ?? '').trim()
+      const { error } = await supabase.from('memories').update({ content, updated_at: new Date().toISOString() }).eq('id', id)
+      return { action: 'update', id, content, ok: !error }
+    }
+    if (name === 'forget') {
+      const id = String(input?.id ?? '')
+      const { error } = await supabase.from('memories').delete().eq('id', id)
+      return { action: 'delete', id, ok: !error }
+    }
+  } catch { /* fall through */ }
+  return { action: 'create', ok: false }
+}
+
+// ───────────── 单轮请求：Anthropic ─────────────
+
+async function runAnthropicTurn(
+  base: string, apiKey: string, model: string, system: string,
+  messages: any[], useTools: boolean, controller: ReadableStreamDefaultController,
+): Promise<{ assistantContent: any[]; toolUses: { id: string; name: string; input: any }[]; failed: boolean }> {
+  const body: any = { model, max_tokens: 16000, system, messages, stream: true }
+  if (useTools) body.tools = MEMORY_TOOLS_ANTHROPIC
+
+  const res = await fetch(`${base}/v1/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok || !res.body) {
+    send(controller, { error: upstreamError(res.status, await res.text()) })
+    return { assistantContent: [], toolUses: [], failed: true }
+  }
+
+  const reader = res.body.getReader()
+  const dec = new TextDecoder()
+  let buf = ''
+  const blocks: any[] = []
+
+  while (true) {
+    const { done: d, value } = await reader.read()
+    if (d) break
+    buf += dec.decode(value, { stream: true })
+    const parts = buf.split('\n\n')
+    buf = parts.pop() ?? ''
+    for (const part of parts) {
+      const dataLine = part.split('\n').find(l => l.startsWith('data: '))
+      if (!dataLine) continue
+      let j: any
+      try { j = JSON.parse(dataLine.slice(6)) } catch { continue }
+      if (j.type === 'content_block_start') {
+        const cb = j.content_block ?? {}
+        blocks[j.index] = { type: cb.type, text: '', name: cb.name, id: cb.id, jsonBuf: '' }
+      } else if (j.type === 'content_block_delta') {
+        const b = blocks[j.index]
+        if (!b) continue
+        const delta = j.delta ?? {}
+        if (delta.type === 'text_delta') { b.text += delta.text; send(controller, { text: delta.text }) }
+        else if (delta.type === 'input_json_delta') { b.jsonBuf += delta.partial_json ?? '' }
+      }
+    }
+  }
+
+  const assistantContent: any[] = []
+  const toolUses: { id: string; name: string; input: any }[] = []
+  for (const b of blocks) {
+    if (!b) continue
+    if (b.type === 'text' && b.text) {
+      assistantContent.push({ type: 'text', text: b.text })
+    } else if (b.type === 'tool_use') {
+      let input: any = {}
+      try { input = b.jsonBuf ? JSON.parse(b.jsonBuf) : {} } catch {}
+      assistantContent.push({ type: 'tool_use', id: b.id, name: b.name, input })
+      toolUses.push({ id: b.id, name: b.name, input })
+    }
+  }
+  return { assistantContent, toolUses, failed: false }
+}
+
+// ───────────── 单轮请求：OpenAI / DeepSeek / Gemini 兼容 ─────────────
+
+async function runOpenAITurn(
+  url: string, apiKey: string, model: string,
+  messages: any[], useTools: boolean, controller: ReadableStreamDefaultController,
+): Promise<{ assistantMessage: any; toolCalls: { id: string; name: string; args: string }[]; failed: boolean }> {
+  const body: any = { model, messages, stream: true }
+  if (useTools) { body.tools = MEMORY_TOOLS_OPENAI; body.tool_choice = 'auto' }
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok || !res.body) {
+    send(controller, { error: upstreamError(res.status, await res.text()) })
+    return { assistantMessage: null, toolCalls: [], failed: true }
+  }
+
+  let content = ''
+  const callMap: Record<number, { id: string; name: string; args: string }> = {}
+
+  function handle(obj: any) {
+    const choice = obj?.choices?.[0]
+    if (!choice) return
+    const delta = choice.delta ?? choice.message ?? {}
+    if (delta.reasoning_content) send(controller, { thinking: delta.reasoning_content })
+    if (delta.content) { content += delta.content; send(controller, { text: delta.content }) }
+    if (Array.isArray(delta.tool_calls)) {
+      for (const tc of delta.tool_calls) {
+        const idx = tc.index ?? 0
+        if (!callMap[idx]) callMap[idx] = { id: '', name: '', args: '' }
+        if (tc.id) callMap[idx].id = tc.id
+        if (tc.function?.name) callMap[idx].name += tc.function.name
+        if (tc.function?.arguments) callMap[idx].args += tc.function.arguments
+      }
+    }
+  }
+
+  if (res.headers.get('content-type')?.includes('application/json')) {
+    handle(await res.json())
+  } else {
+    const reader = res.body.getReader()
+    const dec = new TextDecoder()
+    let buf = ''
+    while (true) {
+      const { done: d, value } = await reader.read()
+      if (d) break
+      buf += dec.decode(value, { stream: true })
+      const parts = buf.split(/\r?\n/)
+      buf = parts.pop() ?? ''
+      for (const part of parts) {
+        const line = part.trim()
+        if (!line || line === 'data: [DONE]') continue
+        const payload = line.startsWith('data:') ? line.slice(5).trim() : line
+        if (!payload) continue
+        try { handle(JSON.parse(payload)) } catch {}
+      }
+    }
+  }
+
+  const toolCalls = Object.values(callMap).filter(t => t.name)
+  let assistantMessage: any = null
+  if (toolCalls.length) {
+    assistantMessage = {
+      role: 'assistant',
+      content: content || null,
+      tool_calls: toolCalls.map(t => ({ id: t.id, type: 'function', function: { name: t.name, arguments: t.args || '{}' } })),
+    }
+  }
+  return { assistantMessage, toolCalls, failed: false }
+}
+
 export async function POST(req: NextRequest) {
   const { protocol, baseUrl, apiKey, model, messages, memories } = await req.json()
 
@@ -174,6 +321,16 @@ export async function POST(req: NextRequest) {
   if (!cleanModel) return new Response(JSON.stringify({ error: '请填写模型名' }), { status: 400 })
   if (!/^[\x00-\xFF]*$/.test(cleanApiKey)) return new Response(JSON.stringify({ error: 'API Key 包含非法字符' }), { status: 400 })
 
+  // 拿到登录用户身份，用于在工具调用时写入该用户自己的记忆
+  let supabase: Awaited<ReturnType<typeof createClient>> | null = null
+  let userId: string | null = null
+  try {
+    supabase = await createClient()
+    const { data } = await supabase.auth.getUser()
+    userId = data.user?.id ?? null
+  } catch { supabase = null }
+  const useTools = !!userId
+
   const base = cleanBaseUrl.replace(/\/(v1|v1beta)(\/.*)?$/, '').replace(/\/$/, '')
   const SYSTEM = buildSystem(memories)
 
@@ -181,40 +338,33 @@ export async function POST(req: NextRequest) {
     async start(controller) {
       try {
         if (protocol === 'anthropic') {
-          const res = await fetch(`${base}/v1/messages`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'x-api-key': cleanApiKey, 'anthropic-version': '2023-06-01' },
-            body: JSON.stringify({ model: cleanModel, max_tokens: 16000, system: SYSTEM, messages: toAnthropic(messages), stream: true, thinking: { type: 'enabled', budget_tokens: 10000 } }),
-          })
-          if (!res.ok) {
-            const txt = await res.text()
-            send(controller, { error: upstreamError(res.status, txt) })
-          } else {
-            await streamAnthropic(res, controller)
-          }
-        } else if (protocol === 'gemini') {
-          const res = await fetch(`${base}/v1beta/openai/chat/completions`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cleanApiKey}` },
-            body: JSON.stringify({ model: cleanModel, messages: [{ role: 'system', content: SYSTEM }, ...toOpenAI(messages)], stream: true }),
-          })
-          if (!res.ok) {
-            const txt = await res.text()
-            send(controller, { error: upstreamError(res.status, txt) })
-          } else {
-            await streamOpenAI(res, controller)
+          const msgs = toAnthropic(messages)
+          for (let round = 0; round < 6; round++) {
+            const { assistantContent, toolUses, failed } = await runAnthropicTurn(base, cleanApiKey, cleanModel, SYSTEM, msgs, useTools, controller)
+            if (failed || !toolUses.length) break
+            msgs.push({ role: 'assistant', content: assistantContent })
+            const results: any[] = []
+            for (const tu of toolUses) {
+              const r = await execMemoryTool(supabase, userId, tu.name, tu.input)
+              send(controller, { memory: r })
+              results.push({ type: 'tool_result', tool_use_id: tu.id, content: r.ok ? '操作成功' : '操作失败' })
+            }
+            msgs.push({ role: 'user', content: results })
           }
         } else {
-          const res = await fetch(chatCompletionsUrl(cleanBaseUrl), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cleanApiKey}` },
-            body: JSON.stringify({ model: cleanModel, messages: [{ role: 'system', content: SYSTEM }, ...toOpenAI(messages)], stream: true }),
-          })
-          if (!res.ok) {
-            const txt = await res.text()
-            send(controller, { error: upstreamError(res.status, txt) })
-          } else {
-            await streamOpenAI(res, controller)
+          const url = protocol === 'gemini' ? `${base}/v1beta/openai/chat/completions` : chatCompletionsUrl(cleanBaseUrl)
+          const msgs: any[] = [{ role: 'system', content: SYSTEM }, ...toOpenAI(messages)]
+          for (let round = 0; round < 6; round++) {
+            const { assistantMessage, toolCalls, failed } = await runOpenAITurn(url, cleanApiKey, cleanModel, msgs, useTools, controller)
+            if (failed || !toolCalls.length) break
+            msgs.push(assistantMessage)
+            for (const tc of toolCalls) {
+              let input: any = {}
+              try { input = JSON.parse(tc.args || '{}') } catch {}
+              const r = await execMemoryTool(supabase, userId, tc.name, input)
+              send(controller, { memory: r })
+              msgs.push({ role: 'tool', tool_call_id: tc.id, content: r.ok ? '操作成功' : '操作失败' })
+            }
           }
         }
       } catch (error) {
@@ -222,7 +372,7 @@ export async function POST(req: NextRequest) {
       } finally {
         done(controller)
       }
-    }
+    },
   })
 
   return new Response(stream, {

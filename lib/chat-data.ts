@@ -29,6 +29,7 @@ export type Message = {
   isError?: boolean
   thinking?: string   // 思考链文本
   images?: string[]   // base64 data URLs
+  memoryNotes?: string[]   // 本次回复中模型对记忆做的操作（仅当次显示）
 }
 
 export type Conversation = {

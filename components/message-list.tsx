@@ -3,7 +3,7 @@
 import Image from "next/image"
 import { useState } from "react"
 import type { Conversation } from "@/lib/chat-data"
-import { ChevronDown, ChevronRight } from "lucide-react"
+import { ChevronDown, ChevronRight, Brain } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkMath from "remark-math"
 import rehypeKatex from "rehype-katex"
@@ -86,6 +86,16 @@ export function MessageList({
                   {endpointName} · {m.time}
                 </span>
                 {m.thinking && <ThinkingBlock thinking={m.thinking} />}
+                {m.memoryNotes && m.memoryNotes.length > 0 && (
+                  <div className="mb-3 space-y-1">
+                    {m.memoryNotes.map((note, i) => (
+                      <div key={i} className="flex items-center gap-1.5 text-xs italic text-muted-foreground/80">
+                        <Brain className="size-3 shrink-0" />
+                        <span className="[overflow-wrap:anywhere]">{note}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <div className="min-w-0 border-l border-border/70 pl-3">
                   {m.isError ? (
                     <p className="break-words whitespace-pre-wrap text-sm italic leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">{m.content}</p>

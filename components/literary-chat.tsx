@@ -188,76 +188,6 @@ export function LiteraryChat() {
     } catch { /* 标题生成失败不影响主流程 */ }
   }
 
-  async function updateMemories(userText: string, aiText: string, currentMemories: Memory[]) {
-    if (!activeEndpoint || !user) return
-    try {
-      const existing = currentMemories.length
-        ? currentMemories.map(m => `[${m.id}] ${m.content}`).join('\n')
-        : '（空）'
-      const prompt = `你是记忆管理助手。根据下面的对话内容，判断是否有值得长期记住的用户信息（姓名、兴趣、偏好、计划、习惯等）。
-
-当前记忆：
-${existing}
-
-对话：
-用户：${userText.slice(0, 300)}
-AI：${aiText.slice(0, 300)}
-
-请以JSON数组格式输出需要执行的操作。如果没有需要更新的，输出空数组 []。
-格式：
-[
-  {"action":"create","content":"用户叫小明"},
-  {"action":"delete","id":"abc123"}
-]
-只输出JSON，不要任何其他文字。`
-
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          protocol: activeEndpoint.protocol,
-          baseUrl: activeEndpoint.baseUrl,
-          apiKey: activeEndpoint.apiKey,
-          model: activeEndpoint.model,
-          messages: [{ role: "user", content: prompt }],
-        }),
-      })
-      if (!res.body) return
-      const reader = res.body.getReader()
-      const dec = new TextDecoder()
-      let raw = ""
-      let buf = ""
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buf += dec.decode(value, { stream: true })
-        const parts = buf.split("\n\n")
-        buf = parts.pop() ?? ""
-        for (const part of parts) {
-          const line = part.trim()
-          if (line.startsWith("data: ") && line !== "data: [DONE]") {
-            try { const d = JSON.parse(line.slice(6)); if (d.text) raw += d.text } catch {}
-          }
-        }
-      }
-
-      const jsonMatch = raw.match(/\[[\s\S]*\]/)
-      if (!jsonMatch) return
-      const ops: { action: string; content?: string; id?: string }[] = JSON.parse(jsonMatch[0])
-      if (!Array.isArray(ops) || ops.length === 0) return
-
-      for (const op of ops) {
-        if (op.action === "create" && op.content?.trim()) {
-          const mem = await insertMemory(user.id, op.content.trim())
-          if (mem) setMemories(prev => [...prev, mem])
-        } else if (op.action === "delete" && op.id) {
-          setMemories(prev => prev.filter(m => m.id !== op.id))
-          deleteMemoryRow(op.id)
-        }
-      }
-    } catch { /* 记忆更新失败不影响主流程 */ }
-  }
-
   async function handleSend(text: string, images?: string[]) {
     if (!user || !active) return
     const userMsg: Message = { id: crypto.randomUUID(), role: "user", content: text, time: "此刻", images }
@@ -349,6 +279,22 @@ AI：${aiText.slice(0, 300)}
           if (line.startsWith("data: ")) {
             try {
               const data = JSON.parse(line.slice(6))
+              if (data.memory) {
+                const mem = data.memory
+                const note = mem.action === "create" ? (mem.ok ? `记住了：${mem.content}` : "记忆保存失败")
+                  : mem.action === "update" ? (mem.ok ? `更新了记忆：${mem.content}` : "记忆更新失败")
+                  : (mem.ok ? "忘记了一条记忆" : "记忆删除失败")
+                setConversations(prev => prev.map(c => c.id !== convId ? c : {
+                  ...c,
+                  messages: c.messages.map(m => m.id !== msgId ? m : { ...m, memoryNotes: [...(m.memoryNotes ?? []), note] }),
+                }))
+                if (mem.ok) {
+                  if (mem.action === "create" && mem.id) setMemories(prev => [...prev, { id: mem.id, content: mem.content ?? "" }])
+                  else if (mem.action === "update" && mem.id) setMemories(prev => prev.map(x => x.id === mem.id ? { ...x, content: mem.content ?? x.content } : x))
+                  else if (mem.action === "delete" && mem.id) setMemories(prev => prev.filter(x => x.id !== mem.id))
+                }
+                continue
+              }
               if (data.text) fullReply += data.text
               if (data.thinking) fullThinking += data.thinking
               setConversations(prev => prev.map(c => c.id !== convId ? c : {
@@ -374,10 +320,6 @@ AI：${aiText.slice(0, 300)}
       // 第一次对话完成后自动生成标题
       if (isFirstExchange && fullReply) {
         generateTitle(convId, text, fullReply)
-      }
-      // 后台更新记忆
-      if (fullReply) {
-        updateMemories(text, fullReply, memories)
       }
     } catch (e: any) {
       setConversations(prev => prev.map(c => c.id !== convId ? c : {
