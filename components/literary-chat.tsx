@@ -101,7 +101,17 @@ export function LiteraryChat() {
   async function handleEndpointAdd(ep: Endpoint) {
     if (!user) return
     setEndpoints(prev => [...prev, ep])
-    insertEndpoint(user.id, ep)
+    const res = await insertEndpoint(user.id, ep)
+    if (!res.ok) {
+      // 保存失败：回滚并明确提示，避免"看着成功、刷新就没"的假象
+      setEndpoints(prev => prev.filter(e => e.id !== ep.id))
+      alert(
+        /relation|schema|endpoints|does not exist/i.test(res.error ?? "")
+          ? "保存失败：数据库里还没有 endpoints 表。请先到 Supabase 的 SQL Editor 跑一遍建表 SQL，再来添加。"
+          : `保存失败，请重试：${res.error ?? "网络问题"}`,
+      )
+      return
+    }
     if (!activeEndpointId) handleActiveEndpointChange(ep.id)
   }
 

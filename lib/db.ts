@@ -154,7 +154,7 @@ export async function fetchEndpoints(): Promise<Endpoint[]> {
   }))
 }
 
-export async function insertEndpoint(userId: string, ep: Endpoint): Promise<void> {
+export async function insertEndpoint(userId: string, ep: Endpoint): Promise<{ ok: boolean; error?: string }> {
   const supabase = createClient()
   const { error } = await supabase.from("endpoints").insert({
     id: ep.id,
@@ -165,7 +165,11 @@ export async function insertEndpoint(userId: string, ep: Endpoint): Promise<void
     api_key: ep.apiKey,
     model: ep.model,
   })
-  if (error) console.error("insertEndpoint", error)
+  if (error) {
+    console.error("insertEndpoint", error)
+    return { ok: false, error: error.message }
+  }
+  return { ok: true }
 }
 
 export async function deleteEndpointRow(id: string): Promise<void> {
