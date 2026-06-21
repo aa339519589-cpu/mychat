@@ -52,8 +52,8 @@
 
 :root {
   color-scheme: light;
-  /* 羊皮纸暖色背景 */
-  --background: oklch(0.945 0.018 84);
+  /* 与小克背景一致 rgb(252,241,222) */
+  --background: #FCF1DE;
   --foreground: oklch(0.305 0.022 52);
   /* 信笺卡片，略浅于背景 */
   --card: oklch(0.972 0.015 86);

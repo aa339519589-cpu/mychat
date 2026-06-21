@@ -2,6 +2,7 @@ import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import { Spectral, Noto_Serif_SC } from 'next/font/google'
 import './globals.css'
+import 'katex/dist/katex.min.css'
 
 const spectral = Spectral({
   variable: '--font-spectral',

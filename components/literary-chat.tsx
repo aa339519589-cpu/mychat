@@ -1,13 +1,7 @@
 "use client"
 
 import { useMemo, useRef, useState, useEffect } from "react"
-import {
-  CONVERSATIONS,
-  MODELS,
-  type Conversation,
-  type Message,
-  type ModelId,
-} from "@/lib/chat-data"
+import { CONVERSATIONS, type Conversation, type Message, type Endpoint } from "@/lib/chat-data"
 import { ConversationSidebar } from "@/components/conversation-sidebar"
 import { MessageList } from "@/components/message-list"
 import { ChatInput } from "@/components/chat-input"
@@ -21,82 +15,111 @@ export function LiteraryChat() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
 
-  const [apiKeys, setApiKeys] = useState<Record<string, string>>({ claude: "", gpt: "", gemini: "", deepseek: "" })
-  const [selectedModel, setSelectedModel] = useState<ModelId>("claude")
+  const [endpoints, setEndpoints] = useState<Endpoint[]>([])
+  const [activeEndpointId, setActiveEndpointId] = useState("")
 
   useEffect(() => {
-    const saved = localStorage.getItem("chat_keys")
-    if (saved) setApiKeys(JSON.parse(saved))
-    const savedModel = localStorage.getItem("chat_model") as ModelId
-    if (savedModel) setSelectedModel(savedModel)
+    const saved = localStorage.getItem("chat_endpoints")
+    if (saved) setEndpoints(JSON.parse(saved))
+    const savedActive = localStorage.getItem("chat_active_endpoint")
+    if (savedActive) setActiveEndpointId(savedActive)
   }, [])
 
-  function handleSaveKey(model: string, key: string) {
-    const next = { ...apiKeys, [model]: key }
-    setApiKeys(next)
-    localStorage.setItem("chat_keys", JSON.stringify(next))
+  function handleEndpointsChange(eps: Endpoint[]) {
+    setEndpoints(eps)
+    localStorage.setItem("chat_endpoints", JSON.stringify(eps))
   }
 
-  function handleModelChange(model: ModelId) {
-    setSelectedModel(model)
-    localStorage.setItem("chat_model", model)
+  function handleActiveEndpointChange(id: string) {
+    setActiveEndpointId(id)
+    localStorage.setItem("chat_active_endpoint", id)
   }
 
-  const activeModel = MODELS.find((m) => m.id === selectedModel) ?? MODELS[0]
+  const activeEndpoint = endpoints.find(e => e.id === activeEndpointId)
+
   const active = useMemo(
-    () => conversations.find((c) => c.id === activeId)!,
+    () => conversations.find(c => c.id === activeId)!,
     [conversations, activeId],
   )
 
   const scrollRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })
-  }, [active.messages.length, activeId, isLoading])
+    const el = scrollRef.current
+    if (!el) return
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
+  }, [active?.messages?.length, activeId])
 
   async function handleSend(text: string) {
     const userMsg: Message = { id: `u-${Date.now()}`, role: "user", content: text, time: "此刻" }
 
-    setConversations((prev) =>
-      prev.map((c) => c.id === activeId ? { ...c, messages: [...c.messages, userMsg] } : c)
-    )
-
-    const apiKey = apiKeys[selectedModel]
-    if (!apiKey) {
-      const errMsg: Message = {
-        id: `e-${Date.now()}`,
-        role: "assistant",
-        content: "⚠️ 请先点击左下角齿轮图标，填写对应模型的 API Key。",
-        time: "此刻",
-      }
-      setConversations((prev) =>
-        prev.map((c) => c.id === activeId ? { ...c, messages: [...c.messages, errMsg] } : c)
-      )
+    if (!activeEndpoint) {
+      setConversations(prev => prev.map(c => c.id === activeId ? {
+        ...c, messages: [...c.messages, userMsg, { id: `e-${Date.now()}`, role: "assistant", content: "请先点击左下角齿轮图标，添加一个 API 端点。", time: "此刻", isError: true }]
+      } : c))
       return
     }
 
+    const msgId = `a-${Date.now()}`
+    setConversations(prev => prev.map(c => c.id === activeId ? {
+      ...c, messages: [...c.messages, userMsg, { id: msgId, role: "assistant", content: "", thinking: "", time: "此刻" }]
+    } : c))
+
     setIsLoading(true)
     try {
-      const history = [...active.messages, userMsg].map((m) => ({
-        role: m.role,
-        content: m.content,
-      }))
-
+      const history = [...active.messages, userMsg].map(m => ({ role: m.role, content: m.content }))
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: selectedModel, messages: history, apiKey }),
+        body: JSON.stringify({
+          protocol: activeEndpoint.protocol,
+          baseUrl: activeEndpoint.baseUrl,
+          apiKey: activeEndpoint.apiKey,
+          model: activeEndpoint.model,
+          messages: history,
+        }),
       })
-      const data = await res.json()
 
-      const botMsg: Message = {
-        id: `a-${Date.now()}`,
-        role: "assistant",
-        content: data.error ? `⚠️ ${data.error}` : data.content,
-        time: "此刻",
+      if (!res.body) throw new Error("无响应体")
+
+      const reader = res.body.getReader()
+      const dec = new TextDecoder()
+      let buf = ""
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += dec.decode(value, { stream: true })
+        const parts = buf.split("\n\n")
+        buf = parts.pop() ?? ""
+
+        for (const part of parts) {
+          const line = part.trim()
+          if (!line || line === "data: [DONE]") continue
+          if (line.startsWith("data: ")) {
+            try {
+              const data = JSON.parse(line.slice(6))
+              setConversations(prev => prev.map(c => c.id !== activeId ? c : {
+                ...c,
+                messages: c.messages.map(m => m.id !== msgId ? m : {
+                  ...m,
+                  content: data.error ? data.error : m.content + (data.text ?? ""),
+                  thinking: data.thinking !== undefined ? (m.thinking ?? "") + data.thinking : m.thinking,
+                  isError: data.error ? true : m.isError,
+                }),
+              }))
+            } catch { /* skip */ }
+          }
+        }
       }
-      setConversations((prev) =>
-        prev.map((c) => c.id === activeId ? { ...c, messages: [...c.messages, botMsg] } : c)
-      )
+    } catch (e: any) {
+      setConversations(prev => prev.map(c => c.id !== activeId ? c : {
+        ...c,
+        messages: c.messages.map((m, i, arr) =>
+          i === arr.length - 1 && m.role === "assistant"
+            ? { ...m, content: e?.message ?? String(e), isError: true }
+            : m
+        ),
+      }))
     } finally {
       setIsLoading(false)
     }
@@ -104,19 +127,19 @@ export function LiteraryChat() {
 
   function handleNew() {
     const id = `c-${Date.now()}`
-    setConversations((prev) => [{
-      id, title: "未命名的篇章", excerpt: "一页尚待书写的空白……", date: "今日", messages: [],
-    }, ...prev])
+    setConversations(prev => [{ id, title: "未命名的篇章", excerpt: "一页尚待书写的空白……", date: "今日", messages: [] }, ...prev])
     setActiveId(id)
     setDrawerOpen(false)
   }
 
-  function selectConversation(id: string) {
-    setActiveId(id)
-    setDrawerOpen(false)
+  const sidebarProps = {
+    conversations, activeId,
+    onSelect: (id: string) => { setActiveId(id); setDrawerOpen(false) },
+    onNew: handleNew,
+    endpoints, activeEndpointId,
+    onEndpointsChange: handleEndpointsChange,
+    onActiveEndpointChange: handleActiveEndpointChange,
   }
-
-  const sidebarProps = { conversations, activeId, onSelect: selectConversation, onNew: handleNew, apiKeys, selectedModel, onSaveKey: handleSaveKey, onModelChange: handleModelChange }
 
   return (
     <div className="flex h-screen overflow-hidden bg-background paper-grain p-3 md:p-4">
@@ -135,7 +158,7 @@ export function LiteraryChat() {
         </div>
         {drawerOpen && (
           <button onClick={() => setDrawerOpen(false)} className="absolute right-4 top-4 z-50 rounded-full bg-card p-2 text-foreground shadow">
-            <X className="size-5" aria-hidden />
+            <X className="size-5" />
           </button>
         )}
       </div>
@@ -143,36 +166,40 @@ export function LiteraryChat() {
       {/* 主区 */}
       <div className="ml-0 flex min-w-0 flex-1 flex-col overflow-hidden md:ml-2">
         <header className="flex items-center gap-3 px-5 py-4 md:px-8">
-          <button onClick={() => setSidebarCollapsed((v) => !v)} className="hidden rounded-full p-2 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground md:inline-flex">
-            <PanelLeft className="size-5" aria-hidden />
+          <button onClick={() => setSidebarCollapsed(v => !v)} className="hidden rounded-full p-2 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground md:inline-flex">
+            <PanelLeft className="size-5" />
           </button>
           <button onClick={() => setDrawerOpen(true)} className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground md:hidden">
-            <PanelLeft className="size-5" aria-hidden />
+            <PanelLeft className="size-5" />
           </button>
-          <span className="flex-1 text-sm italic tracking-wider text-muted-foreground">{active.title}</span>
-          <span className="text-xs tracking-widest text-muted-foreground">{activeModel.name} · {activeModel.subtitle}</span>
+          <span className="flex-1 text-sm italic tracking-wider text-muted-foreground">{active?.title}</span>
         </header>
 
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
-          {active.messages.length > 0 ? (
-            <MessageList conversation={active} model={activeModel} />
+          {active?.messages?.length > 0 ? (
+            <MessageList conversation={active} endpointName={activeEndpoint?.name ?? "笔友"} />
           ) : (
-            <EmptyState modelName={activeModel.name} />
+            <EmptyState endpointName={activeEndpoint?.name} />
           )}
           {isLoading && (
             <div className="mx-auto max-w-[44rem] px-10 pb-4 text-sm italic text-muted-foreground animate-pulse">
-              {activeModel.name} 正在落笔……
+              {activeEndpoint?.name ?? "笔友"} 正在落笔……
             </div>
           )}
         </div>
 
-        <ChatInput onSend={handleSend} modelName={activeModel.name} />
+        <ChatInput
+          onSend={handleSend}
+          endpoints={endpoints}
+          activeEndpointId={activeEndpointId}
+          onEndpointChange={handleActiveEndpointChange}
+        />
       </div>
     </div>
   )
 }
 
-function EmptyState({ modelName }: { modelName: string }) {
+function EmptyState({ endpointName }: { endpointName?: string }) {
   return (
     <div className="mx-auto flex h-full max-w-[40rem] flex-col items-center justify-center px-8 text-center">
       <span className="text-3xl text-primary">❦</span>
@@ -180,7 +207,7 @@ function EmptyState({ modelName }: { modelName: string }) {
       <p className="mt-4 text-[15px] italic leading-[2] tracking-wide text-muted-foreground text-pretty">
         无需匆忙，也无需修饰。<br />
         把心里的念头，原原本本地写下来，<br />
-        {modelName} 会以同样的从容，与你慢慢对谈。
+        {endpointName ?? "笔友"} 会以同样的从容，与你慢慢对谈。
       </p>
     </div>
   )

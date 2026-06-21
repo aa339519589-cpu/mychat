@@ -1,27 +1,33 @@
-export type ModelId = "claude" | "gpt" | "gemini" | "deepseek"
+export type Protocol = "anthropic" | "openai" | "gemini"
 
-export type Model = {
-  id: ModelId
-  name: string
-  subtitle: string
+export type Endpoint = {
+  id: string
+  name: string       // 用户自定义名称，如"我的DeepSeek"
+  protocol: Protocol
+  baseUrl: string    // 如 https://api.deepseek.com
+  apiKey: string
+  model: string      // 如 deepseek-chat
 }
 
-export const MODELS: Model[] = [
-  { id: "claude", name: "Claude", subtitle: "Anthropic · 沉静善思" },
-  { id: "gpt", name: "GPT", subtitle: "OpenAI · 敏捷多才" },
-  { id: "gemini", name: "Gemini", subtitle: "Google · 博学广识" },
-  { id: "deepseek", name: "DeepSeek", subtitle: "深度求索 · 中文尤佳" },
-]
+export const PROTOCOL_LABELS: Record<Protocol, string> = {
+  anthropic: "Anthropic 协议",
+  openai: "OpenAI 兼容协议",
+  gemini: "Gemini 协议",
+}
+
+export const PROTOCOL_DEFAULTS: Record<Protocol, { baseUrl: string; model: string }> = {
+  anthropic: { baseUrl: "https://api.anthropic.com", model: "claude-sonnet-4-6" },
+  openai: { baseUrl: "https://api.openai.com", model: "gpt-4o-mini" },
+  gemini: { baseUrl: "https://generativelanguage.googleapis.com", model: "gemini-2.0-flash" },
+}
 
 export type Message = {
   id: string
   role: "user" | "assistant"
   content: string
   time: string
-  thinking?: {
-    isThinking: boolean
-    duration?: number // 秒数
-  }
+  isError?: boolean
+  thinking?: string   // 思考链文本
 }
 
 export type Conversation = {
@@ -33,6 +39,17 @@ export type Conversation = {
 }
 
 export const CONVERSATIONS: Conversation[] = [
+  {
+    id: "c-default",
+    title: "未命名的篇章",
+    excerpt: "一页尚待书写的空白……",
+    date: "今日",
+    messages: [],
+  },
+]
+
+// 以下为示例数据，已不再使用
+const _EXAMPLE: Conversation[] = [
   {
     id: "c1",
     title: "论独处的艺术",
