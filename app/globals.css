@@ -53,7 +53,7 @@
 :root {
   color-scheme: light;
   /* 与小克背景一致 rgb(252,241,222) */
-  --background: #FCF1DE;
+  --background: #FDF2E2;
   --foreground: oklch(0.305 0.022 52);
   /* 信笺卡片，略浅于背景 */
   --card: oklch(0.972 0.015 86);
@@ -254,12 +254,12 @@
 
 /* 头像随明暗主题切换：浅色用 companion.png（米色底），深色用 companion-dark.png（深色底）。
    跟随系统时不存在 .dark class，所以同时用 prefers-color-scheme media query 处理。 */
-.avatar-box { background-color: #FCF1DE; }
+.avatar-box { background-color: #FDF2E2; }
 .avatar-dark { display: none; }
 .dark .avatar-box { background-color: #1F1F1F; }
 .dark .avatar-light { display: none; }
 .dark .avatar-dark { display: block; }
-.light .avatar-box { background-color: #FCF1DE; }
+.light .avatar-box { background-color: #FDF2E2; }
 .light .avatar-light { display: block; }
 .light .avatar-dark { display: none; }
 @media (prefers-color-scheme: dark) {

@@ -76,7 +76,7 @@ export function MessageList({
           ) : (
             <div key={m.id} className="flex min-w-0 items-start gap-2">
               <div className="avatar-box flex-shrink-0 self-start mt-0.5">
-                <Image src="/companion.png" alt="" width={40} height={40} priority className="avatar-light size-8 select-none md:size-10" style={{ mixBlendMode: "multiply" }} />
+                <Image src="/companion.png" alt="" width={40} height={40} priority className="avatar-light size-8 select-none md:size-10" />
                 <Image src="/companion-dark.png" alt="" width={40} height={40} priority className="avatar-dark size-8 select-none md:size-10" />
               </div>
               <div className="min-w-0 flex-1">

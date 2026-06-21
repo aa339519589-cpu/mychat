@@ -52,7 +52,7 @@ export function LoginScreen() {
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center text-center">
           <div className="avatar-box">
-            <Image src="/companion.png" alt="" width={72} height={72} priority className="avatar-light size-16 select-none" style={{ mixBlendMode: "multiply" }} />
+            <Image src="/companion.png" alt="" width={72} height={72} priority className="avatar-light size-16 select-none" />
             <Image src="/companion-dark.png" alt="" width={72} height={72} priority className="avatar-dark size-16 select-none" />
           </div>
           <h1 className="mt-4 font-heading text-2xl tracking-wide text-foreground">简</h1>
