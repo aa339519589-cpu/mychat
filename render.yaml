@@ -2,7 +2,7 @@ services:
   - type: web
     name: mychat
     runtime: node
-    buildCommand: npm install && npm run build
+    buildCommand: npm install --legacy-peer-deps && npm run build
     startCommand: npm start
     envVars:
       - key: NODE_VERSION
