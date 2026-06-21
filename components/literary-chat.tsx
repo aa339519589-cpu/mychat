@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useRef, useState, useEffect } from "react"
-import { CONVERSATIONS, type Conversation, type Message, type Endpoint } from "@/lib/chat-data"
+import { CONVERSATIONS, DEFAULT_MEMORY_CONFIG, type Conversation, type Message, type Endpoint, type MemoryConfig } from "@/lib/chat-data"
 import { ConversationSidebar } from "@/components/conversation-sidebar"
 import { MessageList } from "@/components/message-list"
 import { ChatInput } from "@/components/chat-input"
@@ -17,12 +17,15 @@ export function LiteraryChat() {
 
   const [endpoints, setEndpoints] = useState<Endpoint[]>([])
   const [activeEndpointId, setActiveEndpointId] = useState("")
+  const [memoryConfig, setMemoryConfig] = useState<MemoryConfig>(DEFAULT_MEMORY_CONFIG)
 
   useEffect(() => {
     const saved = localStorage.getItem("chat_endpoints")
     if (saved) setEndpoints(JSON.parse(saved))
     const savedActive = localStorage.getItem("chat_active_endpoint")
     if (savedActive) setActiveEndpointId(savedActive)
+    const savedMemory = localStorage.getItem("chat_memory_config")
+    if (savedMemory) setMemoryConfig({ ...DEFAULT_MEMORY_CONFIG, ...JSON.parse(savedMemory) })
   }, [])
 
   function handleEndpointsChange(eps: Endpoint[]) {
@@ -35,7 +38,14 @@ export function LiteraryChat() {
     localStorage.setItem("chat_active_endpoint", id)
   }
 
+  function handleMemoryConfigChange(next: MemoryConfig) {
+    setMemoryConfig(next)
+    localStorage.setItem("chat_memory_config", JSON.stringify(next))
+  }
+
   const activeEndpoint = endpoints.find(e => e.id === activeEndpointId)
+  const memoryReady = Boolean(memoryConfig.enabled && memoryConfig.baseUrl.trim())
+  const activeName = memoryReady ? "记忆笔友" : (activeEndpoint?.name ?? "笔友")
 
   const active = useMemo(
     () => conversations.find(c => c.id === activeId)!,
@@ -52,7 +62,14 @@ export function LiteraryChat() {
   async function handleSend(text: string) {
     const userMsg: Message = { id: `u-${Date.now()}`, role: "user", content: text, time: "此刻" }
 
-    if (!activeEndpoint) {
+    if (memoryConfig.enabled && !memoryReady) {
+      setConversations(prev => prev.map(c => c.id === activeId ? {
+        ...c, messages: [...c.messages, userMsg, { id: `e-${Date.now()}`, role: "assistant", content: "请先在设置里填写记忆系统的后端地址。", time: "此刻", isError: true }]
+      } : c))
+      return
+    }
+
+    if (!activeEndpoint && !memoryReady) {
       setConversations(prev => prev.map(c => c.id === activeId ? {
         ...c, messages: [...c.messages, userMsg, { id: `e-${Date.now()}`, role: "assistant", content: "请先点击左下角齿轮图标，添加一个 API 端点。", time: "此刻", isError: true }]
       } : c))
@@ -71,11 +88,12 @@ export function LiteraryChat() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          protocol: activeEndpoint.protocol,
-          baseUrl: activeEndpoint.baseUrl,
-          apiKey: activeEndpoint.apiKey,
-          model: activeEndpoint.model,
+          protocol: activeEndpoint?.protocol,
+          baseUrl: activeEndpoint?.baseUrl,
+          apiKey: activeEndpoint?.apiKey,
+          model: activeEndpoint?.model,
           messages: history,
+          memory: memoryReady ? memoryConfig : undefined,
         }),
       })
 
@@ -139,6 +157,8 @@ export function LiteraryChat() {
     endpoints, activeEndpointId,
     onEndpointsChange: handleEndpointsChange,
     onActiveEndpointChange: handleActiveEndpointChange,
+    memoryConfig,
+    onMemoryConfigChange: handleMemoryConfigChange,
   }
 
   return (
@@ -177,13 +197,13 @@ export function LiteraryChat() {
 
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
           {active?.messages?.length > 0 ? (
-            <MessageList conversation={active} endpointName={activeEndpoint?.name ?? "笔友"} />
+            <MessageList conversation={active} endpointName={activeName} />
           ) : (
-            <EmptyState endpointName={activeEndpoint?.name} />
+            <EmptyState endpointName={activeName} />
           )}
           {isLoading && (
             <div className="mx-auto max-w-[44rem] px-10 pb-4 text-sm italic text-muted-foreground animate-pulse">
-              {activeEndpoint?.name ?? "笔友"} 正在落笔……
+              {activeName} 正在落笔……
             </div>
           )}
         </div>
@@ -193,6 +213,7 @@ export function LiteraryChat() {
           endpoints={endpoints}
           activeEndpointId={activeEndpointId}
           onEndpointChange={handleActiveEndpointChange}
+          memoryEnabled={memoryReady}
         />
       </div>
     </div>

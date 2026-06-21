@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server'
+import type { MemoryConfig } from '@/lib/chat-data'
 
 const SYSTEM = `你是一个有文学气质的对话伙伴，用温暖、有质感的中文与用户交谈，如同在信笺上写字。
 语言自然流露，不堆砌辞藻，也不过于简洁。偶尔引用诗句或比喻，但要恰到好处。`
@@ -12,6 +13,13 @@ function send(controller: ReadableStreamDefaultController, data: object) {
 function done(controller: ReadableStreamDefaultController) {
   controller.enqueue(enc.encode('data: [DONE]\n\n'))
   controller.close()
+}
+
+function chatCompletionsUrl(baseUrl: string) {
+  const base = baseUrl.trim().replace(/\/$/, '')
+  if (base.endsWith('/chat/completions')) return base
+  if (base.endsWith('/v1')) return `${base}/chat/completions`
+  return `${base}/v1/chat/completions`
 }
 
 // 解析 OpenAI / DeepSeek 流
@@ -66,7 +74,55 @@ async function streamAnthropic(upstream: Response, controller: ReadableStreamDef
 }
 
 export async function POST(req: NextRequest) {
-  const { protocol, baseUrl, apiKey, model, messages } = await req.json()
+  const { protocol, baseUrl, apiKey, model, messages, memory } = await req.json()
+  const memoryConfig = memory as MemoryConfig | undefined
+  const memoryEnabled = Boolean(memoryConfig?.enabled && memoryConfig.baseUrl?.trim())
+
+  if (memoryEnabled) {
+    const memoryUrl = chatCompletionsUrl(memoryConfig!.baseUrl)
+    const memoryModel = memoryConfig!.model?.trim() || 'ebbingflow'
+    const memoryHeaders: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (memoryConfig!.apiKey?.trim()) {
+      memoryHeaders.Authorization = `Bearer ${memoryConfig!.apiKey.trim()}`
+    }
+
+    const stream = new ReadableStream({
+      async start(controller) {
+        try {
+          const res = await fetch(memoryUrl, {
+            method: 'POST',
+            headers: memoryHeaders,
+            body: JSON.stringify({
+              model: memoryModel,
+              messages: [{ role: 'system', content: SYSTEM }, ...messages],
+              stream: true,
+              user: memoryConfig!.userId,
+              user_id: memoryConfig!.userId,
+              user_token: memoryConfig!.userToken,
+              metadata: {
+                user_id: memoryConfig!.userId,
+                user_token: memoryConfig!.userToken,
+              },
+            }),
+          })
+          if (!res.ok) {
+            const txt = await res.text()
+            send(controller, { error: `记忆系统请求失败 (${res.status}): ${txt.slice(0, 200)}` })
+          } else {
+            await streamOpenAI(res, controller)
+          }
+        } catch (e: any) {
+          send(controller, { error: e?.message ?? String(e) })
+        } finally {
+          done(controller)
+        }
+      }
+    })
+
+    return new Response(stream, {
+      headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+    })
+  }
 
   if (!apiKey) return new Response(JSON.stringify({ error: '请先填写 API Key' }), { status: 400 })
   if (!baseUrl) return new Response(JSON.stringify({ error: '请填写 Base URL' }), { status: 400 })

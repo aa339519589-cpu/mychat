@@ -9,6 +9,15 @@ export type Endpoint = {
   model: string      // 如 deepseek-chat
 }
 
+export type MemoryConfig = {
+  enabled: boolean
+  baseUrl: string
+  apiKey: string
+  model: string
+  userId: string
+  userToken: string
+}
+
 export const PROTOCOL_LABELS: Record<Protocol, string> = {
   anthropic: "Anthropic 协议",
   openai: "OpenAI 兼容协议",
@@ -19,6 +28,15 @@ export const PROTOCOL_DEFAULTS: Record<Protocol, { baseUrl: string; model: strin
   anthropic: { baseUrl: "https://api.anthropic.com", model: "claude-sonnet-4-6" },
   openai: { baseUrl: "https://api.openai.com", model: "gpt-4o-mini" },
   gemini: { baseUrl: "https://generativelanguage.googleapis.com", model: "gemini-2.0-flash" },
+}
+
+export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
+  enabled: false,
+  baseUrl: "",
+  apiKey: "",
+  model: "ebbingflow",
+  userId: "user_001",
+  userToken: "",
 }
 
 export type Message = {

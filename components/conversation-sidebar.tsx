@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import type { Conversation, Endpoint, Protocol } from "@/lib/chat-data"
+import type { Conversation, Endpoint, MemoryConfig, Protocol } from "@/lib/chat-data"
 import { PROTOCOL_LABELS, PROTOCOL_DEFAULTS } from "@/lib/chat-data"
 import { cn } from "@/lib/utils"
 import { Feather, Plus, Settings, ChevronLeft, Trash2, ChevronDown, ChevronRight } from "lucide-react"
@@ -22,6 +22,7 @@ function emptyDraft(protocol: Protocol): Draft {
 export function ConversationSidebar({
   conversations, activeId, onSelect, onNew,
   endpoints, activeEndpointId, onEndpointsChange, onActiveEndpointChange,
+  memoryConfig, onMemoryConfigChange,
 }: {
   conversations: Conversation[]
   activeId: string
@@ -31,6 +32,8 @@ export function ConversationSidebar({
   activeEndpointId: string
   onEndpointsChange: (eps: Endpoint[]) => void
   onActiveEndpointChange: (id: string) => void
+  memoryConfig: MemoryConfig
+  onMemoryConfigChange: (next: MemoryConfig) => void
 }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [expanded, setExpanded] = useState<Record<Protocol, boolean>>({ anthropic: true, openai: true, gemini: false })
@@ -67,6 +70,12 @@ export function ConversationSidebar({
     if (activeEndpointId === id) onActiveEndpointChange(next[0]?.id ?? "")
   }
 
+  function updateMemory(field: keyof MemoryConfig, value: string | boolean) {
+    onMemoryConfigChange({ ...memoryConfig, [field]: value })
+  }
+
+  const memoryReady = memoryConfig.enabled && memoryConfig.baseUrl.trim()
+
   return (
     <aside className="relative flex h-full w-full flex-col bg-sidebar text-sidebar-foreground overflow-hidden">
 
@@ -83,7 +92,13 @@ export function ConversationSidebar({
         <div className="mx-7 mb-4 border-t border-sidebar-border" />
 
         {/* 当前端点选择 */}
-        {endpoints.length > 0 ? (
+        {memoryReady ? (
+          <div className="mx-5 mb-3 rounded-xl border border-sidebar-primary/25 bg-sidebar-primary/10 px-4 py-3">
+            <p className="mb-1 text-[11px] tracking-widest text-muted-foreground">当前使用</p>
+            <p className="text-sm text-sidebar-primary">记忆系统</p>
+            <p className="mt-1 truncate text-[11px] text-muted-foreground">{memoryConfig.model || "ebbingflow"}</p>
+          </div>
+        ) : endpoints.length > 0 ? (
           <div className="mx-5 mb-3 px-2">
             <p className="mb-1.5 text-[11px] tracking-widest text-muted-foreground">当前使用</p>
             <select
@@ -159,9 +174,56 @@ export function ConversationSidebar({
 
         <div className="flex-1 overflow-y-auto px-4 pb-8 space-y-3">
           <p className="px-2 text-[11px] italic text-muted-foreground leading-relaxed">
-            Key 仅存于浏览器本地，不上传任何服务器。<br />
+            Key 存于浏览器本地，发送时由本站后端转发。<br />
             每种协议下可添加多个端点。
           </p>
+
+          <div className="rounded-2xl border border-sidebar-border overflow-hidden">
+            <button
+              type="button"
+              onClick={() => updateMemory("enabled", !memoryConfig.enabled)}
+              className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-sidebar-accent/40 transition-colors"
+            >
+              <div>
+                <span className="text-sm font-medium tracking-wide">记忆系统</span>
+                <p className="mt-1 text-[11px] text-muted-foreground">EbbingFlow / OpenAI 兼容记忆后端</p>
+              </div>
+              <span className={cn(
+                "rounded-full border px-2.5 py-1 text-[11px]",
+                memoryConfig.enabled
+                  ? "border-sidebar-primary/40 bg-sidebar-primary/10 text-sidebar-primary"
+                  : "border-sidebar-border text-muted-foreground",
+              )}>
+                {memoryConfig.enabled ? "已开启" : "已关闭"}
+              </span>
+            </button>
+
+            {memoryConfig.enabled && (
+              <div className="border-t border-sidebar-border/50 px-3 py-3 space-y-2.5">
+                {[
+                  { field: "baseUrl" as const, label: "后端地址", placeholder: "https://your-ebbingflow.onrender.com/v1", type: "text" },
+                  { field: "apiKey" as const, label: "API Key（可选）", placeholder: "local 或 Bearer token", type: "password" },
+                  { field: "model" as const, label: "模型名", placeholder: "ebbingflow", type: "text" },
+                  { field: "userId" as const, label: "用户 ID", placeholder: "user_001", type: "text" },
+                  { field: "userToken" as const, label: "用户 Token（可选）", placeholder: "用于隔离访问", type: "password" },
+                ].map(({ field, label, placeholder, type }) => (
+                  <div key={field}>
+                    <p className="mb-1 text-[11px] tracking-widest text-muted-foreground">{label}</p>
+                    <input
+                      type={type}
+                      value={String(memoryConfig[field] ?? "")}
+                      onChange={e => updateMemory(field, e.target.value)}
+                      placeholder={placeholder}
+                      className="w-full rounded-lg border border-sidebar-border bg-background/50 px-2.5 py-1.5 text-xs outline-none focus:border-sidebar-primary/50 placeholder:text-muted-foreground/40"
+                    />
+                  </div>
+                ))}
+                <p className="px-1 text-[11px] italic leading-relaxed text-muted-foreground">
+                  开启后，本轮对话会先交给记忆后端，由它负责长期记忆与模型调用。
+                </p>
+              </div>
+            )}
+          </div>
 
           {PROTOCOLS.map(protocol => (
             <div key={protocol} className="rounded-2xl border border-sidebar-border overflow-hidden">
