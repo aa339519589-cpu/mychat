@@ -6,7 +6,7 @@ import { PROTOCOL_LABELS, PROTOCOL_DEFAULTS } from "@/lib/chat-data"
 import { cn } from "@/lib/utils"
 import { Feather, Plus, Settings, ChevronLeft, Trash2, ChevronDown, ChevronRight } from "lucide-react"
 
-const PROTOCOLS: Protocol[] = ["anthropic", "openai", "gemini"]
+const PROTOCOLS: Protocol[] = ["anthropic", "openai", "gemini", "claude-web"]
 
 const OPENAI_PRESETS = [
   { label: "DeepSeek", baseUrl: "https://api.deepseek.com", model: "deepseek-chat" },
