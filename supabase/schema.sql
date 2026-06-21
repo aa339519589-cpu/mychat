@@ -54,3 +54,23 @@ create policy "messages_delete" on public.messages for delete using (auth.uid() 
 create index if not exists idx_messages_conversation on public.messages(conversation_id);
 create index if not exists idx_conversations_user on public.conversations(user_id);
 create index if not exists idx_memories_user on public.memories(user_id);
+
+-- 模型端点表（含 API Key）。RLS 保证只有本人能读自己的 Key
+create table if not exists public.endpoints (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  name text not null,
+  protocol text not null,
+  base_url text not null,
+  api_key text not null,
+  model text not null,
+  created_at timestamptz not null default now()
+);
+alter table public.endpoints enable row level security;
+drop policy if exists "endpoints_select" on public.endpoints;
+create policy "endpoints_select" on public.endpoints for select using (auth.uid() = user_id);
+drop policy if exists "endpoints_insert" on public.endpoints;
+create policy "endpoints_insert" on public.endpoints for insert with check (auth.uid() = user_id);
+drop policy if exists "endpoints_delete" on public.endpoints;
+create policy "endpoints_delete" on public.endpoints for delete using (auth.uid() = user_id);
+create index if not exists idx_endpoints_user on public.endpoints(user_id);

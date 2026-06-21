@@ -27,7 +27,7 @@ function emptyDraft(protocol: Protocol): Draft {
 
 export function ConversationSidebar({
   conversations, activeId, onSelect, onNew, onDelete,
-  endpoints, activeEndpointId, onEndpointsChange, onActiveEndpointChange,
+  endpoints, activeEndpointId, onEndpointAdd, onEndpointDelete, onActiveEndpointChange,
   memories, onMemoryAdd, onMemoryEdit, onMemoryDelete, userEmail, onLogout,
 }: {
   conversations: Conversation[]
@@ -37,7 +37,8 @@ export function ConversationSidebar({
   onDelete: (id: string) => void
   endpoints: Endpoint[]
   activeEndpointId: string
-  onEndpointsChange: (eps: Endpoint[]) => void
+  onEndpointAdd: (ep: Endpoint) => void
+  onEndpointDelete: (id: string) => void
   onActiveEndpointChange: (id: string) => void
   memories: Memory[]
   onMemoryAdd: (content: string) => void
@@ -71,23 +72,19 @@ export function ConversationSidebar({
     if (!draft.baseUrl.trim()) { alert("请填写服务地址"); return }
     if (!draft.model.trim()) { alert("请填写模型名"); return }
     const ep: Endpoint = {
-      id: `ep-${Date.now()}`,
+      id: crypto.randomUUID(),
       protocol,
       name: draft.name.trim(),
       baseUrl: draft.baseUrl.trim(),
       apiKey: draft.apiKey.trim(),
       model: draft.model.trim(),
     }
-    const next = [...endpoints, ep]
-    onEndpointsChange(next)
-    if (!activeEndpointId) onActiveEndpointChange(ep.id)
+    onEndpointAdd(ep)
     setDraft(protocol, null)
   }
 
   function deleteEndpoint(id: string) {
-    const next = endpoints.filter(e => e.id !== id)
-    onEndpointsChange(next)
-    if (activeEndpointId === id) onActiveEndpointChange(next[0]?.id ?? "")
+    onEndpointDelete(id)
   }
 
   function applyOpenAIPreset(preset: (typeof OPENAI_PRESETS)[number]) {

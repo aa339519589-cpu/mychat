@@ -7,6 +7,7 @@ import {
   fetchMemories, insertMemory, updateMemory, deleteMemoryRow,
   fetchConversations, insertConversation, updateConversationTitle, touchConversation, deleteConversationRow,
   fetchMessages, insertMessage, lastExcerpt,
+  fetchEndpoints, insertEndpoint, deleteEndpointRow,
 } from "@/lib/db"
 import { ConversationSidebar } from "@/components/conversation-sidebar"
 import { MessageList } from "@/components/message-list"
@@ -55,15 +56,25 @@ export function LiteraryChat() {
     if (!user) {
       setConversations([])
       setMemories([])
+      setEndpoints([])
       setActiveId("")
+      setActiveEndpointId("")
       loadedRef.current = new Set()
       return
     }
     let cancelled = false
     ;(async () => {
-      const [convs, mems] = await Promise.all([fetchConversations(), fetchMemories()])
+      const [convs, mems, eps] = await Promise.all([fetchConversations(), fetchMemories(), fetchEndpoints()])
       if (cancelled) return
       setMemories(mems)
+      setEndpoints(eps)
+      // 选中端点：用本设备上次选的，否则默认第一个
+      try {
+        const savedActive = localStorage.getItem("chat_active_endpoint")
+        setActiveEndpointId(savedActive && eps.some(e => e.id === savedActive) ? savedActive : eps[0]?.id ?? "")
+      } catch {
+        setActiveEndpointId(eps[0]?.id ?? "")
+      }
       if (convs.length === 0) {
         const id = await insertConversation(user.id, "未命名的篇章")
         if (cancelled || !id) return
@@ -82,45 +93,23 @@ export function LiteraryChat() {
     return () => { cancelled = true }
   }, [user])
 
-  // 模型端点仍保存在本地浏览器（含 API Key，不上云）
-  useEffect(() => {
-    try {
-      let loadedEndpoints: Endpoint[] = []
-      const saved = localStorage.getItem("chat_endpoints")
-      if (saved) {
-        const parsed = JSON.parse(saved)
-        if (Array.isArray(parsed)) {
-          // 只保留协议合法的端点，顺手清除老数据里协议非法、删不掉的"幽灵端点"
-          loadedEndpoints = parsed
-            .filter((endpoint: Endpoint) => endpoint && ["anthropic", "openai", "gemini"].includes(endpoint.protocol))
-            .map((endpoint: Endpoint) => ({
-              ...endpoint,
-              name: String(endpoint.name ?? "").trim(),
-              baseUrl: String(endpoint.baseUrl ?? "").trim(),
-              apiKey: String(endpoint.apiKey ?? "").trim(),
-              model: String(endpoint.model ?? "").trim(),
-            }))
-          setEndpoints(loadedEndpoints)
-          localStorage.setItem("chat_endpoints", JSON.stringify(loadedEndpoints))
-        }
-      }
-      const savedActive = localStorage.getItem("chat_active_endpoint")
-      const nextActive = savedActive && loadedEndpoints.some(endpoint => endpoint.id === savedActive)
-        ? savedActive
-        : loadedEndpoints[0]?.id ?? ""
-      setActiveEndpointId(nextActive)
-      if (nextActive) localStorage.setItem("chat_active_endpoint", nextActive)
-    } catch { /* storage unavailable */ }
-  }, [])
-
-  function handleEndpointsChange(eps: Endpoint[]) {
-    setEndpoints(eps)
-    try { localStorage.setItem("chat_endpoints", JSON.stringify(eps)) } catch { /* storage unavailable */ }
-  }
-
   function handleActiveEndpointChange(id: string) {
     setActiveEndpointId(id)
     try { localStorage.setItem("chat_active_endpoint", id) } catch { /* storage unavailable */ }
+  }
+
+  async function handleEndpointAdd(ep: Endpoint) {
+    if (!user) return
+    setEndpoints(prev => [...prev, ep])
+    insertEndpoint(user.id, ep)
+    if (!activeEndpointId) handleActiveEndpointChange(ep.id)
+  }
+
+  async function handleEndpointDelete(id: string) {
+    const next = endpoints.filter(e => e.id !== id)
+    setEndpoints(next)
+    deleteEndpointRow(id)
+    if (activeEndpointId === id) handleActiveEndpointChange(next[0]?.id ?? "")
   }
 
   const activeEndpoint = endpoints.find(e => e.id === activeEndpointId)
@@ -456,7 +445,8 @@ AI：${aiText.slice(0, 300)}
     onNew: handleNew,
     onDelete: handleDelete,
     endpoints, activeEndpointId,
-    onEndpointsChange: handleEndpointsChange,
+    onEndpointAdd: handleEndpointAdd,
+    onEndpointDelete: handleEndpointDelete,
     onActiveEndpointChange: handleActiveEndpointChange,
     memories,
     onMemoryAdd: handleMemoryAdd,
