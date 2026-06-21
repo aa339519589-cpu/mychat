@@ -45,20 +45,6 @@ export function LoginScreen() {
     }
   }
 
-  async function handleGoogle() {
-    setError("")
-    setLoading(true)
-    try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: { redirectTo: `${window.location.origin}/auth/callback` },
-      })
-      if (error) { setError(translateError(error.message)); setLoading(false) }
-    } catch {
-      setError("无法连接谷歌登录")
-      setLoading(false)
-    }
-  }
 
   return (
     <div className="flex h-dvh w-full items-center justify-center bg-background paper-grain px-6">
@@ -107,23 +93,6 @@ export function LoginScreen() {
           </button>
         </div>
 
-        {/* 分隔线 */}
-        <div className="my-5 flex items-center gap-3">
-          <div className="h-px flex-1 bg-border/60" />
-          <span className="text-[11px] tracking-wider text-muted-foreground">或</span>
-          <div className="h-px flex-1 bg-border/60" />
-        </div>
-
-        {/* 谷歌登录 */}
-        <button
-          onClick={handleGoogle}
-          disabled={loading}
-          className="flex w-full items-center justify-center gap-2.5 rounded-2xl border border-border/70 bg-card/80 px-4 py-3 text-sm text-foreground transition-colors hover:border-border disabled:opacity-60"
-        >
-          <GoogleIcon />
-          用谷歌账号登录
-        </button>
-
         {/* 切换登录/注册 */}
         <p className="mt-6 text-center text-xs text-muted-foreground">
           {mode === "signin" ? "还没有账号？" : "已经有账号了？"}
@@ -145,17 +114,5 @@ function translateError(msg: string): string {
   if (m.includes("user already registered")) return "这个邮箱已经注册过了，直接登录吧"
   if (m.includes("email not confirmed")) return "邮箱还没确认，请查收确认邮件"
   if (m.includes("rate limit")) return "操作太频繁，稍等一下再试"
-  if (m.includes("provider is not enabled")) return "谷歌登录还没在后台开启"
   return msg
-}
-
-function GoogleIcon() {
-  return (
-    <svg className="size-4" viewBox="0 0 24 24">
-      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" />
-      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23z" />
-      <path fill="#FBBC05" d="M5.84 14.1a6.6 6.6 0 0 1 0-4.2V7.06H2.18a11 11 0 0 0 0 9.88l3.66-2.84z" />
-      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84C6.71 7.31 9.14 5.38 12 5.38z" />
-    </svg>
-  )
 }
