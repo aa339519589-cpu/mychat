@@ -67,14 +67,15 @@ export function MessageList({
             </div>
           ) : (
             <div key={m.id} className="flex gap-4 items-start">
-              {/* 头像 */}
-              <div className="flex-shrink-0 mt-1">
+              {/* 陪伴小人 */}
+              <div className="flex-shrink-0 self-end mb-[-4px]">
                 <Image
                   src="/companion.png"
-                  alt="companion"
-                  width={48}
-                  height={48}
-                  className="w-12 h-12 rounded-full"
+                  alt=""
+                  width={56}
+                  height={56}
+                  className="w-14 h-14 select-none"
+                  style={{ mixBlendMode: "multiply" }}
                 />
               </div>
               {/* 消息内容 */}
