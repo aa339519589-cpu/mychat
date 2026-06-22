@@ -8,9 +8,10 @@ import {
   fetchConversations, insertConversation, updateConversationTitle, touchConversation, deleteConversationRow,
   fetchMessages, insertMessage, lastExcerpt,
   deleteMessageRow,
+  fetchProfile, ensureProfile, setMemoryEnabled,
 } from "@/lib/db"
 import { type AttachedFile } from "@/lib/file-extract"
-import { ConversationSidebar } from "@/components/conversation-sidebar"
+import { AppSidebar } from "@/components/app-sidebar"
 import { MessageList } from "@/components/message-list"
 import { ChatInput } from "@/components/chat-input"
 import { LoginScreen } from "@/components/login-screen"
@@ -36,6 +37,7 @@ export function LiteraryChat() {
   const [githubConnected, setGithubConnected] = useState(false)
   const [githubLogin, setGithubLogin] = useState<string | null>(null)
   const [memories, setMemories] = useState<Memory[]>([])
+  const [memoryEnabled, setMemoryEnabledState] = useState(true)
   const [webSearch, setWebSearch] = useState(false)
   const [activeTier, setActiveTier] = useState<Tier>("绝句")
   const [replyTo, setReplyTo] = useState<string | null>(null)
@@ -74,15 +76,18 @@ export function LiteraryChat() {
     if (!user) {
       setConversations([])
       setMemories([])
+      setMemoryEnabledState(true)
       setActiveId("")
       loadedRef.current = new Set()
       return
     }
     let cancelled = false
     ;(async () => {
-      const [convs, mems] = await Promise.all([fetchConversations(), fetchMemories()])
+      ensureProfile(user.id)
+      const [convs, mems, prof] = await Promise.all([fetchConversations(), fetchMemories(), fetchProfile()])
       if (cancelled) return
       setMemories(mems)
+      setMemoryEnabledState(prof.memoryEnabled)
       try {
         const saved = localStorage.getItem("chat_active_tier") as Tier | null
         if (saved && TIERS.some(t => t.id === saved)) setActiveTier(saved)
@@ -195,7 +200,7 @@ export function LiteraryChat() {
         body: JSON.stringify({
           tier: activeTier,
           messages: history,
-          memories: memories.length > 0 ? memories : undefined,
+          memories: memoryEnabled && memories.length > 0 ? memories : undefined,
           attachments: attachments && attachments.length > 0 ? attachments : undefined,
           webSearch,
         }),
@@ -407,6 +412,11 @@ export function LiteraryChat() {
     deleteMemoryRow(id)
   }
 
+  function handleMemoryEnabledChange(v: boolean) {
+    setMemoryEnabledState(v)
+    if (user) setMemoryEnabled(user.id, v)
+  }
+
   async function handleGithubDisconnect() {
     await fetch("/api/auth/github/disconnect", { method: "POST" })
     setGithubConnected(false)
@@ -429,6 +439,8 @@ export function LiteraryChat() {
     onMemoryAdd: handleMemoryAdd,
     onMemoryEdit: handleMemoryEdit,
     onMemoryDelete: handleMemoryDelete,
+    memoryEnabled,
+    onMemoryEnabledChange: handleMemoryEnabledChange,
     userEmail: user?.email ?? "",
     onLogout: handleLogout,
   }
@@ -507,7 +519,7 @@ export function LiteraryChat() {
       <div className="hidden h-dvh min-h-0 w-full overflow-hidden bg-background p-4 paper-grain md:flex">
         <div className={cn("shrink-0 overflow-hidden transition-[width] duration-300 ease-in-out", sidebarCollapsed ? "w-0" : "w-[20rem]")}>
           <div className="h-full w-[20rem] overflow-hidden border-r border-border/50 bg-sidebar/40">
-            <ConversationSidebar {...sidebarProps} />
+            <AppSidebar {...sidebarProps} />
           </div>
         </div>
         {renderChatPane(false)}
@@ -533,10 +545,10 @@ export function LiteraryChat() {
             className={cn("absolute inset-0 h-full w-full bg-foreground/30 transition-opacity", drawerOpen ? "opacity-100" : "opacity-0")}
           />
           <div className={cn(
-            "absolute left-0 top-0 h-dvh w-[min(20rem,88vw)] overflow-hidden rounded-r-2xl border-r border-border bg-sidebar shadow-xl transition-transform",
+            "absolute inset-0 h-dvh w-full overflow-hidden bg-sidebar transition-transform duration-300 ease-out",
             drawerOpen ? "translate-x-0" : "-translate-x-full",
           )}>
-            <ConversationSidebar {...sidebarProps} />
+            <AppSidebar {...sidebarProps} />
           </div>
           {drawerOpen && (
             <button

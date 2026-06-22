@@ -155,12 +155,15 @@ Function-plot 规则：
 - 可以引用公开 CDN（jsDelivr、unpkg、cdnjs），不能请求用户的私有接口。
 - 不要在标签外解释代码；前后用一两句话说明即可。`
 
-type SystemFlags = { webSearch?: boolean }
+type SystemFlags = { webSearch?: boolean; memoryEnabled?: boolean }
 
 // 拼装系统提示词：基础人设 + 已记住的用户信息（带 id 供模型修改/删除）+ 联网提示
 export function buildSystem(memories?: Memory[], flags?: SystemFlags): string {
   let system = BASE_SYSTEM
-  if (memories?.length) {
+  // 记忆总开关关闭：明确告诉模型本次没有任何记忆工具，不要尝试记忆或提及
+  if (flags?.memoryEnabled === false) {
+    system += `\n\n【本次已关闭记忆功能】你没有任何记忆工具（remember / update_memory / forget 均不可用），也看不到任何既往记忆。不要尝试记忆、不要提及"记住"，正常对话即可。`
+  } else if (memories?.length) {
     const memBlock = memories.map(m => `<memory id="${m.id}">${m.content}</memory>`).join('\n')
     system += `
 

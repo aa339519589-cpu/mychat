@@ -35,7 +35,7 @@ function memoryTool(name: string, description: string, schema: ToolSchema): Tool
     name,
     description,
     schema,
-    enabled: f => f.loggedIn,
+    enabled: f => f.loggedIn && f.memoryEnabled,
     execute: async (input, ctx): Promise<ToolOutcome> => {
       const r = await runMemoryOp(ctx, name, input)
       return { result: r.ok ? '操作成功' : '操作失败', event: { memory: r } }

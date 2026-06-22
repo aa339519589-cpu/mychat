@@ -23,8 +23,9 @@ export type ToolSchema = {
 
 // 本次请求的上下文开关，决定哪些工具可用
 export type ToolFlags = {
-  loggedIn: boolean    // 已登录 → 记忆类工具可用
-  webSearch: boolean   // 用户开启联网开关 → 搜索工具可用
+  loggedIn: boolean       // 已登录 → 记忆类工具可用
+  webSearch: boolean      // 用户开启联网开关 → 搜索工具可用
+  memoryEnabled: boolean  // 用户开启记忆总开关 → 记忆类工具可用
 }
 
 // 一个工具的完整定义
