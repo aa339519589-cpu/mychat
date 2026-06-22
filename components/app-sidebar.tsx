@@ -463,6 +463,7 @@ function ProjectsScreen({ projects, conversations, onCreate, onOpen, onDelete }:
   const [adding, setAdding] = useState(false)
   const [name, setName] = useState("")
   const [busy, setBusy] = useState(false)
+  const [search, setSearch] = useState("")
 
   async function create() {
     const n = name.trim()
@@ -474,55 +475,77 @@ function ProjectsScreen({ projects, conversations, onCreate, onOpen, onDelete }:
   }
 
   const countFor = (pid: string) => conversations.filter(c => c.projectId === pid).length
+  const filtered = projects.filter(p => p.name.toLowerCase().includes(search.toLowerCase()))
 
   return (
-    <div className="px-4">
-      {adding ? (
-        <div className="mb-3 space-y-2 rounded-2xl bg-sidebar-accent/30 px-3 py-2.5">
+    <div className="flex flex-col px-4">
+      <div className="mb-4 flex flex-col gap-2">
+        <div className="relative">
+          <Feather className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground/50" />
           <input
-            autoFocus
-            value={name}
-            onChange={e => setName(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); create() } if (e.key === "Escape") { setAdding(false); setName("") } }}
-            placeholder="项目名称……"
-            className="w-full rounded-xl bg-sidebar-accent/50 px-3 py-2 text-sm outline-none placeholder:text-muted-foreground/40 focus:bg-sidebar-accent/70"
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="搜索项目……"
+            className="w-full rounded-2xl bg-sidebar-accent/20 py-2.5 pl-10 pr-4 text-[13px] outline-none placeholder:text-muted-foreground/40 transition-colors border border-sidebar-accent/30 focus:bg-sidebar-accent/40 focus:border-sidebar-accent/50"
           />
-          <div className="flex gap-2">
-            <button onClick={create} disabled={busy} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-primary py-1.5 text-[13px] text-sidebar-primary-foreground disabled:opacity-50">
-              {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}新建
-            </button>
-            <button onClick={() => { setAdding(false); setName("") }} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-accent/60 py-1.5 text-[13px] text-muted-foreground"><X className="size-3.5" />取消</button>
-          </div>
         </div>
-      ) : (
-        <button onClick={() => setAdding(true)} className="mb-3 flex w-full items-center justify-center gap-1.5 rounded-2xl bg-sidebar-accent/40 py-2.5 text-[13px] text-muted-foreground transition-colors hover:bg-sidebar-accent/70 hover:text-foreground">
-          <FolderPlus className="size-4" />新建项目
-        </button>
-      )}
+        {adding ? (
+          <div className="space-y-2">
+            <input
+              autoFocus
+              value={name}
+              onChange={e => setName(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); create() } if (e.key === "Escape") { setAdding(false); setName("") } }}
+              placeholder="项目名称……"
+              className="w-full rounded-xl bg-sidebar-accent/30 px-3 py-2 text-[13px] outline-none placeholder:text-muted-foreground/40 focus:bg-sidebar-accent/50 border border-sidebar-accent/30"
+            />
+            <div className="flex gap-2">
+              <button onClick={create} disabled={busy} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-primary py-1.5 text-[13px] text-sidebar-primary-foreground disabled:opacity-50">
+                {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}新建
+              </button>
+              <button onClick={() => { setAdding(false); setName("") }} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-accent/40 py-1.5 text-[13px] text-muted-foreground"><X className="size-3.5" />取消</button>
+            </div>
+          </div>
+        ) : (
+          <button onClick={() => setAdding(true)} className="flex w-full items-center justify-center gap-1.5 rounded-2xl bg-sidebar-primary py-2.5 text-[13px] text-sidebar-primary-foreground transition-colors hover:bg-sidebar-primary/90">
+            <FolderPlus className="size-4" />New project
+          </button>
+        )}
+      </div>
 
-      {projects.length === 0 && !adding ? (
-        <p className="rounded-2xl bg-sidebar-accent/20 px-4 py-8 text-center text-[13px] italic text-muted-foreground/70">还没有项目</p>
-      ) : (
-        <div className="space-y-1">
-          {projects.map(p => {
+      <div className="flex-1 overflow-y-auto space-y-2">
+        {filtered.length === 0 ? (
+          <p className="rounded-2xl bg-sidebar-accent/20 px-4 py-8 text-center text-[13px] italic text-muted-foreground/70">没有项目</p>
+        ) : (
+          filtered.map(p => {
             const n = countFor(p.id)
             return (
-              <div key={p.id} className="group relative">
-                <button onClick={() => onOpen(p.id)} className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 pr-9 text-left transition-all duration-150 hover:bg-sidebar-accent/60 active:scale-[0.985]">
-                  <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-sidebar-primary/10 text-sidebar-primary"><Folder className="size-4" /></span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-heading text-[15px] tracking-wide text-sidebar-foreground">{p.name}</span>
-                    <span className="block text-[12px] text-muted-foreground">{n > 0 ? `${n} 段对谈 · ` : ""}{p.date}</span>
-                  </span>
-                </button>
-                <button onClick={() => onDelete(p.id)} className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-muted-foreground/40 transition-colors hover:bg-sidebar-accent hover:text-destructive" aria-label="删除项目">
-                  <Trash2 className="size-3.5" />
-                </button>
-              </div>
+              <button
+                key={p.id}
+                onClick={() => onOpen(p.id)}
+                className="group relative flex w-full flex-col gap-2 rounded-2xl bg-sidebar-accent/15 border border-sidebar-accent/20 px-4 py-3 text-left transition-colors hover:bg-sidebar-accent/30 hover:border-sidebar-accent/40 active:scale-[0.99]"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="font-heading text-[14px] tracking-wide text-foreground">{p.name}</div>
+                    {p.instructions && (
+                      <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-muted-foreground">{p.instructions}</p>
+                    )}
+                  </div>
+                  <button
+                    onClick={e => { e.stopPropagation(); onDelete(p.id) }}
+                    className="shrink-0 rounded-lg p-1 text-muted-foreground/40 transition-colors hover:bg-sidebar-accent hover:text-destructive opacity-0 group-hover:opacity-100"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </button>
+                </div>
+                <div className="text-[11px] text-muted-foreground">{n > 0 ? `${n} 段对谈 · ` : ""}{p.date}</div>
+              </button>
             )
-          })}
-        </div>
-      )}
+          })
+        )}
+      </div>
     </div>
   )
 }
@@ -592,6 +615,7 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
 // 项目指令 / 人设：点开成多行编辑器
 function InstructionsCard({ value, onSave }: { value: string; onSave: (v: string) => void }) {
   const [editing, setEditing] = useState(false)
+  const [expanded, setExpanded] = useState(false)
   const [draft, setDraft] = useState(value)
   useEffect(() => { setDraft(value) }, [value])
 
@@ -613,12 +637,37 @@ function InstructionsCard({ value, onSave }: { value: string; onSave: (v: string
     )
   }
 
+  const text = value.trim() || "设定后，本项目每段对谈都会自动沿用。点此编辑。"
+  const lineCount = text.split('\n').length
+  const isTruncated = lineCount > 3 || text.length > 200
+
   return (
-    <button onClick={() => setEditing(true)} className="flex w-full items-start gap-3 rounded-2xl bg-sidebar-accent/30 p-3 text-left transition-colors hover:bg-sidebar-accent/55">
+    <button
+      onClick={() => expanded ? setExpanded(false) : setEditing(true)}
+      className="flex w-full items-start gap-3 rounded-2xl bg-sidebar-accent/30 p-3 text-left transition-colors hover:bg-sidebar-accent/55"
+    >
       <Pencil className="mt-0.5 size-4 shrink-0 text-sidebar-primary" />
       <span className="min-w-0 flex-1">
         <span className="block text-sm text-foreground">项目指令 / 人设</span>
-        <span className="mt-0.5 block line-clamp-2 text-[12px] leading-relaxed text-muted-foreground">{value.trim() || "设定后，本项目每段对谈都会自动沿用。点此编辑。"}</span>
+        <span className={cn("mt-0.5 block text-[12px] leading-relaxed text-muted-foreground", !expanded && "line-clamp-3")}>
+          {text}
+        </span>
+        {isTruncated && !expanded && (
+          <button
+            onClick={e => { e.stopPropagation(); setExpanded(true) }}
+            className="mt-1 text-[11px] text-sidebar-primary transition-colors hover:text-sidebar-primary/80"
+          >
+            展开全文
+          </button>
+        )}
+        {isTruncated && expanded && (
+          <button
+            onClick={e => { e.stopPropagation(); setExpanded(false) }}
+            className="mt-1 text-[11px] text-sidebar-primary transition-colors hover:text-sidebar-primary/80"
+          >
+            收起
+          </button>
+        )}
       </span>
     </button>
   )
