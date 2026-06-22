@@ -7,11 +7,12 @@
 import { memoryTools } from './memory'
 import { webSearchTool } from './web-search'
 import { fetchUrlTool } from './fetch-url'
+import { sheetMusicTool } from './sheet-music'
 import type { ToolDef, ToolFlags, ToolContext, ToolOutcome } from './types'
 
 export type { ToolDef, ToolFlags, ToolContext, ToolOutcome } from './types'
 
-const ALL_TOOLS: ToolDef[] = [...memoryTools, webSearchTool, fetchUrlTool]
+const ALL_TOOLS: ToolDef[] = [...memoryTools, sheetMusicTool, webSearchTool, fetchUrlTool]
 
 // 按本次请求的上下文（是否登录、是否开启联网）筛出可用工具
 export function activeTools(flags: ToolFlags): ToolDef[] {

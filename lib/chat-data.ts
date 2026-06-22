@@ -32,6 +32,7 @@ export type Message = {
   memoryNotes?: string[]   // 本次回复中模型对记忆做的操作（仅当次显示）
   files?: string[]   // 附件文件名（只显示成卡片，全文由后端注入给模型）
   searchNotes?: { query: string; results: { title: string; url: string }[] }[]   // 联网搜索来源
+  sheetMusicNotes?: { type: string; svg: string; status: "rendering" | "done" }[]   // 五线谱渲染
 }
 
 export type Conversation = {

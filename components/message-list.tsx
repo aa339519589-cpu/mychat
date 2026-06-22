@@ -191,6 +191,15 @@ export function MessageList({
                     ))}
                   </div>
                 )}
+                {m.sheetMusicNotes && m.sheetMusicNotes.length > 0 && (
+                  <div className="mb-3 space-y-2">
+                    {m.sheetMusicNotes.map((note, i) => (
+                      <div key={i} className="flex items-center gap-1.5 text-xs italic text-muted-foreground/70 bg-muted/40 rounded px-2 py-1.5">
+                        <span>⏳ 正在渲染{note.type === 'default' ? '五线谱' : note.type === 'c_major' ? 'C大调' : note.type === 'happy_birthday' ? '生日快乐' : '五线谱'}……</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {(() => {
                   // content 始终是模型原始全文，渲染时实时拆分两种 artifact
                   const { display, raw, done, inlineRaw, inlineDone, vegaRaw, vegaDone } = parseArtifact(m.content ?? '')

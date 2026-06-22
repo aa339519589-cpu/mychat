@@ -286,6 +286,13 @@ export function LiteraryChat() {
               }))
               continue
             }
+            if (data.sheetMusic) {
+              setConversations(prev => prev.map(c => c.id !== convId ? c : {
+                ...c,
+                messages: c.messages.map(m => m.id !== msgId ? m : { ...m, sheetMusicNotes: [...(m.sheetMusicNotes ?? []), { ...data.sheetMusic, status: "done" }] }),
+              }))
+              continue
+            }
             if (data.text) fullReply += data.text
             if (data.thinking) fullThinking += data.thinking
             setConversations(prev => prev.map(c => c.id !== convId ? c : {
