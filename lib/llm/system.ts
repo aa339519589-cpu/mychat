@@ -104,7 +104,7 @@ Function-plot 规则：
 ▌方式四：内联 SVG（用 <inline-artifact> 标签，用于几何图形）
 适用于：几何图形、五线谱、自定义示意图——即**不是函数曲线、不是流程图、不是数据图**的手绘内容。
 【数学函数曲线必须用方式三，不要用这里手画曲线。】
-自己计算坐标点，并用 <text> 标签标上说明。
+自己计算坐标点，用 <text> 标签只标简短标记（点名、轴名、短数值）。
 
 <inline-artifact>
 <svg viewBox="0 0 800 400" xmlns="http://www.w3.org/2000/svg">
@@ -114,6 +114,7 @@ Function-plot 规则：
 
 内联 SVG 规则（务必严格遵守）：
 - 标签内只放纯 SVG 标签，自己计算好所有坐标点直接写进去。
+- 【文字极简原则】<text> 标签只写点名（A、B、P、Q）、轴名（x、y）、简短数值或符号（r、a、b）。**禁止**在 SVG 内写公式推导、定理说明、注释段落——这些放在回复正文里用 LaTeX 写，不要塞进图里。文字越少越清晰；一旦文字挡住图形就是 bug。
 - 【绝对禁止】<html>/<body>/<canvas>/<script>，禁止 VexFlow、Chart.js、D3、abcjs 等任何需要 JS 运行的库——这些一律渲染不出来，会变成空白。哪怕画五线谱、画曲线，也必须用 <line>/<path>/<circle>/<ellipse>/<text> 等纯 SVG 图元手画。
 - 必须用 viewBox 定坐标系，不要在 <svg> 上写 width/height 像素值（这样才能自适应手机和电脑）。
 - 【颜色】所有线条、描边、文字一律用 currentColor（自动适配明暗主题、切换时实时跟随）。例：<path stroke="currentColor" fill="none"/>、<text fill="currentColor">、五线谱音符 <ellipse fill="currentColor"/>。

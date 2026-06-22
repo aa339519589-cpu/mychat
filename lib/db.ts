@@ -94,7 +94,26 @@ export async function fetchConversations(): Promise<Conversation[]> {
     .select("id, title, updated_at, project_id, starred, pinned, messages(count)")
     .order("pinned", { ascending: false })
     .order("updated_at", { ascending: false })
-  if (error || !data) return []
+
+  // 主查询失败（如 starred/pinned 列未建、messages 子查询报错）时降级为最简查询，绝不让对话列表返回空
+  if (error || !data) {
+    const { data: fallback } = await supabase
+      .from("conversations")
+      .select("id, title, updated_at, project_id")
+      .order("updated_at", { ascending: false })
+    if (!fallback) return []
+    return fallback.map(r => ({
+      id: r.id as string,
+      title: r.title as string,
+      excerpt: "",
+      date: fmtDate(r.updated_at as string),
+      messages: [],
+      projectId: (r.project_id as string) ?? null,
+      starred: false,
+      pinned: false,
+    }))
+  }
+
   return data.map(r => {
     // 仅当 count 明确返回为数字时才采用；拿不到就留 undefined（按"非空"对待，绝不误删/误藏）
     const m = (r as any).messages
