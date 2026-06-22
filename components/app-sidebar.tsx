@@ -479,40 +479,41 @@ function ProjectsScreen({ projects, conversations, onCreate, onOpen, onDelete }:
 
   return (
     <div className="flex flex-col px-4">
-      <div className="mb-4 flex flex-col gap-2">
-        <div className="relative">
-          <Feather className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground/50" />
+      <div className="mb-4 flex items-start gap-2">
+        <div className="relative flex-1">
+          <Feather className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-sidebar-primary/70" />
           <input
             type="text"
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="搜索项目……"
-            className="w-full rounded-2xl bg-sidebar-accent/20 py-2.5 pl-10 pr-4 text-[13px] outline-none placeholder:text-muted-foreground/40 transition-colors border border-sidebar-accent/30 focus:bg-sidebar-accent/40 focus:border-sidebar-accent/50"
+            className="w-full rounded-xl bg-sidebar-accent/40 py-2 pl-10 pr-3 text-[13px] outline-none placeholder:text-muted-foreground/50 transition-colors border border-sidebar-primary/40 focus:bg-sidebar-accent/60 focus:border-sidebar-primary/70"
           />
         </div>
-        {adding ? (
-          <div className="space-y-2">
-            <input
-              autoFocus
-              value={name}
-              onChange={e => setName(e.target.value)}
-              onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); create() } if (e.key === "Escape") { setAdding(false); setName("") } }}
-              placeholder="项目名称……"
-              className="w-full rounded-xl bg-sidebar-accent/30 px-3 py-2 text-[13px] outline-none placeholder:text-muted-foreground/40 focus:bg-sidebar-accent/50 border border-sidebar-accent/30"
-            />
-            <div className="flex gap-2">
-              <button onClick={create} disabled={busy} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-primary py-1.5 text-[13px] text-sidebar-primary-foreground disabled:opacity-50">
-                {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}新建
-              </button>
-              <button onClick={() => { setAdding(false); setName("") }} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-accent/40 py-1.5 text-[13px] text-muted-foreground"><X className="size-3.5" />取消</button>
-            </div>
-          </div>
-        ) : (
-          <button onClick={() => setAdding(true)} className="flex w-full items-center justify-center gap-1.5 rounded-2xl bg-sidebar-primary py-2.5 text-[13px] text-sidebar-primary-foreground transition-colors hover:bg-sidebar-primary/90">
-            <FolderPlus className="size-4" />New project
+        {!adding && (
+          <button onClick={() => setAdding(true)} className="shrink-0 rounded-lg bg-sidebar-primary p-1.5 text-sidebar-primary-foreground transition-colors hover:bg-sidebar-primary/90" title="新建项目">
+            <FolderPlus className="size-4" />
           </button>
         )}
       </div>
+      {adding && (
+        <div className="mb-4 space-y-2">
+          <input
+            autoFocus
+            value={name}
+            onChange={e => setName(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); create() } if (e.key === "Escape") { setAdding(false); setName("") } }}
+            placeholder="项目名称……"
+            className="w-full rounded-xl bg-sidebar-accent/40 px-3 py-2 text-[13px] outline-none placeholder:text-muted-foreground/40 focus:bg-sidebar-accent/60 border border-sidebar-primary/40"
+          />
+          <div className="flex gap-2">
+            <button onClick={create} disabled={busy} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-primary py-1.5 text-[13px] text-sidebar-primary-foreground disabled:opacity-50">
+              {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}新建
+            </button>
+            <button onClick={() => { setAdding(false); setName("") }} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-accent/40 py-1.5 text-[13px] text-muted-foreground"><X className="size-3.5" />取消</button>
+          </div>
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto space-y-2">
         {filtered.length === 0 ? (
@@ -524,7 +525,7 @@ function ProjectsScreen({ projects, conversations, onCreate, onOpen, onDelete }:
               <button
                 key={p.id}
                 onClick={() => onOpen(p.id)}
-                className="group relative flex w-full flex-col gap-2 rounded-2xl bg-sidebar-accent/15 border border-sidebar-accent/20 px-4 py-3 text-left transition-colors hover:bg-sidebar-accent/30 hover:border-sidebar-accent/40 active:scale-[0.99]"
+                className="group relative flex w-full flex-col gap-2 rounded-2xl bg-sidebar-accent/35 border border-sidebar-accent/60 px-4 py-3 text-left transition-colors hover:bg-sidebar-accent/50 hover:border-sidebar-accent/80 active:scale-[0.99]"
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
