@@ -90,6 +90,7 @@ export async function runOpenAITurn(
   const callMap: Record<number, { id: string; name: string; args: string }> = {}
 
   function handle(obj: any) {
+    if (obj?.usage?.total_tokens) totalTokens = obj.usage.total_tokens
     const choice = obj?.choices?.[0]
     if (!choice) return
     const delta = choice.delta ?? choice.message ?? {}
@@ -104,7 +105,6 @@ export async function runOpenAITurn(
         if (tc.function?.arguments) callMap[idx].args += tc.function.arguments
       }
     }
-    if (obj?.usage?.total_tokens) totalTokens = obj.usage.total_tokens
   }
 
   if (res.headers.get('content-type')?.includes('application/json')) {
