@@ -1,13 +1,12 @@
 "use client"
 
 import { useMemo, useRef, useState, useEffect } from "react"
-import { type Conversation, type Message, type Endpoint } from "@/lib/chat-data"
+import { type Conversation, type Message, type Tier, TIERS } from "@/lib/chat-data"
 import { type Memory } from "@/lib/memory-data"
 import {
   fetchMemories, insertMemory, updateMemory, deleteMemoryRow,
   fetchConversations, insertConversation, updateConversationTitle, touchConversation, deleteConversationRow,
   fetchMessages, insertMessage, lastExcerpt,
-  fetchEndpoints, insertEndpoint, deleteEndpointRow,
   deleteMessageRow,
 } from "@/lib/db"
 import { type AttachedFile } from "@/lib/file-extract"
@@ -38,8 +37,7 @@ export function LiteraryChat() {
   const [githubLogin, setGithubLogin] = useState<string | null>(null)
   const [memories, setMemories] = useState<Memory[]>([])
   const [webSearch, setWebSearch] = useState(false)
-  const [endpoints, setEndpoints] = useState<Endpoint[]>([])
-  const [activeEndpointId, setActiveEndpointId] = useState("")
+  const [activeTier, setActiveTier] = useState<Tier>("绝句")
   const [replyTo, setReplyTo] = useState<string | null>(null)
   const [openArtifactId, setOpenArtifactId] = useState<string | null>(null)
 
@@ -84,16 +82,13 @@ export function LiteraryChat() {
     }
     let cancelled = false
     ;(async () => {
-      const [convs, mems, eps] = await Promise.all([fetchConversations(), fetchMemories(), fetchEndpoints()])
+      const [convs, mems] = await Promise.all([fetchConversations(), fetchMemories()])
       if (cancelled) return
       setMemories(mems)
-      setEndpoints(eps)
       try {
-        const savedActive = localStorage.getItem("chat_active_endpoint")
-        setActiveEndpointId(savedActive && eps.some(e => e.id === savedActive) ? savedActive : eps[0]?.id ?? "")
-      } catch {
-        setActiveEndpointId(eps[0]?.id ?? "")
-      }
+        const saved = localStorage.getItem("chat_active_tier") as Tier | null
+        if (saved && TIERS.some(t => t.id === saved)) setActiveTier(saved)
+      } catch {}
       if (convs.length === 0) {
         const id = await insertConversation(user.id, "未命名的篇章")
         if (cancelled || !id) return
@@ -112,36 +107,12 @@ export function LiteraryChat() {
     return () => { cancelled = true }
   }, [user])
 
-  function handleActiveEndpointChange(id: string) {
-    setActiveEndpointId(id)
-    try { localStorage.setItem("chat_active_endpoint", id) } catch { /* storage unavailable */ }
+  function handleTierChange(t: Tier) {
+    setActiveTier(t)
+    try { localStorage.setItem("chat_active_tier", t) } catch {}
   }
 
-  async function handleEndpointAdd(ep: Endpoint) {
-    if (!user) return
-    setEndpoints(prev => [...prev, ep])
-    const res = await insertEndpoint(user.id, ep)
-    if (!res.ok) {
-      setEndpoints(prev => prev.filter(e => e.id !== ep.id))
-      alert(
-        /relation|schema|endpoints|does not exist/i.test(res.error ?? "")
-          ? "保存失败：数据库里还没有 endpoints 表。请先到 Supabase 的 SQL Editor 跑一遍建表 SQL，再来添加。"
-          : `保存失败，请重试：${res.error ?? "网络问题"}`,
-      )
-      return
-    }
-    if (!activeEndpointId) handleActiveEndpointChange(ep.id)
-  }
-
-  async function handleEndpointDelete(id: string) {
-    const next = endpoints.filter(e => e.id !== id)
-    setEndpoints(next)
-    deleteEndpointRow(id)
-    if (activeEndpointId === id) handleActiveEndpointChange(next[0]?.id ?? "")
-  }
-
-  const activeEndpoint = endpoints.find(e => e.id === activeEndpointId)
-  const activeName = activeEndpoint?.name ?? "笔友"
+  const activeName = activeTier
 
   const active = useMemo(
     () => conversations.find(c => c.id === activeId),
@@ -167,16 +138,12 @@ export function LiteraryChat() {
   }
 
   async function generateTitle(convId: string, userText: string, aiText: string) {
-    if (!activeEndpoint) return
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          protocol: activeEndpoint.protocol,
-          baseUrl: activeEndpoint.baseUrl,
-          apiKey: activeEndpoint.apiKey,
-          model: activeEndpoint.model,
+          tier: "绝句",
           messages: [{ role: "user", content: `根据下面这段对话，给出一个10字以内的标题，只输出标题本身，不要引号和标点：\n用户：${userText.slice(0, 80)}\nAI：${aiText.slice(0, 80)}` }],
         }),
       })
@@ -212,10 +179,8 @@ export function LiteraryChat() {
     controller: AbortController,
     attachments?: AttachedFile[],
   ): Promise<string> {
-    const endpoint = activeEndpoint
-    if (!endpoint || !user) { setIsLoading(false); return "" }
+    if (!user) { setIsLoading(false); return "" }
 
-    // 注入 GitHub 上下文前缀
     const prefix: HistoryMsg[] = []
     if (githubContext) {
       prefix.push({ role: "user", content: `GitHub 仓库上下文 (${githubContext.repo}):\n${githubContext.context.slice(0, 2000)}` })
@@ -230,10 +195,7 @@ export function LiteraryChat() {
         signal: controller.signal,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          protocol: endpoint.protocol,
-          baseUrl: endpoint.baseUrl,
-          apiKey: endpoint.apiKey,
-          model: endpoint.model,
+          tier: activeTier,
           messages: history,
           memories: memories.length > 0 ? memories : undefined,
           attachments: attachments && attachments.length > 0 ? attachments : undefined,
@@ -337,13 +299,6 @@ export function LiteraryChat() {
   async function handleSend(text: string, images?: string[], files?: AttachedFile[]) {
     if (!user || !active) return
     const userMsg: Message = { id: crypto.randomUUID(), role: "user", content: text, time: "此刻", images, files: files?.map(f => f.name) }
-
-    if (!activeEndpoint) {
-      setConversations(prev => prev.map(c => c.id === activeId ? {
-        ...c, messages: [...c.messages, userMsg, { id: crypto.randomUUID(), role: "assistant", content: "请先点击左下角齿轮图标，添加一个 API 端点。", time: "此刻", isError: true }]
-      } : c))
-      return
-    }
 
     const convId = activeId
     const msgId = crypto.randomUUID()
@@ -472,10 +427,6 @@ export function LiteraryChat() {
     onSelect: handleSelect,
     onNew: handleNew,
     onDelete: handleDelete,
-    endpoints, activeEndpointId,
-    onEndpointAdd: handleEndpointAdd,
-    onEndpointDelete: handleEndpointDelete,
-    onActiveEndpointChange: handleActiveEndpointChange,
     memories,
     onMemoryAdd: handleMemoryAdd,
     onMemoryEdit: handleMemoryEdit,
@@ -526,9 +477,8 @@ export function LiteraryChat() {
 
         <ChatInput
           onSend={handleSend}
-          endpoints={endpoints}
-          activeEndpointId={activeEndpointId}
-          onEndpointChange={handleActiveEndpointChange}
+          activeTier={activeTier}
+          onTierChange={handleTierChange}
           mobile={mobile}
           githubContext={githubContext}
           onGithubConnect={(ctx) => { setGithubContext(ctx); if (ctx) setGithubConnected(true) }}

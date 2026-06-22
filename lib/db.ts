@@ -2,7 +2,7 @@
 // 所有数据都带 user_id，靠数据库 RLS 保证账号隔离（用户只能读写自己的）
 import { createClient } from "@/lib/supabase/client"
 import type { Memory } from "@/lib/memory-data"
-import type { Conversation, Message, Endpoint } from "@/lib/chat-data"
+import type { Conversation, Message } from "@/lib/chat-data"
 
 function fmtDate(iso: string): string {
   const d = new Date(iso)
@@ -133,49 +133,6 @@ export async function insertMessage(userId: string, conversationId: string, msg:
     thinking: msg.thinking ?? null,
   })
   if (error) console.error("insertMessage", error)
-}
-
-// ───────────── 模型端点（含 API Key，靠 RLS 隔离，只有本人能读） ─────────────
-
-export async function fetchEndpoints(): Promise<Endpoint[]> {
-  const supabase = createClient()
-  const { data, error } = await supabase
-    .from("endpoints")
-    .select("id, name, protocol, base_url, api_key, model")
-    .order("created_at", { ascending: true })
-  if (error || !data) return []
-  return data.map(r => ({
-    id: r.id as string,
-    name: r.name as string,
-    protocol: r.protocol as Endpoint["protocol"],
-    baseUrl: r.base_url as string,
-    apiKey: r.api_key as string,
-    model: r.model as string,
-  }))
-}
-
-export async function insertEndpoint(userId: string, ep: Endpoint): Promise<{ ok: boolean; error?: string }> {
-  const supabase = createClient()
-  const { error } = await supabase.from("endpoints").insert({
-    id: ep.id,
-    user_id: userId,
-    name: ep.name,
-    protocol: ep.protocol,
-    base_url: ep.baseUrl,
-    api_key: ep.apiKey,
-    model: ep.model,
-  })
-  if (error) {
-    console.error("insertEndpoint", error)
-    return { ok: false, error: error.message }
-  }
-  return { ok: true }
-}
-
-export async function deleteEndpointRow(id: string): Promise<void> {
-  const supabase = createClient()
-  const { error } = await supabase.from("endpoints").delete().eq("id", id)
-  if (error) console.error("deleteEndpointRow", error)
 }
 
 export async function deleteMessageRow(id: string): Promise<void> {

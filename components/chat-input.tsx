@@ -2,8 +2,8 @@
 
 import { useRef, useState, useEffect } from "react"
 import { cn } from "@/lib/utils"
-import { ChevronDown, X, Loader2, Plus, ImageIcon, FileText, Globe, ArrowUp, ExternalLink, LogOut, Square, CornerUpLeft } from "lucide-react"
-import type { Endpoint } from "@/lib/chat-data"
+import { X, Loader2, Plus, ImageIcon, FileText, Globe, ArrowUp, ExternalLink, LogOut, Square, CornerUpLeft } from "lucide-react"
+import { TIERS, type Tier } from "@/lib/chat-data"
 import { prepareFile, type AttachedFile } from "@/lib/file-extract"
 
 type GithubContext = { repo: string; context: string }
@@ -18,7 +18,7 @@ function GitHubIcon({ className }: { className?: string }) {
 }
 
 export function ChatInput({
-  onSend, endpoints, activeEndpointId, onEndpointChange, mobile,
+  onSend, activeTier, onTierChange, mobile,
   githubContext, onGithubConnect,
   githubConnected, githubLogin, onGithubDisconnect,
   webSearch, onWebSearchChange,
@@ -26,9 +26,8 @@ export function ChatInput({
   replyTo, onClearReply,
 }: {
   onSend: (text: string, images?: string[], files?: AttachedFile[]) => void
-  endpoints: Endpoint[]
-  activeEndpointId: string
-  onEndpointChange: (id: string) => void
+  activeTier: Tier
+  onTierChange: (t: Tier) => void
   mobile: boolean
   githubContext: GithubContext | null
   onGithubConnect: (ctx: GithubContext | null) => void
@@ -159,20 +158,22 @@ export function ChatInput({
     )}>
       {/* 工具栏 */}
       <div className="mb-2 flex items-center gap-2 px-1">
-        {endpoints.length > 0 && (
-          <div className="relative">
-            <select
-              value={activeEndpointId}
-              onChange={e => onEndpointChange(e.target.value)}
-              className="appearance-none rounded-full border border-border/50 bg-secondary/50 pl-3 pr-7 py-1 text-xs text-muted-foreground outline-none cursor-pointer hover:border-border transition-colors"
+        <div className="flex items-center gap-1 rounded-full border border-border/50 bg-secondary/50 p-0.5">
+          {TIERS.map(t => (
+            <button
+              key={t.id}
+              onClick={() => onTierChange(t.id)}
+              className={cn(
+                "rounded-full px-2.5 py-0.5 text-xs transition-colors",
+                activeTier === t.id
+                  ? "bg-foreground text-background"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
             >
-              {endpoints.map(ep => (
-                <option key={ep.id} value={ep.id}>{ep.name}</option>
-              ))}
-            </select>
-            <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 size-3 text-muted-foreground" />
-          </div>
-        )}
+              {t.id}
+            </button>
+          ))}
+        </div>
 
         <button
           onClick={() => onWebSearchChange(!webSearch)}

@@ -58,8 +58,10 @@ export async function injectAttachmentsOpenAI(msgs: any[], attachments?: Attachm
 export async function runOpenAITurn(
   url: string, apiKey: string, model: string,
   messages: any[], tools: any[], controller: ReadableStreamDefaultController,
+  opts?: { thinking?: boolean },
 ): Promise<{ assistantMessage: any; toolCalls: { id: string; name: string; args: string }[]; failed: boolean }> {
   const body: any = { model, messages, stream: true }
+  if (opts?.thinking) body.thinking_budget_tokens = 8000
   if (tools.length) { body.tools = tools; body.tool_choice = 'auto' }
 
   const res = await fetch(url, {

@@ -1,25 +1,14 @@
-export type Protocol = "anthropic" | "openai" | "gemini"
+export type Tier = "绝句" | "正构" | "鸿篇"
 
-export type Endpoint = {
-  id: string
-  name: string       // 用户自定义名称，如"我的DeepSeek"
-  protocol: Protocol
-  baseUrl: string    // 如 https://api.deepseek.com
-  apiKey: string
-  model: string      // 如 deepseek-chat
-}
+export type TierConfig = { id: Tier; label: string; desc: string; model: string; thinking: boolean }
 
-export const PROTOCOL_LABELS: Record<Protocol, string> = {
-  anthropic: "Anthropic 协议",
-  openai: "DeepSeek / OpenAI 兼容",
-  gemini: "Gemini 协议",
-}
+export const TIERS: TierConfig[] = [
+  { id: "绝句", label: "绝句", desc: "迅捷",  model: "deepseek-chat",     thinking: false },
+  { id: "正构", label: "正构", desc: "思考",  model: "deepseek-chat",     thinking: true  },
+  { id: "鸿篇", label: "鸿篇", desc: "深推",  model: "deepseek-reasoner", thinking: true  },
+]
 
-export const PROTOCOL_DEFAULTS: Record<Protocol, { baseUrl: string; model: string }> = {
-  anthropic: { baseUrl: "https://api.anthropic.com", model: "claude-sonnet-4-6" },
-  openai: { baseUrl: "https://api.deepseek.com", model: "deepseek-chat" },
-  gemini: { baseUrl: "https://generativelanguage.googleapis.com", model: "gemini-2.0-flash" },
-}
+export const TIER_MAP: Record<Tier, TierConfig> = Object.fromEntries(TIERS.map(t => [t.id, t])) as Record<Tier, TierConfig>
 
 export type Message = {
   id: string
@@ -27,12 +16,12 @@ export type Message = {
   content: string
   time: string
   isError?: boolean
-  thinking?: string   // 思考链文本
-  images?: string[]   // base64 data URLs
-  memoryNotes?: string[]   // 本次回复中模型对记忆做的操作（仅当次显示）
-  files?: string[]   // 附件文件名（只显示成卡片，全文由后端注入给模型）
-  searchNotes?: { query: string; results: { title: string; url: string }[] }[]   // 联网搜索来源
-  sheetMusicNotes?: { type: string; svg: string; status: "rendering" | "done" }[]   // 五线谱渲染
+  thinking?: string
+  images?: string[]
+  memoryNotes?: string[]
+  files?: string[]
+  searchNotes?: { query: string; results: { title: string; url: string }[] }[]
+  sheetMusicNotes?: { type: string; svg: string; status: "rendering" | "done" }[]
 }
 
 export type Conversation = {
