@@ -5,10 +5,8 @@ export async function GET(req: NextRequest) {
   const clientId = process.env.GITHUB_CLIENT_ID
   if (!clientId) return new Response('GitHub OAuth 未配置', { status: 500 })
 
-  // x-forwarded-host 是 Render 反向代理传入的真实域名，优先使用
-  const host = req.headers.get('x-forwarded-host') ?? req.headers.get('host') ?? 'mychat-nm6x.onrender.com'
-  const proto = host.startsWith('localhost') ? 'http' : 'https'
-  const redirectUri = `${proto}://${host}/api/auth/github/callback`
+  const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? 'https://mychat-nm6x.onrender.com').replace(/\/$/, '')
+  const redirectUri = `${appUrl}/api/auth/github/callback`
 
   // state 用于回调时验证，防止 CSRF
   const state = crypto.randomUUID()
