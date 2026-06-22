@@ -375,7 +375,7 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
 
   return (
     <div className="px-4">
-      <div className="flex items-start gap-3 rounded-2xl bg-sidebar-accent/30 p-4">
+      <div className="flex items-start gap-3 rounded-2xl bg-sidebar-accent/45 border border-sidebar-accent/70 p-4">
         <Brain className="mt-0.5 size-5 shrink-0 text-sidebar-primary" />
         <div className="min-w-0 flex-1">
           <p className="text-sm text-foreground">开启记忆</p>
@@ -393,11 +393,11 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
 
         <div className="space-y-2">
           {memories.length === 0 && !adding && (
-            <p className="rounded-2xl bg-sidebar-accent/20 px-4 py-6 text-center text-[13px] italic text-muted-foreground/70">还没有记忆</p>
+            <p className="rounded-2xl bg-sidebar-accent/40 border border-sidebar-accent/60 px-4 py-6 text-center text-[13px] italic text-muted-foreground/70">还没有记忆</p>
           )}
 
           {memories.map(m => (
-            <div key={m.id} className="rounded-2xl bg-sidebar-accent/30 px-3 py-2.5">
+            <div key={m.id} className="rounded-2xl bg-sidebar-accent/40 border border-sidebar-accent/60 px-3 py-2.5">
               {editingId === m.id ? (
                 <div className="space-y-2">
                   <textarea
@@ -405,7 +405,7 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
                     value={editValue}
                     onChange={e => setEditValue(e.target.value)}
                     onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveEdit() } if (e.key === "Escape") setEditingId(null) }}
-                    className="w-full resize-none rounded-xl bg-sidebar-accent/50 px-3 py-2 text-[13px] outline-none focus:bg-sidebar-accent/70"
+                    className="w-full resize-none rounded-xl bg-sidebar-accent/60 border border-sidebar-accent/70 px-3 py-2 text-[13px] outline-none focus:bg-sidebar-accent/80"
                     rows={2}
                   />
                   <div className="flex gap-2">
@@ -426,14 +426,14 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
           ))}
 
           {adding ? (
-            <div className="space-y-2 rounded-2xl bg-sidebar-accent/30 px-3 py-2.5">
+            <div className="space-y-2 rounded-2xl bg-sidebar-accent/40 border border-sidebar-accent/60 px-3 py-2.5">
               <textarea
                 autoFocus
                 value={newValue}
                 onChange={e => setNewValue(e.target.value)}
                 onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addMemory() } if (e.key === "Escape") setAdding(false) }}
                 placeholder="输入要记住的内容……"
-                className="w-full resize-none rounded-xl bg-sidebar-accent/50 px-3 py-2 text-[13px] outline-none placeholder:text-muted-foreground/40 focus:bg-sidebar-accent/70"
+                className="w-full resize-none rounded-xl bg-sidebar-accent/60 border border-sidebar-accent/70 px-3 py-2 text-[13px] outline-none placeholder:text-muted-foreground/40 focus:bg-sidebar-accent/80"
                 rows={2}
               />
               <div className="flex gap-2">
@@ -442,7 +442,7 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
               </div>
             </div>
           ) : (
-            <button onClick={() => setAdding(true)} className="flex w-full items-center justify-center gap-1.5 rounded-2xl bg-sidebar-accent/40 py-2.5 text-[13px] text-muted-foreground transition-colors hover:bg-sidebar-accent/70 hover:text-foreground">
+            <button onClick={() => setAdding(true)} className="flex w-full items-center justify-center gap-1.5 rounded-2xl bg-sidebar-accent/45 border border-sidebar-accent/70 py-2.5 text-[13px] text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-foreground">
               <Plus className="size-4" />手动添加记忆
             </button>
           )}
@@ -971,7 +971,7 @@ function SystemPromptScreen() {
         value={value}
         onChange={e => setValue(e.target.value)}
         placeholder="比如：「回复尽量简短」「优先中文资料」「多用表格和列表」"
-        className="w-full min-h-[160px] resize-none rounded-2xl bg-sidebar-accent/20 px-4 py-3 text-[13px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/40 transition-colors focus:bg-sidebar-accent/40 border border-sidebar-accent/30 focus:border-sidebar-accent/50"
+        className="w-full min-h-[160px] resize-none rounded-2xl bg-sidebar-accent/45 px-4 py-3 text-[13px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/40 transition-colors focus:bg-sidebar-accent/60 border border-sidebar-accent/70 focus:border-sidebar-primary/50"
       />
       <button
         onClick={save}
@@ -1020,12 +1020,12 @@ function QuotaScreen() {
   return (
     <div className="space-y-4 px-4">
 
-      <div className="space-y-2.5 rounded-2xl bg-sidebar-accent/15 p-4 border border-sidebar-accent/20">
+      <div className="space-y-2.5 rounded-2xl bg-sidebar-accent/45 p-4 border border-sidebar-accent/70">
         <div className="flex items-baseline justify-between">
           <span className="text-[13px] font-medium text-foreground">5 小时用量</span>
           <span className="text-[11px] text-muted-foreground">{fmtRemaining(w5h, 5 * 3600 * 1000)}</span>
         </div>
-        <div className="h-1.5 overflow-hidden rounded-full bg-sidebar-accent/25">
+        <div className="h-1.5 overflow-hidden rounded-full bg-sidebar-accent/60">
           <div className="h-full rounded-full bg-sidebar-primary transition-all" style={{ width: `${pct(t5h, max5h)}%` }} />
         </div>
         <div className="flex justify-between text-[11px] text-muted-foreground">
@@ -1034,12 +1034,12 @@ function QuotaScreen() {
         </div>
       </div>
 
-      <div className="space-y-2.5 rounded-2xl bg-sidebar-accent/15 p-4 border border-sidebar-accent/20">
+      <div className="space-y-2.5 rounded-2xl bg-sidebar-accent/45 p-4 border border-sidebar-accent/70">
         <div className="flex items-baseline justify-between">
           <span className="text-[13px] font-medium text-foreground">7 天用量</span>
           <span className="text-[11px] text-muted-foreground">{fmtRemaining(w7d, 7 * 86400 * 1000)}</span>
         </div>
-        <div className="h-1.5 overflow-hidden rounded-full bg-sidebar-accent/25">
+        <div className="h-1.5 overflow-hidden rounded-full bg-sidebar-accent/60">
           <div className="h-full rounded-full bg-sidebar-primary transition-all" style={{ width: `${pct(t7d, max7d)}%` }} />
         </div>
         <div className="flex justify-between text-[11px] text-muted-foreground">
