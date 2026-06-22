@@ -1,85 +1,88 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
-import { Maximize2, Minimize2 } from "lucide-react"
-import { sanitizeForPreview } from "@/lib/artifact"
+import { useEffect, useMemo, useRef, useState } from "react"
 
-// 把页面当前主题色注入 iframe，让渲染内容背景匹配页面
-function injectTheme(html: string): string {
-  let bg = '#ffffff', fg = '#1a1a1a'
-  if (typeof document !== 'undefined') {
-    const s = getComputedStyle(document.documentElement)
-    const bgVal = s.getPropertyValue('--background').trim()
-    const fgVal = s.getPropertyValue('--foreground').trim()
-    if (bgVal) bg = `hsl(${bgVal})`
-    if (fgVal) fg = `hsl(${fgVal})`
-  }
-  const style = `<style id="__th__">
-html,body{background:${bg};color:${fg};margin:0;padding:1rem;font-family:system-ui,-apple-system,sans-serif;box-sizing:border-box;}
-*,*::before,*::after{box-sizing:border-box;}
-</style>`
-  if (html.includes('</head>')) return html.replace('</head>', style + '</head>')
-  if (html.match(/<body[^>]*>/i)) return html.replace(/(<body[^>]*>)/i, `$1${style}`)
-  return style + html
+type Colors = { fg: string; bg: string; scheme: "light" | "dark" }
+
+// 读取页面当前主题色，注入给 iframe，让渲染内容跟随明暗
+function readTheme(): Colors {
+  if (typeof document === "undefined") return { fg: "#1a1a1a", bg: "#ffffff", scheme: "light" }
+  const cs = getComputedStyle(document.documentElement)
+  const fg = cs.getPropertyValue("--foreground").trim() || "#1a1a1a"
+  const bg = cs.getPropertyValue("--background").trim() || "#ffffff"
+  const root = document.documentElement
+  const dark = root.classList.contains("dark") ||
+    (!root.classList.contains("light") && typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches)
+  return { fg, bg, scheme: dark ? "dark" : "light" }
 }
 
-export function ArtifactFrame({
-  html,
-  partialHtml,
-  loading,
-}: {
-  html: string | null
-  partialHtml: string | null
-  loading: boolean
-}) {
+// iframe 空壳：只创建一次，之后全靠 postMessage 更新（绝不重写 srcdoc，避免重载闪烁）
+function bootstrap(c: Colors): string {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+:root{--fg:${c.fg};--bg:${c.bg};color-scheme:${c.scheme};}
+html,body{background:transparent;margin:0;padding:16px;color:var(--fg);font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;box-sizing:border-box;min-height:100%;}
+*{box-sizing:border-box;}#__v{width:100%;}
+</style>
+<script>(function(){
+window.addEventListener("message",function(e){var d=e.data||{};
+if(d.__art==="preview"){var v=document.getElementById("__v");if(v)v.innerHTML=d.html;}
+else if(d.__art==="final"){document.open();document.write(d.html);document.close();}});
+parent.postMessage({__art:"ready"},"*");
+})();</script>
+</head><body><div id="__v"></div></body></html>`
+}
+
+// 完成时写入完整文档：注入透明背景 + 主题变量，脚本按序执行
+function prepareFinal(raw: string, c: Colors): string {
+  const inject = `<style>
+:root{--fg:${c.fg};--bg:${c.bg};color-scheme:${c.scheme};}
+html,body{background:transparent!important;color:var(--fg);}
+</style>`
+  if (/<head[^>]*>/i.test(raw)) return raw.replace(/(<head[^>]*>)/i, `$1${inject}`)
+  if (/<\/head>/i.test(raw)) return raw.replace(/<\/head>/i, `${inject}</head>`)
+  if (/<body[^>]*>/i.test(raw)) return raw.replace(/(<body[^>]*>)/i, `$1${inject}`)
+  return inject + raw
+}
+
+// 持久 iframe 渲染器：流式 preview（innerHTML，不跑脚本）→ 完成 final（document.write，跑脚本）
+export function ArtifactFrame({ raw, done }: { raw: string; done: boolean }) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
-  const [expanded, setExpanded] = useState(false)
+  const [ready, setReady] = useState(false)
+  const finalizedRef = useRef(false)
+  const colors = useMemo(readTheme, [])
+  const srcDoc = useMemo(() => bootstrap(colors), [colors])
 
-  // iframe 内容完成时一次性写入，不用 srcdoc prop（避免 React 触发 iframe 重载）
   useEffect(() => {
-    if (!html || !iframeRef.current) return
-    iframeRef.current.srcdoc = injectTheme(html)
-  }, [html])
+    function onMsg(e: MessageEvent) {
+      if (e.source !== iframeRef.current?.contentWindow) return
+      if ((e.data || {}).__art === "ready") setReady(true)
+    }
+    window.addEventListener("message", onMsg)
+    return () => window.removeEventListener("message", onMsg)
+  }, [])
 
-  // ── 流式预览：用去脚本的 HTML 安全地内联渲染 ──
-  if (loading) {
-    const preview = sanitizeForPreview(partialHtml ?? '')
-    return (
-      <div className="mt-3 min-h-[2rem] overflow-hidden">
-        {preview ? (
-          <div
-            className="text-[14px] leading-relaxed text-foreground/90"
-            dangerouslySetInnerHTML={{ __html: preview }}
-          />
-        ) : (
-          <span className="text-xs italic text-muted-foreground/50">渲染中……</span>
-        )}
-      </div>
-    )
-  }
+  // 流式预览：raw 变化推送（未完成阶段，静态内容边长边现）
+  useEffect(() => {
+    if (!ready || done) return
+    iframeRef.current?.contentWindow?.postMessage({ __art: "preview", html: raw }, "*")
+  }, [raw, ready, done])
 
-  if (!html) return null
+  // 完成：写入完整文档，脚本执行（图表/动画出现）
+  useEffect(() => {
+    if (!ready || !done || finalizedRef.current) return
+    iframeRef.current?.contentWindow?.postMessage({ __art: "final", html: prepareFinal(raw, colors) }, "*")
+    finalizedRef.current = true
+  }, [ready, done, raw, colors])
 
-  // ── 完成后：沙盒 iframe，支持全屏 ──
   return (
-    <div className={expanded ? 'fixed inset-4 z-50 rounded-2xl overflow-hidden shadow-2xl border border-border/30 bg-background' : 'mt-3 rounded-xl overflow-hidden'}>
-      {/* 极细的操作条，hover 时才出现 */}
-      <div className="group relative">
-        <button
-          onClick={() => setExpanded(v => !v)}
-          className="absolute right-2 top-2 z-10 flex size-6 items-center justify-center rounded-full bg-background/70 text-muted-foreground opacity-0 shadow transition-opacity hover:text-foreground group-hover:opacity-100"
-          aria-label={expanded ? "缩小" : "全屏"}
-        >
-          {expanded ? <Minimize2 className="size-3" /> : <Maximize2 className="size-3" />}
-        </button>
-        <iframe
-          ref={iframeRef}
-          sandbox="allow-scripts allow-same-origin"
-          title="渲染预览"
-          className="w-full border-0"
-          style={{ height: expanded ? 'calc(100vh - 2rem)' : '420px', display: 'block' }}
-        />
-      </div>
-    </div>
+    <iframe
+      ref={iframeRef}
+      srcDoc={srcDoc}
+      sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+      title="渲染"
+      className="h-full w-full border-0"
+      style={{ background: "transparent" }}
+    />
   )
 }

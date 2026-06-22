@@ -7,8 +7,8 @@ import { ChevronDown, ChevronRight, Brain, FileText, Globe, Copy, Check, Refresh
 import ReactMarkdown from "react-markdown"
 import remarkMath from "remark-math"
 import rehypeKatex from "rehype-katex"
-import { parseArtifact } from "@/lib/artifact"
-import { ArtifactFrame } from "@/components/artifact-frame"
+import { parseArtifact, artifactTitle } from "@/lib/artifact"
+import { ArtifactCard } from "@/components/artifact-card"
 
 function MdContent({ text }: { text: string }) {
   return (
@@ -127,11 +127,15 @@ export function MessageList({
   onRegenerate,
   onReply,
   isLoading,
+  onOpenArtifact,
+  openArtifactId,
 }: {
   conversation: Conversation
   onRegenerate?: () => void
   onReply?: (text: string) => void
   isLoading?: boolean
+  onOpenArtifact?: (msgId: string) => void
+  openArtifactId?: string | null
 }) {
   const msgs = conversation.messages
   const lastAiIdx = [...msgs].map((m, i) => ({ m, i })).reverse().find(({ m }) => m.role === 'assistant')?.i ?? -1
@@ -186,12 +190,8 @@ export function MessageList({
                   </div>
                 )}
                 {(() => {
-                  // 流式期间 content 已经是 display 文本，artifactHtml/partialHtml 由 streaming 解析器注入
-                  // 从 DB 加载时 content 可能含原始 <artifact> 标签，这里重新 parse
-                  const hasPreParsed = m.artifactHtml !== undefined || m.artifactPartialHtml !== undefined
-                  const { display, artifactHtml, partialHtml, artifactLoading } = hasPreParsed
-                    ? { display: m.content, artifactHtml: m.artifactHtml ?? null, partialHtml: m.artifactPartialHtml ?? null, artifactLoading: m.artifactLoading ?? false }
-                    : parseArtifact(m.content ?? '')
+                  // content 始终是模型原始全文（含 <artifact> 标签），渲染时实时拆分
+                  const { display, raw, done } = parseArtifact(m.content ?? '')
                   return (
                     <div className="min-w-0 border-l border-border/70 pl-3">
                       {m.isError ? (
@@ -199,11 +199,14 @@ export function MessageList({
                       ) : (
                         <div className="min-w-0 space-y-3 text-[15px] text-foreground/90 md:text-[17px]">
                           {display && <MdContent text={display} />}
-                          <ArtifactFrame
-                            html={artifactHtml}
-                            partialHtml={partialHtml}
-                            loading={artifactLoading}
-                          />
+                          {raw !== null && (
+                            <ArtifactCard
+                              title={artifactTitle(raw)}
+                              done={done}
+                              active={openArtifactId === m.id}
+                              onClick={() => onOpenArtifact?.(m.id)}
+                            />
+                          )}
                           <AiActions
                             text={display}
                             isLast={idx === lastAiIdx}

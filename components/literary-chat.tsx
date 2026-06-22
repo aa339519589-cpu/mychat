@@ -19,7 +19,8 @@ import { createClient } from "@/lib/supabase/client"
 import type { User } from "@supabase/supabase-js"
 import { cn } from "@/lib/utils"
 import { PanelLeft, X } from "lucide-react"
-import { parseArtifact } from "@/lib/artifact"
+import { parseArtifact, artifactTitle } from "@/lib/artifact"
+import { ArtifactPanel } from "@/components/artifact-panel"
 
 type GithubContext = { repo: string; context: string }
 type HistoryMsg = { role: string; content: string; images?: string[] }
@@ -40,6 +41,7 @@ export function LiteraryChat() {
   const [endpoints, setEndpoints] = useState<Endpoint[]>([])
   const [activeEndpointId, setActiveEndpointId] = useState("")
   const [replyTo, setReplyTo] = useState<string | null>(null)
+  const [openArtifactId, setOpenArtifactId] = useState<string | null>(null)
 
   const abortRef = useRef<AbortController | null>(null)
   const loadedRef = useRef<Set<string>>(new Set())
@@ -157,6 +159,7 @@ export function LiteraryChat() {
   async function handleSelect(id: string) {
     setActiveId(id)
     setDrawerOpen(false)
+    setOpenArtifactId(null)
     if (loadedRef.current.has(id)) return
     loadedRef.current.add(id)
     const msgs = await fetchMessages(id)
@@ -221,6 +224,7 @@ export function LiteraryChat() {
     const history = [...prefix, ...messages]
 
     let fullReply = "", fullThinking = ""
+    let autoOpened = false
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -285,16 +289,18 @@ export function LiteraryChat() {
             }
             if (data.text) fullReply += data.text
             if (data.thinking) fullThinking += data.thinking
-            const { display, artifactHtml, partialHtml, artifactLoading } = parseArtifact(fullReply)
+            // content 存模型原始全文（含 <artifact> 标签），渲染端实时拆分
+            // 首次检测到 artifact 时自动打开右侧面板（之后用户可手动关闭，不再打扰）
+            if (!autoOpened && parseArtifact(fullReply).raw !== null) {
+              setOpenArtifactId(msgId)
+              autoOpened = true
+            }
             setConversations(prev => prev.map(c => c.id !== convId ? c : {
               ...c,
               messages: c.messages.map(m => m.id !== msgId ? m : {
                 ...m,
-                content: data.error ? data.error : display,
+                content: data.error ? data.error : fullReply,
                 thinking: fullThinking || undefined,
-                artifactHtml,
-                artifactPartialHtml: partialHtml,
-                artifactLoading,
                 isError: data.error ? true : m.isError,
               }),
             }))
@@ -343,7 +349,7 @@ export function LiteraryChat() {
     const msgId = crypto.randomUUID()
     const isFirstExchange = active.messages.length === 0
     setConversations(prev => prev.map(c => c.id === convId ? {
-      ...c, messages: [...c.messages, userMsg, { id: msgId, role: "assistant", content: "", thinking: "", time: "此刻", artifactHtml: undefined, artifactPartialHtml: undefined, artifactLoading: false }]
+      ...c, messages: [...c.messages, userMsg, { id: msgId, role: "assistant", content: "", thinking: "", time: "此刻" }]
     } : c))
     insertMessage(user.id, convId, userMsg)
 
@@ -366,6 +372,7 @@ export function LiteraryChat() {
   // ── 重新生成最后一条 AI 回复 ──
   async function handleRegenerate() {
     if (!user || !active || isLoading) return
+    setOpenArtifactId(null)
     const msgs = active.messages
     const lastAiIdx = [...msgs].map((m, i) => ({ m, i })).reverse().find(({ m }) => m.role === "assistant")?.i ?? -1
     if (lastAiIdx === -1) return
@@ -382,7 +389,7 @@ export function LiteraryChat() {
       ...c,
       messages: [
         ...msgs.slice(0, lastAiIdx),
-        { id: newMsgId, role: "assistant" as const, content: "", thinking: "", time: "此刻", artifactHtml: undefined, artifactPartialHtml: undefined, artifactLoading: false },
+        { id: newMsgId, role: "assistant" as const, content: "", thinking: "", time: "此刻" },
       ],
     }))
     deleteMessageRow(lastAiMsg.id)
@@ -504,6 +511,8 @@ export function LiteraryChat() {
               onRegenerate={handleRegenerate}
               onReply={handleReply}
               isLoading={isLoading}
+              onOpenArtifact={setOpenArtifactId}
+              openArtifactId={openArtifactId}
             />
           ) : (
             <EmptyState endpointName={activeName} />
@@ -540,6 +549,11 @@ export function LiteraryChat() {
   if (!authChecked) return <div className="h-dvh w-full bg-background paper-grain" />
   if (!user) return <LoginScreen />
 
+  // 当前打开的 artifact 面板数据（从消息原始全文实时拆分，流式时自动更新）
+  const openMsg = openArtifactId ? active?.messages.find(m => m.id === openArtifactId) : null
+  const openArt = openMsg ? parseArtifact(openMsg.content) : null
+  const showArt = !!(openArt && openArt.raw !== null)
+
   return (
     <>
       <div className="hidden h-dvh min-h-0 w-full overflow-hidden bg-background p-4 paper-grain md:flex">
@@ -549,6 +563,17 @@ export function LiteraryChat() {
           </div>
         </div>
         {renderChatPane(false)}
+        {showArt && (
+          <aside className="ml-2 hidden w-[44%] min-w-[360px] max-w-[720px] shrink-0 overflow-hidden rounded-2xl border border-border/50 md:block">
+            <ArtifactPanel
+              key={openArtifactId}
+              raw={openArt!.raw!}
+              done={openArt!.done}
+              title={artifactTitle(openArt!.raw!)}
+              onClose={() => setOpenArtifactId(null)}
+            />
+          </aside>
+        )}
       </div>
 
       <div className="flex h-dvh min-h-0 w-full overflow-hidden bg-background paper-grain md:hidden">
@@ -576,6 +601,17 @@ export function LiteraryChat() {
           )}
         </div>
         {renderChatPane(true)}
+        {showArt && (
+          <div className="fixed inset-0 z-50 bg-background">
+            <ArtifactPanel
+              key={openArtifactId}
+              raw={openArt!.raw!}
+              done={openArt!.done}
+              title={artifactTitle(openArt!.raw!)}
+              onClose={() => setOpenArtifactId(null)}
+            />
+          </div>
+        )}
       </div>
     </>
   )

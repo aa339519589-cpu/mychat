@@ -32,9 +32,6 @@ export type Message = {
   memoryNotes?: string[]   // 本次回复中模型对记忆做的操作（仅当次显示）
   files?: string[]   // 附件文件名（只显示成卡片，全文由后端注入给模型）
   searchNotes?: { query: string; results: { title: string; url: string }[] }[]   // 联网搜索来源
-  artifactHtml?: string | null        // <artifact>...</artifact> 内的完整 HTML
-  artifactPartialHtml?: string | null // 正在流式生成的部分 HTML（用于实时预览）
-  artifactLoading?: boolean           // artifact 正在流式生成中
 }
 
 export type Conversation = {
