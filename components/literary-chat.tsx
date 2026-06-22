@@ -44,6 +44,7 @@ export function LiteraryChat() {
   const [memories, setMemories] = useState<Memory[]>([])
   const [memoryEnabled, setMemoryEnabledState] = useState(true)
   const [webSearch, setWebSearch] = useState(false)
+  const [deepResearch, setDeepResearch] = useState(false)
   const [activeTier, setActiveTier] = useState<Tier>("绝句")
   const [replyTo, setReplyTo] = useState<string | null>(null)
   const [openArtifactId, setOpenArtifactId] = useState<string | null>(null)
@@ -228,6 +229,7 @@ export function LiteraryChat() {
           memories: memoryEnabled && memories.length > 0 ? memories : undefined,
           attachments: attachments && attachments.length > 0 ? attachments : undefined,
           webSearch,
+          deepResearch,
           project: projectCtx,
         }),
       })
@@ -715,6 +717,8 @@ export function LiteraryChat() {
           onGithubDisconnect={handleGithubDisconnect}
           webSearch={webSearch}
           onWebSearchChange={setWebSearch}
+          deepResearch={deepResearch}
+          onDeepResearchChange={setDeepResearch}
           isLoading={isLoading}
           onStop={handleStop}
           replyTo={replyTo}

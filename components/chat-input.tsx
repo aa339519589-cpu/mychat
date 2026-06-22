@@ -2,7 +2,7 @@
 
 import { useRef, useState, useEffect } from "react"
 import { cn } from "@/lib/utils"
-import { ChevronDown, X, Loader2, Plus, ImageIcon, FileText, Globe, ArrowUp, ExternalLink, LogOut, Square, CornerUpLeft, Camera, Check } from "lucide-react"
+import { ChevronDown, X, Loader2, Plus, ImageIcon, FileText, Globe, ArrowUp, ExternalLink, LogOut, Square, CornerUpLeft, Camera, Check, Microscope } from "lucide-react"
 import { TIERS, type Tier } from "@/lib/chat-data"
 import { prepareFile, type AttachedFile } from "@/lib/file-extract"
 
@@ -22,6 +22,7 @@ export function ChatInput({
   githubContext, onGithubConnect,
   githubConnected, githubLogin, onGithubDisconnect,
   webSearch, onWebSearchChange,
+  deepResearch, onDeepResearchChange,
   isLoading, onStop,
   replyTo, onClearReply,
 }: {
@@ -36,6 +37,8 @@ export function ChatInput({
   onGithubDisconnect: () => void
   webSearch: boolean
   onWebSearchChange: (on: boolean) => void
+  deepResearch: boolean
+  onDeepResearchChange: (on: boolean) => void
   isLoading: boolean
   onStop: () => void
   replyTo: string | null
@@ -188,7 +191,7 @@ export function ChatInput({
   }
 
   const githubLabel = githubContext ? githubContext.repo : githubConnected ? "选择仓库" : "连接仓库"
-  const hasActiveTools = webSearch || !!githubContext
+  const hasActiveTools = webSearch || !!githubContext || deepResearch
   const canSend = !isLoading && (!!value.trim() || images.length > 0 || files.length > 0)
 
   return (
@@ -329,6 +332,17 @@ export function ChatInput({
                 <Globe className="size-4" />
                 <span className="flex-1 text-left">联网</span>
                 {webSearch && <Check className="size-3.5" />}
+              </button>
+              <button
+                onClick={() => onDeepResearchChange(!deepResearch)}
+                className={cn(
+                  "flex w-full items-center gap-2.5 px-4 py-2.5 text-sm transition-colors",
+                  deepResearch ? "text-primary" : "text-muted-foreground hover:bg-secondary/60",
+                )}
+              >
+                <Microscope className="size-4" />
+                <span className="flex-1 text-left">深度研究</span>
+                {deepResearch && <Check className="size-3.5" />}
               </button>
               <button
                 onClick={handleGithubEntry}

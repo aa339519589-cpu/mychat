@@ -39,14 +39,16 @@ async function uploadScannedPdfs(attachments: any[], apiKey: string, baseUrl: st
 }
 
 export async function POST(req: NextRequest) {
-  const { tier = '绝句', messages, memories, attachments, webSearch, project } = await req.json()
+  const { tier = '绝句', messages, memories, attachments, webSearch, deepResearch, project } = await req.json()
 
   if (!DEEPSEEK_API_KEY) {
     return new Response(JSON.stringify({ error: '服务未配置（DEEPSEEK_API_KEY 未设置）' }), { status: 500 })
   }
 
   const tierCfg = TIER_MAP[tier as keyof typeof TIER_MAP] ?? TIER_MAP['绝句']
-  const { model, thinking } = tierCfg
+  // 深度研究模式：强制使用最强模型 + 开启思考链
+  const model = deepResearch ? 'deepseek-v4-pro' : tierCfg.model
+  const thinking = deepResearch ? true : tierCfg.thinking
 
   let supabase: ToolContext['supabase'] = null
   let userId: string | null = null
@@ -69,7 +71,7 @@ export async function POST(req: NextRequest) {
   // 关闭记忆时：既不挂记忆工具（上面已过滤），也不注入已存的记忆
   const effectiveMemories = memoryEnabled ? (memories as Memory[] | undefined) : undefined
   const url = chatCompletionsUrl(DEEPSEEK_BASE_URL)
-  const SYSTEM = buildSystem(effectiveMemories, { webSearch: flags.webSearch, memoryEnabled, project })
+  const SYSTEM = buildSystem(effectiveMemories, { webSearch: flags.webSearch, memoryEnabled, project, deepResearch: !!deepResearch })
   const openaiTools = toOpenAITools(tools)
 
   const stream = new ReadableStream({

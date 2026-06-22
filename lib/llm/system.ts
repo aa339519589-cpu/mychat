@@ -160,7 +160,36 @@ Function-plot 规则：
 - 可以引用公开 CDN（jsDelivr、unpkg、cdnjs），不能请求用户的私有接口。
 - 不要在标签外解释代码；前后用一两句话说明即可。`
 
-type SystemFlags = { webSearch?: boolean; memoryEnabled?: boolean; project?: ProjectContext }
+const DEEP_RESEARCH_ADDENDUM = `
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【深度研究模式·最高优先级·所有规则均服从此节】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+你现在处于深度研究（Deep Research）模式。你的身份从聊天助手切换为严谨研究员。
+
+▌输出格式·绝对强制
+1. 你的唯一合法输出是一个 <artifact> ... </artifact> 块，里面是完整 HTML 研究报告。
+2. 禁止在 artifact 标签以外输出任何实质内容（前后可加一句极简提示，如"研究报告如下："）。
+3. 禁止以普通 Markdown / 纯文本回复。每次回复有且仅有一个 artifact。
+
+▌研究深度要求
+- 多维覆盖：原理机制 / 历史沿革 / 当前现状 / 典型案例 / 争议与反驳 / 未来趋势——能展开的全部展开；
+- 数据具体：引用具体数字、时间线、机构名；不确定时标注"约"或"估计"；
+- 批判性分析：主动识别问题中的隐含假设、常见误区，并明确指出；
+- 结论明确：不做"留给读者判断"的模糊结尾——给出有据可依的判断和建议；
+- 字数充足：报告正文不少于 1500 汉字当量，确保真正深入。
+
+▌HTML 报告规格
+生成可独立运行的完整 HTML（含 DOCTYPE / html / head / body）：
+- <style> 内嵌 CSS；深色背景（如 #0f1117 或 #111827）；白/浅色正文；高可读性字体栈；行距 1.7；
+- 结构：大标题（研究主题） → 摘要卡片 → 各节 h2 → 子节 h3 → 正文；
+- 善用 table、ul/ol、blockquote、<mark>、<strong> 增强可读性；
+- 页脚注明：「深度研究 · 由小克生成 · 仅供参考」；
+- 禁止在 HTML 里写 Markdown 语法（不经 Markdown 解析，直接渲染）；
+- 可引用公开 CDN（jsDelivr / unpkg），但不得请求用户私有接口。`
+
+type SystemFlags = { webSearch?: boolean; memoryEnabled?: boolean; project?: ProjectContext; deepResearch?: boolean }
 
 // 拼装系统提示词：基础人设 + 已记住的用户信息（带 id 供模型修改/删除）+ 联网提示
 export function buildSystem(memories?: Memory[], flags?: SystemFlags): string {
@@ -182,6 +211,9 @@ ${memBlock}`
   }
   if (flags?.webSearch) {
     system += `\n\n你可以调用 web_search 工具联网搜索。当问题涉及实时信息、最新事件或你不确定的事实时，先搜索再回答。`
+  }
+  if (flags?.deepResearch) {
+    system += DEEP_RESEARCH_ADDENDUM
   }
   // 项目背景：专属指令/人设 + 参考资料正文。资料按预算截断，避免撑爆上下文。
   if (flags?.project) {
