@@ -224,7 +224,6 @@ export function LiteraryChat() {
     const history = [...prefix, ...messages]
 
     let fullReply = "", fullThinking = ""
-    let autoOpened = false
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -289,12 +288,6 @@ export function LiteraryChat() {
             }
             if (data.text) fullReply += data.text
             if (data.thinking) fullThinking += data.thinking
-            // content 存模型原始全文（含 <artifact> 标签），渲染端实时拆分
-            // 首次检测到 artifact 时自动打开右侧面板（之后用户可手动关闭，不再打扰）
-            if (!autoOpened && parseArtifact(fullReply).raw !== null) {
-              setOpenArtifactId(msgId)
-              autoOpened = true
-            }
             setConversations(prev => prev.map(c => c.id !== convId ? c : {
               ...c,
               messages: c.messages.map(m => m.id !== msgId ? m : {

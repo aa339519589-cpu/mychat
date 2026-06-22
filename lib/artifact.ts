@@ -1,30 +1,43 @@
-// 从消息文本里提取 <artifact>...</artifact> 块
-// 返回原始内容（流式时是部分，完成时是完整），渲染端统一处理
-export function parseArtifact(text: string): {
-  display: string        // artifact 标签外的普通文字
-  raw: string | null     // artifact 标签内的原始 HTML（部分或完整）；null 表示没有 artifact
-  done: boolean          // 闭合标签是否已出现（决定是否执行脚本）
-} {
-  const OPEN = '<artifact>'
-  const CLOSE = '</artifact>'
-  const o = text.indexOf(OPEN)
-  if (o === -1) return { display: text, raw: null, done: false }
-
-  const before = text.slice(0, o).trim()
-  const innerStart = o + OPEN.length
-  const c = text.indexOf(CLOSE, innerStart)
-
-  if (c === -1) {
-    // 还在流式输出 artifact 内容
-    return { display: before, raw: text.slice(innerStart), done: false }
-  }
-
-  const raw = text.slice(innerStart, c).trim()
-  const after = text.slice(c + CLOSE.length).trim()
-  return { display: [before, after].filter(Boolean).join('\n\n'), raw, done: true }
+export type ArtifactParsed = {
+  display: string
+  // 面板 artifact（需要自己的视觉环境，如红色立方体、复杂报告）
+  raw: string | null
+  done: boolean
+  // 内联 artifact（颜色与背景无关，直接流式渲染在对话里）
+  inlineRaw: string | null
+  inlineDone: boolean
 }
 
-// 从 artifact HTML 里猜一个标题，给对话流里的卡片入口用
+export function parseArtifact(text: string): ArtifactParsed {
+  // 先尝试 inline-artifact
+  const IO = text.indexOf('<inline-artifact>')
+  if (IO !== -1) {
+    const before = text.slice(0, IO).trim()
+    const bodyStart = IO + '<inline-artifact>'.length
+    const IC = text.indexOf('</inline-artifact>', bodyStart)
+    if (IC === -1) {
+      return { display: before, raw: null, done: false, inlineRaw: text.slice(bodyStart), inlineDone: false }
+    }
+    const inlineRaw = text.slice(bodyStart, IC).trim()
+    const after = text.slice(IC + '</inline-artifact>'.length).trim()
+    return { display: [before, after].filter(Boolean).join('\n\n'), raw: null, done: false, inlineRaw, inlineDone: true }
+  }
+
+  // 再尝试 panel artifact
+  const O = text.indexOf('<artifact>')
+  if (O === -1) return { display: text, raw: null, done: false, inlineRaw: null, inlineDone: false }
+  const before = text.slice(0, O).trim()
+  const bodyStart = O + '<artifact>'.length
+  const C = text.indexOf('</artifact>', bodyStart)
+  if (C === -1) {
+    return { display: before, raw: text.slice(bodyStart), done: false, inlineRaw: null, inlineDone: false }
+  }
+  const raw = text.slice(bodyStart, C).trim()
+  const after = text.slice(C + '</artifact>'.length).trim()
+  return { display: [before, after].filter(Boolean).join('\n\n'), raw, done: true, inlineRaw: null, inlineDone: false }
+}
+
+// 从 artifact HTML 里猜标题，给对话流卡片入口用
 export function artifactTitle(raw: string): string {
   const t = raw.match(/<title[^>]*>([^<]+)<\/title>/i)
   if (t?.[1]?.trim()) return t[1].trim().slice(0, 40)

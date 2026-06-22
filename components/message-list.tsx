@@ -9,6 +9,7 @@ import remarkMath from "remark-math"
 import rehypeKatex from "rehype-katex"
 import { parseArtifact, artifactTitle } from "@/lib/artifact"
 import { ArtifactCard } from "@/components/artifact-card"
+import { ArtifactFrame } from "@/components/artifact-frame"
 
 function MdContent({ text }: { text: string }) {
   return (
@@ -190,8 +191,8 @@ export function MessageList({
                   </div>
                 )}
                 {(() => {
-                  // content 始终是模型原始全文（含 <artifact> 标签），渲染时实时拆分
-                  const { display, raw, done } = parseArtifact(m.content ?? '')
+                  // content 始终是模型原始全文，渲染时实时拆分两种 artifact
+                  const { display, raw, done, inlineRaw, inlineDone } = parseArtifact(m.content ?? '')
                   return (
                     <div className="min-w-0 border-l border-border/70 pl-3">
                       {m.isError ? (
@@ -199,6 +200,11 @@ export function MessageList({
                       ) : (
                         <div className="min-w-0 space-y-3 text-[15px] text-foreground/90 md:text-[17px]">
                           {display && <MdContent text={display} />}
+                          {/* 内联 artifact：透明背景，高度自适应，直接融在对话里 */}
+                          {inlineRaw !== null && (
+                            <ArtifactFrame raw={inlineRaw} done={inlineDone} inline />
+                          )}
+                          {/* 面板 artifact：卡片入口，点击右侧展开 */}
                           {raw !== null && (
                             <ArtifactCard
                               title={artifactTitle(raw)}
