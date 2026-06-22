@@ -18,12 +18,31 @@ function MdContent({ text }: { text: string }) {
       remarkPlugins={[remarkMath]}
       rehypePlugins={[rehypeKatex]}
       components={{
-        p: ({ children }) => <p className="break-words leading-[1.95] tracking-[0.01em] [overflow-wrap:anywhere]">{children}</p>,
-        a: ({ children, href }) => <a href={href} className="break-all underline underline-offset-4">{children}</a>,
-        code: ({ children }) => <code className="break-all rounded bg-muted/40 px-1 py-0.5 font-mono text-sm">{children}</code>,
-        pre: ({ children }) => <pre className="max-w-full overflow-x-auto rounded-xl bg-muted/30 p-4 text-sm">{children}</pre>,
-        ul: ({ children }) => <ul className="list-disc pl-5 space-y-1">{children}</ul>,
-        ol: ({ children }) => <ol className="list-decimal pl-5 space-y-1">{children}</ol>,
+        p: ({ children }) => <p className="break-words leading-[1.95] tracking-[0.01em] mb-3 [overflow-wrap:anywhere]">{children}</p>,
+        a: ({ children, href }) => <a href={href} className="break-all underline underline-offset-4 text-primary hover:text-primary/80">{children}</a>,
+        strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+        em: ({ children }) => <em className="italic">{children}</em>,
+        del: ({ children }) => <del className="line-through text-muted-foreground/60">{children}</del>,
+        code: ({ children }) => <code className="break-all rounded bg-muted/40 px-1.5 py-0.5 font-mono text-sm">{children}</code>,
+        pre: ({ children }) => <pre className="max-w-full overflow-x-auto rounded-lg bg-muted/30 p-4 text-sm mb-3 border border-border/30">{children}</pre>,
+        h1: ({ children }) => <h1 className="text-2xl font-bold mt-6 mb-3 leading-tight">{children}</h1>,
+        h2: ({ children }) => <h2 className="text-xl font-bold mt-5 mb-2.5 leading-tight">{children}</h2>,
+        h3: ({ children }) => <h3 className="text-lg font-semibold mt-4 mb-2 leading-tight">{children}</h3>,
+        h4: ({ children }) => <h4 className="font-semibold mt-3 mb-2 leading-tight">{children}</h4>,
+        h5: ({ children }) => <h5 className="font-semibold text-sm mt-2.5 mb-1.5">{children}</h5>,
+        h6: ({ children }) => <h6 className="font-semibold text-sm text-muted-foreground mt-2 mb-1">{children}</h6>,
+        ul: ({ children }) => <ul className="list-disc list-inside pl-2 space-y-1.5 mb-3">{children}</ul>,
+        ol: ({ children }) => <ol className="list-decimal list-inside pl-2 space-y-1.5 mb-3">{children}</ol>,
+        li: ({ children }) => <li className="break-words [overflow-wrap:anywhere]">{children}</li>,
+        blockquote: ({ children }) => <blockquote className="border-l-4 border-primary/40 bg-muted/20 pl-4 py-2 pr-3 rounded-r my-3 italic text-muted-foreground">{children}</blockquote>,
+        hr: () => <hr className="my-4 border-border/30" />,
+        table: ({ children }) => <div className="overflow-x-auto my-3"><table className="w-full border-collapse border border-border/30 rounded-lg overflow-hidden">{children}</table></div>,
+        thead: ({ children }) => <thead className="bg-muted/40 font-semibold">{children}</thead>,
+        tbody: ({ children }) => <tbody>{children}</tbody>,
+        tr: ({ children }) => <tr className="border-b border-border/20 last:border-b-0">{children}</tr>,
+        th: ({ children }) => <th className="text-left px-3 py-2 font-semibold text-sm border-r border-border/20 last:border-r-0">{children}</th>,
+        td: ({ children }) => <td className="px-3 py-2 text-sm border-r border-border/20 last:border-r-0 break-words [overflow-wrap:anywhere]">{children}</td>,
+        img: ({ src, alt }) => <img src={src} alt={alt} className="max-w-full h-auto rounded-lg my-3 border border-border/20" />,
       }}
     >
       {text}
