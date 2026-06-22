@@ -6,11 +6,12 @@
 //   就这样——route.ts、协议层都不用动。
 import { memoryTools } from './memory'
 import { webSearchTool } from './web-search'
+import { fetchUrlTool } from './fetch-url'
 import type { ToolDef, ToolFlags, ToolContext, ToolOutcome } from './types'
 
 export type { ToolDef, ToolFlags, ToolContext, ToolOutcome } from './types'
 
-const ALL_TOOLS: ToolDef[] = [...memoryTools, webSearchTool]
+const ALL_TOOLS: ToolDef[] = [...memoryTools, webSearchTool, fetchUrlTool]
 
 // 按本次请求的上下文（是否登录、是否开启联网）筛出可用工具
 export function activeTools(flags: ToolFlags): ToolDef[] {
