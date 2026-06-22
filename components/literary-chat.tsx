@@ -285,8 +285,8 @@ export function LiteraryChat() {
                 messages: c.messages.map(m => m.id !== msgId ? m : { ...m, memoryNotes: [...(m.memoryNotes ?? []), note] }),
               }))
               if (mem.ok) {
-                if (mem.action === "create" && mem.id) setMemories(prev => [...prev, { id: mem.id, content: mem.content ?? "" }])
-                else if (mem.action === "update" && mem.id) setMemories(prev => prev.map(x => x.id === mem.id ? { ...x, content: mem.content ?? x.content } : x))
+                if (mem.action === "create" && mem.id) setMemories(prev => [...prev, { id: mem.id, content: mem.content ?? "", timestamp: mem.timestamp }])
+                else if (mem.action === "update" && mem.id) setMemories(prev => prev.map(x => x.id === mem.id ? { ...x, content: mem.content ?? x.content, timestamp: mem.timestamp ?? x.timestamp } : x))
                 else if (mem.action === "delete" && mem.id) setMemories(prev => prev.filter(x => x.id !== mem.id))
               }
               continue
@@ -349,7 +349,7 @@ export function LiteraryChat() {
 
   async function handleSend(text: string, images?: string[], files?: AttachedFile[]) {
     if (!user || !active) return
-    const userMsg: Message = { id: crypto.randomUUID(), role: "user", content: text, time: "此刻", images, files: files?.map(f => f.name) }
+    const userMsg: Message = { id: crypto.randomUUID(), role: "user", content: text, time: "此刻", ts: new Date().toISOString(), images, files: files?.map(f => f.name) }
     const msgId = crypto.randomUUID()
     const assistantMsg: Message = { id: msgId, role: "assistant", content: "", thinking: "", time: "此刻" }
     const isFirstExchange = active.messages.length === 0
@@ -389,6 +389,7 @@ export function LiteraryChat() {
       role: m.role,
       content: m.content,
       ...(m.images?.length ? { images: m.images } : {}),
+      ...(m.ts ? { ts: m.ts } : {}),
     }))
 
     const projectCtx = await getProjectContext(active.projectId)
@@ -413,6 +414,7 @@ export function LiteraryChat() {
     const historyBeforeAi = msgs.slice(0, lastAiIdx).map(m => ({
       role: m.role, content: m.content,
       ...(m.images?.length ? { images: m.images } : {}),
+      ...(m.ts ? { ts: m.ts } : {}),
     }))
 
     const newMsgId = crypto.randomUUID()
@@ -582,7 +584,8 @@ export function LiteraryChat() {
     if (mem) setMemories(prev => [...prev, mem])
   }
   async function handleMemoryEdit(id: string, content: string) {
-    setMemories(prev => prev.map(m => m.id === id ? { ...m, content } : m))
+    const ts = new Date().toISOString()
+    setMemories(prev => prev.map(m => m.id === id ? { ...m, content, timestamp: ts } : m))
     updateMemory(id, content)
   }
   async function handleMemoryDelete(id: string) {

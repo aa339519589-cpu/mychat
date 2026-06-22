@@ -15,6 +15,7 @@ export type Message = {
   role: "user" | "assistant"
   content: string
   time: string
+  ts?: string   // ISO 8601 发送时间（系统元数据，传给模型用于时间感知；缺失视为未知时间）
   isError?: boolean
   thinking?: string
   images?: string[]

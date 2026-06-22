@@ -2,7 +2,7 @@
 // 在当前登录用户身份下写 memories 表，受 RLS 隔离（用户只能写自己的）
 import type { ToolDef, ToolContext, ToolOutcome, ToolSchema } from './types'
 
-type MemoryResult = { action: 'create' | 'update' | 'delete'; id?: string; content?: string; ok: boolean }
+type MemoryResult = { action: 'create' | 'update' | 'delete'; id?: string; content?: string; ok: boolean; timestamp?: string }
 
 async function runMemoryOp(ctx: ToolContext, name: string, input: any): Promise<MemoryResult> {
   const { supabase, userId } = ctx
@@ -12,14 +12,16 @@ async function runMemoryOp(ctx: ToolContext, name: string, input: any): Promise<
       const content = String(input?.content ?? '').trim()
       if (!content) return { action: 'create', ok: false }
       const id = crypto.randomUUID()
+      const ts = new Date().toISOString()
       const { error } = await supabase.from('memories').insert({ id, user_id: userId, content })
-      return { action: 'create', id, content, ok: !error }
+      return { action: 'create', id, content, ok: !error, timestamp: ts }
     }
     if (name === 'update_memory') {
       const id = String(input?.id ?? '')
       const content = String(input?.content ?? '').trim()
-      const { error } = await supabase.from('memories').update({ content, updated_at: new Date().toISOString() }).eq('id', id)
-      return { action: 'update', id, content, ok: !error }
+      const ts = new Date().toISOString()
+      const { error } = await supabase.from('memories').update({ content, updated_at: ts }).eq('id', id)
+      return { action: 'update', id, content, ok: !error, timestamp: ts }
     }
     if (name === 'forget') {
       const id = String(input?.id ?? '')

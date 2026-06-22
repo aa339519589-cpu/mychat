@@ -5,12 +5,14 @@ import { send, upstreamError } from './stream'
 
 export function toOpenAI(msgs: RawMsg[]) {
   return msgs.map(m => {
-    if (!m.images?.length) return { role: m.role, content: m.content }
+    // 给用户消息附加 ISO 8601 时间戳（系统元数据，供模型做时间感知，非用户输入）
+    const content = m.role === 'user' && m.ts ? `${m.content}\n\n[发送时间：${m.ts}]` : m.content
+    if (!m.images?.length) return { role: m.role, content }
     return {
       role: m.role,
       content: [
         ...m.images.map(img => ({ type: 'image_url', image_url: { url: img } })),
-        { type: 'text', text: m.content || ' ' },
+        { type: 'text', text: content || ' ' },
       ],
     }
   })
