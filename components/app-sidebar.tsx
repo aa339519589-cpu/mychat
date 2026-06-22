@@ -1,22 +1,22 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import type { Conversation } from "@/lib/chat-data"
 import type { Memory } from "@/lib/memory-data"
 import { cn } from "@/lib/utils"
 import {
   Feather, Plus, ChevronLeft, ChevronRight, Trash2, Brain, LogOut,
-  Settings, Folder, Shapes, Pencil, Check, X,
+  Settings, Folder, Shapes, Pencil, Check, X, PanelLeft,
 } from "lucide-react"
 
 // 二级页面：除根视图（侧栏主体）外的所有可滑入页面
-type Screen = "settings" | "memory" | "account" | "projects" | "artifacts"
+type Screen = "settings" | "memory" | "projects" | "artifacts"
 
-// 层级 z-index：从根进入的为一级(10)，从设置再进入的为二级(20)。
-// 同级页面从不同时出现，因此静态 z 即可，退场时仍盖在被揭开的页面之上，滑出动画才完整。
+// 层级 z：从根进入的为一级(20)，从设置再进入的为二级(30)，均高于根面板(10)。
+// 同级页面从不同时出现，静态 z 即可，退场时仍盖在被揭开的页面之上，滑出动画才完整。
 const Z: Record<Screen, number> = {
-  settings: 10, projects: 10, artifacts: 10,
-  memory: 20, account: 20,
+  settings: 20, projects: 20, artifacts: 20,
+  memory: 30,
 }
 
 export type AppSidebarProps = {
@@ -35,15 +35,20 @@ export type AppSidebarProps = {
   onLogout: () => void
 }
 
-export function AppSidebar(props: AppSidebarProps) {
+// mobile：一级侧栏只占半屏（露出后面的对话），二级页面铺满整屏
+// 桌面：侧栏常驻于 20rem 容器内，二级页面在容器内滑动
+export function AppSidebar({
+  mobile = false, visible = true, onClose, ...props
+}: AppSidebarProps & { mobile?: boolean; visible?: boolean; onClose?: () => void }) {
   const { conversations, activeId, onDelete, userEmail, onLogout } = props
   const [stack, setStack] = useState<Screen[]>([])
   const [userMenuOpen, setUserMenuOpen] = useState(false)
 
+  // 抽屉收起后复位到根视图
+  useEffect(() => { if (!visible) { setStack([]); setUserMenuOpen(false) } }, [visible])
+
   const push = (s: Screen) => { setUserMenuOpen(false); setStack(prev => [...prev, s]) }
   const pop = () => setStack(prev => prev.slice(0, -1))
-
-  // 选对话 / 新建时，收起所有二级页面与菜单，回到干净的根视图
   const handleSelect = (id: string) => { setStack([]); setUserMenuOpen(false); props.onSelect(id) }
   const handleNew = () => { setStack([]); setUserMenuOpen(false); props.onNew() }
 
@@ -58,101 +63,102 @@ export function AppSidebar(props: AppSidebarProps) {
 
   const initial = (userEmail.slice(0, 1) || "我").toUpperCase()
 
-  return (
-    <aside className="relative flex h-full w-full flex-col overflow-hidden bg-sidebar text-sidebar-foreground">
-
-      {/* ───────── 根视图 ───────── */}
-      <div className="flex h-full flex-col">
-        <div className="flex items-center gap-2 px-5 pb-3 pt-[max(1rem,env(safe-area-inset-top))]">
-          <Feather className="size-4 text-sidebar-primary" />
-          <span className="font-heading text-base tracking-wide">简</span>
-        </div>
-
-        <button
-          onClick={handleNew}
-          className="mx-4 mb-2 flex items-center gap-2.5 rounded-2xl px-3 py-2.5 text-sm tracking-wide text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
-        >
-          <Plus className="size-4 text-sidebar-primary" />
-          起一篇新的对谈
-        </button>
-
-        {/* 主导航：项目 / 作品 */}
-        <nav className="mx-4 space-y-0.5">
-          <NavRow icon={<Folder className="size-4" />} label="项目" onClick={() => push("projects")} />
-          <NavRow icon={<Shapes className="size-4" />} label="作品" onClick={() => push("artifacts")} />
-        </nav>
-
-        <div className="mx-7 my-3 border-t border-sidebar-border/60" />
-        <p className="px-7 pb-2 text-[11px] tracking-[0.2em] text-muted-foreground/70">近期</p>
-
-        {/* 对话列表 */}
-        <div className="flex-1 space-y-1 overflow-y-auto px-3 pb-3">
-          {conversations.length === 0 ? (
-            <p className="px-4 py-6 text-center text-[13px] italic text-muted-foreground/60">还没有对谈</p>
-          ) : conversations.map(c => {
-            const isActive = c.id === activeId
-            return (
-              <div key={c.id} className="group relative">
-                <button
-                  onClick={() => handleSelect(c.id)}
-                  className={cn("block w-full rounded-2xl px-4 py-3 pr-9 text-left transition-colors", isActive ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60")}
-                >
-                  <div className="flex items-baseline justify-between gap-3">
-                    <span className={cn("truncate font-heading text-[15px] leading-snug tracking-wide", isActive ? "text-sidebar-primary" : "text-sidebar-foreground")}>{c.title}</span>
-                    <span className="shrink-0 text-[11px] tracking-wider text-muted-foreground">{c.date}</span>
-                  </div>
-                  {c.excerpt && <p className="mt-1.5 line-clamp-2 text-[13px] leading-relaxed text-muted-foreground">{c.excerpt}</p>}
-                </button>
-                <button
-                  onClick={e => { e.stopPropagation(); onDelete(c.id) }}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-muted-foreground/40 transition-colors hover:bg-sidebar-accent hover:text-destructive"
-                  aria-label="删除对话"
-                >
-                  <Trash2 className="size-3.5" />
-                </button>
-              </div>
-            )
-          })}
-        </div>
-
-        {/* 用户页脚：点开 → 设置 / 退出 */}
-        <div className="relative border-t border-sidebar-border px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3">
-          {userMenuOpen && (
-            <>
-              <button className="fixed inset-0 z-10 cursor-default" aria-label="关闭菜单" onClick={() => setUserMenuOpen(false)} />
-              <div className="absolute bottom-[calc(100%-0.25rem)] left-3 right-3 z-20 overflow-hidden rounded-2xl border border-sidebar-border bg-card shadow-lg">
-                <button onClick={() => push("settings")} className="flex w-full items-center gap-3 px-4 py-3 text-sm text-foreground transition-colors hover:bg-sidebar-accent/60">
-                  <Settings className="size-4 text-muted-foreground" />设置
-                </button>
-                <div className="border-t border-sidebar-border/50" />
-                <button onClick={onLogout} className="flex w-full items-center gap-3 px-4 py-3 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/40 hover:text-destructive">
-                  <LogOut className="size-4" />退出登录
-                </button>
-              </div>
-            </>
-          )}
-          <button
-            onClick={() => setUserMenuOpen(v => !v)}
-            className="flex w-full items-center gap-3 rounded-2xl px-2 py-2 text-left transition-colors hover:bg-sidebar-accent/60"
-          >
-            <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-sidebar-primary/15 text-sm text-sidebar-primary">{initial}</div>
-            <span className="min-w-0 flex-1 truncate text-sm text-foreground">{userEmail || "已登录"}</span>
-            <ChevronRight className={cn("size-4 shrink-0 text-muted-foreground transition-transform", userMenuOpen && "-rotate-90")} />
+  const rootContent = (
+    <div className="relative flex h-full flex-col">
+      <div className="flex items-center gap-2 px-5 pb-3 pt-[max(1rem,env(safe-area-inset-top))]">
+        <Feather className="size-4 text-sidebar-primary" />
+        <span className="font-heading text-base tracking-wide">简</span>
+        {mobile && onClose && (
+          <button onClick={onClose} aria-label="收起侧栏" className="ml-auto rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground">
+            <PanelLeft className="size-5" />
           </button>
-        </div>
+        )}
       </div>
 
-      {/* ───────── 二级页面（覆盖在根视图之上，滑入/滑出） ───────── */}
+      <button
+        onClick={handleNew}
+        className="mx-4 mb-2 flex items-center gap-2.5 rounded-2xl px-3 py-2.5 text-sm tracking-wide text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
+      >
+        <Plus className="size-4 text-sidebar-primary" />
+        起一篇新的对谈
+      </button>
 
-      {/* 设置菜单 */}
+      <nav className="mx-4 space-y-0.5">
+        <NavRow icon={<Folder className="size-4" />} label="项目" onClick={() => push("projects")} />
+        <NavRow icon={<Shapes className="size-4" />} label="作品" onClick={() => push("artifacts")} />
+      </nav>
+
+      <div className="mx-7 my-3 border-t border-sidebar-border/60" />
+      <p className="px-7 pb-2 text-[11px] tracking-[0.2em] text-muted-foreground/70">近期</p>
+
+      <div className="flex-1 space-y-1 overflow-y-auto px-3 pb-3">
+        {conversations.length === 0 ? (
+          <p className="px-4 py-6 text-center text-[13px] italic text-muted-foreground/60">还没有对谈</p>
+        ) : conversations.map(c => {
+          const isActive = c.id === activeId
+          return (
+            <div key={c.id} className="group relative">
+              <button
+                onClick={() => handleSelect(c.id)}
+                className={cn("block w-full rounded-2xl px-4 py-3 pr-9 text-left transition-colors", isActive ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60")}
+              >
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className={cn("truncate font-heading text-[15px] leading-snug tracking-wide", isActive ? "text-sidebar-primary" : "text-sidebar-foreground")}>{c.title}</span>
+                  <span className="shrink-0 text-[11px] tracking-wider text-muted-foreground">{c.date}</span>
+                </div>
+                {c.excerpt && <p className="mt-1.5 line-clamp-2 text-[13px] leading-relaxed text-muted-foreground">{c.excerpt}</p>}
+              </button>
+              <button
+                onClick={e => { e.stopPropagation(); onDelete(c.id) }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-muted-foreground/40 transition-colors hover:bg-sidebar-accent hover:text-destructive"
+                aria-label="删除对话"
+              >
+                <Trash2 className="size-3.5" />
+              </button>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* 用户页脚 */}
+      <div className="border-t border-sidebar-border px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3">
+        <button
+          onClick={() => setUserMenuOpen(v => !v)}
+          className="flex w-full items-center gap-3 rounded-2xl px-2 py-2 text-left transition-colors hover:bg-sidebar-accent/60"
+        >
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-sidebar-primary/15 text-sm text-sidebar-primary">{initial}</div>
+          <span className="min-w-0 flex-1 truncate text-sm text-foreground">{userEmail || "已登录"}</span>
+          <ChevronRight className={cn("size-4 shrink-0 text-muted-foreground transition-transform", userMenuOpen && "-rotate-90")} />
+        </button>
+      </div>
+
+      {/* 用户菜单：设置 / 退出（覆盖层 + 点外部收起） */}
+      {userMenuOpen && (
+        <div className="absolute inset-0 z-30">
+          <button className="absolute inset-0 cursor-default" aria-label="关闭菜单" onClick={() => setUserMenuOpen(false)} />
+          <div className="absolute bottom-[calc(4rem+env(safe-area-inset-bottom,0px))] left-3 right-3 overflow-hidden rounded-2xl border border-sidebar-border bg-card shadow-lg">
+            <button onClick={() => push("settings")} className="flex w-full items-center gap-3 px-4 py-3 text-sm text-foreground transition-colors hover:bg-sidebar-accent/60">
+              <Settings className="size-4 text-muted-foreground" />设置
+            </button>
+            <div className="border-t border-sidebar-border/50" />
+            <button onClick={onLogout} className="flex w-full items-center gap-3 px-4 py-3 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/40 hover:text-destructive">
+              <LogOut className="size-4" />退出登录
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+
+  const screens = (
+    <>
+      {/* 设置：现在只剩记忆（账户与退出已并入底部用户区，不再重复） */}
       <ScreenPanel style={screenStyle("settings")} title="设置" onBack={pop}>
         <div className="space-y-1 px-3">
           <MenuRow icon={<Brain className="size-4" />} label="记忆" hint={`${props.memories.length} 条`} onClick={() => push("memory")} />
-          <MenuRow icon={<div className="flex size-4 items-center justify-center rounded-full bg-sidebar-primary/15 text-[10px] text-sidebar-primary">{initial}</div>} label="账户" onClick={() => push("account")} />
         </div>
       </ScreenPanel>
 
-      {/* 记忆页 */}
       <ScreenPanel style={screenStyle("memory")} title="记忆" onBack={pop}>
         <MemoryScreen
           memories={props.memories}
@@ -164,26 +170,6 @@ export function AppSidebar(props: AppSidebarProps) {
         />
       </ScreenPanel>
 
-      {/* 账户页 */}
-      <ScreenPanel style={screenStyle("account")} title="账户" onBack={pop}>
-        <div className="px-5">
-          <div className="flex items-center gap-3 rounded-2xl border border-sidebar-border p-4">
-            <div className="flex size-11 shrink-0 items-center justify-center rounded-full bg-sidebar-primary/15 text-lg text-sidebar-primary">{initial}</div>
-            <div className="min-w-0">
-              <p className="truncate text-sm text-foreground">{userEmail || "已登录"}</p>
-              <p className="text-[12px] text-muted-foreground">已登录</p>
-            </div>
-          </div>
-          <button
-            onClick={onLogout}
-            className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-sidebar-border py-3 text-sm text-muted-foreground transition-colors hover:border-destructive/40 hover:text-destructive"
-          >
-            <LogOut className="size-4" />退出登录
-          </button>
-        </div>
-      </ScreenPanel>
-
-      {/* 项目（占位，下一批填充） */}
       <ScreenPanel style={screenStyle("projects")} title="项目" onBack={pop}>
         <ComingSoon
           icon={<Folder className="size-7" />}
@@ -192,7 +178,6 @@ export function AppSidebar(props: AppSidebarProps) {
         />
       </ScreenPanel>
 
-      {/* 作品（占位，下一批填充） */}
       <ScreenPanel style={screenStyle("artifacts")} title="作品" onBack={pop}>
         <ComingSoon
           icon={<Shapes className="size-7" />}
@@ -200,11 +185,34 @@ export function AppSidebar(props: AppSidebarProps) {
           desc="你与小克共同创作过的可交互页面会收藏在这里，随时回看、下载。"
         />
       </ScreenPanel>
+    </>
+  )
+
+  // 手机：一级半屏面板（滑入/滑出）+ 二级整屏页面（相对外层 fixed 容器铺满）
+  if (mobile) {
+    return (
+      <>
+        <div className={cn(
+          "absolute left-0 top-0 z-10 h-full w-[min(20rem,82vw)] overflow-hidden bg-sidebar text-sidebar-foreground shadow-2xl transition-transform duration-300 ease-out",
+          visible ? "translate-x-0" : "-translate-x-full",
+        )}>
+          {rootContent}
+        </div>
+        {screens}
+      </>
+    )
+  }
+
+  // 桌面：常驻侧栏，二级页面在 20rem 容器内滑动
+  return (
+    <aside className="relative flex h-full w-full flex-col overflow-hidden bg-sidebar text-sidebar-foreground">
+      {rootContent}
+      {screens}
     </aside>
   )
 }
 
-// ── 二级页面外壳：统一的返回头 + 滑动动画 ──
+// ── 二级页面外壳：统一返回头 + 滑动动画 ──
 function ScreenPanel({ style, title, onBack, children }: {
   style: React.CSSProperties
   title: string
@@ -253,7 +261,6 @@ function ComingSoon({ icon, title, desc }: { icon: React.ReactNode; title: strin
   )
 }
 
-// ── 开关 ──
 function Switch({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
   return (
     <button
@@ -267,7 +274,6 @@ function Switch({ checked, onChange }: { checked: boolean; onChange: (v: boolean
   )
 }
 
-// ── 记忆页主体：总开关 + 列表（编辑/删除）+ 手动添加 ──
 function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDelete }: {
   memories: Memory[]
   enabled: boolean
@@ -293,7 +299,6 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
 
   return (
     <div className="px-4">
-      {/* 总开关 */}
       <div className="flex items-start gap-3 rounded-2xl border border-sidebar-border p-4">
         <Brain className="mt-0.5 size-5 shrink-0 text-sidebar-primary" />
         <div className="min-w-0 flex-1">
@@ -305,7 +310,6 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
         <Switch checked={enabled} onChange={onEnabledChange} />
       </div>
 
-      {/* 列表 */}
       <div className={cn("mt-4 transition-opacity", !enabled && "opacity-40")}>
         <div className="mb-2 flex items-center justify-between px-1">
           <span className="text-[12px] tracking-[0.15em] text-muted-foreground">已记住 {memories.length} 条</span>

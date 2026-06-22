@@ -2,7 +2,7 @@
 
 import { useRef, useState, useEffect } from "react"
 import { cn } from "@/lib/utils"
-import { ChevronDown, X, Loader2, Plus, ImageIcon, FileText, Globe, ArrowUp, ExternalLink, LogOut, Square, CornerUpLeft } from "lucide-react"
+import { ChevronDown, X, Loader2, Plus, ImageIcon, FileText, Globe, ArrowUp, ExternalLink, LogOut, Square, CornerUpLeft, Camera, Check } from "lucide-react"
 import { TIERS, type Tier } from "@/lib/chat-data"
 import { prepareFile, type AttachedFile } from "@/lib/file-extract"
 
@@ -48,8 +48,10 @@ export function ChatInput({
   const [files, setFiles] = useState<AttachedFile[]>([])
   const [fileLoading, setFileLoading] = useState(false)
   const [fileError, setFileError] = useState("")
+  const cameraInputRef = useRef<HTMLInputElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const plusMenuRef = useRef<HTMLDivElement>(null)
 
   const [repoPickerOpen, setRepoPickerOpen] = useState(false)
   const [repos, setRepos] = useState<GithubRepo[]>([])
@@ -83,6 +85,18 @@ export function ChatInput({
     document.addEventListener("mousedown", handleClickOutside)
     return () => document.removeEventListener("mousedown", handleClickOutside)
   }, [tierMenuOpen])
+
+  // 点加号菜单外部时关闭
+  useEffect(() => {
+    if (!plusOpen) return
+    function handleClickOutside(e: MouseEvent) {
+      if (plusMenuRef.current && !plusMenuRef.current.contains(e.target as Node)) {
+        setPlusOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [plusOpen])
 
   function resize() {
     const el = ref.current
@@ -136,6 +150,7 @@ export function ChatInput({
   }
 
   async function openRepoPicker() {
+    setPlusOpen(false)
     setRepoPickerOpen(true)
     if (repos.length > 0) return
     setReposLoading(true)
@@ -162,6 +177,18 @@ export function ChatInput({
     }
   }
 
+  // 加号菜单里点“仓库”：已连且选了仓库 / 已连未选 → 打开选择器；未连 → 去授权
+  function handleGithubEntry() {
+    if (githubConnected || githubContext) {
+      openRepoPicker()
+    } else {
+      setPlusOpen(false)
+      window.location.href = "/api/auth/github"
+    }
+  }
+
+  const githubLabel = githubContext ? githubContext.repo : githubConnected ? "选择仓库" : "连接仓库"
+  const hasActiveTools = webSearch || !!githubContext
   const canSend = !isLoading && (!!value.trim() || images.length > 0 || files.length > 0)
 
   return (
@@ -171,54 +198,13 @@ export function ChatInput({
         ? "bg-background px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2"
         : "max-w-[44rem] px-10 pb-8 pt-2",
     )}>
-      {/* 工具栏 */}
-      <div className="mb-2 flex items-center gap-2 px-1">
-        <button
-          onClick={() => onWebSearchChange(!webSearch)}
-          className={cn(
-            "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors",
-            webSearch
-              ? "border-primary/50 bg-primary/10 text-primary"
-              : "border-border/50 bg-secondary/50 text-muted-foreground hover:border-border",
-          )}
-        >
-          <Globe className="size-3" />
-          <span>联网</span>
-        </button>
-
-        {githubContext ? (
-          <div className="flex items-center gap-1.5 rounded-full border border-border/50 bg-secondary/50 pl-2 pr-1.5 py-1">
-            {repoConnecting
-              ? <Loader2 className="size-3 animate-spin text-muted-foreground" />
-              : <GitHubIcon className="size-3 text-muted-foreground" />
-            }
-            <span className="text-xs text-muted-foreground max-w-[120px] truncate">{githubContext.repo}</span>
-            <button onClick={() => onGithubConnect(null)} className="rounded-full p-0.5 hover:bg-muted transition-colors">
-              <X className="size-3 text-muted-foreground" />
-            </button>
-          </div>
-        ) : githubConnected ? (
-          <button
-            onClick={openRepoPicker}
-            className="flex items-center gap-1.5 rounded-full border border-border/50 bg-secondary/50 px-2.5 py-1 text-xs text-muted-foreground hover:border-border transition-colors"
-          >
-            {repoConnecting
-              ? <Loader2 className="size-3 animate-spin" />
-              : <GitHubIcon className="size-3" />
-            }
-            <span>选择仓库</span>
-            <ChevronDown className="size-3" />
-          </button>
-        ) : (
-          <button
-            onClick={() => { window.location.href = "/api/auth/github" }}
-            className="flex items-center gap-1.5 rounded-full border border-border/50 bg-secondary/50 px-2.5 py-1 text-xs text-muted-foreground hover:border-border transition-colors"
-          >
-            <GitHubIcon className="size-3" />
-            <span>连接仓库</span>
-          </button>
-        )}
-      </div>
+      {/* 三类图片/文件输入：拍照=唤起相机，图片=相册，文件=文档 */}
+      <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden"
+        onChange={e => { readImagesAsBase64(e.target.files); e.currentTarget.value = "" }} />
+      <input ref={imageInputRef} type="file" accept="image/*" multiple className="hidden"
+        onChange={e => { readImagesAsBase64(e.target.files); e.currentTarget.value = "" }} />
+      <input ref={fileInputRef} type="file" accept=".pdf,.txt,.md,.csv,.json,.log,.xml,.html,.yaml,.yml,text/*,application/pdf" multiple className="hidden"
+        onChange={e => { handleFiles(e.target.files); e.currentTarget.value = "" }} />
 
       {/* 仓库选择器（点外部关闭） */}
       {repoPickerOpen && (
@@ -275,11 +261,6 @@ export function ChatInput({
         </div>
       )}
 
-      <input ref={imageInputRef} type="file" accept="image/*" multiple capture="environment" className="hidden"
-        onChange={e => { readImagesAsBase64(e.target.files); e.currentTarget.value = "" }} />
-      <input ref={fileInputRef} type="file" accept=".pdf,.txt,.md,.csv,.json,.log,.xml,.html,.yaml,.yml,text/*,application/pdf" multiple className="hidden"
-        onChange={e => { handleFiles(e.target.files); e.currentTarget.value = "" }} />
-
       {/* 引用回复条 */}
       {replyTo && (
         <div className="mb-2 flex items-start gap-2 rounded-xl border-l-2 border-primary/40 bg-muted/30 pl-3 pr-2 py-2">
@@ -329,32 +310,62 @@ export function ChatInput({
       )}
       {fileError && <p className="mb-2 px-2 text-xs text-destructive">{fileError}</p>}
 
-      {plusOpen && (
-        <div className="mb-2 flex gap-2 px-1">
-          <button onClick={() => { imageInputRef.current?.click() }}
-            className="flex items-center gap-1.5 rounded-full border border-border/50 bg-secondary/50 px-3 py-1.5 text-xs text-muted-foreground hover:border-border transition-colors">
-            <ImageIcon className="size-3.5" />上传图片
-          </button>
-          <button onClick={() => { fileInputRef.current?.click() }}
-            className="flex items-center gap-1.5 rounded-full border border-border/50 bg-secondary/50 px-3 py-1.5 text-xs text-muted-foreground hover:border-border transition-colors">
-            <FileText className="size-3.5" />上传文件
+      <div className="flex min-w-0 items-end gap-2 rounded-3xl border border-border/70 bg-card/80 py-2 pl-2 pr-2">
+        {/* 加号：展开 拍照/图片/文件/联网/仓库（样式同模型选择器） */}
+        <div ref={plusMenuRef} className="relative mb-0.5 shrink-0">
+          {plusOpen && (
+            <div className="absolute bottom-full left-0 mb-2 min-w-[9.5rem] overflow-hidden rounded-2xl border border-border/60 bg-card shadow-lg">
+              <PlusItem icon={<Camera className="size-4" />} label="拍照" onClick={() => { setPlusOpen(false); cameraInputRef.current?.click() }} />
+              <PlusItem icon={<ImageIcon className="size-4" />} label="图片" onClick={() => { setPlusOpen(false); imageInputRef.current?.click() }} />
+              <PlusItem icon={<FileText className="size-4" />} label="文件" onClick={() => { setPlusOpen(false); fileInputRef.current?.click() }} />
+              <div className="border-t border-border/40" />
+              <button
+                onClick={() => onWebSearchChange(!webSearch)}
+                className={cn(
+                  "flex w-full items-center gap-2.5 px-4 py-2.5 text-sm transition-colors",
+                  webSearch ? "text-primary" : "text-muted-foreground hover:bg-secondary/60",
+                )}
+              >
+                <Globe className="size-4" />
+                <span className="flex-1 text-left">联网</span>
+                {webSearch && <Check className="size-3.5" />}
+              </button>
+              <button
+                onClick={handleGithubEntry}
+                className="flex w-full items-center gap-2.5 px-4 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-secondary/60"
+              >
+                {repoConnecting ? <Loader2 className="size-4 animate-spin" /> : <GitHubIcon className={cn("size-4", githubContext && "text-primary")} />}
+                <span className={cn("flex-1 truncate text-left", githubContext && "text-primary")}>{githubLabel}</span>
+                {githubContext && (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={e => { e.stopPropagation(); onGithubConnect(null); setPlusOpen(false) }}
+                    className="rounded-full p-0.5 hover:bg-muted"
+                    aria-label="移除仓库"
+                  >
+                    <X className="size-3.5" />
+                  </span>
+                )}
+              </button>
+            </div>
+          )}
+          <button
+            onClick={() => setPlusOpen(v => !v)}
+            aria-label="添加"
+            className={cn(
+              "relative flex size-8 items-center justify-center rounded-full border transition-colors",
+              plusOpen
+                ? "border-primary/50 bg-primary/10 text-primary"
+                : "border-border/50 text-muted-foreground hover:border-border hover:text-foreground",
+            )}
+          >
+            <Plus className={cn("size-4 transition-transform", plusOpen && "rotate-45")} />
+            {hasActiveTools && !plusOpen && (
+              <span className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-primary ring-2 ring-card" />
+            )}
           </button>
         </div>
-      )}
-
-      <div className="flex min-w-0 items-end gap-2 rounded-3xl border border-border/70 bg-card/80 py-2 pl-2 pr-2">
-        <button
-          onClick={() => setPlusOpen(v => !v)}
-          aria-label="添加附件"
-          className={cn(
-            "mb-0.5 flex size-8 shrink-0 items-center justify-center rounded-full border transition-colors",
-            plusOpen
-              ? "border-primary/50 bg-primary/10 text-primary"
-              : "border-border/50 text-muted-foreground hover:border-border hover:text-foreground",
-          )}
-        >
-          <Plus className={cn("size-4 transition-transform", plusOpen && "rotate-45")} />
-        </button>
 
         <textarea
           ref={ref}
@@ -425,5 +436,18 @@ export function ChatInput({
         )}
       </div>
     </div>
+  )
+}
+
+// 加号菜单里的一项（拍照/图片/文件）：点完即收起菜单
+function PlusItem({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex w-full items-center gap-2.5 px-4 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-secondary/60"
+    >
+      <span className="text-muted-foreground">{icon}</span>
+      <span className="flex-1 text-left">{label}</span>
+    </button>
   )
 }

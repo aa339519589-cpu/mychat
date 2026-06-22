@@ -18,7 +18,7 @@ import { LoginScreen } from "@/components/login-screen"
 import { createClient } from "@/lib/supabase/client"
 import type { User } from "@supabase/supabase-js"
 import { cn } from "@/lib/utils"
-import { PanelLeft, X } from "lucide-react"
+import { PanelLeft } from "lucide-react"
 import { parseArtifact, artifactTitle } from "@/lib/artifact"
 import { ArtifactPanel } from "@/components/artifact-panel"
 
@@ -538,27 +538,14 @@ export function LiteraryChat() {
 
       <div className="flex h-dvh min-h-0 w-full overflow-hidden bg-background paper-grain md:hidden">
         <div className={cn("fixed inset-0 z-40", drawerOpen ? "pointer-events-auto" : "pointer-events-none")}>
+          {/* 半屏遮罩：露出后面的对话，点一下收起 */}
           <button
             type="button"
-            aria-label="关闭侧栏"
+            aria-label="收起侧栏"
             onClick={() => setDrawerOpen(false)}
-            className={cn("absolute inset-0 h-full w-full bg-foreground/30 transition-opacity", drawerOpen ? "opacity-100" : "opacity-0")}
+            className={cn("absolute inset-0 bg-foreground/40 transition-opacity duration-300", drawerOpen ? "opacity-100" : "opacity-0")}
           />
-          <div className={cn(
-            "absolute inset-0 h-dvh w-full overflow-hidden bg-sidebar transition-transform duration-300 ease-out",
-            drawerOpen ? "translate-x-0" : "-translate-x-full",
-          )}>
-            <AppSidebar {...sidebarProps} />
-          </div>
-          {drawerOpen && (
-            <button
-              onClick={() => setDrawerOpen(false)}
-              className="absolute right-4 top-[max(1rem,env(safe-area-inset-top))] z-50 rounded-full bg-card p-2 text-foreground shadow"
-              aria-label="关闭对话列表"
-            >
-              <X className="size-5" />
-            </button>
-          )}
+          <AppSidebar {...sidebarProps} mobile visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
         </div>
         {renderChatPane(true)}
         {showArt && (
