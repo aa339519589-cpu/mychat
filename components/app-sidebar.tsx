@@ -10,18 +10,18 @@ import {
   Feather, Plus, ChevronLeft, ChevronRight, Trash2, Brain, LogOut,
   Settings, Folder, Shapes, Pencil, Check, X, PanelLeft,
   FileText, Upload, MessageCircle, Loader2, FolderPlus,
-  MoreHorizontal, Star, Pin, Terminal, BarChart2,
+  MoreHorizontal, Star, Pin, SlidersHorizontal, BarChart2,
 } from "lucide-react"
 import { fetchQuota, fetchCustomSystemPrompt, saveCustomSystemPrompt, type QuotaSnapshot } from "@/lib/db"
 
 // 二级页面：除根视图（侧栏主体）外的所有可滑入页面
-type Screen = "settings" | "memory" | "projects" | "artifacts" | "project-detail" | "system-prompt" | "quota"
+type Screen = "settings" | "memory" | "projects" | "artifacts" | "project-detail" | "basics" | "quota"
 
 // 层级 z：从根进入的为一级(20)，从设置再进入的为二级(30)，均高于根面板(10)。
 // 同级页面从不同时出现，静态 z 即可，退场时仍盖在被揭开的页面之上，滑出动画才完整。
 const Z: Record<Screen, number> = {
   settings: 20, projects: 20, artifacts: 20,
-  memory: 30, "project-detail": 30, "system-prompt": 30, "quota": 30,
+  memory: 30, "project-detail": 30, "basics": 30, "quota": 30,
 }
 
 // 置顶的排在最前；同组内保持原顺序（V8 的 sort 稳定）
@@ -179,8 +179,8 @@ export function AppSidebar({
       <ScreenPanel style={screenStyle("settings")} title="设置" onBack={pop}>
         <div className="space-y-1 px-3">
           <MenuRow icon={<Brain className="size-4" />} label="记忆" hint={`${props.memories.length} 条`} onClick={() => push("memory")} />
-          <MenuRow icon={<Terminal className="size-4" />} label="系统提示词" onClick={() => push("system-prompt")} />
           <MenuRow icon={<BarChart2 className="size-4" />} label="使用额度" onClick={() => push("quota")} />
+          <MenuRow icon={<SlidersHorizontal className="size-4" />} label="基础设定" onClick={() => push("basics")} />
         </div>
       </ScreenPanel>
 
@@ -195,12 +195,12 @@ export function AppSidebar({
         />
       </ScreenPanel>
 
-      <ScreenPanel style={screenStyle("system-prompt")} title="系统提示词" onBack={pop}>
-        <SystemPromptScreen />
-      </ScreenPanel>
-
       <ScreenPanel style={screenStyle("quota")} title="使用额度" onBack={pop}>
         <QuotaScreen />
+      </ScreenPanel>
+
+      <ScreenPanel style={screenStyle("basics")} title="基础设定" onBack={pop}>
+        <BasicsScreen />
       </ScreenPanel>
 
       <ScreenPanel style={screenStyle("projects")} title="项目" onBack={pop}>
@@ -944,42 +944,72 @@ function ConvMenu({ conv, anchor, projects, picker, onPicker, onClose, onToggleS
   )
 }
 
-// ── 系统提示词设置 ──
-function SystemPromptScreen() {
+// ── 基础设定（对话偏好，Claude.ai 风格的纯文本框 + 字数 + 保存/取消）──
+const BASICS_MAX = 2000
+function BasicsScreen() {
   const [value, setValue] = useState('')
+  const [saved, setSaved] = useState('')   // 最近一次已保存的值，供"取消"回退 + 脏检查
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(false)
+  const [justSaved, setJustSaved] = useState(false)
 
   useEffect(() => {
-    fetchCustomSystemPrompt().then(v => { setValue(v); setLoading(false) })
+    fetchCustomSystemPrompt().then(v => { setValue(v); setSaved(v); setLoading(false) })
   }, [])
+
+  const dirty = value !== saved
 
   async function save() {
     setSaving(true)
     await saveCustomSystemPrompt(value)
+    setSaved(value)
     setSaving(false)
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
+    setJustSaved(true)
+    setTimeout(() => setJustSaved(false), 2000)
   }
 
   if (loading) return <div className="px-4 py-8 text-center text-sm text-muted-foreground">加载中…</div>
 
   return (
-    <div className="space-y-3 px-4">
-      <textarea
-        value={value}
-        onChange={e => setValue(e.target.value)}
-        placeholder="比如：「回复尽量简短」「优先中文资料」「多用表格和列表」"
-        className="w-full min-h-[160px] resize-none rounded-2xl bg-sidebar-accent/45 px-4 py-3 text-[13px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/40 transition-colors focus:bg-sidebar-accent/60 border border-sidebar-accent/70 focus:border-sidebar-primary/50"
-      />
-      <button
-        onClick={save}
-        disabled={saving}
-        className="flex w-full items-center justify-center gap-1.5 rounded-2xl bg-sidebar-primary/90 hover:bg-sidebar-primary py-2 text-[13px] text-sidebar-primary-foreground transition-colors disabled:opacity-50"
-      >
-        {saved ? <><Check className="size-3.5" />已保存</> : saving ? '保存中…' : '保存'}
-      </button>
+    <div className="space-y-4 px-4">
+      <div>
+        <p className="text-[13px] font-medium text-foreground">对话偏好</p>
+        <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
+          告诉它你希望被如何回应，这些偏好会在每段对话里默默生效。
+        </p>
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-sidebar-border bg-card transition-colors focus-within:border-sidebar-primary/55">
+        <textarea
+          value={value}
+          maxLength={BASICS_MAX}
+          onChange={e => setValue(e.target.value)}
+          placeholder="比如：「回复尽量简短」「优先中文资料」「多用表格和列表」「语气随和一点」"
+          className="block min-h-[180px] w-full resize-none bg-transparent px-4 py-3.5 text-[14px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/45"
+        />
+        <div className="flex justify-end px-4 pb-2.5">
+          <span className={cn("text-[11px] tabular-nums", value.length > BASICS_MAX * 0.9 ? "text-destructive/80" : "text-muted-foreground/55")}>
+            {value.length} / {BASICS_MAX}
+          </span>
+        </div>
+      </div>
+
+      <div className="flex gap-2.5">
+        <button
+          onClick={save}
+          disabled={saving || !dirty}
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-sidebar-primary py-2.5 text-[13px] font-medium text-sidebar-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
+        >
+          {justSaved ? <><Check className="size-3.5" />已保存</> : saving ? '保存中…' : '保存'}
+        </button>
+        <button
+          onClick={() => setValue(saved)}
+          disabled={!dirty || saving}
+          className="flex flex-1 items-center justify-center rounded-xl border border-sidebar-border bg-sidebar-accent/40 py-2.5 text-[13px] text-muted-foreground transition-colors hover:bg-sidebar-accent/70 hover:text-foreground disabled:opacity-40"
+        >
+          取消
+        </button>
+      </div>
     </div>
   )
 }
