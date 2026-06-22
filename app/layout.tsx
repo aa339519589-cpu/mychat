@@ -61,7 +61,7 @@ export default function RootLayout({
       <head>
         <link rel="preload" href="/companion.png" as="image" />
       </head>
-      <body className="font-serif antialiased">
+      <body className="font-sans antialiased">
         {children}
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>

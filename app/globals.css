@@ -5,10 +5,14 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+  /* 内容衬线：AI 对话正文、内容标题——阅读型、有质感 */
   --font-heading: var(--font-spectral), var(--font-noto-serif-sc), serif;
   --font-serif: var(--font-spectral), var(--font-noto-serif-sc), 'Songti SC',
     'STSong', 'SimSun', serif;
-  --font-sans: var(--font-spectral), var(--font-noto-serif-sc), serif;
+  /* UI 无衬线：导航/侧栏/按钮/输入——功能性、工具感、更稳定。
+     与正文衬线形成明确分层，iOS 上落到 PingFang SC，非常干净。 */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'PingFang SC',
+    'Noto Sans CJK SC', 'Microsoft YaHei', system-ui, sans-serif;
   --font-mono: var(--font-noto-serif-sc), serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -174,7 +178,7 @@
     overflow: hidden;
   }
   html {
-    @apply font-serif;
+    @apply font-sans;
   }
   html,
   body {

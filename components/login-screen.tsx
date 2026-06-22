@@ -68,7 +68,7 @@ export function LoginScreen() {
             onChange={e => { setEmail(e.target.value); setError("") }}
             placeholder="邮箱"
             autoComplete="email"
-            className="w-full rounded-2xl border border-border/70 bg-card/80 px-4 py-3 text-sm outline-none focus:border-primary/50 placeholder:text-muted-foreground/50"
+            className="w-full rounded-2xl bg-secondary/50 px-4 py-3.5 text-sm outline-none transition-colors focus:bg-secondary/75 placeholder:text-muted-foreground/50"
           />
           <input
             type="password"
@@ -77,7 +77,7 @@ export function LoginScreen() {
             onKeyDown={e => { if (e.key === "Enter") handleEmailAuth() }}
             placeholder="密码（至少 6 位）"
             autoComplete={mode === "signup" ? "new-password" : "current-password"}
-            className="w-full rounded-2xl border border-border/70 bg-card/80 px-4 py-3 text-sm outline-none focus:border-primary/50 placeholder:text-muted-foreground/50"
+            className="w-full rounded-2xl bg-secondary/50 px-4 py-3.5 text-sm outline-none transition-colors focus:bg-secondary/75 placeholder:text-muted-foreground/50"
           />
 
           {error && <p className="px-1 text-xs text-destructive">{error}</p>}
@@ -101,7 +101,7 @@ export function LoginScreen() {
         <button
           onClick={handleGuest}
           disabled={loading || guestLoading}
-          className="flex w-full items-center justify-center gap-2 rounded-2xl border border-border/70 bg-card/50 px-4 py-3 text-sm text-muted-foreground transition-colors hover:border-border hover:text-foreground disabled:opacity-60"
+          className="flex w-full items-center justify-center gap-2 rounded-2xl bg-secondary/40 px-4 py-3.5 text-sm text-muted-foreground transition-colors hover:bg-secondary/70 hover:text-foreground disabled:opacity-60"
         >
           {guestLoading && <Loader2 className="size-4 animate-spin" />}
           以游客身份继续

@@ -310,7 +310,7 @@ export function ChatInput({
       )}
       {fileError && <p className="mb-2 px-2 text-xs text-destructive">{fileError}</p>}
 
-      <div className="flex min-w-0 items-end gap-2 rounded-3xl border border-border/70 bg-card/80 py-2 pl-2 pr-2">
+      <div className="flex min-w-0 items-end gap-2 rounded-3xl bg-secondary/50 py-2 pl-2 pr-2">
         {/* 加号：展开 拍照/图片/文件/联网/仓库（样式同模型选择器） */}
         <div ref={plusMenuRef} className="relative mb-0.5 shrink-0">
           {plusOpen && (
@@ -354,10 +354,10 @@ export function ChatInput({
             onClick={() => setPlusOpen(v => !v)}
             aria-label="添加"
             className={cn(
-              "relative flex size-8 items-center justify-center rounded-full border transition-colors",
+              "relative flex size-8 items-center justify-center rounded-full transition-colors",
               plusOpen
-                ? "border-primary/50 bg-primary/10 text-primary"
-                : "border-border/50 text-muted-foreground hover:border-border hover:text-foreground",
+                ? "bg-primary/10 text-primary"
+                : "text-muted-foreground hover:bg-background/40 hover:text-foreground",
             )}
           >
             <Plus className={cn("size-4 transition-transform", plusOpen && "rotate-45")} />
@@ -404,7 +404,7 @@ export function ChatInput({
             type="button"
             onClick={() => setTierMenuOpen(v => !v)}
             aria-label="选择模型"
-            className="flex h-8 items-center gap-1 rounded-full border border-border/50 bg-secondary/50 px-3 text-xs text-muted-foreground transition-colors hover:border-border hover:text-foreground"
+            className="flex h-8 items-center gap-1 rounded-full px-3 text-xs text-muted-foreground transition-colors hover:bg-background/40 hover:text-foreground"
           >
             <span>{activeTier}</span>
             <ChevronDown className={cn("size-3 transition-transform", tierMenuOpen && "rotate-180")} />
@@ -425,10 +425,10 @@ export function ChatInput({
             disabled={!canSend}
             aria-label="发送"
             className={cn(
-              "mb-0.5 flex size-9 shrink-0 items-center justify-center rounded-full border transition-colors",
+              "mb-0.5 flex size-9 shrink-0 items-center justify-center rounded-full transition-colors",
               canSend
-                ? "border-primary/50 bg-primary text-primary-foreground hover:opacity-90"
-                : "cursor-not-allowed border-border/40 text-muted-foreground/30",
+                ? "bg-primary text-primary-foreground hover:opacity-90"
+                : "cursor-not-allowed text-muted-foreground/30",
             )}
           >
             <ArrowUp className="size-4" />

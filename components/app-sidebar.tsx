@@ -112,7 +112,7 @@ export function AppSidebar({
 
       <button
         onClick={handleNew}
-        className="mx-4 mb-2 flex items-center gap-2.5 rounded-2xl px-3 py-2.5 text-sm tracking-wide text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
+        className="mx-4 mb-2 flex items-center gap-2.5 rounded-2xl px-3 py-2.5 text-sm font-medium text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
       >
         <Plus className="size-4 text-sidebar-primary" />
         起一篇新的对谈
@@ -291,7 +291,7 @@ function ScreenPanel({ style, title, onBack, children }: {
         <button onClick={onBack} className="-ml-1 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground" aria-label="返回">
           <ChevronLeft className="size-5" />
         </button>
-        <h3 className="font-heading text-lg tracking-wide">{title}</h3>
+        <h3 className="text-[17px] font-semibold tracking-tight">{title}</h3>
       </div>
       <div className="flex-1 overflow-y-auto pb-[max(1.5rem,env(safe-area-inset-bottom))]">{children}</div>
     </div>
@@ -300,7 +300,7 @@ function ScreenPanel({ style, title, onBack, children }: {
 
 function NavRow({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {
   return (
-    <button onClick={onClick} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-sm tracking-wide text-sidebar-foreground transition-colors hover:bg-sidebar-accent">
+    <button onClick={onClick} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-sm font-medium text-sidebar-foreground transition-colors hover:bg-sidebar-accent">
       <span className="text-muted-foreground">{icon}</span>{label}
     </button>
   )
@@ -365,7 +365,7 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
 
   return (
     <div className="px-4">
-      <div className="flex items-start gap-3 rounded-2xl border border-sidebar-border p-4">
+      <div className="flex items-start gap-3 rounded-2xl bg-sidebar-accent/30 p-4">
         <Brain className="mt-0.5 size-5 shrink-0 text-sidebar-primary" />
         <div className="min-w-0 flex-1">
           <p className="text-sm text-foreground">开启记忆</p>
@@ -587,8 +587,8 @@ function InstructionsCard({ value, onSave }: { value: string; onSave: (v: string
 
   if (editing) {
     return (
-      <div className="space-y-2 rounded-2xl border border-sidebar-border p-3">
-        <p className="text-[12px] tracking-[0.1em] text-muted-foreground">项目指令 / 人设</p>
+      <div className="space-y-2 rounded-2xl bg-sidebar-accent/30 p-3">
+        <p className="text-[12px] font-medium tracking-[0.08em] text-muted-foreground">项目指令 / 人设</p>
         <textarea
           autoFocus value={draft} onChange={e => setDraft(e.target.value)}
           placeholder="例如：你是我的英语学习教练，回答时多结合本项目里的资料……"
@@ -604,7 +604,7 @@ function InstructionsCard({ value, onSave }: { value: string; onSave: (v: string
   }
 
   return (
-    <button onClick={() => setEditing(true)} className="flex w-full items-start gap-3 rounded-2xl border border-sidebar-border p-3 text-left transition-colors hover:bg-sidebar-accent/40">
+    <button onClick={() => setEditing(true)} className="flex w-full items-start gap-3 rounded-2xl bg-sidebar-accent/30 p-3 text-left transition-colors hover:bg-sidebar-accent/55">
       <Pencil className="mt-0.5 size-4 shrink-0 text-sidebar-primary" />
       <span className="min-w-0 flex-1">
         <span className="block text-sm text-foreground">项目指令 / 人设</span>
@@ -785,7 +785,7 @@ function ConversationRow({ c, isActive, renaming, onSelect, onOpenMenu, onCommit
         <div className="flex items-baseline justify-between gap-3">
           <span className="flex min-w-0 items-center gap-1.5">
             {c.pinned && <Pin className="size-3 shrink-0 rotate-45 fill-current text-sidebar-primary/70" />}
-            <span className={cn("truncate font-heading text-[15px] leading-snug tracking-wide", isActive ? "text-sidebar-primary" : "text-sidebar-foreground")}>{c.title}</span>
+            <span className={cn("truncate text-[14px] font-medium leading-snug", isActive ? "text-sidebar-primary" : "text-sidebar-foreground")}>{c.title}</span>
             {c.starred && <Star className="size-3 shrink-0 fill-current text-sidebar-primary/70" />}
           </span>
           <span className="shrink-0 text-[11px] tracking-wider text-muted-foreground">{c.date}</span>
