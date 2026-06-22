@@ -211,10 +211,10 @@ export function MessageList({
                   </div>
                 )}
                 {m.sheetMusicNotes && m.sheetMusicNotes.length > 0 && (
-                  <div className="mb-3 space-y-2">
+                  <div className="mb-3 space-y-1">
                     {m.sheetMusicNotes.map((note, i) => (
-                      <div key={i} className="flex items-center gap-1.5 text-xs italic text-muted-foreground/70 bg-muted/40 rounded px-2 py-1.5">
-                        <span>⏳ 正在渲染{note.type === 'default' ? '五线谱' : note.type === 'c_major' ? 'C大调' : note.type === 'happy_birthday' ? '生日快乐' : '五线谱'}……</span>
+                      <div key={i} className="flex items-center gap-1.5 text-xs italic text-muted-foreground/80">
+                        <span>正在渲染……</span>
                       </div>
                     ))}
                   </div>
@@ -222,8 +222,8 @@ export function MessageList({
                 {(() => {
                   // content 始终是模型原始全文，渲染时实时拆分两种 artifact
                   const { display, raw, done, inlineRaw, inlineDone, vegaRaw, vegaDone } = parseArtifact(m.content ?? '')
-                  // 操作栏是否有内容（避免渲染出一截空引导线）
-                  const showActions = !!display || idx === lastAiIdx || raw !== null
+                  // 操作栏只在有文字内容时显示引导线，避免纯 SVG 消息下方出现空竖线
+                  const showActions = !!display || raw !== null
                   return (
                     <div className="min-w-0 space-y-3">
                       {m.isError ? (
