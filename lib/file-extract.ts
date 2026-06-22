@@ -1,13 +1,12 @@
 // 把上传的文件转成可发送的附件：
-// - PDF 有文字层：pdfjs-dist 提字存入 text，后端直接注入
-// - PDF 扫描件：逐页渲染成图片存入 pages，发送时附到消息 images 供视觉模型识别
-// - 文本类文件：浏览器直接读取内容
+// - PDF 有文字层：pdfjs 提字存入 text，后端注入消息
+// - PDF 扫描件：dataUrl 保留原始 PDF base64，后端上传至 DeepSeek Files API 让模型原生识别
+// - 文本类文件：浏览器直接读取
 export type AttachedFile = {
   name: string
-  dataUrl: string
+  dataUrl: string   // 扫描件 PDF：原始 base64；其余为空字符串
   isPdf: boolean
   text?: string
-  pages?: string[]  // 扫描件各页 JPEG base64；发送时临时用，不落库
 }
 
 const TEXT_EXTS = [
@@ -21,6 +20,15 @@ function hasExt(name: string, exts: string[]) {
   return exts.some(e => lower.endsWith(e))
 }
 
+function readAsDataURL(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve(r.result as string)
+    r.onerror = () => reject(new Error("读取文件失败"))
+    r.readAsDataURL(file)
+  })
+}
+
 export async function prepareFile(file: File): Promise<AttachedFile> {
   const name = file.name
   const isPdf = file.type === "application/pdf" || name.toLowerCase().endsWith(".pdf")
@@ -31,12 +39,9 @@ export async function prepareFile(file: File): Promise<AttachedFile> {
       if (result.kind === 'text') {
         return { name, dataUrl: "", isPdf: true, text: result.text }
       }
-      // 扫描件：把页数信息写进 text，页面图片存入 pages
-      const truncated = result.totalPages > result.pages.length
-      const hint = truncated
-        ? `（扫描件，已转换前 ${result.pages.length} 页为图片，共 ${result.totalPages} 页）`
-        : `（扫描件，已转换全部 ${result.totalPages} 页为图片）`
-      return { name, dataUrl: "", isPdf: true, text: hint, pages: result.pages }
+      // 扫描件：保留原始 PDF，后端用 DeepSeek Files API 上传识别
+      const dataUrl = await readAsDataURL(file)
+      return { name, dataUrl, isPdf: true, text: "(扫描件，正在上传给 AI 识别)" }
     } catch {
       return { name, dataUrl: "", isPdf: true, text: "（PDF 解析失败）" }
     }

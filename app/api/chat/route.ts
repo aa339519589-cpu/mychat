@@ -12,6 +12,32 @@ const DEEPSEEK_BASE_URL = 'https://api.deepseek.com'
 
 const MAX_TOOL_ROUNDS = 6
 
+// 扫描件 PDF：上传到 DeepSeek Files API，返回 file_id；失败则原样返回（后端会降级为文字提示）
+async function uploadScannedPdfs(attachments: any[], apiKey: string, baseUrl: string): Promise<any[]> {
+  if (!attachments?.length) return attachments ?? []
+  return Promise.all(attachments.map(async (f) => {
+    if (!f.isPdf || !f.dataUrl) return f
+    try {
+      const b64 = typeof f.dataUrl === 'string' ? (f.dataUrl.split(',')[1] ?? '') : ''
+      if (!b64) return f
+      const blob = new Blob([Buffer.from(b64, 'base64')], { type: 'application/pdf' })
+      const form = new FormData()
+      form.append('file', blob, f.name)
+      form.append('purpose', 'file-extract')
+      const res = await fetch(`${baseUrl}/v1/files`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}` },
+        body: form,
+      })
+      if (!res.ok) return f
+      const data = await res.json()
+      return { ...f, fileId: data.id, dataUrl: '' }
+    } catch {
+      return f
+    }
+  }))
+}
+
 export async function POST(req: NextRequest) {
   const { tier = '绝句', messages, memories, attachments, webSearch, project } = await req.json()
 
@@ -50,7 +76,8 @@ export async function POST(req: NextRequest) {
     async start(controller) {
       try {
         const msgs: any[] = [{ role: 'system', content: SYSTEM }, ...toOpenAI(messages)]
-        await injectAttachmentsOpenAI(msgs, attachments)
+        const processedAttachments = await uploadScannedPdfs(attachments, DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL)
+        await injectAttachmentsOpenAI(msgs, processedAttachments)
         for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
           const { assistantMessage, toolCalls, failed } = await runOpenAITurn(
             url, DEEPSEEK_API_KEY, model, msgs, openaiTools, controller, { thinking }

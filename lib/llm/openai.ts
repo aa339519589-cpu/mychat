@@ -24,23 +24,42 @@ export function chatCompletionsUrl(baseUrl: string) {
   return `${base}/v1/chat/completions`
 }
 
-// 前端已通过 pdfjs-dist 提取文字，后端直接注入 text 字段，无需服务端 PDF 解析
+// 注入附件：文本附件直接拼文字；扫描件 PDF（已由路由上传至 Files API）用 file 类型引用
 export async function injectAttachmentsOpenAI(msgs: any[], attachments?: Attachment[]) {
   if (!attachments?.length) return
   const last = msgs[msgs.length - 1]
   if (!last || last.role !== 'user') return
-  const blocks: string[] = []
+
+  const textParts: string[] = []
+  const fileRefs: { type: 'file'; file: { file_id: string } }[] = []
+
   for (const f of attachments) {
-    if (f.text) {
-      blocks.push(`［附件：${f.name}］\n${f.text}`)
+    if (f.fileId) {
+      textParts.push(`［附件：${f.name}］`)
+      fileRefs.push({ type: 'file', file: { file_id: f.fileId } })
+    } else if (f.text) {
+      textParts.push(`［附件：${f.name}］\n${f.text}`)
     }
   }
-  if (!blocks.length) return
-  const joined = blocks.join('\n\n')
-  if (typeof last.content === 'string') {
-    last.content = `${last.content}\n\n${joined}`.trim()
-  } else if (Array.isArray(last.content)) {
-    last.content.push({ type: 'text', text: joined })
+
+  if (!textParts.length && !fileRefs.length) return
+
+  const textBlock = textParts.join('\n\n')
+
+  if (fileRefs.length) {
+    // 有文件引用时，content 必须是数组格式
+    const existingText = typeof last.content === 'string' ? last.content
+      : (Array.isArray(last.content) ? last.content.find((b: any) => b.type === 'text')?.text ?? '' : '')
+    last.content = [
+      { type: 'text', text: [existingText, textBlock].filter(Boolean).join('\n\n').trim() || ' ' },
+      ...fileRefs,
+    ]
+  } else if (textBlock) {
+    if (typeof last.content === 'string') {
+      last.content = `${last.content}\n\n${textBlock}`.trim()
+    } else if (Array.isArray(last.content)) {
+      last.content.push({ type: 'text', text: textBlock })
+    }
   }
 }
 
