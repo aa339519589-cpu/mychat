@@ -103,19 +103,21 @@ export function LiteraryChat() {
         const saved = localStorage.getItem("chat_active_tier") as Tier | null
         if (saved && TIERS.some(t => t.id === saved)) setActiveTier(saved)
       } catch {}
-      if (convs.length === 0) {
-        // 没有任何历史会话：起一个本地草稿（先不写库），用户发首条消息时才真正创建
+      // 隐藏旧 bug 留下的"空会话"（确知 0 条消息的未命名片段）；count 拿不到就当作非空，绝不误藏
+      const real = convs.filter(c => c.msgCount !== 0)
+      if (real.length === 0) {
+        // 没有任何真实会话：起一个本地草稿（先不写库），用户发首条消息时才真正创建
         const id = crypto.randomUUID()
         draftIdRef.current = id
         setConversations([{ id, title: "未命名的篇章", excerpt: "", date: "今日", messages: [], draft: true }])
         setActiveId(id)
       } else {
-        setConversations(convs)
-        setActiveId(convs[0].id)
-        const msgs = await fetchMessages(convs[0].id)
+        setConversations(real)
+        setActiveId(real[0].id)
+        const msgs = await fetchMessages(real[0].id)
         if (cancelled) return
-        loadedRef.current.add(convs[0].id)
-        setConversations(prev => prev.map(c => c.id === convs[0].id ? { ...c, messages: msgs, excerpt: lastExcerpt(msgs) } : c))
+        loadedRef.current.add(real[0].id)
+        setConversations(prev => prev.map(c => c.id === real[0].id ? { ...c, messages: msgs, excerpt: lastExcerpt(msgs) } : c))
       }
     })()
     return () => { cancelled = true }

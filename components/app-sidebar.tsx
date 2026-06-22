@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
+import { createPortal } from "react-dom"
 import type { Conversation } from "@/lib/chat-data"
 import type { Memory } from "@/lib/memory-data"
 import type { Project, ProjectFile } from "@/lib/project-data"
@@ -24,6 +25,9 @@ const Z: Record<Screen, number> = {
 
 // 置顶的排在最前；同组内保持原顺序（V8 的 sort 稳定）
 const sortConvs = (list: Conversation[]) => [...list].sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned))
+
+// 会话"更多菜单"锚点：⋯ 按钮的视口坐标（把弹层定位到它旁边）
+type Anchor = { top: number; bottom: number; right: number }
 
 export type AppSidebarProps = {
   conversations: Conversation[]
@@ -64,6 +68,7 @@ export function AppSidebar({
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
   const [actionConvId, setActionConvId] = useState<string | null>(null)   // 打开"更多菜单"的会话
+  const [actionAnchor, setActionAnchor] = useState<Anchor | null>(null)   // ⋯ 按钮的位置
   const [actionProjectPicker, setActionProjectPicker] = useState(false)   // 菜单内"添加进项目"二级
   const [renamingId, setRenamingId] = useState<string | null>(null)       // 正在改名的会话
 
@@ -74,7 +79,7 @@ export function AppSidebar({
   const pop = () => setStack(prev => prev.slice(0, -1))
   const openProject = (id: string) => { setSelectedProjectId(id); push("project-detail") }
   const selectedProject = props.projects.find(p => p.id === selectedProjectId) ?? null
-  const openConvMenu = (id: string) => { setActionProjectPicker(false); setActionConvId(id) }
+  const openConvMenu = (id: string, anchor: Anchor) => { setActionProjectPicker(false); setActionAnchor(anchor); setActionConvId(id) }
   const closeConvMenu = () => { setActionConvId(null); setActionProjectPicker(false) }
   const actionConv = conversations.find(c => c.id === actionConvId) ?? null
   // 根列表只显示「未归入项目、且非草稿」的对谈；置顶在前
@@ -230,41 +235,21 @@ export function AppSidebar({
     </>
   )
 
-  // 会话「更多菜单」：底部动作面板（不被滚动容器裁切，移动端手感）
-  const convMenu = actionConv && (
-    <div className="absolute inset-0 z-[60]">
-      <button className="absolute inset-0 cursor-default bg-black/40" aria-label="关闭菜单" onClick={closeConvMenu} />
-      <div className="absolute bottom-0 left-0 right-0 overflow-hidden rounded-t-3xl border-t border-sidebar-border bg-card p-2 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl">
-        {!actionProjectPicker ? (
-          <>
-            <p className="truncate px-3 py-2 text-[12px] tracking-wide text-muted-foreground">{actionConv.title}</p>
-            <ActionRow icon={<Star className={cn("size-4", actionConv.starred && "fill-current text-sidebar-primary")} />} label={actionConv.starred ? "取消收藏" : "收藏"} onClick={() => { props.onToggleStar(actionConv.id); closeConvMenu() }} />
-            <ActionRow icon={<Pencil className="size-4" />} label="编辑标题" onClick={() => { setRenamingId(actionConv.id); closeConvMenu() }} />
-            <ActionRow icon={<FolderPlus className="size-4" />} label="添加进项目" onClick={() => setActionProjectPicker(true)} />
-            <ActionRow icon={<Pin className={cn("size-4", actionConv.pinned && "fill-current text-sidebar-primary")} />} label={actionConv.pinned ? "取消置顶" : "置顶"} onClick={() => { props.onTogglePin(actionConv.id); closeConvMenu() }} />
-            <ActionRow icon={<Trash2 className="size-4" />} label="删除" danger onClick={() => { onDelete(actionConv.id); closeConvMenu() }} />
-          </>
-        ) : (
-          <>
-            <div className="flex items-center gap-2 px-2 py-2">
-              <button onClick={() => setActionProjectPicker(false)} className="rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground" aria-label="返回"><ChevronLeft className="size-4" /></button>
-              <span className="text-sm text-foreground">添加进项目</span>
-            </div>
-            <div className="max-h-[42vh] overflow-y-auto">
-              {actionConv.projectId && (
-                <ActionRow icon={<X className="size-4" />} label="移出当前项目" onClick={() => { props.onAddToProject(actionConv.id, null); closeConvMenu() }} />
-              )}
-              {props.projects.filter(p => p.id !== actionConv.projectId).map(p => (
-                <ActionRow key={p.id} icon={<Folder className="size-4" />} label={p.name} onClick={() => { props.onAddToProject(actionConv.id, p.id); closeConvMenu() }} />
-              ))}
-              {props.projects.filter(p => p.id !== actionConv.projectId).length === 0 && !actionConv.projectId && (
-                <p className="px-4 py-6 text-center text-[13px] italic text-muted-foreground/70">还没有项目，先去「项目」里新建一个</p>
-              )}
-            </div>
-          </>
-        )}
-      </div>
-    </div>
+  // 会话「更多菜单」：锚定在 ⋯ 旁的弹层（portal 到 body，避免被滚动容器/抽屉变换裁切）
+  const convMenu = actionConv && actionAnchor && (
+    <ConvMenu
+      conv={actionConv}
+      anchor={actionAnchor}
+      projects={props.projects}
+      picker={actionProjectPicker}
+      onPicker={setActionProjectPicker}
+      onClose={closeConvMenu}
+      onToggleStar={() => { props.onToggleStar(actionConv.id); closeConvMenu() }}
+      onTogglePin={() => { props.onTogglePin(actionConv.id); closeConvMenu() }}
+      onStartRename={() => { setRenamingId(actionConv.id); closeConvMenu() }}
+      onAddToProject={(pid) => { props.onAddToProject(actionConv.id, pid); closeConvMenu() }}
+      onDelete={() => { onDelete(actionConv.id); closeConvMenu() }}
+    />
   )
 
   // 手机：一级半屏面板（滑入/滑出）+ 二级整屏页面（相对外层 fixed 容器铺满）
@@ -301,7 +286,7 @@ function ScreenPanel({ style, title, onBack, children }: {
   children: React.ReactNode
 }) {
   return (
-    <div className="absolute inset-0 flex flex-col bg-sidebar transition-transform duration-300 ease-out" style={style}>
+    <div className="absolute inset-0 flex flex-col bg-sidebar transition-transform duration-[360ms] ease-[cubic-bezier(0.32,0.72,0,1)]" style={style}>
       <div className="flex shrink-0 items-center gap-2 px-4 pb-4 pt-[max(1rem,env(safe-area-inset-top))]">
         <button onClick={onBack} className="-ml-1 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground" aria-label="返回">
           <ChevronLeft className="size-5" />
@@ -513,7 +498,7 @@ function ProjectsScreen({ projects, conversations, onCreate, onOpen, onDelete }:
             const n = countFor(p.id)
             return (
               <div key={p.id} className="group relative">
-                <button onClick={() => onOpen(p.id)} className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 pr-9 text-left transition-colors hover:bg-sidebar-accent/60">
+                <button onClick={() => onOpen(p.id)} className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 pr-9 text-left transition-all duration-150 hover:bg-sidebar-accent/60 active:scale-[0.985]">
                   <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-sidebar-accent/60 text-sidebar-primary"><Folder className="size-4" /></span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-heading text-[15px] tracking-wide text-sidebar-foreground">{p.name}</span>
@@ -549,7 +534,7 @@ function ProjectDetailScreen({
   onAddFile: (projectId: string, file: File) => Promise<ProjectFile | null>
   onDeleteFile: (fileId: string) => void
   renamingId: string | null
-  onOpenConvMenu: (id: string) => void
+  onOpenConvMenu: (id: string, anchor: Anchor) => void
   onRenameConversation: (id: string, title: string) => void
   onStopRename: () => void
 }) {
@@ -635,7 +620,7 @@ function ProjectChatsTab({ project, chats, onOpenChat, onNewChat, renamingId, on
   onOpenChat: (id: string) => void
   onNewChat: (projectId: string) => void
   renamingId: string | null
-  onOpenConvMenu: (id: string) => void
+  onOpenConvMenu: (id: string, anchor: Anchor) => void
   onRenameConversation: (id: string, title: string) => void
   onStopRename: () => void
 }) {
@@ -770,7 +755,7 @@ function ConversationRow({ c, isActive, renaming, onSelect, onOpenMenu, onCommit
   isActive: boolean
   renaming: boolean
   onSelect: (id: string) => void
-  onOpenMenu: (id: string) => void
+  onOpenMenu: (id: string, anchor: Anchor) => void
   onCommitRename: (id: string, title: string) => void
   onCancelRename: () => void
 }) {
@@ -795,7 +780,7 @@ function ConversationRow({ c, isActive, renaming, onSelect, onOpenMenu, onCommit
     <div className="group relative">
       <button
         onClick={() => onSelect(c.id)}
-        className={cn("block w-full rounded-2xl px-4 py-3 pr-9 text-left transition-colors", isActive ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60")}
+        className={cn("block w-full rounded-2xl px-4 py-3 pr-9 text-left transition-all duration-150 active:scale-[0.985]", isActive ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60")}
       >
         <div className="flex items-baseline justify-between gap-3">
           <span className="flex min-w-0 items-center gap-1.5">
@@ -808,8 +793,8 @@ function ConversationRow({ c, isActive, renaming, onSelect, onOpenMenu, onCommit
         {c.excerpt && <p className="mt-1.5 line-clamp-2 text-[13px] leading-relaxed text-muted-foreground">{c.excerpt}</p>}
       </button>
       <button
-        onClick={e => { e.stopPropagation(); onOpenMenu(c.id) }}
-        className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-muted-foreground/40 opacity-100 transition-colors hover:bg-sidebar-accent hover:text-foreground"
+        onClick={e => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); onOpenMenu(c.id, { top: r.top, bottom: r.bottom, right: r.right }) }}
+        className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-muted-foreground/50 transition-all hover:bg-sidebar-accent hover:text-foreground active:scale-90"
         aria-label="更多"
       >
         <MoreHorizontal className="size-4" />
@@ -820,8 +805,80 @@ function ConversationRow({ c, isActive, renaming, onSelect, onOpenMenu, onCommit
 
 function ActionRow({ icon, label, onClick, danger }: { icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean }) {
   return (
-    <button onClick={onClick} className={cn("flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left text-sm transition-colors hover:bg-sidebar-accent/60", danger ? "text-destructive" : "text-foreground")}>
+    <button onClick={onClick} className={cn("flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors active:scale-[0.98]", danger ? "text-destructive hover:bg-destructive/10" : "text-foreground hover:bg-sidebar-accent/60")}>
       <span className={danger ? "text-destructive" : "text-muted-foreground"}>{icon}</span>{label}
     </button>
+  )
+}
+
+// 会话"更多菜单"弹层：锚定在 ⋯ 旁，portal 到 body，淡入+轻微缩放（自然手感，且不被裁切）
+function ConvMenu({ conv, anchor, projects, picker, onPicker, onClose, onToggleStar, onTogglePin, onStartRename, onAddToProject, onDelete }: {
+  conv: Conversation
+  anchor: Anchor
+  projects: Project[]
+  picker: boolean
+  onPicker: (v: boolean) => void
+  onClose: () => void
+  onToggleStar: () => void
+  onTogglePin: () => void
+  onStartRename: () => void
+  onAddToProject: (projectId: string | null) => void
+  onDelete: () => void
+}) {
+  const [shown, setShown] = useState(false)
+  useEffect(() => { const r = requestAnimationFrame(() => setShown(true)); return () => cancelAnimationFrame(r) }, [])
+  if (typeof document === "undefined") return null
+
+  const vw = window.innerWidth, vh = window.innerHeight
+  const W = 220
+  const estH = picker ? 320 : 250
+  const openUp = anchor.bottom + estH > vh - 12
+  const right = Math.max(10, vw - anchor.right)
+  const pos: React.CSSProperties = {
+    position: "fixed", right, width: W,
+    transformOrigin: openUp ? "bottom right" : "top right",
+    ...(openUp ? { bottom: vh - anchor.top + 6 } : { top: anchor.bottom + 6 }),
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-[80]" onClick={onClose}>
+      <div
+        onClick={e => e.stopPropagation()}
+        style={pos}
+        className={cn(
+          "overflow-hidden rounded-2xl border border-sidebar-border bg-card p-1 shadow-xl transition-all duration-150 ease-out",
+          shown ? "scale-100 opacity-100" : "scale-95 opacity-0",
+        )}
+      >
+        {!picker ? (
+          <>
+            <ActionRow icon={<Star className={cn("size-4", conv.starred && "fill-current text-sidebar-primary")} />} label={conv.starred ? "取消收藏" : "收藏"} onClick={onToggleStar} />
+            <ActionRow icon={<Pencil className="size-4" />} label="编辑标题" onClick={onStartRename} />
+            <ActionRow icon={<FolderPlus className="size-4" />} label="添加进项目" onClick={() => onPicker(true)} />
+            <ActionRow icon={<Pin className="size-4" />} label={conv.pinned ? "取消置顶" : "置顶"} onClick={onTogglePin} />
+            <div className="my-1 border-t border-sidebar-border/60" />
+            <ActionRow icon={<Trash2 className="size-4" />} label="删除" danger onClick={onDelete} />
+          </>
+        ) : (
+          <>
+            <button onClick={() => onPicker(false)} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-[13px] text-muted-foreground transition-colors hover:bg-sidebar-accent/60">
+              <ChevronLeft className="size-4" />添加进项目
+            </button>
+            <div className="max-h-[44vh] overflow-y-auto">
+              {conv.projectId && (
+                <ActionRow icon={<X className="size-4" />} label="移出当前项目" onClick={() => onAddToProject(null)} />
+              )}
+              {projects.filter(p => p.id !== conv.projectId).map(p => (
+                <ActionRow key={p.id} icon={<Folder className="size-4" />} label={p.name} onClick={() => onAddToProject(p.id)} />
+              ))}
+              {projects.filter(p => p.id !== conv.projectId).length === 0 && !conv.projectId && (
+                <p className="px-3 py-4 text-center text-[12px] italic text-muted-foreground/70">还没有项目</p>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>,
+    document.body,
   )
 }

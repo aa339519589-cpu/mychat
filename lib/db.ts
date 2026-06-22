@@ -91,20 +91,26 @@ export async function fetchConversations(): Promise<Conversation[]> {
   const supabase = createClient()
   const { data, error } = await supabase
     .from("conversations")
-    .select("id, title, updated_at, project_id, starred, pinned")
+    .select("id, title, updated_at, project_id, starred, pinned, messages(count)")
     .order("pinned", { ascending: false })
     .order("updated_at", { ascending: false })
   if (error || !data) return []
-  return data.map(r => ({
-    id: r.id as string,
-    title: r.title as string,
-    excerpt: "",
-    date: fmtDate(r.updated_at as string),
-    messages: [],
-    projectId: (r.project_id as string) ?? null,
-    starred: !!r.starred,
-    pinned: !!r.pinned,
-  }))
+  return data.map(r => {
+    // 仅当 count 明确返回为数字时才采用；拿不到就留 undefined（按"非空"对待，绝不误删/误藏）
+    const m = (r as any).messages
+    const msgCount = Array.isArray(m) && m.length > 0 && typeof m[0]?.count === "number" ? (m[0].count as number) : undefined
+    return {
+      id: r.id as string,
+      title: r.title as string,
+      excerpt: "",
+      date: fmtDate(r.updated_at as string),
+      messages: [],
+      projectId: (r.project_id as string) ?? null,
+      starred: !!r.starred,
+      pinned: !!r.pinned,
+      msgCount,
+    }
+  })
 }
 
 export async function insertConversation(userId: string, title: string, projectId?: string | null): Promise<string | null> {

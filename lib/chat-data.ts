@@ -33,6 +33,7 @@ export type Conversation = {
   starred?: boolean
   pinned?: boolean
   draft?: boolean   // 本地草稿：尚未发送首条消息、未写入数据库；不进列表、不可删
+  msgCount?: number // 仅加载时带回的消息条数；用于隐藏历史遗留的空会话
 }
 
 export const CONVERSATIONS: Conversation[] = [
