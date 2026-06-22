@@ -22,7 +22,7 @@ import { LoginScreen } from "@/components/login-screen"
 import { createClient } from "@/lib/supabase/client"
 import type { User } from "@supabase/supabase-js"
 import { cn } from "@/lib/utils"
-import { PanelLeft } from "lucide-react"
+import { PanelLeft, Folder } from "lucide-react"
 import { parseArtifact, artifactTitle } from "@/lib/artifact"
 import { ArtifactPanel } from "@/components/artifact-panel"
 
@@ -646,7 +646,13 @@ export function LiteraryChat() {
           >
             <PanelLeft className="size-5" />
           </button>
-          <span className="min-w-0 flex-1 truncate text-sm italic tracking-wider text-muted-foreground">{activeProject ? `${activeProject.name} · ` : ""}{active?.title}</span>
+          <span className="min-w-0 flex-1 truncate text-sm italic tracking-wider text-muted-foreground">{active?.title}</span>
+          {activeProject && (
+            <span className="flex shrink-0 items-center gap-1.5 rounded-full border border-primary/20 bg-primary/5 px-2.5 py-1 text-xs text-primary/80">
+              <Folder className="size-3.5 shrink-0" />
+              <span className="max-w-[6.5rem] truncate">{activeProject.name.slice(0, 10)}</span>
+            </span>
+          )}
         </header>
 
         <div

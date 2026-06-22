@@ -297,6 +297,32 @@
   color: transparent;
   animation: thinkingFlow 1.8s linear infinite;
 }
+/* 亮色下 foreground 与 muted-foreground 明度太接近，流光发闷几乎看不见。
+   单独把基底调浅、高光压成深墨（带一点赭石彩度），拉大对比，让流光在亮色下也清晰。
+   暗色（.dark 或系统暗色）保持原样不动。 */
+.light .thinking-flow {
+  background-image: linear-gradient(
+    100deg,
+    oklch(0.7 0.012 60) 0%,
+    oklch(0.7 0.012 60) 42%,
+    oklch(0.33 0.06 45) 50%,
+    oklch(0.7 0.012 60) 58%,
+    oklch(0.7 0.012 60) 100%
+  );
+}
+@media (prefers-color-scheme: light) {
+  :root:not(.dark) .thinking-flow {
+    background-image: linear-gradient(
+      100deg,
+      oklch(0.7 0.012 60) 0%,
+      oklch(0.7 0.012 60) 42%,
+      oklch(0.33 0.06 45) 50%,
+      oklch(0.7 0.012 60) 58%,
+      oklch(0.7 0.012 60) 100%
+    );
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .thinking-flow { animation: none; -webkit-text-fill-color: var(--muted-foreground); color: var(--muted-foreground); }
 }
