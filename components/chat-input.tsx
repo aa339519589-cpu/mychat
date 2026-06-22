@@ -1,15 +1,14 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { useRef, useState, useEffect } from "react"
 import { cn } from "@/lib/utils"
-import { ChevronDown, X, Loader2, Plus, ImageIcon, FileText, Globe, ArrowUp, ExternalLink, LogOut } from "lucide-react"
+import { ChevronDown, X, Loader2, Plus, ImageIcon, FileText, Globe, ArrowUp, ExternalLink, LogOut, Square, CornerUpLeft } from "lucide-react"
 import type { Endpoint } from "@/lib/chat-data"
 import { prepareFile, type AttachedFile } from "@/lib/file-extract"
 
 type GithubContext = { repo: string; context: string }
 type GithubRepo = { name: string; full_name: string; private: boolean; description: string }
 
-// GitHub Octocat logo（官方 SVG mark）
 function GitHubIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -23,6 +22,8 @@ export function ChatInput({
   githubContext, onGithubConnect,
   githubConnected, githubLogin, onGithubDisconnect,
   webSearch, onWebSearchChange,
+  isLoading, onStop,
+  replyTo, onClearReply,
 }: {
   onSend: (text: string, images?: string[], files?: AttachedFile[]) => void
   endpoints: Endpoint[]
@@ -36,6 +37,10 @@ export function ChatInput({
   onGithubDisconnect: () => void
   webSearch: boolean
   onWebSearchChange: (on: boolean) => void
+  isLoading: boolean
+  onStop: () => void
+  replyTo: string | null
+  onClearReply: () => void
 }) {
   const [value, setValue] = useState("")
   const ref = useRef<HTMLTextAreaElement>(null)
@@ -47,11 +52,23 @@ export function ChatInput({
   const imageInputRef = useRef<HTMLInputElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // GitHub 仓库选择器
   const [repoPickerOpen, setRepoPickerOpen] = useState(false)
   const [repos, setRepos] = useState<GithubRepo[]>([])
   const [reposLoading, setReposLoading] = useState(false)
   const [repoConnecting, setRepoConnecting] = useState(false)
+  const repoPickerRef = useRef<HTMLDivElement>(null)
+
+  // 点选择器外部时关闭
+  useEffect(() => {
+    if (!repoPickerOpen) return
+    function handleClickOutside(e: MouseEvent) {
+      if (repoPickerRef.current && !repoPickerRef.current.contains(e.target as Node)) {
+        setRepoPickerOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [repoPickerOpen])
 
   function resize() {
     const el = ref.current
@@ -63,7 +80,8 @@ export function ChatInput({
   function submit() {
     const text = value.trim()
     if (!text && images.length === 0 && files.length === 0) return
-    onSend(text, images.length > 0 ? images : undefined, files.length > 0 ? files : undefined)
+    const finalText = replyTo ? `> ${replyTo.replace(/\n/g, '\n> ').slice(0, 300)}\n\n${text}` : text
+    onSend(finalText, images.length > 0 ? images : undefined, files.length > 0 ? files : undefined)
     setValue("")
     setImages([])
     setFiles([])
@@ -130,6 +148,8 @@ export function ChatInput({
     }
   }
 
+  const canSend = !isLoading && (!!value.trim() || images.length > 0 || files.length > 0)
+
   return (
     <div className={cn(
       "relative z-10 mx-auto w-full shrink-0",
@@ -139,7 +159,6 @@ export function ChatInput({
     )}>
       {/* 工具栏 */}
       <div className="mb-2 flex items-center gap-2 px-1">
-        {/* 模型选择器 */}
         {endpoints.length > 0 && (
           <div className="relative">
             <select
@@ -155,7 +174,6 @@ export function ChatInput({
           </div>
         )}
 
-        {/* 联网开关 */}
         <button
           onClick={() => onWebSearchChange(!webSearch)}
           className={cn(
@@ -169,9 +187,7 @@ export function ChatInput({
           <span>联网</span>
         </button>
 
-        {/* GitHub 连接器 */}
         {githubContext ? (
-          // 已选择仓库：显示仓库名 + 取消按钮
           <div className="flex items-center gap-1.5 rounded-full border border-border/50 bg-secondary/50 pl-2 pr-1.5 py-1">
             {repoConnecting
               ? <Loader2 className="size-3 animate-spin text-muted-foreground" />
@@ -183,7 +199,6 @@ export function ChatInput({
             </button>
           </div>
         ) : githubConnected ? (
-          // 已连接 GitHub，未选仓库：点击打开选择器
           <button
             onClick={openRepoPicker}
             className="flex items-center gap-1.5 rounded-full border border-border/50 bg-secondary/50 px-2.5 py-1 text-xs text-muted-foreground hover:border-border transition-colors"
@@ -196,7 +211,6 @@ export function ChatInput({
             <ChevronDown className="size-3" />
           </button>
         ) : (
-          // 未连接 GitHub：点击跳转 OAuth
           <button
             onClick={() => { window.location.href = "/api/auth/github" }}
             className="flex items-center gap-1.5 rounded-full border border-border/50 bg-secondary/50 px-2.5 py-1 text-xs text-muted-foreground hover:border-border transition-colors"
@@ -207,9 +221,9 @@ export function ChatInput({
         )}
       </div>
 
-      {/* 仓库选择器下拉 */}
+      {/* 仓库选择器（点外部关闭） */}
       {repoPickerOpen && (
-        <div className="mb-2 overflow-hidden rounded-2xl border border-border/60 bg-card shadow-lg">
+        <div ref={repoPickerRef} className="mb-2 overflow-hidden rounded-2xl border border-border/60 bg-card shadow-lg">
           <div className="max-h-64 overflow-y-auto">
             {reposLoading ? (
               <div className="flex items-center gap-2 px-4 py-3 text-sm text-muted-foreground">
@@ -239,7 +253,7 @@ export function ChatInput({
           </div>
           <div className="border-t border-border/40">
             <a
-              href={`https://github.com/settings/connections/applications/${process.env.NEXT_PUBLIC_GITHUB_CLIENT_ID ?? "Ov23li6Pfgts4Ye4a5FL"}`}
+              href="https://github.com/settings/connections/applications/Ov23li6Pfgts4Ye4a5FL"
               target="_blank"
               rel="noreferrer"
               className="flex items-center gap-2 px-4 py-2.5 text-xs text-muted-foreground hover:bg-secondary/60 transition-colors"
@@ -256,19 +270,28 @@ export function ChatInput({
               className="flex w-full items-center gap-2 px-4 py-2.5 text-xs text-destructive/80 hover:bg-destructive/5 transition-colors"
             >
               <LogOut className="size-3" />
-              断开 GitHub（{githubLogin}）
+              断开 GitHub{githubLogin ? `（${githubLogin}）` : ""}
             </button>
           </div>
         </div>
       )}
 
-      {/* 隐藏的文件输入 */}
       <input ref={imageInputRef} type="file" accept="image/*" multiple capture="environment" className="hidden"
         onChange={e => { readImagesAsBase64(e.target.files); e.currentTarget.value = "" }} />
       <input ref={fileInputRef} type="file" accept=".pdf,.txt,.md,.csv,.json,.log,.xml,.html,.yaml,.yml,text/*,application/pdf" multiple className="hidden"
         onChange={e => { handleFiles(e.target.files); e.currentTarget.value = "" }} />
 
-      {/* 图片预览条 */}
+      {/* 引用回复条 */}
+      {replyTo && (
+        <div className="mb-2 flex items-start gap-2 rounded-xl border-l-2 border-primary/40 bg-muted/30 pl-3 pr-2 py-2">
+          <CornerUpLeft className="size-3.5 mt-0.5 shrink-0 text-primary/50" />
+          <span className="flex-1 text-xs text-muted-foreground line-clamp-2 leading-relaxed">{replyTo}</span>
+          <button onClick={onClearReply} className="rounded p-0.5 hover:bg-muted transition-colors">
+            <X className="size-3 text-muted-foreground" />
+          </button>
+        </div>
+      )}
+
       {images.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-2 px-1">
           {images.map((img, i) => (
@@ -286,7 +309,6 @@ export function ChatInput({
         </div>
       )}
 
-      {/* 文件预览条 */}
       {(files.length > 0 || fileLoading) && (
         <div className="mb-2 flex flex-wrap gap-2 px-1">
           {files.map((f, i) => (
@@ -308,27 +330,19 @@ export function ChatInput({
       )}
       {fileError && <p className="mb-2 px-2 text-xs text-destructive">{fileError}</p>}
 
-      {/* + 号菜单 */}
       {plusOpen && (
         <div className="mb-2 flex gap-2 px-1">
-          <button
-            onClick={() => { imageInputRef.current?.click() }}
-            className="flex items-center gap-1.5 rounded-full border border-border/50 bg-secondary/50 px-3 py-1.5 text-xs text-muted-foreground hover:border-border transition-colors"
-          >
-            <ImageIcon className="size-3.5" />
-            上传图片
+          <button onClick={() => { imageInputRef.current?.click() }}
+            className="flex items-center gap-1.5 rounded-full border border-border/50 bg-secondary/50 px-3 py-1.5 text-xs text-muted-foreground hover:border-border transition-colors">
+            <ImageIcon className="size-3.5" />上传图片
           </button>
-          <button
-            onClick={() => { fileInputRef.current?.click() }}
-            className="flex items-center gap-1.5 rounded-full border border-border/50 bg-secondary/50 px-3 py-1.5 text-xs text-muted-foreground hover:border-border transition-colors"
-          >
-            <FileText className="size-3.5" />
-            上传文件
+          <button onClick={() => { fileInputRef.current?.click() }}
+            className="flex items-center gap-1.5 rounded-full border border-border/50 bg-secondary/50 px-3 py-1.5 text-xs text-muted-foreground hover:border-border transition-colors">
+            <FileText className="size-3.5" />上传文件
           </button>
         </div>
       )}
 
-      {/* 输入框 */}
       <div className="flex min-w-0 items-end gap-2 rounded-3xl border border-border/70 bg-card/80 py-2 pl-2 pr-2">
         <button
           onClick={() => setPlusOpen(v => !v)}
@@ -348,26 +362,37 @@ export function ChatInput({
           rows={1}
           value={value}
           onChange={e => { setValue(e.target.value); resize() }}
-          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit() } }}
+          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !isLoading) { e.preventDefault(); submit() } }}
           placeholder="说点什么……"
           className={cn(
             "block min-w-0 flex-1 resize-none bg-transparent py-1.5 text-[16px] leading-[1.7] tracking-wide text-foreground outline-none placeholder:italic placeholder:text-muted-foreground",
             mobile ? "max-h-[120px]" : "max-h-[180px]",
           )}
         />
-        <button
-          onClick={submit}
-          disabled={!value.trim() && images.length === 0 && files.length === 0}
-          aria-label="发送"
-          className={cn(
-            "mb-0.5 flex size-9 shrink-0 items-center justify-center rounded-full border transition-colors",
-            (value.trim() || images.length > 0 || files.length > 0)
-              ? "border-primary/50 bg-primary text-primary-foreground hover:opacity-90"
-              : "cursor-not-allowed border-border/40 text-muted-foreground/30",
-          )}
-        >
-          <ArrowUp className="size-4" />
-        </button>
+
+        {isLoading ? (
+          <button
+            onClick={onStop}
+            aria-label="停止生成"
+            className="mb-0.5 flex size-9 shrink-0 items-center justify-center rounded-full bg-foreground text-background transition-colors hover:opacity-80"
+          >
+            <Square className="size-3.5 fill-current" />
+          </button>
+        ) : (
+          <button
+            onClick={submit}
+            disabled={!canSend}
+            aria-label="发送"
+            className={cn(
+              "mb-0.5 flex size-9 shrink-0 items-center justify-center rounded-full border transition-colors",
+              canSend
+                ? "border-primary/50 bg-primary text-primary-foreground hover:opacity-90"
+                : "cursor-not-allowed border-border/40 text-muted-foreground/30",
+            )}
+          >
+            <ArrowUp className="size-4" />
+          </button>
+        )}
       </div>
     </div>
   )

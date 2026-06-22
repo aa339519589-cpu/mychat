@@ -3,7 +3,7 @@
 import Image from "next/image"
 import { useState, useEffect } from "react"
 import type { Conversation } from "@/lib/chat-data"
-import { ChevronDown, ChevronRight, Brain, FileText, Globe } from "lucide-react"
+import { ChevronDown, ChevronRight, Brain, FileText, Globe, Copy, Check, RefreshCw, CornerUpLeft } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkMath from "remark-math"
 import rehypeKatex from "rehype-katex"
@@ -50,7 +50,6 @@ function ThinkingBlock({ thinking }: { thinking: string }) {
   )
 }
 
-// 联网搜索来源：搜索时默认展开，模型开始回复后自动收起（仿 Claude）
 function SearchBlock({ searches, replying }: { searches: { query: string; results: { title: string; url: string }[] }[]; replying: boolean }) {
   const [open, setOpen] = useState(true)
   useEffect(() => { if (replying) setOpen(false) }, [replying])
@@ -84,15 +83,63 @@ function SearchBlock({ searches, replying }: { searches: { query: string; result
   )
 }
 
+// 单个 AI 消息的操作栏（复制、重新生成、引用回复）
+function AiActions({
+  text, isLast, isLoading,
+  onCopy, onRegenerate, onReply,
+}: {
+  text: string; isLast: boolean; isLoading: boolean
+  onCopy?: (t: string) => void
+  onRegenerate?: () => void
+  onReply?: (t: string) => void
+}) {
+  const [copied, setCopied] = useState(false)
+  if (!text && !isLast) return null
+  function doCopy() {
+    navigator.clipboard.writeText(text).catch(() => {})
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+    onCopy?.(text)
+  }
+  return (
+    <div className="mt-2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+      {text && (
+        <button onClick={doCopy} title="复制" className="rounded-lg p-1.5 text-muted-foreground/50 hover:bg-muted/60 hover:text-muted-foreground transition-colors">
+          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+        </button>
+      )}
+      {isLast && !isLoading && onRegenerate && text && (
+        <button onClick={onRegenerate} title="重新生成" className="rounded-lg p-1.5 text-muted-foreground/50 hover:bg-muted/60 hover:text-muted-foreground transition-colors">
+          <RefreshCw className="size-3.5" />
+        </button>
+      )}
+      {text && onReply && (
+        <button onClick={() => onReply(text)} title="引用回复" className="rounded-lg p-1.5 text-muted-foreground/50 hover:bg-muted/60 hover:text-muted-foreground transition-colors">
+          <CornerUpLeft className="size-3.5" />
+        </button>
+      )}
+    </div>
+  )
+}
+
 export function MessageList({
   conversation,
+  onRegenerate,
+  onReply,
+  isLoading,
 }: {
   conversation: Conversation
+  onRegenerate?: () => void
+  onReply?: (text: string) => void
+  isLoading?: boolean
 }) {
+  const msgs = conversation.messages
+  const lastAiIdx = [...msgs].map((m, i) => ({ m, i })).reverse().find(({ m }) => m.role === 'assistant')?.i ?? -1
+
   return (
     <article className="mx-auto w-full min-w-0 max-w-[44rem] overflow-x-hidden px-4 py-6 md:px-6 md:py-8">
       <div className="min-w-0 space-y-8 md:space-y-10">
-        {conversation.messages.map(m =>
+        {msgs.map((m, idx) =>
           m.role === "user" ? (
             <div key={m.id} className="flex flex-col items-end">
               {m.images && m.images.length > 0 && (
@@ -120,7 +167,7 @@ export function MessageList({
               )}
             </div>
           ) : (
-            <div key={m.id} className="flex min-w-0 items-start gap-2">
+            <div key={m.id} className="group flex min-w-0 items-start gap-2">
               <div className="avatar-box flex-shrink-0 self-start mt-0.5">
                 <Image src="/companion.png" alt="" width={40} height={40} priority className="avatar-light size-8 select-none md:size-10" />
                 <Image src="/companion-dark.png" alt="" width={40} height={40} priority className="avatar-dark size-8 select-none md:size-10" />
@@ -139,20 +186,31 @@ export function MessageList({
                   </div>
                 )}
                 {(() => {
-                  // 如果 artifactHtml 已经由流式解析器注入（streaming state），直接用；
-                  // 否则从 content 里解析（从数据库加载时 content 包含原始 <artifact> 标签）
-                  const hasPreParsed = m.artifactHtml !== undefined
-                  const { display, artifactHtml, artifactLoading } = hasPreParsed
-                    ? { display: m.content, artifactHtml: m.artifactHtml ?? null, artifactLoading: m.artifactLoading ?? false }
+                  // 流式期间 content 已经是 display 文本，artifactHtml/partialHtml 由 streaming 解析器注入
+                  // 从 DB 加载时 content 可能含原始 <artifact> 标签，这里重新 parse
+                  const hasPreParsed = m.artifactHtml !== undefined || m.artifactPartialHtml !== undefined
+                  const { display, artifactHtml, partialHtml, artifactLoading } = hasPreParsed
+                    ? { display: m.content, artifactHtml: m.artifactHtml ?? null, partialHtml: m.artifactPartialHtml ?? null, artifactLoading: m.artifactLoading ?? false }
                     : parseArtifact(m.content ?? '')
                   return (
                     <div className="min-w-0 border-l border-border/70 pl-3">
                       {m.isError ? (
                         <p className="break-words whitespace-pre-wrap text-sm italic leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">{m.content}</p>
                       ) : (
-                        <div className="min-w-0 space-y-4 text-[15px] text-foreground/90 md:text-[17px]">
+                        <div className="min-w-0 space-y-3 text-[15px] text-foreground/90 md:text-[17px]">
                           {display && <MdContent text={display} />}
-                          <ArtifactFrame html={artifactHtml} loading={artifactLoading} />
+                          <ArtifactFrame
+                            html={artifactHtml}
+                            partialHtml={partialHtml}
+                            loading={artifactLoading}
+                          />
+                          <AiActions
+                            text={display}
+                            isLast={idx === lastAiIdx}
+                            isLoading={!!isLoading}
+                            onRegenerate={onRegenerate}
+                            onReply={onReply}
+                          />
                         </div>
                       )}
                     </div>

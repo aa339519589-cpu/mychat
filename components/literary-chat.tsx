@@ -8,6 +8,7 @@ import {
   fetchConversations, insertConversation, updateConversationTitle, touchConversation, deleteConversationRow,
   fetchMessages, insertMessage, lastExcerpt,
   fetchEndpoints, insertEndpoint, deleteEndpointRow,
+  deleteMessageRow,
 } from "@/lib/db"
 import { type AttachedFile } from "@/lib/file-extract"
 import { ConversationSidebar } from "@/components/conversation-sidebar"
@@ -21,6 +22,7 @@ import { PanelLeft, X } from "lucide-react"
 import { parseArtifact } from "@/lib/artifact"
 
 type GithubContext = { repo: string; context: string }
+type HistoryMsg = { role: string; content: string; images?: string[] }
 
 export function LiteraryChat() {
   const [user, setUser] = useState<User | null>(null)
@@ -37,21 +39,21 @@ export function LiteraryChat() {
   const [webSearch, setWebSearch] = useState(false)
   const [endpoints, setEndpoints] = useState<Endpoint[]>([])
   const [activeEndpointId, setActiveEndpointId] = useState("")
+  const [replyTo, setReplyTo] = useState<string | null>(null)
 
-  // 页面加载时检查 GitHub 连接状态（cookie 里有 token 即为已连接）
+  const abortRef = useRef<AbortController | null>(null)
+  const loadedRef = useRef<Set<string>>(new Set())
+
+  // 页面加载时检查 GitHub 连接状态
   useEffect(() => {
     fetch("/api/github/status")
       .then(r => r.json())
       .then(d => { setGithubConnected(!!d.connected); setGithubLogin(d.login ?? null) })
       .catch(() => {})
-    // 清理 OAuth 回调留下的 ?github=connected 查询参数
     if (typeof window !== "undefined" && window.location.search.includes("github=")) {
       window.history.replaceState({}, "", window.location.pathname)
     }
   }, [])
-
-  // 已经从数据库拉过消息的对话 id，避免重复拉取
-  const loadedRef = useRef<Set<string>>(new Set())
 
   // 检查登录状态，并监听登录/登出
   useEffect(() => {
@@ -84,7 +86,6 @@ export function LiteraryChat() {
       if (cancelled) return
       setMemories(mems)
       setEndpoints(eps)
-      // 选中端点：用本设备上次选的，否则默认第一个
       try {
         const savedActive = localStorage.getItem("chat_active_endpoint")
         setActiveEndpointId(savedActive && eps.some(e => e.id === savedActive) ? savedActive : eps[0]?.id ?? "")
@@ -119,7 +120,6 @@ export function LiteraryChat() {
     setEndpoints(prev => [...prev, ep])
     const res = await insertEndpoint(user.id, ep)
     if (!res.ok) {
-      // 保存失败：回滚并明确提示，避免"看着成功、刷新就没"的假象
       setEndpoints(prev => prev.filter(e => e.id !== ep.id))
       alert(
         /relation|schema|endpoints|does not exist/i.test(res.error ?? "")
@@ -154,7 +154,6 @@ export function LiteraryChat() {
     }
   }, [active?.messages?.length, activeId])
 
-  // 切换对话：未加载过消息则从云端拉取
   async function handleSelect(id: string) {
     setActiveId(id)
     setDrawerOpen(false)
@@ -181,14 +180,12 @@ export function LiteraryChat() {
       if (!res.body) return
       const reader = res.body.getReader()
       const dec = new TextDecoder()
-      let title = ""
-      let buf = ""
+      let title = "", buf = ""
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
         buf += dec.decode(value, { stream: true })
-        const parts = buf.split("\n\n")
-        buf = parts.pop() ?? ""
+        const parts = buf.split("\n\n"); buf = parts.pop() ?? ""
         for (const part of parts) {
           const line = part.trim()
           if (line.startsWith("data: ") && line !== "data: [DONE]") {
@@ -202,6 +199,133 @@ export function LiteraryChat() {
         updateConversationTitle(convId, clean)
       }
     } catch { /* 标题生成失败不影响主流程 */ }
+  }
+
+  // ── 核心：运行 AI 流式响应，被 handleSend 和 handleRegenerate 共用 ──
+  async function runAiStream(
+    messages: HistoryMsg[],
+    msgId: string,
+    convId: string,
+    controller: AbortController,
+    attachments?: AttachedFile[],
+  ): Promise<string> {
+    const endpoint = activeEndpoint
+    if (!endpoint || !user) { setIsLoading(false); return "" }
+
+    // 注入 GitHub 上下文前缀
+    const prefix: HistoryMsg[] = []
+    if (githubContext) {
+      prefix.push({ role: "user", content: `GitHub 仓库上下文 (${githubContext.repo}):\n${githubContext.context.slice(0, 2000)}` })
+      prefix.push({ role: "assistant", content: "已了解仓库信息。" })
+    }
+    const history = [...prefix, ...messages]
+
+    let fullReply = "", fullThinking = ""
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        signal: controller.signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          protocol: endpoint.protocol,
+          baseUrl: endpoint.baseUrl,
+          apiKey: endpoint.apiKey,
+          model: endpoint.model,
+          messages: history,
+          memories: memories.length > 0 ? memories : undefined,
+          attachments: attachments && attachments.length > 0 ? attachments : undefined,
+          webSearch,
+        }),
+      })
+
+      if (!res.ok) {
+        const error = await res.json().catch(() => null)
+        throw new Error(error?.error ?? `请求失败（${res.status}）`)
+      }
+      if (!res.body) throw new Error("无响应体")
+
+      const reader = res.body.getReader()
+      const dec = new TextDecoder()
+      let buf = ""
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += dec.decode(value, { stream: true })
+        const parts = buf.split("\n\n"); buf = parts.pop() ?? ""
+
+        for (const part of parts) {
+          const line = part.trim()
+          if (!line || line === "data: [DONE]") continue
+          if (!line.startsWith("data: ")) continue
+          try {
+            const data = JSON.parse(line.slice(6))
+            if (data.memory) {
+              const mem = data.memory
+              const note = mem.action === "create" ? (mem.ok ? `记住了：${mem.content}` : "记忆保存失败")
+                : mem.action === "update" ? (mem.ok ? `更新了记忆：${mem.content}` : "记忆更新失败")
+                : (mem.ok ? "忘记了一条记忆" : "记忆删除失败")
+              setConversations(prev => prev.map(c => c.id !== convId ? c : {
+                ...c,
+                messages: c.messages.map(m => m.id !== msgId ? m : { ...m, memoryNotes: [...(m.memoryNotes ?? []), note] }),
+              }))
+              if (mem.ok) {
+                if (mem.action === "create" && mem.id) setMemories(prev => [...prev, { id: mem.id, content: mem.content ?? "" }])
+                else if (mem.action === "update" && mem.id) setMemories(prev => prev.map(x => x.id === mem.id ? { ...x, content: mem.content ?? x.content } : x))
+                else if (mem.action === "delete" && mem.id) setMemories(prev => prev.filter(x => x.id !== mem.id))
+              }
+              continue
+            }
+            if (data.search) {
+              setConversations(prev => prev.map(c => c.id !== convId ? c : {
+                ...c,
+                messages: c.messages.map(m => m.id !== msgId ? m : { ...m, searchNotes: [...(m.searchNotes ?? []), data.search] }),
+              }))
+              continue
+            }
+            if (data.text) fullReply += data.text
+            if (data.thinking) fullThinking += data.thinking
+            const { display, artifactHtml, partialHtml, artifactLoading } = parseArtifact(fullReply)
+            setConversations(prev => prev.map(c => c.id !== convId ? c : {
+              ...c,
+              messages: c.messages.map(m => m.id !== msgId ? m : {
+                ...m,
+                content: data.error ? data.error : display,
+                thinking: fullThinking || undefined,
+                artifactHtml,
+                artifactPartialHtml: partialHtml,
+                artifactLoading,
+                isError: data.error ? true : m.isError,
+              }),
+            }))
+          } catch { /* skip bad event */ }
+        }
+      }
+
+      if (fullReply) {
+        insertMessage(user.id, convId, { id: msgId, role: "assistant", content: fullReply, thinking: fullThinking || undefined, time: "" })
+        touchConversation(convId)
+        setConversations(prev => prev.map(c => c.id === convId ? { ...c, excerpt: fullReply.slice(0, 60), date: "今日" } : c))
+      }
+    } catch (e: any) {
+      if (e?.name === "AbortError") return fullReply  // 用户主动停止，保留已有内容
+      setConversations(prev => prev.map(c => c.id !== convId ? c : {
+        ...c,
+        messages: c.messages.map((m, i, arr) =>
+          i === arr.length - 1 && m.role === "assistant"
+            ? { ...m, content: e?.message ?? String(e), isError: true }
+            : m
+        ),
+      }))
+    } finally {
+      setIsLoading(false)
+    }
+    return fullReply
+  }
+
+  // ── 停止生成 ──
+  function handleStop() {
+    abortRef.current?.abort()
   }
 
   async function handleSend(text: string, images?: string[], files?: AttachedFile[]) {
@@ -219,129 +343,59 @@ export function LiteraryChat() {
     const msgId = crypto.randomUUID()
     const isFirstExchange = active.messages.length === 0
     setConversations(prev => prev.map(c => c.id === convId ? {
-      ...c, messages: [...c.messages, userMsg, { id: msgId, role: "assistant", content: "", thinking: "", time: "此刻" }]
+      ...c, messages: [...c.messages, userMsg, { id: msgId, role: "assistant", content: "", thinking: "", time: "此刻", artifactHtml: undefined, artifactPartialHtml: undefined, artifactLoading: false }]
     } : c))
     insertMessage(user.id, convId, userMsg)
 
+    const history = [...active.messages, userMsg].map(m => ({
+      role: m.role,
+      content: m.content,
+      ...(m.images?.length ? { images: m.images } : {}),
+    }))
+
     setIsLoading(true)
-    try {
-      const baseHistory = [...active.messages, userMsg].map(m => ({
-        role: m.role,
-        content: m.content,
-        ...(m.images?.length ? { images: m.images } : {}),
-      }))
-      const prefixMessages: { role: "user" | "assistant"; content: string }[] = []
-      if (githubContext) {
-        prefixMessages.push({ role: "user", content: `GitHub 仓库上下文 (${githubContext.repo}):\n${githubContext.context.slice(0, 2000)}` })
-        prefixMessages.push({ role: "assistant", content: "已了解仓库信息。" })
-      }
-      const history = [...prefixMessages, ...baseHistory]
+    const controller = new AbortController()
+    abortRef.current = controller
+    const fullReply = await runAiStream(history, msgId, convId, controller, files)
 
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          protocol: activeEndpoint.protocol,
-          baseUrl: activeEndpoint.baseUrl,
-          apiKey: activeEndpoint.apiKey,
-          model: activeEndpoint.model,
-          messages: history,
-          memories: memories.length > 0 ? memories : undefined,
-          attachments: files && files.length > 0 ? files : undefined,
-          webSearch,
-        }),
-      })
+    if (isFirstExchange && fullReply) generateTitle(convId, text, fullReply)
+    // 清掉引用
+    setReplyTo(null)
+  }
 
-      if (!res.ok) {
-        const error = await res.json().catch(() => null)
-        throw new Error(error?.error ?? `请求失败（${res.status}）`)
-      }
-      if (!res.body) throw new Error("无响应体")
+  // ── 重新生成最后一条 AI 回复 ──
+  async function handleRegenerate() {
+    if (!user || !active || isLoading) return
+    const msgs = active.messages
+    const lastAiIdx = [...msgs].map((m, i) => ({ m, i })).reverse().find(({ m }) => m.role === "assistant")?.i ?? -1
+    if (lastAiIdx === -1) return
+    const lastAiMsg = msgs[lastAiIdx]
 
-      const reader = res.body.getReader()
-      const dec = new TextDecoder()
-      let buf = ""
-      let fullReply = ""
-      let fullThinking = ""
+    // 历史 = 最后一条 AI 消息之前的所有消息
+    const historyBeforeAi = msgs.slice(0, lastAiIdx).map(m => ({
+      role: m.role, content: m.content,
+      ...(m.images?.length ? { images: m.images } : {}),
+    }))
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buf += dec.decode(value, { stream: true })
-        const parts = buf.split("\n\n")
-        buf = parts.pop() ?? ""
+    const newMsgId = crypto.randomUUID()
+    setConversations(prev => prev.map(c => c.id !== activeId ? c : {
+      ...c,
+      messages: [
+        ...msgs.slice(0, lastAiIdx),
+        { id: newMsgId, role: "assistant" as const, content: "", thinking: "", time: "此刻", artifactHtml: undefined, artifactPartialHtml: undefined, artifactLoading: false },
+      ],
+    }))
+    deleteMessageRow(lastAiMsg.id)
 
-        for (const part of parts) {
-          const line = part.trim()
-          if (!line || line === "data: [DONE]") continue
-          if (line.startsWith("data: ")) {
-            try {
-              const data = JSON.parse(line.slice(6))
-              if (data.memory) {
-                const mem = data.memory
-                const note = mem.action === "create" ? (mem.ok ? `记住了：${mem.content}` : "记忆保存失败")
-                  : mem.action === "update" ? (mem.ok ? `更新了记忆：${mem.content}` : "记忆更新失败")
-                  : (mem.ok ? "忘记了一条记忆" : "记忆删除失败")
-                setConversations(prev => prev.map(c => c.id !== convId ? c : {
-                  ...c,
-                  messages: c.messages.map(m => m.id !== msgId ? m : { ...m, memoryNotes: [...(m.memoryNotes ?? []), note] }),
-                }))
-                if (mem.ok) {
-                  if (mem.action === "create" && mem.id) setMemories(prev => [...prev, { id: mem.id, content: mem.content ?? "" }])
-                  else if (mem.action === "update" && mem.id) setMemories(prev => prev.map(x => x.id === mem.id ? { ...x, content: mem.content ?? x.content } : x))
-                  else if (mem.action === "delete" && mem.id) setMemories(prev => prev.filter(x => x.id !== mem.id))
-                }
-                continue
-              }
-              if (data.search) {
-                const s = data.search
-                setConversations(prev => prev.map(c => c.id !== convId ? c : {
-                  ...c,
-                  messages: c.messages.map(m => m.id !== msgId ? m : { ...m, searchNotes: [...(m.searchNotes ?? []), s] }),
-                }))
-                continue
-              }
-              if (data.text) fullReply += data.text
-              if (data.thinking) fullThinking += data.thinking
-              const { display, artifactHtml: parsedArtifactHtml, artifactLoading } = parseArtifact(fullReply)
-              setConversations(prev => prev.map(c => c.id !== convId ? c : {
-                ...c,
-                messages: c.messages.map(m => m.id !== msgId ? m : {
-                  ...m,
-                  content: data.error ? data.error : display,
-                  thinking: fullThinking || undefined,
-                  artifactHtml: parsedArtifactHtml,
-                  artifactLoading,
-                  isError: data.error ? true : m.isError,
-                }),
-              }))
-            } catch { /* skip */ }
-          }
-        }
-      }
+    setIsLoading(true)
+    const controller = new AbortController()
+    abortRef.current = controller
+    await runAiStream(historyBeforeAi, newMsgId, activeId, controller)
+  }
 
-      // 把完整回复写入云端，并更新列表预览与时间
-      if (fullReply) {
-        insertMessage(user.id, convId, { id: msgId, role: "assistant", content: fullReply, thinking: fullThinking || undefined, time: "" })
-        touchConversation(convId)
-        setConversations(prev => prev.map(c => c.id === convId ? { ...c, excerpt: fullReply.slice(0, 60), date: "今日" } : c))
-      }
-      // 第一次对话完成后自动生成标题
-      if (isFirstExchange && fullReply) {
-        generateTitle(convId, text, fullReply)
-      }
-    } catch (e: any) {
-      setConversations(prev => prev.map(c => c.id !== convId ? c : {
-        ...c,
-        messages: c.messages.map((m, i, arr) =>
-          i === arr.length - 1 && m.role === "assistant"
-            ? { ...m, content: e?.message ?? String(e), isError: true }
-            : m
-        ),
-      }))
-    } finally {
-      setIsLoading(false)
-    }
+  // ── 引用回复 ──
+  function handleReply(text: string) {
+    setReplyTo(text.slice(0, 400))
   }
 
   async function handleDelete(id: string) {
@@ -379,7 +433,6 @@ export function LiteraryChat() {
     setDrawerOpen(false)
   }
 
-  // 记忆：手动增删改，立即写云端
   async function handleMemoryAdd(content: string) {
     if (!user) return
     const mem = await insertMemory(user.id, content)
@@ -429,9 +482,7 @@ export function LiteraryChat() {
       <main className={cn("flex min-w-0 flex-1 flex-col overflow-hidden", !mobile && "ml-2")}>
         <header className={cn(
           "z-10 flex shrink-0 items-center gap-3 bg-background/90 backdrop-blur-sm",
-          mobile
-            ? "px-4 pb-2 pt-[max(0.75rem,env(safe-area-inset-top))]"
-            : "px-8 py-4",
+          mobile ? "px-4 pb-2 pt-[max(0.75rem,env(safe-area-inset-top))]" : "px-8 py-4",
         )}>
           <button
             onClick={() => mobile ? setDrawerOpen(true) : setSidebarCollapsed(v => !v)}
@@ -448,7 +499,12 @@ export function LiteraryChat() {
           className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain"
         >
           {active && active.messages.length > 0 ? (
-            <MessageList conversation={active} />
+            <MessageList
+              conversation={active}
+              onRegenerate={handleRegenerate}
+              onReply={handleReply}
+              isLoading={isLoading}
+            />
           ) : (
             <EmptyState endpointName={activeName} />
           )}
@@ -472,19 +528,17 @@ export function LiteraryChat() {
           onGithubDisconnect={handleGithubDisconnect}
           webSearch={webSearch}
           onWebSearchChange={setWebSearch}
+          isLoading={isLoading}
+          onStop={handleStop}
+          replyTo={replyTo}
+          onClearReply={() => setReplyTo(null)}
         />
       </main>
     )
   }
 
-  // 还没查完登录状态：显示空白过渡，避免闪烁
-  if (!authChecked) {
-    return <div className="h-dvh w-full bg-background paper-grain" />
-  }
-  // 未登录：显示登录页
-  if (!user) {
-    return <LoginScreen />
-  }
+  if (!authChecked) return <div className="h-dvh w-full bg-background paper-grain" />
+  if (!user) return <LoginScreen />
 
   return (
     <>

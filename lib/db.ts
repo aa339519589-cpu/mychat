@@ -177,3 +177,9 @@ export async function deleteEndpointRow(id: string): Promise<void> {
   const { error } = await supabase.from("endpoints").delete().eq("id", id)
   if (error) console.error("deleteEndpointRow", error)
 }
+
+export async function deleteMessageRow(id: string): Promise<void> {
+  const supabase = createClient()
+  const { error } = await supabase.from("messages").delete().eq("id", id)
+  if (error) console.error("deleteMessageRow", error)
+}
