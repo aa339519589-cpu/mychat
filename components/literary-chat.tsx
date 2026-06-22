@@ -1,6 +1,7 @@
 "use client"
 
 import { useMemo, useRef, useState, useEffect } from "react"
+import { createPortal } from "react-dom"
 import { type Conversation, type Message, type Tier, TIERS } from "@/lib/chat-data"
 import { type Memory } from "@/lib/memory-data"
 import {
@@ -22,7 +23,7 @@ import { LoginScreen } from "@/components/login-screen"
 import { createClient } from "@/lib/supabase/client"
 import type { User } from "@supabase/supabase-js"
 import { cn } from "@/lib/utils"
-import { PanelLeft, Folder } from "lucide-react"
+import { PanelLeft, Folder, ChevronDown, Star, Pin, Pencil, Trash2, X, Check, ChevronLeft } from "lucide-react"
 import { parseArtifact, artifactTitle } from "@/lib/artifact"
 import { ArtifactPanel } from "@/components/artifact-panel"
 
@@ -46,6 +47,9 @@ export function LiteraryChat() {
   const [activeTier, setActiveTier] = useState<Tier>("绝句")
   const [replyTo, setReplyTo] = useState<string | null>(null)
   const [openArtifactId, setOpenArtifactId] = useState<string | null>(null)
+  // 顶部对话菜单（Claude 式「项目名 / 标题 ⌄」）：触发按钮锚点 + 顶部就地改名
+  const [headerMenuAnchor, setHeaderMenuAnchor] = useState<{ bottom: number; left: number } | null>(null)
+  const [headerRenaming, setHeaderRenaming] = useState(false)
   const [projects, setProjects] = useState<Project[]>([])
 
   const abortRef = useRef<AbortController | null>(null)
@@ -641,17 +645,43 @@ export function LiteraryChat() {
         )}>
           <button
             onClick={() => mobile ? setDrawerOpen(true) : setSidebarCollapsed(v => !v)}
-            className="inline-flex rounded-full p-2 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+            className="inline-flex shrink-0 rounded-full p-2 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
             aria-label={mobile ? "打开对话列表" : "收起侧栏"}
           >
             <PanelLeft className="size-5" />
           </button>
-          <span className="min-w-0 flex-1 truncate text-sm italic tracking-wider text-muted-foreground">{active?.title}</span>
-          {activeProject && (
-            <span className="flex shrink-0 items-center gap-1.5 rounded-full border border-primary/20 bg-primary/5 px-2.5 py-1 text-xs text-primary/80">
-              <Folder className="size-3.5 shrink-0" />
-              <span className="max-w-[6.5rem] truncate">{activeProject.name.slice(0, 10)}</span>
-            </span>
+
+          {headerRenaming && active ? (
+            <HeaderRename
+              title={active.title}
+              onCommit={t => { if (t.trim()) handleRenameConversation(active.id, t.trim()); setHeaderRenaming(false) }}
+              onCancel={() => setHeaderRenaming(false)}
+            />
+          ) : active ? (
+            <button
+              onClick={e => {
+                if (active.draft) return
+                if (headerMenuAnchor) { setHeaderMenuAnchor(null); return }
+                const r = e.currentTarget.getBoundingClientRect()
+                setHeaderMenuAnchor({ bottom: r.bottom, left: r.left })
+              }}
+              className={cn(
+                "flex min-w-0 flex-1 items-center gap-1.5 rounded-full px-2 py-1 text-left transition-colors",
+                !active.draft && "hover:bg-secondary/50",
+              )}
+            >
+              {activeProject && (
+                <>
+                  <Folder className="size-3.5 shrink-0 text-primary/70" />
+                  <span className="max-w-[6rem] shrink-0 truncate text-sm font-medium text-foreground/90">{activeProject.name.slice(0, 10)}</span>
+                  <span className="shrink-0 text-muted-foreground/40">/</span>
+                </>
+              )}
+              <span className="min-w-0 truncate text-sm italic text-muted-foreground">{active.title}</span>
+              {!active.draft && <ChevronDown className={cn("size-4 shrink-0 text-muted-foreground/60 transition-transform", headerMenuAnchor && "rotate-180")} />}
+            </button>
+          ) : (
+            <span className="flex-1" />
           )}
         </header>
 
@@ -753,7 +783,116 @@ export function LiteraryChat() {
           </div>
         )}
       </div>
+
+      {active && !active.draft && headerMenuAnchor && (
+        <HeaderConvMenu
+          conv={active}
+          anchor={headerMenuAnchor}
+          projects={projects}
+          onClose={() => setHeaderMenuAnchor(null)}
+          onToggleStar={() => { handleToggleStar(active.id); setHeaderMenuAnchor(null) }}
+          onTogglePin={() => { handleTogglePin(active.id); setHeaderMenuAnchor(null) }}
+          onStartRename={() => { setHeaderMenuAnchor(null); setHeaderRenaming(true) }}
+          onAddToProject={pid => { handleAddToProject(active.id, pid); setHeaderMenuAnchor(null) }}
+          onDelete={() => { handleDelete(active.id); setHeaderMenuAnchor(null) }}
+        />
+      )}
     </>
+  )
+}
+
+// 顶部就地改名：标题区变输入框，回车提交、失焦提交、Esc 取消
+function HeaderRename({ title, onCommit, onCancel }: {
+  title: string
+  onCommit: (t: string) => void
+  onCancel: () => void
+}) {
+  const [val, setVal] = useState(title)
+  const doneRef = useRef(false)
+  useEffect(() => { setVal(title) }, [title])
+  return (
+    <input
+      autoFocus
+      value={val}
+      onChange={e => setVal(e.target.value)}
+      onKeyDown={e => {
+        if (e.key === "Enter") { e.preventDefault(); doneRef.current = true; onCommit(val) }
+        if (e.key === "Escape") { doneRef.current = true; onCancel() }
+      }}
+      onBlur={() => { if (!doneRef.current) onCommit(val) }}
+      className="min-w-0 flex-1 rounded-lg bg-secondary/60 px-3 py-1.5 text-sm outline-none focus:bg-secondary/80"
+    />
+  )
+}
+
+// 顶部对话菜单（锚定 ⌄ 的弹层，portal 到 body）：收藏 / 改名 / 加入项目 / 置顶 / 删除
+function HeaderConvMenu({ conv, anchor, projects, onClose, onToggleStar, onTogglePin, onStartRename, onAddToProject, onDelete }: {
+  conv: Conversation
+  anchor: { bottom: number; left: number }
+  projects: Project[]
+  onClose: () => void
+  onToggleStar: () => void
+  onTogglePin: () => void
+  onStartRename: () => void
+  onAddToProject: (projectId: string | null) => void
+  onDelete: () => void
+}) {
+  const [picker, setPicker] = useState(false)
+  const [shown, setShown] = useState(false)
+  useEffect(() => { const r = requestAnimationFrame(() => setShown(true)); return () => cancelAnimationFrame(r) }, [])
+  if (typeof document === "undefined") return null
+
+  const left = Math.min(anchor.left, window.innerWidth - 236)
+  const pos: React.CSSProperties = { position: "fixed", left: Math.max(8, left), top: anchor.bottom + 6, width: 220 }
+
+  return createPortal(
+    <div className="fixed inset-0 z-[80]" onClick={onClose}>
+      <div
+        onClick={e => e.stopPropagation()}
+        style={pos}
+        className={cn(
+          "overflow-hidden rounded-2xl bg-popover p-1 shadow-xl ring-1 ring-black/5 transition-all duration-150 ease-out",
+          shown ? "scale-100 opacity-100" : "scale-95 opacity-0",
+        )}
+      >
+        {!picker ? (
+          <>
+            <HeaderMenuRow icon={<Star className={cn("size-4", conv.starred && "fill-current text-primary")} />} label={conv.starred ? "取消收藏" : "收藏"} onClick={onToggleStar} />
+            <HeaderMenuRow icon={<Pencil className="size-4" />} label="重命名" onClick={onStartRename} />
+            <HeaderMenuRow icon={<Folder className="size-4" />} label="加入项目" onClick={() => setPicker(true)} />
+            <HeaderMenuRow icon={<Pin className="size-4" />} label={conv.pinned ? "取消置顶" : "置顶"} onClick={onTogglePin} />
+            <div className="my-1 border-t border-border/50" />
+            <HeaderMenuRow icon={<Trash2 className="size-4" />} label="删除" danger onClick={onDelete} />
+          </>
+        ) : (
+          <>
+            <button onClick={() => setPicker(false)} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-[13px] text-muted-foreground transition-colors hover:bg-secondary/60">
+              <ChevronLeft className="size-4" />加入项目
+            </button>
+            <div className="max-h-[44vh] overflow-y-auto">
+              {conv.projectId && (
+                <HeaderMenuRow icon={<X className="size-4" />} label="移出当前项目" onClick={() => onAddToProject(null)} />
+              )}
+              {projects.filter(p => p.id !== conv.projectId).map(p => (
+                <HeaderMenuRow key={p.id} icon={<Folder className="size-4" />} label={p.name} onClick={() => onAddToProject(p.id)} />
+              ))}
+              {projects.filter(p => p.id !== conv.projectId).length === 0 && !conv.projectId && (
+                <p className="px-3 py-4 text-center text-[12px] italic text-muted-foreground/70">还没有项目</p>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
+function HeaderMenuRow({ icon, label, onClick, danger }: { icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean }) {
+  return (
+    <button onClick={onClick} className={cn("flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors active:scale-[0.98]", danger ? "text-destructive hover:bg-destructive/10" : "text-foreground hover:bg-secondary/60")}>
+      <span className={danger ? "text-destructive" : "text-muted-foreground"}>{icon}</span>{label}
+    </button>
   )
 }
 
