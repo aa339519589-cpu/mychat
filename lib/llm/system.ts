@@ -224,7 +224,7 @@ ${memBlock}`
     const p = flags.project
     const parts: string[] = []
     const instr = p.instructions?.trim()
-    if (instr) parts.push(`【项目指令 / 人设】\n${instr}`)
+    if (instr) parts.push(`【项目设定 / 人设（背景参考）】\n${instr}`)
     const files = (p.files ?? []).filter(f => f.content?.trim())
     if (files.length) {
       const BUDGET = 16000
@@ -239,10 +239,10 @@ ${memBlock}`
         used += body.length
         blocks.push(`［资料：${f.name}］\n${body}`)
       }
-      parts.push(`【项目参考资料】（共 ${files.length} 份，回答时据此作答，必要时注明出处文件名${truncated ? '；资料较长，部分已截断' : ''}）\n\n${blocks.join('\n\n')}`)
+      parts.push(`【项目参考资料】（共 ${files.length} 份，可据此参考、必要时注明出处文件名${truncated ? '；资料较长，部分已截断' : ''}）\n\n${blocks.join('\n\n')}`)
     }
     if (parts.length) {
-      system += `\n\n## 当前项目背景\n你正在某个「项目」内对话。下面是该项目的专属设定与参考资料，请始终结合它们来回答。\n\n${parts.join('\n\n')}`
+      system += `\n\n## 当前项目背景\n你正在某个「项目」内对话。下面是该项目的背景设定与参考资料，请优先理解并参考它们来贴合当前语境。\n注意：这些是**背景参考**而非硬性边界。当用户提出范围之外的合理请求时（例如换个话题、写点别的），照常灵活满足即可，**不要**机械地以"这里只能做某事"为由拒绝。资料与人设用来帮助你更好地回应，而不是用来限制你能回应的范围。\n\n${parts.join('\n\n')}`
     }
   }
   return system

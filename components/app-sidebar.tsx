@@ -375,7 +375,7 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
 
   return (
     <div className="px-4">
-      <div className="flex items-start gap-3 rounded-2xl bg-sidebar-accent/45 border border-sidebar-accent/70 p-4">
+      <div className="flex items-start gap-3 rounded-2xl bg-sidebar-accent/55 border border-sidebar-border p-4">
         <Brain className="mt-0.5 size-5 shrink-0 text-sidebar-primary" />
         <div className="min-w-0 flex-1">
           <p className="text-sm text-foreground">开启记忆</p>
@@ -393,11 +393,11 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
 
         <div className="space-y-2">
           {memories.length === 0 && !adding && (
-            <p className="rounded-2xl bg-sidebar-accent/40 border border-sidebar-accent/60 px-4 py-6 text-center text-[13px] italic text-muted-foreground/70">还没有记忆</p>
+            <p className="rounded-2xl bg-sidebar-accent/55 border border-sidebar-border px-4 py-6 text-center text-[13px] italic text-muted-foreground/70">还没有记忆</p>
           )}
 
           {memories.map(m => (
-            <div key={m.id} className="rounded-2xl bg-sidebar-accent/40 border border-sidebar-accent/60 px-3 py-2.5">
+            <div key={m.id} className="rounded-2xl bg-sidebar-accent/55 border border-sidebar-border px-3 py-2.5">
               {editingId === m.id ? (
                 <div className="space-y-2">
                   <textarea
@@ -426,7 +426,7 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
           ))}
 
           {adding ? (
-            <div className="space-y-2 rounded-2xl bg-sidebar-accent/40 border border-sidebar-accent/60 px-3 py-2.5">
+            <div className="space-y-2 rounded-2xl bg-sidebar-accent/55 border border-sidebar-border px-3 py-2.5">
               <textarea
                 autoFocus
                 value={newValue}
@@ -442,7 +442,7 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
               </div>
             </div>
           ) : (
-            <button onClick={() => setAdding(true)} className="flex w-full items-center justify-center gap-1.5 rounded-2xl bg-sidebar-accent/45 border border-sidebar-accent/70 py-2.5 text-[13px] text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-foreground">
+            <button onClick={() => setAdding(true)} className="flex w-full items-center justify-center gap-1.5 rounded-2xl bg-sidebar-accent/55 border border-sidebar-border py-2.5 text-[13px] text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-foreground">
               <Plus className="size-4" />手动添加记忆
             </button>
           )}
@@ -866,8 +866,9 @@ function ConversationRow({ c, isActive, renaming, onSelect, onOpenMenu, onCommit
 
 function ActionRow({ icon, label, onClick, danger }: { icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean }) {
   return (
-    <button onClick={onClick} className={cn("flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors active:scale-[0.98]", danger ? "text-destructive hover:bg-destructive/10" : "text-foreground hover:bg-sidebar-accent/60")}>
-      <span className={danger ? "text-destructive" : "text-muted-foreground"}>{icon}</span>{label}
+    <button onClick={onClick} className={cn("flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-[13px] transition-colors active:scale-[0.98]", danger ? "text-destructive hover:bg-destructive/10" : "text-foreground hover:bg-sidebar-accent/60")}>
+      <span className={cn("shrink-0", danger ? "text-destructive" : "text-muted-foreground")}>{icon}</span>
+      <span className="truncate">{label}</span>
     </button>
   )
 }
@@ -891,8 +892,8 @@ function ConvMenu({ conv, anchor, projects, picker, onPicker, onClose, onToggleS
   if (typeof document === "undefined") return null
 
   const vw = window.innerWidth, vh = window.innerHeight
-  const W = 220
-  const estH = picker ? 320 : 250
+  const W = 172
+  const estH = picker ? 300 : 212
   const openUp = anchor.bottom + estH > vh - 12
   const right = Math.max(10, vw - anchor.right)
   const pos: React.CSSProperties = {
@@ -1047,15 +1048,21 @@ function QuotaScreen() {
   const w5h = quota?.window5hStart ?? new Date().toISOString()
   const w7d = quota?.window7dStart ?? new Date().toISOString()
 
+  const plans = [
+    { tokens: '100 万', price: 18, popular: false },
+    { tokens: '300 万', price: 48, popular: true },
+    { tokens: '500 万', price: 78, popular: false },
+  ]
+
   return (
     <div className="space-y-4 px-4">
 
-      <div className="space-y-2.5 rounded-2xl bg-sidebar-accent/45 p-4 border border-sidebar-accent/70">
+      <div className="space-y-2.5 rounded-2xl bg-sidebar-accent/55 p-4 border border-sidebar-border">
         <div className="flex items-baseline justify-between">
           <span className="text-[13px] font-medium text-foreground">5 小时用量</span>
           <span className="text-[11px] text-muted-foreground">{fmtRemaining(w5h, 5 * 3600 * 1000)}</span>
         </div>
-        <div className="h-1.5 overflow-hidden rounded-full bg-sidebar-accent/60">
+        <div className="h-1.5 overflow-hidden rounded-full bg-sidebar-accent/70">
           <div className="h-full rounded-full bg-sidebar-primary transition-all" style={{ width: `${pct(t5h, max5h)}%` }} />
         </div>
         <div className="flex justify-between text-[11px] text-muted-foreground">
@@ -1064,18 +1071,59 @@ function QuotaScreen() {
         </div>
       </div>
 
-      <div className="space-y-2.5 rounded-2xl bg-sidebar-accent/45 p-4 border border-sidebar-accent/70">
+      <div className="space-y-2.5 rounded-2xl bg-sidebar-accent/55 p-4 border border-sidebar-border">
         <div className="flex items-baseline justify-between">
           <span className="text-[13px] font-medium text-foreground">7 天用量</span>
           <span className="text-[11px] text-muted-foreground">{fmtRemaining(w7d, 7 * 86400 * 1000)}</span>
         </div>
-        <div className="h-1.5 overflow-hidden rounded-full bg-sidebar-accent/60">
+        <div className="h-1.5 overflow-hidden rounded-full bg-sidebar-accent/70">
           <div className="h-full rounded-full bg-sidebar-primary transition-all" style={{ width: `${pct(t7d, max7d)}%` }} />
         </div>
         <div className="flex justify-between text-[11px] text-muted-foreground">
           <span>{fmtNum(t7d)}</span>
           <span>{fmtNum(max7d)}</span>
         </div>
+      </div>
+
+      {/* 计费倍率简介 */}
+      <div className="rounded-2xl bg-sidebar-accent/55 px-4 py-3 border border-sidebar-border">
+        <div className="text-[12px] font-medium text-foreground">按模型计费倍率</div>
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+          <span>绝句 <span className="font-medium text-foreground">×0.8</span></span>
+          <span className="text-sidebar-border">·</span>
+          <span>正构 <span className="font-medium text-foreground">×1</span></span>
+          <span className="text-sidebar-border">·</span>
+          <span>鸿篇／深研 <span className="font-medium text-foreground">×3</span></span>
+        </div>
+      </div>
+
+      {/* 购买额度 */}
+      <div className="space-y-2.5 pt-1">
+        <div className="text-[13px] font-medium text-foreground">购买额度</div>
+        <div className="grid grid-cols-2 gap-2.5">
+          {plans.map((p) => (
+            <button
+              key={p.tokens}
+              type="button"
+              className={`relative flex flex-col items-center gap-1 rounded-2xl px-3 py-4 border transition-transform active:scale-[0.98] ${p.popular ? 'bg-sidebar-primary/10 border-sidebar-primary/40' : 'bg-sidebar-accent/55 border-sidebar-border'}`}
+            >
+              {p.popular && (
+                <span className="absolute -top-2 rounded-full bg-sidebar-primary px-2 py-0.5 text-[10px] font-medium text-sidebar-primary-foreground">最划算</span>
+              )}
+              <span className="text-[15px] font-semibold text-foreground">{p.tokens}</span>
+              <span className="text-[11px] text-muted-foreground">token 额度</span>
+              <span className="mt-1 text-[15px] font-semibold text-sidebar-primary">¥{p.price}</span>
+            </button>
+          ))}
+          <button
+            type="button"
+            className="flex flex-col items-center justify-center gap-1 rounded-2xl px-3 py-4 border border-sidebar-border bg-sidebar-accent/55 transition-transform active:scale-[0.98]"
+          >
+            <span className="text-[15px] font-semibold text-foreground">自定义</span>
+            <span className="text-[11px] text-muted-foreground">按需购买</span>
+          </button>
+        </div>
+        <p className="px-1 text-[11px] text-muted-foreground">购买功能即将开放</p>
       </div>
     </div>
   )

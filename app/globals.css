@@ -70,7 +70,8 @@
   --secondary: oklch(0.915 0.022 82);
   --secondary-foreground: oklch(0.355 0.03 50);
   --muted: oklch(0.915 0.02 82);
-  --muted-foreground: oklch(0.52 0.028 56);
+  /* 次要文字（时间戳/提示/占位/摘要）：亮色下原 0.52 偏浅，叠 /40~/50 透明后在米黄底上糊掉；调深保证可读 */
+  --muted-foreground: oklch(0.44 0.03 56);
   /* 点缀：暗红印泥 */
   --accent: oklch(0.905 0.025 70);
   --accent-foreground: oklch(0.44 0.11 38);

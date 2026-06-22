@@ -39,7 +39,15 @@ export function LoginScreen() {
     setGuestLoading(true)
     try {
       const { error } = await supabase.auth.signInAnonymously()
-      if (error) setError("游客登录失败，请重试")
+      if (error) {
+        console.error("[guest-login]", error.status, error.message)
+        const msg = error.message || ""
+        if (/anonymous|disabled|not enabled|signup/i.test(msg)) {
+          setError("游客登录暂未开放，请用邮箱登录")
+        } else {
+          setError("游客登录失败，请重试")
+        }
+      }
     } catch {
       setError("网络错误，请重试")
     } finally {
