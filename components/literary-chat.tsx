@@ -251,13 +251,6 @@ export function LiteraryChat() {
               }))
               continue
             }
-            if (data.sheetMusic) {
-              setConversations(prev => prev.map(c => c.id !== convId ? c : {
-                ...c,
-                messages: c.messages.map(m => m.id !== msgId ? m : { ...m, sheetMusicNotes: [...(m.sheetMusicNotes ?? []), { ...data.sheetMusic, status: "done" }] }),
-              }))
-              continue
-            }
             if (data.text) fullReply += data.text
             if (data.thinking) fullThinking += data.thinking
             setConversations(prev => prev.map(c => c.id !== convId ? c : {
@@ -543,7 +536,7 @@ export function LiteraryChat() {
             type="button"
             aria-label="收起侧栏"
             onClick={() => setDrawerOpen(false)}
-            className={cn("absolute inset-0 bg-foreground/40 transition-opacity duration-300", drawerOpen ? "opacity-100" : "opacity-0")}
+            className={cn("absolute inset-0 bg-foreground/40 dark:bg-black/40 transition-opacity duration-300", drawerOpen ? "opacity-100" : "opacity-0")}
           />
           <AppSidebar {...sidebarProps} mobile visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
         </div>

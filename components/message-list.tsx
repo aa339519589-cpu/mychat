@@ -188,7 +188,7 @@ export function MessageList({
                 </div>
               )}
               {m.content && (
-                <div className="max-w-[85%] min-w-0 rounded-[1.5rem] rounded-tr-md bg-secondary/70 px-5 py-3.5">
+                <div className="max-w-[85%] min-w-0 rounded-[1.5rem] rounded-tr-md bg-secondary/70 dark:bg-[#121212] px-5 py-3.5">
                   <p className="break-words text-[15px] italic leading-[1.9] tracking-wide text-secondary-foreground [overflow-wrap:anywhere]">{m.content}</p>
                 </div>
               )}
@@ -212,19 +212,9 @@ export function MessageList({
                     ))}
                   </div>
                 )}
-                {m.sheetMusicNotes && m.sheetMusicNotes.length > 0 && (
-                  <div className="mb-3 space-y-1">
-                    {m.sheetMusicNotes.map((note, i) => (
-                      <div key={i} className="flex items-center gap-1.5 text-xs italic text-muted-foreground/80">
-                        <span>正在渲染……</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
                 {(() => {
                   // content 始终是模型原始全文，渲染时实时拆分两种 artifact
                   const { display, raw, done, inlineRaw, inlineDone, vegaRaw, vegaDone, mermaidRaw, mermaidDone, fnPlotRaw, fnPlotDone } = parseArtifact(m.content ?? '')
-                  const hasVisual = inlineRaw !== null || vegaRaw !== null || mermaidRaw !== null || fnPlotRaw !== null
                   return (
                     <div className="min-w-0 space-y-3">
                       {m.isError ? (
@@ -258,9 +248,9 @@ export function MessageList({
                               />
                             </div>
                           )}
-                          {/* 操作栏：无引导线（避免纯图形消息下方出现空竖线） */}
+                          {/* 操作栏：永不加左侧引导线——按钮在手机上隐藏时 border-l 会变成一根孤立的空竖线 */}
                           {(!!display || raw !== null || idx === lastAiIdx) && (
-                            <div className={hasVisual && !display && raw === null ? "pl-0 space-y-3" : "border-l border-border/70 pl-3 space-y-3"}>
+                            <div className="pl-3 space-y-3">
                               <AiActions
                                 text={display}
                                 isLast={idx === lastAiIdx}

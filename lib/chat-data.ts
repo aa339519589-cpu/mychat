@@ -21,7 +21,6 @@ export type Message = {
   memoryNotes?: string[]
   files?: string[]
   searchNotes?: { query: string; results: { title: string; url: string }[] }[]
-  sheetMusicNotes?: { type: string; svg: string; status: "rendering" | "done" }[]
 }
 
 export type Conversation = {
