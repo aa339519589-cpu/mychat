@@ -193,34 +193,47 @@ export function MessageList({
                 {(() => {
                   // content 始终是模型原始全文，渲染时实时拆分两种 artifact
                   const { display, raw, done, inlineRaw, inlineDone } = parseArtifact(m.content ?? '')
+                  // 操作栏是否有内容（避免渲染出一截空引导线）
+                  const showActions = !!display || idx === lastAiIdx || raw !== null
                   return (
-                    <div className="min-w-0 border-l border-border/70 pl-3">
+                    <div className="min-w-0 space-y-3">
                       {m.isError ? (
-                        <p className="break-words whitespace-pre-wrap text-sm italic leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">{m.content}</p>
+                        <div className="border-l border-border/70 pl-3">
+                          <p className="break-words whitespace-pre-wrap text-sm italic leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">{m.content}</p>
+                        </div>
                       ) : (
-                        <div className="min-w-0 space-y-3 text-[15px] text-foreground/90 md:text-[17px]">
-                          {display && <MdContent text={display} />}
-                          {/* 内联 artifact：透明背景，高度自适应，直接融在对话里 */}
+                        <>
+                          {/* 文字回复：引导线只包文字，长度跟随回复 */}
+                          {display && (
+                            <div className="border-l border-border/70 pl-3 text-[15px] text-foreground/90 md:text-[17px]">
+                              <MdContent text={display} />
+                            </div>
+                          )}
+                          {/* 内联 artifact：全宽，不带引导线，再高也不会拉长引导线 */}
                           {inlineRaw !== null && (
                             <ArtifactFrame raw={inlineRaw} done={inlineDone} inline />
                           )}
-                          {/* 面板 artifact：卡片入口，点击右侧展开 */}
-                          {raw !== null && (
-                            <ArtifactCard
-                              title={artifactTitle(raw)}
-                              done={done}
-                              active={openArtifactId === m.id}
-                              onClick={() => onOpenArtifact?.(m.id)}
-                            />
+                          {/* 卡片 + 操作栏：带引导线（内容矮，不会拖长） */}
+                          {showActions && (
+                            <div className="border-l border-border/70 pl-3 space-y-3">
+                              {raw !== null && (
+                                <ArtifactCard
+                                  title={artifactTitle(raw)}
+                                  done={done}
+                                  active={openArtifactId === m.id}
+                                  onClick={() => onOpenArtifact?.(m.id)}
+                                />
+                              )}
+                              <AiActions
+                                text={display}
+                                isLast={idx === lastAiIdx}
+                                isLoading={!!isLoading}
+                                onRegenerate={onRegenerate}
+                                onReply={onReply}
+                              />
+                            </div>
                           )}
-                          <AiActions
-                            text={display}
-                            isLast={idx === lastAiIdx}
-                            isLoading={!!isLoading}
-                            onRegenerate={onRegenerate}
-                            onReply={onReply}
-                          />
-                        </div>
+                        </>
                       )}
                     </div>
                   )
