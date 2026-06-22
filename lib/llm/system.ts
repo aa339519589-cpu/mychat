@@ -74,13 +74,15 @@ Vega-Lite 规则：
 - 坐标轴、网格线、辅助线用 currentColor + 透明度：<line stroke="currentColor" stroke-opacity="0.3"/>。
 - 多条线区分时用实线/虚线（stroke-dasharray）/粗细，不用颜色区分。
 - 绝不画背景（不要铺满的 <rect>），保持透明。
+- 【函数曲线必须密集采样——最重要的硬性规定】画 sin/cos/指数/对数/抛物线/任何函数曲线时，必须自己按固定小步长算出**大量坐标点**：横轴每隔 5～10 像素就取一个点，一条曲线**至少 40～60 个点**，越密越好。把这些点用 <polyline points="x1,y1 x2,y2 x3,y3 ..."> 依次连起来（或 <path> 用同样多的 L 命令逐点连线）。
+- 【绝对禁止】用 2、3 个点的粗略贝塞尔（Q/T/C）去"凑"一条函数曲线——采样点太少会让曲线扭曲、变形、左右不对称、波峰跑偏，非常难看。宁可点多到啰嗦，也不能少。点足够密时，直线段连起来肉眼就是完美平滑的曲线。
 
-示例（正弦曲线，照此结构手写坐标）：
+示例（正弦曲线——注意取了大量密集点，照此密度手写坐标，实际可取更多）：
 <inline-artifact>
 <svg viewBox="0 0 600 300" xmlns="http://www.w3.org/2000/svg">
   <line x1="40" y1="150" x2="560" y2="150" stroke="currentColor" stroke-opacity="0.3"/>
   <line x1="40" y1="20" x2="40" y2="280" stroke="currentColor" stroke-opacity="0.3"/>
-  <path d="M40,150 Q170,20 300,150 T560,150" stroke="currentColor" fill="none" stroke-width="2"/>
+  <polyline points="40,150 65,123 90,97 115,75 140,59 165,51 190,51 215,59 240,74 265,95 290,120 315,147 340,174 365,199 390,220 415,237 440,247 465,250 490,245 515,233 540,214 560,193" stroke="currentColor" fill="none" stroke-width="2"/>
   <text x="300" y="295" fill="currentColor" font-size="14" text-anchor="middle">y = sin(x)</text>
 </svg>
 </inline-artifact>

@@ -57,6 +57,9 @@ export function ChatInput({
   const [repoConnecting, setRepoConnecting] = useState(false)
   const repoPickerRef = useRef<HTMLDivElement>(null)
 
+  const [tierMenuOpen, setTierMenuOpen] = useState(false)
+  const tierMenuRef = useRef<HTMLDivElement>(null)
+
   // 点选择器外部时关闭
   useEffect(() => {
     if (!repoPickerOpen) return
@@ -68,6 +71,18 @@ export function ChatInput({
     document.addEventListener("mousedown", handleClickOutside)
     return () => document.removeEventListener("mousedown", handleClickOutside)
   }, [repoPickerOpen])
+
+  // 点模型菜单外部时关闭
+  useEffect(() => {
+    if (!tierMenuOpen) return
+    function handleClickOutside(e: MouseEvent) {
+      if (tierMenuRef.current && !tierMenuRef.current.contains(e.target as Node)) {
+        setTierMenuOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [tierMenuOpen])
 
   function resize() {
     const el = ref.current
@@ -158,23 +173,6 @@ export function ChatInput({
     )}>
       {/* 工具栏 */}
       <div className="mb-2 flex items-center gap-2 px-1">
-        <div className="flex items-center gap-1 rounded-full border border-border/50 bg-secondary/50 p-0.5">
-          {TIERS.map(t => (
-            <button
-              key={t.id}
-              onClick={() => onTierChange(t.id)}
-              className={cn(
-                "rounded-full px-2.5 py-0.5 text-xs transition-colors",
-                activeTier === t.id
-                  ? "bg-foreground text-background"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {t.id}
-            </button>
-          ))}
-        </div>
-
         <button
           onClick={() => onWebSearchChange(!webSearch)}
           className={cn(
@@ -370,6 +368,37 @@ export function ChatInput({
             mobile ? "max-h-[120px]" : "max-h-[180px]",
           )}
         />
+
+        {/* 模型选择（可展开，从上到下：鸿篇＞正构＞绝句） */}
+        <div ref={tierMenuRef} className="relative mb-0.5 shrink-0">
+          {tierMenuOpen && (
+            <div className="absolute bottom-full right-0 mb-2 min-w-[6.5rem] overflow-hidden rounded-2xl border border-border/60 bg-card shadow-lg">
+              {[...TIERS].reverse().map(t => (
+                <button
+                  key={t.id}
+                  onClick={() => { onTierChange(t.id); setTierMenuOpen(false) }}
+                  className={cn(
+                    "flex w-full items-center justify-center px-4 py-2.5 text-sm transition-colors",
+                    activeTier === t.id
+                      ? "bg-secondary/70 text-foreground"
+                      : "text-muted-foreground hover:bg-secondary/50",
+                  )}
+                >
+                  {t.id}
+                </button>
+              ))}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => setTierMenuOpen(v => !v)}
+            aria-label="选择模型"
+            className="flex h-8 items-center gap-1 rounded-full border border-border/50 bg-secondary/50 px-3 text-xs text-muted-foreground transition-colors hover:border-border hover:text-foreground"
+          >
+            <span>{activeTier}</span>
+            <ChevronDown className={cn("size-3 transition-transform", tierMenuOpen && "rotate-180")} />
+          </button>
+        </div>
 
         {isLoading ? (
           <button
