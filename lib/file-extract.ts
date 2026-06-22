@@ -1,7 +1,14 @@
 // 把上传的文件转成可发送的附件：
-// - PDF 用 pdfjs-dist 在浏览器提取文字（支持中文），结果存入 text 字段，后端直接使用
-// - 文本类文件直接在浏览器读取内容
-export type AttachedFile = { name: string; dataUrl: string; isPdf: boolean; text?: string }
+// - PDF 有文字层：pdfjs-dist 提字存入 text，后端直接注入
+// - PDF 扫描件：逐页渲染成图片存入 pages，发送时附到消息 images 供视觉模型识别
+// - 文本类文件：浏览器直接读取内容
+export type AttachedFile = {
+  name: string
+  dataUrl: string
+  isPdf: boolean
+  text?: string
+  pages?: string[]  // 扫描件各页 JPEG base64；发送时临时用，不落库
+}
 
 const TEXT_EXTS = [
   ".txt", ".md", ".markdown", ".csv", ".json", ".log", ".xml", ".yaml", ".yml",
@@ -19,9 +26,17 @@ export async function prepareFile(file: File): Promise<AttachedFile> {
   const isPdf = file.type === "application/pdf" || name.toLowerCase().endsWith(".pdf")
   if (isPdf) {
     try {
-      const { extractPdfText } = await import('./pdf-extract')
-      const text = await extractPdfText(file)
-      return { name, dataUrl: "", isPdf: true, text: text || "（未能提取文字，可能是扫描件）" }
+      const { extractPdf } = await import('./pdf-extract')
+      const result = await extractPdf(file)
+      if (result.kind === 'text') {
+        return { name, dataUrl: "", isPdf: true, text: result.text }
+      }
+      // 扫描件：把页数信息写进 text，页面图片存入 pages
+      const truncated = result.totalPages > result.pages.length
+      const hint = truncated
+        ? `（扫描件，已转换前 ${result.pages.length} 页为图片，共 ${result.totalPages} 页）`
+        : `（扫描件，已转换全部 ${result.totalPages} 页为图片）`
+      return { name, dataUrl: "", isPdf: true, text: hint, pages: result.pages }
     } catch {
       return { name, dataUrl: "", isPdf: true, text: "（PDF 解析失败）" }
     }

@@ -349,7 +349,13 @@ export function LiteraryChat() {
 
   async function handleSend(text: string, images?: string[], files?: AttachedFile[]) {
     if (!user || !active) return
-    const userMsg: Message = { id: crypto.randomUUID(), role: "user", content: text, time: "此刻", ts: new Date().toISOString(), images, files: files?.map(f => f.name) }
+
+    // 扫描件各页图片：只在本次 API 调用中使用，不存 DB（base64 体积太大）
+    const pdfPages = files?.flatMap(f => f.pages ?? []) ?? []
+    const allImagesForApi = [...(images ?? []), ...pdfPages]
+
+    // userMsg 存 DB 和显示：images 只含用户拍摄/选取的图，不含 PDF 页面截图
+    const userMsg: Message = { id: crypto.randomUUID(), role: "user", content: text, time: "此刻", ts: new Date().toISOString(), images: images?.length ? images : undefined, files: files?.map(f => f.name) }
     const msgId = crypto.randomUUID()
     const assistantMsg: Message = { id: msgId, role: "assistant", content: "", thinking: "", time: "此刻" }
     const isFirstExchange = active.messages.length === 0
@@ -385,17 +391,22 @@ export function LiteraryChat() {
       insertMessage(user.id, convId, userMsg)
     }
 
-    const history = [...baseHistory, userMsg].map(m => ({
+    // 历史里最后一条用户消息附上完整图片（含 PDF 页面截图），供 API 视觉识别
+    const lastMsgForApi = { ...userMsg, images: allImagesForApi.length ? allImagesForApi : undefined }
+    const history = [...baseHistory, lastMsgForApi].map(m => ({
       role: m.role,
       content: m.content,
       ...(m.images?.length ? { images: m.images } : {}),
       ...(m.ts ? { ts: m.ts } : {}),
     }))
 
+    // 发给 API 的 attachments 去掉 pages 字段（图片已在 images 里，避免重复传输）
+    const apiFiles = files?.map(({ pages: _p, ...rest }) => rest)
+
     const projectCtx = await getProjectContext(active.projectId)
     const controller = new AbortController()
     abortRef.current = controller
-    const fullReply = await runAiStream(history, msgId, convId, controller, files, projectCtx)
+    const fullReply = await runAiStream(history, msgId, convId, controller, apiFiles?.length ? apiFiles : undefined, projectCtx)
 
     if (isFirstExchange && fullReply) generateTitle(convId, text, fullReply)
     setReplyTo(null)
