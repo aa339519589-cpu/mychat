@@ -9,7 +9,7 @@ import remarkMath from "remark-math"
 import rehypeKatex from "rehype-katex"
 import { parseArtifact, artifactTitle } from "@/lib/artifact"
 import { ArtifactCard } from "@/components/artifact-card"
-import { ArtifactFrame } from "@/components/artifact-frame"
+import { InlineArtifact } from "@/components/inline-artifact"
 
 function MdContent({ text }: { text: string }) {
   return (
@@ -209,10 +209,8 @@ export function MessageList({
                               <MdContent text={display} />
                             </div>
                           )}
-                          {/* 内联 artifact：全宽，不带引导线，再高也不会拉长引导线 */}
-                          {inlineRaw !== null && (
-                            <ArtifactFrame raw={inlineRaw} done={inlineDone} inline />
-                          )}
+                          {/* 内联 SVG：直接注入 DOM，currentColor 跟随主题，桌面手机宽度分开 */}
+                          {inlineRaw !== null && <InlineArtifact svg={inlineRaw} done={inlineDone} />}
                           {/* 卡片 + 操作栏：带引导线（内容矮，不会拖长） */}
                           {showActions && (
                             <div className="border-l border-border/70 pl-3 space-y-3">

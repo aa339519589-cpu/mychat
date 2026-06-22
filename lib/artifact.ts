@@ -37,6 +37,35 @@ export function parseArtifact(text: string): ArtifactParsed {
   return { display: [before, after].filter(Boolean).join('\n\n'), raw, done: true, inlineRaw: null, inlineDone: false }
 }
 
+// 从内联内容里提取并安全清洗 SVG，直接注入对话 DOM 渲染
+// - 流式时若未闭合，临时补 </svg> 让浏览器容错渲染
+// - 去掉 script / foreignObject / on* 事件 / javascript: 协议，防 XSS
+export function sanitizeSvg(input: string): string | null {
+  if (!input) return null
+  const open = input.search(/<svg[\s>]/i)
+  if (open === -1) return null
+
+  let svg: string
+  const closeMatch = input.match(/<\/svg\s*>/i)
+  if (closeMatch && typeof closeMatch.index === 'number') {
+    svg = input.slice(open, closeMatch.index + closeMatch[0].length)
+  } else {
+    // 流式中还没闭合：取到末尾并补一个闭合标签
+    svg = input.slice(open) + '</svg>'
+  }
+
+  svg = svg
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<script[\s\S]*$/gi, '')           // 流式中未闭合的 script 尾巴
+    .replace(/<foreignObject[\s\S]*?<\/foreignObject>/gi, '')
+    .replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, '')   // onload/onclick 等
+    .replace(/\son[a-z]+\s*=\s*'[^']*'/gi, '')
+    .replace(/(xlink:href|href)\s*=\s*"\s*javascript:[^"]*"/gi, '')
+    .replace(/(xlink:href|href)\s*=\s*'\s*javascript:[^']*'/gi, '')
+
+  return svg
+}
+
 // 从 artifact HTML 里猜标题，给对话流卡片入口用
 export function artifactTitle(raw: string): string {
   const t = raw.match(/<title[^>]*>([^<]+)<\/title>/i)
