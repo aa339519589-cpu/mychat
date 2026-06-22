@@ -7,7 +7,7 @@ export async function GET(req: NextRequest) {
   const state = searchParams.get('state')
   const savedState = req.cookies.get('gh_oauth_state')?.value
 
-  const home = new URL('/', req.url).toString()
+  const home = 'https://mychat-nm6x.onrender.com/'
 
   if (!code || !state || state !== savedState) {
     return Response.redirect(`${home}?github=error`)

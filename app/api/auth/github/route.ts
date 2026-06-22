@@ -5,8 +5,7 @@ export async function GET(req: NextRequest) {
   const clientId = process.env.GITHUB_CLIENT_ID
   if (!clientId) return new Response('GitHub OAuth 未配置', { status: 500 })
 
-  const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? 'https://mychat-nm6x.onrender.com').replace(/\/$/, '')
-  const redirectUri = `${appUrl}/api/auth/github/callback`
+  const redirectUri = 'https://mychat-nm6x.onrender.com/api/auth/github/callback'
 
   // state 用于回调时验证，防止 CSRF
   const state = crypto.randomUUID()

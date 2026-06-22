@@ -11,6 +11,8 @@ import { parseArtifact, artifactTitle } from "@/lib/artifact"
 import { ArtifactCard } from "@/components/artifact-card"
 import { InlineArtifact } from "@/components/inline-artifact"
 import { VegaChart } from "@/components/vega-chart"
+import { MermaidChart } from "@/components/mermaid-chart"
+import { FunctionPlotChart } from "@/components/function-plot-chart"
 
 function MdContent({ text }: { text: string }) {
   return (
@@ -221,8 +223,8 @@ export function MessageList({
                 )}
                 {(() => {
                   // content 始终是模型原始全文，渲染时实时拆分两种 artifact
-                  const { display, raw, done, inlineRaw, inlineDone, vegaRaw, vegaDone } = parseArtifact(m.content ?? '')
-                  const hasVisual = inlineRaw !== null || vegaRaw !== null
+                  const { display, raw, done, inlineRaw, inlineDone, vegaRaw, vegaDone, mermaidRaw, mermaidDone, fnPlotRaw, fnPlotDone } = parseArtifact(m.content ?? '')
+                  const hasVisual = inlineRaw !== null || vegaRaw !== null || mermaidRaw !== null || fnPlotRaw !== null
                   return (
                     <div className="min-w-0 space-y-3">
                       {m.isError ? (
@@ -239,6 +241,10 @@ export function MessageList({
                           )}
                           {/* Vega-Lite 图表 */}
                           {vegaRaw !== null && <VegaChart spec={vegaRaw} done={vegaDone} />}
+                          {/* Mermaid 流程图 */}
+                          {mermaidRaw !== null && <MermaidChart code={mermaidRaw} done={mermaidDone} />}
+                          {/* Function-plot 数学函数 */}
+                          {fnPlotRaw !== null && <FunctionPlotChart spec={fnPlotRaw} done={fnPlotDone} />}
                           {/* 内联 SVG */}
                           {inlineRaw !== null && <InlineArtifact svg={inlineRaw} done={inlineDone} />}
                           {/* 面板卡片（有 artifact）*/}
