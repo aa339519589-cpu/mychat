@@ -10,17 +10,18 @@ import {
   Feather, Plus, ChevronLeft, ChevronRight, Trash2, Brain, LogOut,
   Settings, Folder, Shapes, Pencil, Check, X, PanelLeft,
   FileText, Upload, MessageCircle, Loader2, FolderPlus,
-  MoreHorizontal, Star, Pin,
+  MoreHorizontal, Star, Pin, Terminal, BarChart2,
 } from "lucide-react"
+import { fetchQuota, fetchCustomSystemPrompt, saveCustomSystemPrompt, type QuotaSnapshot } from "@/lib/db"
 
 // 二级页面：除根视图（侧栏主体）外的所有可滑入页面
-type Screen = "settings" | "memory" | "projects" | "artifacts" | "project-detail"
+type Screen = "settings" | "memory" | "projects" | "artifacts" | "project-detail" | "system-prompt" | "quota"
 
 // 层级 z：从根进入的为一级(20)，从设置再进入的为二级(30)，均高于根面板(10)。
 // 同级页面从不同时出现，静态 z 即可，退场时仍盖在被揭开的页面之上，滑出动画才完整。
 const Z: Record<Screen, number> = {
   settings: 20, projects: 20, artifacts: 20,
-  memory: 30, "project-detail": 30,
+  memory: 30, "project-detail": 30, "system-prompt": 30, "quota": 30,
 }
 
 // 置顶的排在最前；同组内保持原顺序（V8 的 sort 稳定）
@@ -175,10 +176,11 @@ export function AppSidebar({
 
   const screens = (
     <>
-      {/* 设置：现在只剩记忆（账户与退出已并入底部用户区，不再重复） */}
       <ScreenPanel style={screenStyle("settings")} title="设置" onBack={pop}>
         <div className="space-y-1 px-3">
           <MenuRow icon={<Brain className="size-4" />} label="记忆" hint={`${props.memories.length} 条`} onClick={() => push("memory")} />
+          <MenuRow icon={<Terminal className="size-4" />} label="系统提示词" onClick={() => push("system-prompt")} />
+          <MenuRow icon={<BarChart2 className="size-4" />} label="使用额度" onClick={() => push("quota")} />
         </div>
       </ScreenPanel>
 
@@ -191,6 +193,14 @@ export function AppSidebar({
           onEdit={props.onMemoryEdit}
           onDelete={props.onMemoryDelete}
         />
+      </ScreenPanel>
+
+      <ScreenPanel style={screenStyle("system-prompt")} title="系统提示词" onBack={pop}>
+        <SystemPromptScreen />
+      </ScreenPanel>
+
+      <ScreenPanel style={screenStyle("quota")} title="使用额度" onBack={pop}>
+        <QuotaScreen />
       </ScreenPanel>
 
       <ScreenPanel style={screenStyle("projects")} title="项目" onBack={pop}>
@@ -880,5 +890,113 @@ function ConvMenu({ conv, anchor, projects, picker, onPicker, onClose, onToggleS
       </div>
     </div>,
     document.body,
+  )
+}
+
+// ── 系统提示词设置 ──
+function SystemPromptScreen() {
+  const [value, setValue] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    fetchCustomSystemPrompt().then(v => { setValue(v); setLoading(false) })
+  }, [])
+
+  async function save() {
+    setSaving(true)
+    await saveCustomSystemPrompt(value)
+    setSaving(false)
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
+  }
+
+  if (loading) return <div className="px-4 py-8 text-center text-sm text-muted-foreground">加载中…</div>
+
+  return (
+    <div className="space-y-3 px-4">
+      <div className="rounded-2xl bg-sidebar-accent/30 px-4 py-3 text-[12px] leading-relaxed text-muted-foreground">
+        作为附加指令层注入对话。权限低于系统设定，不可覆盖内置规则。
+      </div>
+      <textarea
+        value={value}
+        onChange={e => setValue(e.target.value)}
+        placeholder="例：始终优先引用中文资料。回复控制在三段以内。"
+        className="w-full min-h-[160px] resize-none rounded-2xl bg-sidebar-accent/30 px-4 py-3 text-[13px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/40 transition-colors focus:bg-sidebar-accent/50"
+      />
+      <button
+        onClick={save}
+        disabled={saving}
+        className="flex w-full items-center justify-center gap-1.5 rounded-2xl bg-sidebar-primary py-2.5 text-[13px] text-sidebar-primary-foreground transition-opacity disabled:opacity-60"
+      >
+        {saved ? <><Check className="size-3.5" />已保存</> : saving ? '保存中…' : '保存'}
+      </button>
+    </div>
+  )
+}
+
+// ── 使用额度展示 ──
+function QuotaScreen() {
+  const [quota, setQuota] = useState<QuotaSnapshot | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    fetchQuota().then(q => { setQuota(q); setLoading(false) })
+  }, [])
+
+  function fmtNum(n: number) { return n.toLocaleString() }
+  function pct(n: number, max: number) { return Math.min(100, (n / max) * 100) }
+  function fmtRemaining(windowStart: string, windowMs: number): string {
+    const rem = Math.max(0, windowMs - (Date.now() - new Date(windowStart).getTime()))
+    const h = Math.floor(rem / 3600000)
+    const m = Math.floor((rem % 3600000) / 60000)
+    if (h > 24) return `${Math.floor(h / 24)}天 ${h % 24}h 后重置`
+    if (h > 0) return `${h}h ${m}m 后重置`
+    return `${m}m 后重置`
+  }
+
+  if (loading) return <div className="px-4 py-8 text-center text-sm text-muted-foreground">加载中…</div>
+  if (!quota) return <div className="px-4 py-8 text-center text-sm text-muted-foreground">暂无额度数据</div>
+
+  const t5h = quota.tokens5h ?? 0
+  const t7d = quota.tokens7d ?? 0
+  const max5h = 500_000
+  const max7d = 1_000_000
+
+  return (
+    <div className="space-y-4 px-4">
+      <div className="rounded-2xl bg-sidebar-accent/30 px-4 py-3 text-[12px] leading-relaxed text-muted-foreground">
+        Token 消耗按倍率折算：绝句 ×0.8 · 正构 ×1 · 鸿篇/深研 ×3
+      </div>
+
+      <div className="space-y-2.5 rounded-2xl bg-sidebar-accent/30 p-4">
+        <div className="flex items-baseline justify-between">
+          <span className="text-[13px] font-medium text-foreground">5 小时用量</span>
+          <span className="text-[11px] text-muted-foreground">{fmtRemaining(quota.window5hStart, 5 * 3600 * 1000)}</span>
+        </div>
+        <div className="h-1.5 overflow-hidden rounded-full bg-sidebar-accent/50">
+          <div className="h-full rounded-full bg-sidebar-primary transition-all" style={{ width: `${pct(t5h, max5h)}%` }} />
+        </div>
+        <div className="flex justify-between text-[11px] text-muted-foreground">
+          <span>{fmtNum(t5h)}</span>
+          <span>{fmtNum(max5h)}</span>
+        </div>
+      </div>
+
+      <div className="space-y-2.5 rounded-2xl bg-sidebar-accent/30 p-4">
+        <div className="flex items-baseline justify-between">
+          <span className="text-[13px] font-medium text-foreground">7 天用量</span>
+          <span className="text-[11px] text-muted-foreground">{fmtRemaining(quota.window7dStart, 7 * 86400 * 1000)}</span>
+        </div>
+        <div className="h-1.5 overflow-hidden rounded-full bg-sidebar-accent/50">
+          <div className="h-full rounded-full bg-sidebar-primary transition-all" style={{ width: `${pct(t7d, max7d)}%` }} />
+        </div>
+        <div className="flex justify-between text-[11px] text-muted-foreground">
+          <span>{fmtNum(t7d)}</span>
+          <span>{fmtNum(max7d)}</span>
+        </div>
+      </div>
+    </div>
   )
 }

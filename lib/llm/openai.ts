@@ -68,10 +68,11 @@ export async function runOpenAITurn(
   url: string, apiKey: string, model: string,
   messages: any[], tools: any[], controller: ReadableStreamDefaultController,
   opts?: { thinking?: boolean },
-): Promise<{ assistantMessage: any; toolCalls: { id: string; name: string; args: string }[]; failed: boolean }> {
+): Promise<{ assistantMessage: any; toolCalls: { id: string; name: string; args: string }[]; failed: boolean; totalTokens: number }> {
   const body: any = { model, messages, stream: true }
   body.thinking = { type: opts?.thinking ? 'enabled' : 'disabled' }
   body.max_tokens = 65536
+  body.stream_options = { include_usage: true }
   if (tools.length) { body.tools = tools; body.tool_choice = 'auto' }
 
   const res = await fetch(url, {
@@ -81,10 +82,11 @@ export async function runOpenAITurn(
   })
   if (!res.ok || !res.body) {
     send(controller, { error: upstreamError(res.status, await res.text()) })
-    return { assistantMessage: null, toolCalls: [], failed: true }
+    return { assistantMessage: null, toolCalls: [], failed: true, totalTokens: 0 }
   }
 
   let content = ''
+  let totalTokens = 0
   const callMap: Record<number, { id: string; name: string; args: string }> = {}
 
   function handle(obj: any) {
@@ -102,6 +104,7 @@ export async function runOpenAITurn(
         if (tc.function?.arguments) callMap[idx].args += tc.function.arguments
       }
     }
+    if (obj?.usage?.total_tokens) totalTokens = obj.usage.total_tokens
   }
 
   if (res.headers.get('content-type')?.includes('application/json')) {
@@ -135,5 +138,5 @@ export async function runOpenAITurn(
       tool_calls: toolCalls.map(t => ({ id: t.id, type: 'function', function: { name: t.name, arguments: t.args || '{}' } })),
     }
   }
-  return { assistantMessage, toolCalls, failed: false }
+  return { assistantMessage, toolCalls, failed: false, totalTokens }
 }

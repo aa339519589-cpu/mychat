@@ -12,6 +12,32 @@ const DEEPSEEK_BASE_URL = 'https://api.deepseek.com'
 
 const MAX_TOOL_ROUNDS = 6
 
+// Token 倍率：鸿篇/深度研究 3x，正构 1x，绝句 0.8x
+async function addQuotaUsage(supabase: any, userId: string, rawTokens: number, model: string, isThinking: boolean) {
+  if (!supabase || !userId || rawTokens <= 0) return
+  try {
+    const multiplier = model.includes('v4-pro') ? 3 : isThinking ? 1 : 0.8
+    const weighted = Math.round(rawTokens * multiplier)
+    const { data } = await supabase
+      .from('profiles')
+      .select('tokens_5h, window_5h_start, tokens_7d, window_7d_start')
+      .eq('user_id', userId).maybeSingle()
+    const now = Date.now()
+    const nowIso = new Date(now).toISOString()
+    const ms5h = 5 * 3600 * 1000
+    const ms7d = 7 * 86400 * 1000
+    const start5h = new Date((data?.window_5h_start as string) || 0).getTime()
+    const start7d = new Date((data?.window_7d_start as string) || 0).getTime()
+    await supabase.from('profiles').upsert({
+      user_id: userId,
+      tokens_5h: (now - start5h >= ms5h ? 0 : ((data?.tokens_5h as number) ?? 0)) + weighted,
+      window_5h_start: now - start5h >= ms5h ? nowIso : ((data?.window_5h_start as string) ?? nowIso),
+      tokens_7d: (now - start7d >= ms7d ? 0 : ((data?.tokens_7d as number) ?? 0)) + weighted,
+      window_7d_start: now - start7d >= ms7d ? nowIso : ((data?.window_7d_start as string) ?? nowIso),
+    }, { onConflict: 'user_id' })
+  } catch { /* best-effort */ }
+}
+
 // 扫描件 PDF：上传到 DeepSeek Files API，返回 file_id；失败则原样返回（后端会降级为文字提示）
 async function uploadScannedPdfs(attachments: any[], apiKey: string, baseUrl: string): Promise<any[]> {
   if (!attachments?.length) return attachments ?? []
@@ -53,14 +79,20 @@ export async function POST(req: NextRequest) {
   let supabase: ToolContext['supabase'] = null
   let userId: string | null = null
   let memoryEnabled = true
+  let customSystemPrompt = ''
   try {
     supabase = await createClient()
     const { data } = await supabase.auth.getUser()
     userId = data.user?.id ?? null
     if (userId) {
-      // 记忆总开关：服务端权威判定（前端伪造也无效）
-      const { data: prof } = await supabase.from('profiles').select('memory_enabled').eq('user_id', userId).maybeSingle()
-      if (prof) memoryEnabled = prof.memory_enabled !== false
+      const { data: prof } = await supabase
+        .from('profiles')
+        .select('memory_enabled, custom_system_prompt')
+        .eq('user_id', userId).maybeSingle()
+      if (prof) {
+        memoryEnabled = prof.memory_enabled !== false
+        customSystemPrompt = ((prof.custom_system_prompt as string) ?? '').trim()
+      }
     }
   } catch { supabase = null }
 
@@ -71,20 +103,22 @@ export async function POST(req: NextRequest) {
   // 关闭记忆时：既不挂记忆工具（上面已过滤），也不注入已存的记忆
   const effectiveMemories = memoryEnabled ? (memories as Memory[] | undefined) : undefined
   const url = chatCompletionsUrl(DEEPSEEK_BASE_URL)
-  const SYSTEM = buildSystem(effectiveMemories, { webSearch: flags.webSearch, memoryEnabled, project, deepResearch: !!deepResearch })
+  const SYSTEM = buildSystem(effectiveMemories, { webSearch: flags.webSearch, memoryEnabled, project, deepResearch: !!deepResearch, customSystemPrompt: customSystemPrompt || undefined })
   const openaiTools = toOpenAITools(tools)
 
   const stream = new ReadableStream({
     async start(controller) {
+      let totalTokensUsed = 0
       try {
         const msgs: any[] = [{ role: 'system', content: SYSTEM }, ...toOpenAI(messages)]
         const processedAttachments = await uploadScannedPdfs(attachments, DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL)
         await injectAttachmentsOpenAI(msgs, processedAttachments)
         let lastHadToolCalls = false
         for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-          const { assistantMessage, toolCalls, failed } = await runOpenAITurn(
+          const { assistantMessage, toolCalls, failed, totalTokens } = await runOpenAITurn(
             url, DEEPSEEK_API_KEY, model, msgs, openaiTools, controller, { thinking }
           )
+          totalTokensUsed += totalTokens
           lastHadToolCalls = toolCalls.length > 0
           if (failed || !lastHadToolCalls) break
           msgs.push(assistantMessage)
@@ -98,12 +132,16 @@ export async function POST(req: NextRequest) {
         }
         // 轮次用完但最后一轮还有工具调用 → 补一轮纯文本请求，确保有完整回复
         if (lastHadToolCalls) {
-          await runOpenAITurn(url, DEEPSEEK_API_KEY, model, msgs, [], controller, { thinking })
+          const { totalTokens: ft } = await runOpenAITurn(url, DEEPSEEK_API_KEY, model, msgs, [], controller, { thinking })
+          totalTokensUsed += ft
         }
       } catch (error) {
         send(controller, { error: networkError(error) })
       } finally {
         done(controller)
+        if (userId && supabase) {
+          addQuotaUsage(supabase, userId, totalTokensUsed, model, thinking).catch(() => {})
+        }
       }
     },
   })

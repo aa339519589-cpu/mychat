@@ -189,7 +189,7 @@ const DEEP_RESEARCH_ADDENDUM = `
 - 禁止在 HTML 里写 Markdown 语法（不经 Markdown 解析，直接渲染）；
 - 可引用公开 CDN（jsDelivr / unpkg），但不得请求用户私有接口。`
 
-type SystemFlags = { webSearch?: boolean; memoryEnabled?: boolean; project?: ProjectContext; deepResearch?: boolean }
+type SystemFlags = { webSearch?: boolean; memoryEnabled?: boolean; project?: ProjectContext; deepResearch?: boolean; customSystemPrompt?: string }
 
 // 拼装系统提示词：基础人设 + 已记住的用户信息（带 id 供模型修改/删除）+ 联网提示
 export function buildSystem(memories?: Memory[], flags?: SystemFlags): string {
@@ -214,6 +214,10 @@ ${memBlock}`
   }
   if (flags?.deepResearch) {
     system += DEEP_RESEARCH_ADDENDUM
+  }
+  // 用户附加指令：权重低于所有系统规则，追加在最末尾
+  if (flags?.customSystemPrompt?.trim()) {
+    system += `\n\n## 用户附加指令（优先级低于以上所有系统规则，仅作补充）\n${flags.customSystemPrompt.trim()}`
   }
   // 项目背景：专属指令/人设 + 参考资料正文。资料按预算截断，避免撑爆上下文。
   if (flags?.project) {
