@@ -222,8 +222,7 @@ export function MessageList({
                 {(() => {
                   // content 始终是模型原始全文，渲染时实时拆分两种 artifact
                   const { display, raw, done, inlineRaw, inlineDone, vegaRaw, vegaDone } = parseArtifact(m.content ?? '')
-                  // 操作栏只在有文字内容时显示引导线，避免纯 SVG 消息下方出现空竖线
-                  const showActions = !!display || raw !== null
+                  const hasVisual = inlineRaw !== null || vegaRaw !== null
                   return (
                     <div className="min-w-0 space-y-3">
                       {m.isError ? (
@@ -232,27 +231,30 @@ export function MessageList({
                         </div>
                       ) : (
                         <>
-                          {/* 文字回复：引导线只包文字，长度跟随回复 */}
+                          {/* 文字回复：引导线只包文字 */}
                           {display && (
                             <div className="border-l border-border/70 pl-3 text-[15px] text-foreground/90 md:text-[17px]">
                               <MdContent text={display} />
                             </div>
                           )}
-                          {/* Vega-Lite 图表：JSON spec → SVG，库负责专业呈现 */}
+                          {/* Vega-Lite 图表 */}
                           {vegaRaw !== null && <VegaChart spec={vegaRaw} done={vegaDone} />}
-                          {/* 内联 SVG：直接注入 DOM，currentColor 跟随主题，桌面手机宽度分开 */}
+                          {/* 内联 SVG */}
                           {inlineRaw !== null && <InlineArtifact svg={inlineRaw} done={inlineDone} />}
-                          {/* 卡片 + 操作栏：带引导线（内容矮，不会拖长） */}
-                          {showActions && (
-                            <div className="border-l border-border/70 pl-3 space-y-3">
-                              {raw !== null && (
-                                <ArtifactCard
-                                  title={artifactTitle(raw)}
-                                  done={done}
-                                  active={openArtifactId === m.id}
-                                  onClick={() => onOpenArtifact?.(m.id)}
-                                />
-                              )}
+                          {/* 面板卡片（有 artifact）*/}
+                          {raw !== null && (
+                            <div className="border-l border-border/70 pl-3">
+                              <ArtifactCard
+                                title={artifactTitle(raw)}
+                                done={done}
+                                active={openArtifactId === m.id}
+                                onClick={() => onOpenArtifact?.(m.id)}
+                              />
+                            </div>
+                          )}
+                          {/* 操作栏：无引导线（避免纯图形消息下方出现空竖线） */}
+                          {(!!display || raw !== null || idx === lastAiIdx) && (
+                            <div className={hasVisual && !display && raw === null ? "pl-0 space-y-3" : "border-l border-border/70 pl-3 space-y-3"}>
                               <AiActions
                                 text={display}
                                 isLast={idx === lastAiIdx}
