@@ -10,6 +10,7 @@ import rehypeKatex from "rehype-katex"
 import { parseArtifact, artifactTitle } from "@/lib/artifact"
 import { ArtifactCard } from "@/components/artifact-card"
 import { InlineArtifact } from "@/components/inline-artifact"
+import { VegaChart } from "@/components/vega-chart"
 
 function MdContent({ text }: { text: string }) {
   return (
@@ -192,7 +193,7 @@ export function MessageList({
                 )}
                 {(() => {
                   // content 始终是模型原始全文，渲染时实时拆分两种 artifact
-                  const { display, raw, done, inlineRaw, inlineDone } = parseArtifact(m.content ?? '')
+                  const { display, raw, done, inlineRaw, inlineDone, vegaRaw, vegaDone } = parseArtifact(m.content ?? '')
                   // 操作栏是否有内容（避免渲染出一截空引导线）
                   const showActions = !!display || idx === lastAiIdx || raw !== null
                   return (
@@ -209,6 +210,8 @@ export function MessageList({
                               <MdContent text={display} />
                             </div>
                           )}
+                          {/* Vega-Lite 图表：JSON spec → SVG，库负责专业呈现 */}
+                          {vegaRaw !== null && <VegaChart spec={vegaRaw} done={vegaDone} />}
                           {/* 内联 SVG：直接注入 DOM，currentColor 跟随主题，桌面手机宽度分开 */}
                           {inlineRaw !== null && <InlineArtifact svg={inlineRaw} done={inlineDone} />}
                           {/* 卡片 + 操作栏：带引导线（内容矮，不会拖长） */}

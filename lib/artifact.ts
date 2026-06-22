@@ -3,38 +3,55 @@ export type ArtifactParsed = {
   // 面板 artifact（需要自己的视觉环境，如红色立方体、复杂报告）
   raw: string | null
   done: boolean
-  // 内联 artifact（颜色与背景无关，直接流式渲染在对话里）
+  // 内联 SVG（纯矢量，手画坐标）
   inlineRaw: string | null
   inlineDone: boolean
+  // Vega-Lite 图表（JSON spec，库负责画）
+  vegaRaw: string | null
+  vegaDone: boolean
 }
 
 export function parseArtifact(text: string): ArtifactParsed {
-  // 先尝试 inline-artifact
+  // 先尝试 <vega>
+  const VO = text.indexOf('<vega>')
+  if (VO !== -1) {
+    const before = text.slice(0, VO).trim()
+    const bodyStart = VO + '<vega>'.length
+    const VC = text.indexOf('</vega>', bodyStart)
+    if (VC === -1) {
+      return { display: before, raw: null, done: false, inlineRaw: null, inlineDone: false, vegaRaw: text.slice(bodyStart), vegaDone: false }
+    }
+    const vegaRaw = text.slice(bodyStart, VC).trim()
+    const after = text.slice(VC + '</vega>'.length).trim()
+    return { display: [before, after].filter(Boolean).join('\n\n'), raw: null, done: false, inlineRaw: null, inlineDone: false, vegaRaw, vegaDone: true }
+  }
+
+  // 再尝试 inline-artifact
   const IO = text.indexOf('<inline-artifact>')
   if (IO !== -1) {
     const before = text.slice(0, IO).trim()
     const bodyStart = IO + '<inline-artifact>'.length
     const IC = text.indexOf('</inline-artifact>', bodyStart)
     if (IC === -1) {
-      return { display: before, raw: null, done: false, inlineRaw: text.slice(bodyStart), inlineDone: false }
+      return { display: before, raw: null, done: false, inlineRaw: text.slice(bodyStart), inlineDone: false, vegaRaw: null, vegaDone: false }
     }
     const inlineRaw = text.slice(bodyStart, IC).trim()
     const after = text.slice(IC + '</inline-artifact>'.length).trim()
-    return { display: [before, after].filter(Boolean).join('\n\n'), raw: null, done: false, inlineRaw, inlineDone: true }
+    return { display: [before, after].filter(Boolean).join('\n\n'), raw: null, done: false, inlineRaw, inlineDone: true, vegaRaw: null, vegaDone: false }
   }
 
-  // 再尝试 panel artifact
+  // 最后尝试 panel artifact
   const O = text.indexOf('<artifact>')
-  if (O === -1) return { display: text, raw: null, done: false, inlineRaw: null, inlineDone: false }
+  if (O === -1) return { display: text, raw: null, done: false, inlineRaw: null, inlineDone: false, vegaRaw: null, vegaDone: false }
   const before = text.slice(0, O).trim()
   const bodyStart = O + '<artifact>'.length
   const C = text.indexOf('</artifact>', bodyStart)
   if (C === -1) {
-    return { display: before, raw: text.slice(bodyStart), done: false, inlineRaw: null, inlineDone: false }
+    return { display: before, raw: text.slice(bodyStart), done: false, inlineRaw: null, inlineDone: false, vegaRaw: null, vegaDone: false }
   }
   const raw = text.slice(bodyStart, C).trim()
   const after = text.slice(C + '</artifact>'.length).trim()
-  return { display: [before, after].filter(Boolean).join('\n\n'), raw, done: true, inlineRaw: null, inlineDone: false }
+  return { display: [before, after].filter(Boolean).join('\n\n'), raw, done: true, inlineRaw: null, inlineDone: false, vegaRaw: null, vegaDone: false }
 }
 
 // 从内联内容里提取并安全清洗 SVG，直接注入对话 DOM 渲染
