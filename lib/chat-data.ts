@@ -3,9 +3,9 @@ export type Tier = "绝句" | "正构" | "鸿篇"
 export type TierConfig = { id: Tier; label: string; desc: string; model: string; thinking: boolean }
 
 export const TIERS: TierConfig[] = [
-  { id: "绝句", label: "绝句", desc: "迅捷",  model: "deepseek-chat",     thinking: false },
-  { id: "正构", label: "正构", desc: "思考",  model: "deepseek-chat",     thinking: true  },
-  { id: "鸿篇", label: "鸿篇", desc: "深推",  model: "deepseek-reasoner", thinking: true  },
+  { id: "绝句", label: "绝句", desc: "迅捷",  model: "deepseek-v4-flash", thinking: false },
+  { id: "正构", label: "正构", desc: "思考",  model: "deepseek-v4-flash", thinking: true  },
+  { id: "鸿篇", label: "鸿篇", desc: "深推",  model: "deepseek-v4-pro",   thinking: true  },
 ]
 
 export const TIER_MAP: Record<Tier, TierConfig> = Object.fromEntries(TIERS.map(t => [t.id, t])) as Record<Tier, TierConfig>
