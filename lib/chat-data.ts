@@ -29,6 +29,10 @@ export type Conversation = {
   excerpt: string
   date: string
   messages: Message[]
+  projectId?: string | null
+  starred?: boolean
+  pinned?: boolean
+  draft?: boolean   // 本地草稿：尚未发送首条消息、未写入数据库；不进列表、不可删
 }
 
 export const CONVERSATIONS: Conversation[] = [

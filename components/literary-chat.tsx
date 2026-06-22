@@ -6,11 +6,15 @@ import { type Memory } from "@/lib/memory-data"
 import {
   fetchMemories, insertMemory, updateMemory, deleteMemoryRow,
   fetchConversations, insertConversation, updateConversationTitle, touchConversation, deleteConversationRow,
+  setConversationStarred, setConversationPinned, setConversationProject,
   fetchMessages, insertMessage, lastExcerpt,
   deleteMessageRow,
   fetchProfile, ensureProfile, setMemoryEnabled,
+  fetchProjects, insertProject, updateProject, deleteProjectRow,
+  fetchProjectFiles, insertProjectFile, deleteProjectFileRow, fetchProjectContext,
 } from "@/lib/db"
-import { type AttachedFile } from "@/lib/file-extract"
+import { type AttachedFile, prepareFile } from "@/lib/file-extract"
+import type { Project, ProjectFile, ProjectContext } from "@/lib/project-data"
 import { AppSidebar } from "@/components/app-sidebar"
 import { MessageList } from "@/components/message-list"
 import { ChatInput } from "@/components/chat-input"
@@ -42,9 +46,12 @@ export function LiteraryChat() {
   const [activeTier, setActiveTier] = useState<Tier>("绝句")
   const [replyTo, setReplyTo] = useState<string | null>(null)
   const [openArtifactId, setOpenArtifactId] = useState<string | null>(null)
+  const [projects, setProjects] = useState<Project[]>([])
 
   const abortRef = useRef<AbortController | null>(null)
   const loadedRef = useRef<Set<string>>(new Set())
+  const projectCtxRef = useRef<Map<string, ProjectContext>>(new Map())
+  const draftIdRef = useRef<string | null>(null)   // 当前本地草稿会话的 id（最多一个）
 
   // 页面加载时检查 GitHub 连接状态
   useEffect(() => {
@@ -78,25 +85,29 @@ export function LiteraryChat() {
       setMemories([])
       setMemoryEnabledState(true)
       setActiveId("")
+      setProjects([])
+      projectCtxRef.current.clear()
+      draftIdRef.current = null
       loadedRef.current = new Set()
       return
     }
     let cancelled = false
     ;(async () => {
       ensureProfile(user.id)
-      const [convs, mems, prof] = await Promise.all([fetchConversations(), fetchMemories(), fetchProfile()])
+      const [convs, mems, prof, projs] = await Promise.all([fetchConversations(), fetchMemories(), fetchProfile(), fetchProjects()])
       if (cancelled) return
       setMemories(mems)
       setMemoryEnabledState(prof.memoryEnabled)
+      setProjects(projs)
       try {
         const saved = localStorage.getItem("chat_active_tier") as Tier | null
         if (saved && TIERS.some(t => t.id === saved)) setActiveTier(saved)
       } catch {}
       if (convs.length === 0) {
-        const id = await insertConversation(user.id, "未命名的篇章")
-        if (cancelled || !id) return
-        loadedRef.current.add(id)
-        setConversations([{ id, title: "未命名的篇章", excerpt: "", date: "今日", messages: [] }])
+        // 没有任何历史会话：起一个本地草稿（先不写库），用户发首条消息时才真正创建
+        const id = crypto.randomUUID()
+        draftIdRef.current = id
+        setConversations([{ id, title: "未命名的篇章", excerpt: "", date: "今日", messages: [], draft: true }])
         setActiveId(id)
       } else {
         setConversations(convs)
@@ -120,6 +131,11 @@ export function LiteraryChat() {
   const active = useMemo(
     () => conversations.find(c => c.id === activeId),
     [conversations, activeId],
+  )
+
+  const activeProject = useMemo(
+    () => projects.find(p => p.id === active?.projectId) ?? null,
+    [projects, active?.projectId],
   )
 
   const desktopScrollRef = useRef<HTMLDivElement>(null)
@@ -181,6 +197,7 @@ export function LiteraryChat() {
     convId: string,
     controller: AbortController,
     attachments?: AttachedFile[],
+    projectCtx?: ProjectContext,
   ): Promise<string> {
     if (!user) { setIsLoading(false); return "" }
 
@@ -203,6 +220,7 @@ export function LiteraryChat() {
           memories: memoryEnabled && memories.length > 0 ? memories : undefined,
           attachments: attachments && attachments.length > 0 ? attachments : undefined,
           webSearch,
+          project: projectCtx,
         }),
       })
 
@@ -324,14 +342,34 @@ export function LiteraryChat() {
   async function handleSend(text: string, images?: string[], files?: AttachedFile[]) {
     if (!user || !active) return
     const userMsg: Message = { id: crypto.randomUUID(), role: "user", content: text, time: "此刻", images, files: files?.map(f => f.name) }
-
-    const convId = activeId
     const msgId = crypto.randomUUID()
+    const assistantMsg: Message = { id: msgId, role: "assistant", content: "", thinking: "", time: "此刻" }
     const isFirstExchange = active.messages.length === 0
-    setConversations(prev => prev.map(c => c.id === convId ? {
-      ...c, messages: [...c.messages, userMsg, { id: msgId, role: "assistant", content: "", thinking: "", time: "此刻" }]
-    } : c))
-    insertMessage(user.id, convId, userMsg)
+
+    let convId = active.id
+    if (active.draft) {
+      // 草稿此刻才真正落库（带项目归属，若有）；这才让它进入历史列表
+      const realId = await insertConversation(user.id, "未命名的篇章", active.projectId ?? undefined)
+      if (!realId) {
+        setConversations(prev => prev.map(c => c.id === active.id
+          ? { ...c, messages: [userMsg, { ...assistantMsg, content: "创建会话失败，请重试", isError: true }] }
+          : c))
+        return
+      }
+      convId = realId
+      loadedRef.current.add(realId)
+      draftIdRef.current = null
+      setConversations(prev => prev.map(c => c.id === active.id
+        ? { ...c, id: realId, draft: false, messages: [userMsg, assistantMsg] }
+        : c))
+      setActiveId(realId)
+      insertMessage(user.id, realId, userMsg)
+    } else {
+      setConversations(prev => prev.map(c => c.id === convId
+        ? { ...c, messages: [...c.messages, userMsg, assistantMsg] }
+        : c))
+      insertMessage(user.id, convId, userMsg)
+    }
 
     const history = [...active.messages, userMsg].map(m => ({
       role: m.role,
@@ -340,12 +378,12 @@ export function LiteraryChat() {
     }))
 
     setIsLoading(true)
+    const projectCtx = await getProjectContext(active.projectId)
     const controller = new AbortController()
     abortRef.current = controller
-    const fullReply = await runAiStream(history, msgId, convId, controller, files)
+    const fullReply = await runAiStream(history, msgId, convId, controller, files, projectCtx)
 
     if (isFirstExchange && fullReply) generateTitle(convId, text, fullReply)
-    // 清掉引用
     setReplyTo(null)
   }
 
@@ -375,9 +413,10 @@ export function LiteraryChat() {
     deleteMessageRow(lastAiMsg.id)
 
     setIsLoading(true)
+    const projectCtx = await getProjectContext(active.projectId)
     const controller = new AbortController()
     abortRef.current = controller
-    await runAiStream(historyBeforeAi, newMsgId, activeId, controller)
+    await runAiStream(historyBeforeAi, newMsgId, activeId, controller, undefined, projectCtx)
   }
 
   // ── 引用回复 ──
@@ -388,36 +427,140 @@ export function LiteraryChat() {
   async function handleDelete(id: string) {
     deleteConversationRow(id)
     loadedRef.current.delete(id)
+    if (draftIdRef.current === id) draftIdRef.current = null
     const remaining = conversations.filter(c => c.id !== id)
     if (remaining.length === 0) {
-      if (!user) return
-      const newId = await insertConversation(user.id, "未命名的篇章")
-      if (!newId) return
-      loadedRef.current.add(newId)
-      setConversations([{ id: newId, title: "未命名的篇章", excerpt: "", date: "今日", messages: [] }])
-      setActiveId(newId)
+      // 删到空了：起一个本地草稿，别再写库
+      const draftId = crypto.randomUUID()
+      draftIdRef.current = draftId
+      setConversations([{ id: draftId, title: "未命名的篇章", excerpt: "", date: "今日", messages: [], draft: true }])
+      setActiveId(draftId)
       return
     }
     setConversations(remaining)
     if (activeId === id) {
-      const nextId = remaining[0].id
-      setActiveId(nextId)
-      if (!loadedRef.current.has(nextId)) {
-        loadedRef.current.add(nextId)
-        const msgs = await fetchMessages(nextId)
-        setConversations(prev => prev.map(c => c.id === nextId ? { ...c, messages: msgs, excerpt: lastExcerpt(msgs) } : c))
+      const next = remaining.find(c => !c.draft) ?? remaining[0]
+      setActiveId(next.id)
+      if (!next.draft && !loadedRef.current.has(next.id)) {
+        loadedRef.current.add(next.id)
+        const msgs = await fetchMessages(next.id)
+        setConversations(prev => prev.map(c => c.id === next.id ? { ...c, messages: msgs, excerpt: lastExcerpt(msgs) } : c))
       }
     }
   }
 
-  async function handleNew() {
+  function handleNew() {
     if (!user) return
-    const id = await insertConversation(user.id, "未命名的篇章")
-    if (!id) return
-    loadedRef.current.add(id)
-    setConversations(prev => [{ id, title: "未命名的篇章", excerpt: "", date: "今日", messages: [] }, ...prev])
-    setActiveId(id)
     setDrawerOpen(false)
+    // 已有一个空草稿（或当前正停在草稿上）：切过去即可，绝不重复创建——天然防连点
+    if (draftIdRef.current) { setActiveId(draftIdRef.current); return }
+    const id = crypto.randomUUID()
+    draftIdRef.current = id
+    setConversations(prev => [{ id, title: "未命名的篇章", excerpt: "", date: "今日", messages: [], draft: true }, ...prev])
+    setActiveId(id)
+  }
+
+  // ── 会话菜单：收藏 / 置顶 / 改名 / 移入移出项目 ──
+  function handleToggleStar(id: string) {
+    const cur = conversations.find(c => c.id === id)
+    if (!cur) return
+    const next = !cur.starred
+    setConversations(prev => prev.map(c => c.id === id ? { ...c, starred: next } : c))
+    setConversationStarred(id, next)
+  }
+  function handleTogglePin(id: string) {
+    const cur = conversations.find(c => c.id === id)
+    if (!cur) return
+    const next = !cur.pinned
+    setConversations(prev => prev.map(c => c.id === id ? { ...c, pinned: next } : c))
+    setConversationPinned(id, next)
+  }
+  function handleRenameConversation(id: string, title: string) {
+    const t = title.trim()
+    if (!t) return
+    setConversations(prev => prev.map(c => c.id === id ? { ...c, title: t } : c))
+    updateConversationTitle(id, t)
+  }
+  function handleAddToProject(id: string, projectId: string | null) {
+    setConversations(prev => prev.map(c => c.id === id ? { ...c, projectId } : c))
+    setConversationProject(id, projectId)
+  }
+
+  // ── 项目 ──
+  // 取项目背景（指令 + 资料）；按 projectId 缓存，资料/指令变动时清缓存
+  async function getProjectContext(projectId?: string | null): Promise<ProjectContext | undefined> {
+    if (!projectId) return undefined
+    const cached = projectCtxRef.current.get(projectId)
+    if (cached) return cached
+    const ctx = await fetchProjectContext(projectId)
+    projectCtxRef.current.set(projectId, ctx)
+    return ctx
+  }
+
+  async function handleProjectCreate(name: string): Promise<Project | null> {
+    if (!user) return null
+    const p = await insertProject(user.id, name)
+    if (p) setProjects(prev => [p, ...prev])
+    return p
+  }
+  function handleProjectRename(id: string, name: string) {
+    setProjects(prev => prev.map(p => p.id === id ? { ...p, name } : p))
+    updateProject(id, { name })
+  }
+  function handleProjectInstructions(id: string, instructions: string) {
+    setProjects(prev => prev.map(p => p.id === id ? { ...p, instructions } : p))
+    updateProject(id, { instructions })
+    projectCtxRef.current.delete(id)
+  }
+  function handleProjectDelete(id: string) {
+    setProjects(prev => prev.filter(p => p.id !== id))
+    projectCtxRef.current.delete(id)
+    // 该项目下的对谈本地解绑（DB 端 ON DELETE SET NULL 已处理）
+    setConversations(prev => prev.map(c => c.projectId === id ? { ...c, projectId: null } : c))
+    deleteProjectRow(id)
+  }
+  function handleNewInProject(projectId: string) {
+    if (!user) return
+    setDrawerOpen(false)
+    // 复用唯一草稿并归到此项目；没有草稿就新建一个带项目归属的草稿（同样发首条消息才落库）
+    if (draftIdRef.current) {
+      const did = draftIdRef.current
+      setConversations(prev => prev.map(c => c.id === did ? { ...c, projectId } : c))
+      setActiveId(did)
+      return
+    }
+    const id = crypto.randomUUID()
+    draftIdRef.current = id
+    setConversations(prev => [{ id, title: "未命名的篇章", excerpt: "", date: "今日", messages: [], draft: true, projectId }, ...prev])
+    setActiveId(id)
+  }
+  async function handleLoadProjectFiles(projectId: string): Promise<ProjectFile[]> {
+    return fetchProjectFiles(projectId)
+  }
+  async function handleAddProjectFile(projectId: string, file: File): Promise<ProjectFile | null> {
+    if (!user) return null
+    try {
+      const prepared = await prepareFile(file)  // 不支持的类型会抛错
+      let content = prepared.text ?? ""
+      if (prepared.isPdf) {
+        const res = await fetch("/api/extract", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(prepared),
+        })
+        const data = await res.json().catch(() => null)
+        content = data?.text ?? ""
+      }
+      const saved = await insertProjectFile(user.id, projectId, prepared.name, content)
+      if (saved) projectCtxRef.current.delete(projectId)
+      return saved
+    } catch {
+      return null
+    }
+  }
+  function handleDeleteProjectFile(fileId: string) {
+    deleteProjectFileRow(fileId)
+    projectCtxRef.current.clear()  // 不知归属哪个项目，直接清空缓存（仅是优化缓存）
   }
 
   async function handleMemoryAdd(content: string) {
@@ -463,6 +606,19 @@ export function LiteraryChat() {
     onMemoryDelete: handleMemoryDelete,
     memoryEnabled,
     onMemoryEnabledChange: handleMemoryEnabledChange,
+    projects,
+    onProjectCreate: handleProjectCreate,
+    onProjectRename: handleProjectRename,
+    onProjectInstructions: handleProjectInstructions,
+    onProjectDelete: handleProjectDelete,
+    onNewInProject: handleNewInProject,
+    onLoadProjectFiles: handleLoadProjectFiles,
+    onAddProjectFile: handleAddProjectFile,
+    onDeleteProjectFile: handleDeleteProjectFile,
+    onToggleStar: handleToggleStar,
+    onTogglePin: handleTogglePin,
+    onRenameConversation: handleRenameConversation,
+    onAddToProject: handleAddToProject,
     userEmail: user?.email ?? "",
     onLogout: handleLogout,
   }
@@ -481,7 +637,7 @@ export function LiteraryChat() {
           >
             <PanelLeft className="size-5" />
           </button>
-          <span className="min-w-0 flex-1 truncate text-sm italic tracking-wider text-muted-foreground">{active?.title}</span>
+          <span className="min-w-0 flex-1 truncate text-sm italic tracking-wider text-muted-foreground">{activeProject ? `${activeProject.name} · ` : ""}{active?.title}</span>
         </header>
 
         <div

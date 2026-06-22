@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/client"
 import type { Memory } from "@/lib/memory-data"
 import type { Conversation, Message } from "@/lib/chat-data"
+import type { Project, ProjectFile, ProjectContext } from "@/lib/project-data"
 
 function fmtDate(iso: string): string {
   const d = new Date(iso)
@@ -90,7 +91,8 @@ export async function fetchConversations(): Promise<Conversation[]> {
   const supabase = createClient()
   const { data, error } = await supabase
     .from("conversations")
-    .select("id, title, updated_at")
+    .select("id, title, updated_at, project_id, starred, pinned")
+    .order("pinned", { ascending: false })
     .order("updated_at", { ascending: false })
   if (error || !data) return []
   return data.map(r => ({
@@ -99,13 +101,18 @@ export async function fetchConversations(): Promise<Conversation[]> {
     excerpt: "",
     date: fmtDate(r.updated_at as string),
     messages: [],
+    projectId: (r.project_id as string) ?? null,
+    starred: !!r.starred,
+    pinned: !!r.pinned,
   }))
 }
 
-export async function insertConversation(userId: string, title: string): Promise<string | null> {
+export async function insertConversation(userId: string, title: string, projectId?: string | null): Promise<string | null> {
   const supabase = createClient()
   const id = crypto.randomUUID()
-  const { error } = await supabase.from("conversations").insert({ id, user_id: userId, title })
+  const row: Record<string, unknown> = { id, user_id: userId, title }
+  if (projectId) row.project_id = projectId
+  const { error } = await supabase.from("conversations").insert(row)
   if (error) { console.error("insertConversation", error); return null }
   return id
 }
@@ -117,6 +124,24 @@ export async function updateConversationTitle(id: string, title: string): Promis
     .update({ title, updated_at: new Date().toISOString() })
     .eq("id", id)
   if (error) console.error("updateConversationTitle", error)
+}
+
+export async function setConversationStarred(id: string, starred: boolean): Promise<void> {
+  const supabase = createClient()
+  const { error } = await supabase.from("conversations").update({ starred }).eq("id", id)
+  if (error) console.error("setConversationStarred", error)
+}
+
+export async function setConversationPinned(id: string, pinned: boolean): Promise<void> {
+  const supabase = createClient()
+  const { error } = await supabase.from("conversations").update({ pinned }).eq("id", id)
+  if (error) console.error("setConversationPinned", error)
+}
+
+export async function setConversationProject(id: string, projectId: string | null): Promise<void> {
+  const supabase = createClient()
+  const { error } = await supabase.from("conversations").update({ project_id: projectId }).eq("id", id)
+  if (error) console.error("setConversationProject", error)
 }
 
 export async function touchConversation(id: string): Promise<void> {
@@ -168,4 +193,84 @@ export async function deleteMessageRow(id: string): Promise<void> {
   const supabase = createClient()
   const { error } = await supabase.from("messages").delete().eq("id", id)
   if (error) console.error("deleteMessageRow", error)
+}
+
+// ───────────── 项目 ─────────────
+
+export async function fetchProjects(): Promise<Project[]> {
+  const supabase = createClient()
+  const { data, error } = await supabase
+    .from("projects")
+    .select("id, name, instructions, updated_at")
+    .order("updated_at", { ascending: false })
+  if (error || !data) return []
+  return data.map(r => ({
+    id: r.id as string,
+    name: r.name as string,
+    instructions: (r.instructions as string) ?? "",
+    date: fmtDate(r.updated_at as string),
+  }))
+}
+
+export async function insertProject(userId: string, name: string): Promise<Project | null> {
+  const supabase = createClient()
+  const id = crypto.randomUUID()
+  const { error } = await supabase.from("projects").insert({ id, user_id: userId, name })
+  if (error) { console.error("insertProject", error); return null }
+  return { id, name, instructions: "", date: "今日" }
+}
+
+export async function updateProject(id: string, patch: { name?: string; instructions?: string }): Promise<void> {
+  const supabase = createClient()
+  const { error } = await supabase
+    .from("projects")
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq("id", id)
+  if (error) console.error("updateProject", error)
+}
+
+export async function deleteProjectRow(id: string): Promise<void> {
+  const supabase = createClient()
+  const { error } = await supabase.from("projects").delete().eq("id", id)
+  if (error) console.error("deleteProjectRow", error)
+}
+
+// ───────────── 项目资料 ─────────────
+
+export async function fetchProjectFiles(projectId: string): Promise<ProjectFile[]> {
+  const supabase = createClient()
+  const { data, error } = await supabase
+    .from("project_files")
+    .select("id, name, content")
+    .eq("project_id", projectId)
+    .order("created_at", { ascending: true })
+  if (error || !data) return []
+  return data.map(r => ({ id: r.id as string, name: r.name as string, content: (r.content as string) ?? "" }))
+}
+
+export async function insertProjectFile(userId: string, projectId: string, name: string, content: string): Promise<ProjectFile | null> {
+  const supabase = createClient()
+  const id = crypto.randomUUID()
+  const { error } = await supabase.from("project_files").insert({ id, project_id: projectId, user_id: userId, name, content })
+  if (error) { console.error("insertProjectFile", error); return null }
+  return { id, name, content }
+}
+
+export async function deleteProjectFileRow(id: string): Promise<void> {
+  const supabase = createClient()
+  const { error } = await supabase.from("project_files").delete().eq("id", id)
+  if (error) console.error("deleteProjectFileRow", error)
+}
+
+// 聊天时取项目背景：专属指令 + 资料正文（喂给模型当上下文）
+export async function fetchProjectContext(projectId: string): Promise<ProjectContext> {
+  const supabase = createClient()
+  const [{ data: proj }, files] = await Promise.all([
+    supabase.from("projects").select("instructions").eq("id", projectId).maybeSingle(),
+    fetchProjectFiles(projectId),
+  ])
+  return {
+    instructions: (proj?.instructions as string) ?? "",
+    files: files.map(f => ({ name: f.name, content: f.content })),
+  }
 }

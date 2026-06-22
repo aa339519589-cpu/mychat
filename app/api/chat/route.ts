@@ -13,7 +13,7 @@ const DEEPSEEK_BASE_URL = 'https://api.deepseek.com'
 const MAX_TOOL_ROUNDS = 6
 
 export async function POST(req: NextRequest) {
-  const { tier = '绝句', messages, memories, attachments, webSearch } = await req.json()
+  const { tier = '绝句', messages, memories, attachments, webSearch, project } = await req.json()
 
   if (!DEEPSEEK_API_KEY) {
     return new Response(JSON.stringify({ error: '服务未配置（DEEPSEEK_API_KEY 未设置）' }), { status: 500 })
@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
   // 关闭记忆时：既不挂记忆工具（上面已过滤），也不注入已存的记忆
   const effectiveMemories = memoryEnabled ? (memories as Memory[] | undefined) : undefined
   const url = chatCompletionsUrl(DEEPSEEK_BASE_URL)
-  const SYSTEM = buildSystem(effectiveMemories, { webSearch: flags.webSearch, memoryEnabled })
+  const SYSTEM = buildSystem(effectiveMemories, { webSearch: flags.webSearch, memoryEnabled, project })
   const openaiTools = toOpenAITools(tools)
 
   const stream = new ReadableStream({
