@@ -103,7 +103,9 @@ export function LiteraryChat() {
         const saved = localStorage.getItem("chat_active_tier") as Tier | null
         if (saved && TIERS.some(t => t.id === saved)) setActiveTier(saved)
       } catch {}
-      // 隐藏旧 bug 留下的"空会话"（确知 0 条消息的未命名片段）；count 拿不到就当作非空，绝不误藏
+      // 旧 bug 留下的"空会话"（确知 0 条消息）：不仅前端隐藏，更直接删库彻底清掉，根治"清不掉的死会话"。
+      // count 拿不到（undefined）的一律按"非空"对待，绝不误删/误藏。
+      for (const c of convs) if (c.msgCount === 0) deleteConversationRow(c.id)
       const real = convs.filter(c => c.msgCount !== 0)
       if (real.length === 0) {
         // 没有任何真实会话：起一个本地草稿（先不写库），用户发首条消息时才真正创建
@@ -347,39 +349,44 @@ export function LiteraryChat() {
     const msgId = crypto.randomUUID()
     const assistantMsg: Message = { id: msgId, role: "assistant", content: "", thinking: "", time: "此刻" }
     const isFirstExchange = active.messages.length === 0
+    const wasDraft = !!active.draft
+    const draftId = active.id
+    const baseHistory = active.messages
 
-    let convId = active.id
-    if (active.draft) {
-      // 草稿此刻才真正落库（带项目归属，若有）；这才让它进入历史列表
+    // 1) 先把用户气泡 + 空 AI 占位立刻显示出来——必须抢在任何网络 await 之前。
+    //    否则草稿首轮要等落库往返才看到自己刚发的话（这正是"发出去整页空白、等回复完才一起冒出来"的根因）。
+    setConversations(prev => prev.map(c => c.id === draftId
+      ? { ...c, draft: false, messages: [...c.messages, userMsg, assistantMsg] }
+      : c))
+    setIsLoading(true)
+
+    // 2) 草稿此刻才落库（在后台进行，不阻塞上面的显示）；拿到真实 id 后把临时 id 悄悄换掉
+    let convId = draftId
+    if (wasDraft) {
       const realId = await insertConversation(user.id, "未命名的篇章", active.projectId ?? undefined)
       if (!realId) {
-        setConversations(prev => prev.map(c => c.id === active.id
-          ? { ...c, messages: [userMsg, { ...assistantMsg, content: "创建会话失败，请重试", isError: true }] }
+        setConversations(prev => prev.map(c => c.id === draftId
+          ? { ...c, draft: true, messages: c.messages.map(m => m.id === msgId ? { ...m, content: "创建会话失败，请重试", isError: true } : m) }
           : c))
+        setIsLoading(false)
         return
       }
       convId = realId
       loadedRef.current.add(realId)
       draftIdRef.current = null
-      setConversations(prev => prev.map(c => c.id === active.id
-        ? { ...c, id: realId, draft: false, messages: [userMsg, assistantMsg] }
-        : c))
+      setConversations(prev => prev.map(c => c.id === draftId ? { ...c, id: realId } : c))
       setActiveId(realId)
       insertMessage(user.id, realId, userMsg)
     } else {
-      setConversations(prev => prev.map(c => c.id === convId
-        ? { ...c, messages: [...c.messages, userMsg, assistantMsg] }
-        : c))
       insertMessage(user.id, convId, userMsg)
     }
 
-    const history = [...active.messages, userMsg].map(m => ({
+    const history = [...baseHistory, userMsg].map(m => ({
       role: m.role,
       content: m.content,
       ...(m.images?.length ? { images: m.images } : {}),
     }))
 
-    setIsLoading(true)
     const projectCtx = await getProjectContext(active.projectId)
     const controller = new AbortController()
     abortRef.current = controller

@@ -23,7 +23,7 @@ export function chatCompletionsUrl(baseUrl: string) {
   return `${base}/v1/chat/completions`
 }
 
-// OpenAI/DeepSeek 不支持原生 PDF，后端用 unpdf 提取文字再附上
+// OpenAI/DeepSeek 不支持原生 PDF，后端用 pdf-parse 提取文字再附上
 export async function injectAttachmentsOpenAI(msgs: any[], attachments?: Attachment[]) {
   if (!attachments?.length) return
   const last = msgs[msgs.length - 1]
