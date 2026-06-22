@@ -30,10 +30,24 @@ export function LiteraryChat() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [githubContext, setGithubContext] = useState<GithubContext | null>(null)
+  const [githubConnected, setGithubConnected] = useState(false)
+  const [githubLogin, setGithubLogin] = useState<string | null>(null)
   const [memories, setMemories] = useState<Memory[]>([])
   const [webSearch, setWebSearch] = useState(false)
   const [endpoints, setEndpoints] = useState<Endpoint[]>([])
   const [activeEndpointId, setActiveEndpointId] = useState("")
+
+  // 页面加载时检查 GitHub 连接状态（cookie 里有 token 即为已连接）
+  useEffect(() => {
+    fetch("/api/github/status")
+      .then(r => r.json())
+      .then(d => { setGithubConnected(!!d.connected); setGithubLogin(d.login ?? null) })
+      .catch(() => {})
+    // 清理 OAuth 回调留下的 ?github=connected 查询参数
+    if (typeof window !== "undefined" && window.location.search.includes("github=")) {
+      window.history.replaceState({}, "", window.location.pathname)
+    }
+  }, [])
 
   // 已经从数据库拉过消息的对话 id，避免重复拉取
   const loadedRef = useRef<Set<string>>(new Set())
@@ -376,6 +390,13 @@ export function LiteraryChat() {
     deleteMemoryRow(id)
   }
 
+  async function handleGithubDisconnect() {
+    await fetch("/api/auth/github/disconnect", { method: "POST" })
+    setGithubConnected(false)
+    setGithubLogin(null)
+    setGithubContext(null)
+  }
+
   async function handleLogout() {
     const supabase = createClient()
     await supabase.auth.signOut()
@@ -441,7 +462,10 @@ export function LiteraryChat() {
           onEndpointChange={handleActiveEndpointChange}
           mobile={mobile}
           githubContext={githubContext}
-          onGithubConnect={setGithubContext}
+          onGithubConnect={(ctx) => { setGithubContext(ctx); if (ctx) setGithubConnected(true) }}
+          githubConnected={githubConnected}
+          githubLogin={githubLogin}
+          onGithubDisconnect={handleGithubDisconnect}
           webSearch={webSearch}
           onWebSearchChange={setWebSearch}
         />

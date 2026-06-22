@@ -2,15 +2,26 @@
 
 import { useRef, useState } from "react"
 import { cn } from "@/lib/utils"
-import { ChevronDown, GitBranch, X, Loader2, Plus, ImageIcon, FileText, Globe, ArrowUp } from "lucide-react"
+import { ChevronDown, X, Loader2, Plus, ImageIcon, FileText, Globe, ArrowUp, ExternalLink, LogOut } from "lucide-react"
 import type { Endpoint } from "@/lib/chat-data"
 import { prepareFile, type AttachedFile } from "@/lib/file-extract"
 
 type GithubContext = { repo: string; context: string }
+type GithubRepo = { name: string; full_name: string; private: boolean; description: string }
+
+// GitHub Octocat logo（官方 SVG mark）
+function GitHubIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z" />
+    </svg>
+  )
+}
 
 export function ChatInput({
   onSend, endpoints, activeEndpointId, onEndpointChange, mobile,
   githubContext, onGithubConnect,
+  githubConnected, githubLogin, onGithubDisconnect,
   webSearch, onWebSearchChange,
 }: {
   onSend: (text: string, images?: string[], files?: AttachedFile[]) => void
@@ -20,14 +31,14 @@ export function ChatInput({
   mobile: boolean
   githubContext: GithubContext | null
   onGithubConnect: (ctx: GithubContext | null) => void
+  githubConnected: boolean
+  githubLogin: string | null
+  onGithubDisconnect: () => void
   webSearch: boolean
   onWebSearchChange: (on: boolean) => void
 }) {
   const [value, setValue] = useState("")
   const ref = useRef<HTMLTextAreaElement>(null)
-  const [githubOpen, setGithubOpen] = useState(false)
-  const [githubUrl, setGithubUrl] = useState("")
-  const [githubLoading, setGithubLoading] = useState(false)
   const [plusOpen, setPlusOpen] = useState(false)
   const [images, setImages] = useState<string[]>([])
   const [files, setFiles] = useState<AttachedFile[]>([])
@@ -35,7 +46,12 @@ export function ChatInput({
   const [fileError, setFileError] = useState("")
   const imageInputRef = useRef<HTMLInputElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [githubError, setGithubError] = useState("")
+
+  // GitHub 仓库选择器
+  const [repoPickerOpen, setRepoPickerOpen] = useState(false)
+  const [repos, setRepos] = useState<GithubRepo[]>([])
+  const [reposLoading, setReposLoading] = useState(false)
+  const [repoConnecting, setRepoConnecting] = useState(false)
 
   function resize() {
     const el = ref.current
@@ -87,30 +103,32 @@ export function ChatInput({
     }
   }
 
-  async function connectGithub() {
-    const raw = githubUrl.trim()
-    if (!raw) return
-    setGithubError("")
-    setGithubLoading(true)
+  async function openRepoPicker() {
+    setRepoPickerOpen(true)
+    if (repos.length > 0) return
+    setReposLoading(true)
     try {
-      const res = await fetch(`/api/github?repo=${encodeURIComponent(raw)}`)
-      const data = await res.json()
-      if (!res.ok) {
-        setGithubError(data.error ?? "连接失败")
-        return
+      const res = await fetch("/api/github/repos")
+      if (res.ok) {
+        const data = await res.json()
+        setRepos(data.repos ?? [])
       }
-      onGithubConnect({ repo: data.repo, context: data.context })
-      setGithubOpen(false)
-      setGithubUrl("")
-      setGithubError("")
-    } catch {
-      setGithubError("网络错误，请重试")
     } finally {
-      setGithubLoading(false)
+      setReposLoading(false)
     }
   }
 
-  const showToolbar = endpoints.length > 0 || githubContext || true
+  async function selectRepo(fullName: string) {
+    setRepoPickerOpen(false)
+    setRepoConnecting(true)
+    try {
+      const res = await fetch(`/api/github?repo=${encodeURIComponent(fullName)}`)
+      const data = await res.json()
+      if (res.ok) onGithubConnect({ repo: data.repo, context: data.context })
+    } finally {
+      setRepoConnecting(false)
+    }
+  }
 
   return (
     <div className={cn(
@@ -120,82 +138,127 @@ export function ChatInput({
         : "max-w-[44rem] px-10 pb-8 pt-2",
     )}>
       {/* 工具栏 */}
-      {showToolbar && (
-        <div className="mb-2 flex items-center gap-2 px-1">
-          {/* 模型选择器 */}
-          {endpoints.length > 0 && (
-            <div className="relative">
-              <select
-                value={activeEndpointId}
-                onChange={e => onEndpointChange(e.target.value)}
-                className="appearance-none rounded-full border border-border/50 bg-secondary/50 pl-3 pr-7 py-1 text-xs text-muted-foreground outline-none cursor-pointer hover:border-border transition-colors"
-              >
-                {endpoints.map(ep => (
-                  <option key={ep.id} value={ep.id}>{ep.name}</option>
-                ))}
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 size-3 text-muted-foreground" />
-            </div>
-          )}
-
-          {/* 联网开关 */}
-          <button
-            onClick={() => onWebSearchChange(!webSearch)}
-            className={cn(
-              "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors",
-              webSearch
-                ? "border-primary/50 bg-primary/10 text-primary"
-                : "border-border/50 bg-secondary/50 text-muted-foreground hover:border-border",
-            )}
-          >
-            <Globe className="size-3" />
-            <span>联网</span>
-          </button>
-
-          {/* GitHub 连接器 */}
-          {githubContext ? (
-            <div className="flex items-center gap-1.5 rounded-full border border-border/50 bg-secondary/50 pl-2.5 pr-1.5 py-1">
-              <GitBranch className="size-3 text-muted-foreground" />
-              <span className="text-xs text-muted-foreground max-w-[120px] truncate">{githubContext.repo}</span>
-              <button onClick={() => onGithubConnect(null)} className="rounded-full p-0.5 hover:bg-muted transition-colors">
-                <X className="size-3 text-muted-foreground" />
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => setGithubOpen(v => !v)}
-              className="flex items-center gap-1.5 rounded-full border border-border/50 bg-secondary/50 px-2.5 py-1 text-xs text-muted-foreground hover:border-border transition-colors"
+      <div className="mb-2 flex items-center gap-2 px-1">
+        {/* 模型选择器 */}
+        {endpoints.length > 0 && (
+          <div className="relative">
+            <select
+              value={activeEndpointId}
+              onChange={e => onEndpointChange(e.target.value)}
+              className="appearance-none rounded-full border border-border/50 bg-secondary/50 pl-3 pr-7 py-1 text-xs text-muted-foreground outline-none cursor-pointer hover:border-border transition-colors"
             >
-              <GitBranch className="size-3" />
-              <span>连接仓库</span>
-            </button>
-          )}
-        </div>
-      )}
+              {endpoints.map(ep => (
+                <option key={ep.id} value={ep.id}>{ep.name}</option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 size-3 text-muted-foreground" />
+          </div>
+        )}
 
-      {/* GitHub 输入弹出框 */}
-      {githubOpen && (
-        <div className="mb-2 space-y-1.5">
-          <div className="flex items-center gap-2 rounded-2xl border border-border/70 bg-card/80 px-3 py-2">
-            <GitBranch className="size-4 shrink-0 text-muted-foreground" />
-            <input
-              autoFocus
-              type="text"
-              value={githubUrl}
-              onChange={e => { setGithubUrl(e.target.value); setGithubError("") }}
-              onKeyDown={e => { if (e.key === "Enter") connectGithub(); if (e.key === "Escape") { setGithubOpen(false); setGithubError("") } }}
-              placeholder="owner/repo 或 GitHub 链接"
-              className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/50"
-            />
-            {githubLoading
-              ? <Loader2 className="size-4 animate-spin text-muted-foreground" />
-              : <button onClick={connectGithub} className="rounded-full bg-primary/10 px-2.5 py-0.5 text-xs text-primary hover:bg-primary/20 transition-colors">连接</button>
+        {/* 联网开关 */}
+        <button
+          onClick={() => onWebSearchChange(!webSearch)}
+          className={cn(
+            "flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors",
+            webSearch
+              ? "border-primary/50 bg-primary/10 text-primary"
+              : "border-border/50 bg-secondary/50 text-muted-foreground hover:border-border",
+          )}
+        >
+          <Globe className="size-3" />
+          <span>联网</span>
+        </button>
+
+        {/* GitHub 连接器 */}
+        {githubContext ? (
+          // 已选择仓库：显示仓库名 + 取消按钮
+          <div className="flex items-center gap-1.5 rounded-full border border-border/50 bg-secondary/50 pl-2 pr-1.5 py-1">
+            {repoConnecting
+              ? <Loader2 className="size-3 animate-spin text-muted-foreground" />
+              : <GitHubIcon className="size-3 text-muted-foreground" />
             }
-            <button onClick={() => { setGithubOpen(false); setGithubError("") }} className="text-muted-foreground hover:text-foreground">
-              <X className="size-4" />
+            <span className="text-xs text-muted-foreground max-w-[120px] truncate">{githubContext.repo}</span>
+            <button onClick={() => onGithubConnect(null)} className="rounded-full p-0.5 hover:bg-muted transition-colors">
+              <X className="size-3 text-muted-foreground" />
             </button>
           </div>
-          {githubError && <p className="px-3 text-xs text-destructive">{githubError}</p>}
+        ) : githubConnected ? (
+          // 已连接 GitHub，未选仓库：点击打开选择器
+          <button
+            onClick={openRepoPicker}
+            className="flex items-center gap-1.5 rounded-full border border-border/50 bg-secondary/50 px-2.5 py-1 text-xs text-muted-foreground hover:border-border transition-colors"
+          >
+            {repoConnecting
+              ? <Loader2 className="size-3 animate-spin" />
+              : <GitHubIcon className="size-3" />
+            }
+            <span>选择仓库</span>
+            <ChevronDown className="size-3" />
+          </button>
+        ) : (
+          // 未连接 GitHub：点击跳转 OAuth
+          <button
+            onClick={() => { window.location.href = "/api/auth/github" }}
+            className="flex items-center gap-1.5 rounded-full border border-border/50 bg-secondary/50 px-2.5 py-1 text-xs text-muted-foreground hover:border-border transition-colors"
+          >
+            <GitHubIcon className="size-3" />
+            <span>连接仓库</span>
+          </button>
+        )}
+      </div>
+
+      {/* 仓库选择器下拉 */}
+      {repoPickerOpen && (
+        <div className="mb-2 overflow-hidden rounded-2xl border border-border/60 bg-card shadow-lg">
+          <div className="max-h-64 overflow-y-auto">
+            {reposLoading ? (
+              <div className="flex items-center gap-2 px-4 py-3 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+                <span>加载仓库列表……</span>
+              </div>
+            ) : repos.length === 0 ? (
+              <div className="px-4 py-3 text-sm text-muted-foreground">没有找到仓库</div>
+            ) : (
+              repos.map(r => (
+                <button
+                  key={r.full_name}
+                  onClick={() => selectRepo(r.full_name)}
+                  className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-secondary/60 transition-colors"
+                >
+                  <GitHubIcon className="size-4 shrink-0 text-muted-foreground" />
+                  <span className="flex-1 min-w-0 truncate text-sm">{r.name}</span>
+                  <span className={cn(
+                    "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium",
+                    r.private ? "bg-muted text-muted-foreground" : "bg-primary/10 text-primary/80"
+                  )}>
+                    {r.private ? "私有" : "公开"}
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+          <div className="border-t border-border/40">
+            <a
+              href={`https://github.com/settings/connections/applications/${process.env.NEXT_PUBLIC_GITHUB_CLIENT_ID ?? "Ov23li6Pfgts4Ye4a5FL"}`}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-2 px-4 py-2.5 text-xs text-muted-foreground hover:bg-secondary/60 transition-colors"
+            >
+              <ExternalLink className="size-3" />
+              管理仓库权限
+            </a>
+            <button
+              onClick={async () => {
+                setRepoPickerOpen(false)
+                await fetch("/api/auth/github/disconnect", { method: "POST" })
+                onGithubDisconnect()
+              }}
+              className="flex w-full items-center gap-2 px-4 py-2.5 text-xs text-destructive/80 hover:bg-destructive/5 transition-colors"
+            >
+              <LogOut className="size-3" />
+              断开 GitHub（{githubLogin}）
+            </button>
+          </div>
         </div>
       )}
 
@@ -267,7 +330,6 @@ export function ChatInput({
 
       {/* 输入框 */}
       <div className="flex min-w-0 items-end gap-2 rounded-3xl border border-border/70 bg-card/80 py-2 pl-2 pr-2">
-        {/* + 按钮 */}
         <button
           onClick={() => setPlusOpen(v => !v)}
           aria-label="添加附件"
