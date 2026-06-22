@@ -13,29 +13,45 @@ const DEEPSEEK_BASE_URL = 'https://api.deepseek.com'
 const MAX_TOOL_ROUNDS = 6
 
 // Token 倍率：鸿篇/深度研究 3x，正构 1x，绝句 0.8x
+// 乐观锁：quota_version 版本号防并发冲突，失败自动重试一次
 async function addQuotaUsage(supabase: any, userId: string, rawTokens: number, model: string, isThinking: boolean) {
   if (!supabase || !userId || rawTokens <= 0) return
-  try {
-    const multiplier = model.includes('v4-pro') ? 3 : isThinking ? 1 : 0.8
-    const weighted = Math.round(rawTokens * multiplier)
-    const { data } = await supabase
-      .from('profiles')
-      .select('tokens_5h, window_5h_start, tokens_7d, window_7d_start')
-      .eq('user_id', userId).maybeSingle()
-    const now = Date.now()
-    const nowIso = new Date(now).toISOString()
-    const ms5h = 5 * 3600 * 1000
-    const ms7d = 7 * 86400 * 1000
-    const start5h = new Date((data?.window_5h_start as string) || 0).getTime()
-    const start7d = new Date((data?.window_7d_start as string) || 0).getTime()
-    await supabase.from('profiles').upsert({
-      user_id: userId,
-      tokens_5h: (now - start5h >= ms5h ? 0 : ((data?.tokens_5h as number) ?? 0)) + weighted,
-      window_5h_start: now - start5h >= ms5h ? nowIso : ((data?.window_5h_start as string) ?? nowIso),
-      tokens_7d: (now - start7d >= ms7d ? 0 : ((data?.tokens_7d as number) ?? 0)) + weighted,
-      window_7d_start: now - start7d >= ms7d ? nowIso : ((data?.window_7d_start as string) ?? nowIso),
-    }, { onConflict: 'user_id' })
-  } catch { /* best-effort */ }
+  for (let retry = 0; retry < 2; retry++) {
+    try {
+      const multiplier = model.includes('v4-pro') ? 3 : isThinking ? 1 : 0.8
+      const weighted = Math.round(rawTokens * multiplier)
+      const { data } = await supabase
+        .from('profiles')
+        .select('tokens_5h, window_5h_start, tokens_7d, window_7d_start, quota_version')
+        .eq('user_id', userId).maybeSingle()
+      const now = Date.now()
+      const nowIso = new Date(now).toISOString()
+      const ms5h = 5 * 3600 * 1000
+      const ms7d = 7 * 86400 * 1000
+      const start5h = new Date((data?.window_5h_start as string) || 0).getTime()
+      const start7d = new Date((data?.window_7d_start as string) || 0).getTime()
+      const oldVersion = (data?.quota_version as number) ?? 0
+      const newTokens5h = (now - start5h >= ms5h ? 0 : ((data?.tokens_5h as number) ?? 0)) + weighted
+      const newTokens7d = (now - start7d >= ms7d ? 0 : ((data?.tokens_7d as number) ?? 0)) + weighted
+      const newWindow5h = now - start5h >= ms5h ? nowIso : ((data?.window_5h_start as string) ?? nowIso)
+      const newWindow7d = now - start7d >= ms7d ? nowIso : ((data?.window_7d_start as string) ?? nowIso)
+      // 乐观锁：只有版本号匹配才能更新，否则本轮被并发请求抢占，重试一次
+      const { data: updated } = await supabase
+        .from('profiles')
+        .update({
+          tokens_5h: newTokens5h,
+          window_5h_start: newWindow5h,
+          tokens_7d: newTokens7d,
+          window_7d_start: newWindow7d,
+          quota_version: oldVersion + 1,
+        })
+        .eq('user_id', userId)
+        .eq('quota_version', oldVersion)
+        .select('quota_version')
+      if (updated && updated.length > 0) break // 更新成功，退出重试循环
+      // 否则版本号冲突，继续重试一次
+    } catch { /* best-effort */ }
+  }
 }
 
 // 扫描件 PDF：上传到 DeepSeek Files API，返回 file_id；失败则原样返回（后端会降级为文字提示）
@@ -138,10 +154,11 @@ export async function POST(req: NextRequest) {
       } catch (error) {
         send(controller, { error: networkError(error) })
       } finally {
-        done(controller)
+        // 写额度必须在关闭响应前完成，确保同步性
         if (userId && supabase) {
-          addQuotaUsage(supabase, userId, totalTokensUsed, model, thinking).catch(() => {})
+          await addQuotaUsage(supabase, userId, totalTokensUsed, model, thinking)
         }
+        done(controller)
       }
     },
   })
