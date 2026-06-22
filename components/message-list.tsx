@@ -3,7 +3,7 @@
 import Image from "next/image"
 import { useState, useEffect } from "react"
 import type { Conversation } from "@/lib/chat-data"
-import { ChevronDown, ChevronRight, Brain, FileText, Globe, Copy, Check, RefreshCw, CornerUpLeft } from "lucide-react"
+import { ChevronDown, ChevronRight, Brain, FileText, Globe, Copy, Check, RefreshCw } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkMath from "remark-math"
 import rehypeKatex from "rehype-katex"
@@ -52,7 +52,7 @@ function MdContent({ text }: { text: string }) {
   )
 }
 
-function ThinkingBlock({ thinking }: { thinking: string }) {
+function ThinkingBlock({ thinking, active }: { thinking: string; active?: boolean }) {
   const [open, setOpen] = useState(false)
   if (!thinking.trim()) return null
   return (
@@ -62,7 +62,7 @@ function ThinkingBlock({ thinking }: { thinking: string }) {
         className="flex items-center gap-1.5 text-xs italic text-muted-foreground/70 hover:text-muted-foreground transition-colors"
       >
         {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
-        <span>思考过程</span>
+        <span className={active ? "thinking-flow not-italic font-medium tracking-wide" : undefined}>thinking</span>
       </button>
       {open && (
         <div className="mt-2 break-words whitespace-pre-wrap rounded-xl border border-border/40 bg-muted/20 px-4 py-3 text-[13px] italic leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
@@ -106,15 +106,14 @@ function SearchBlock({ searches, replying }: { searches: { query: string; result
   )
 }
 
-// 单个 AI 消息的操作栏（复制、重新生成、引用回复）
+// 单个 AI 消息的操作栏（仅模型回复：复制 + 重新生成，常驻显示）
 function AiActions({
   text, isLast, isLoading,
-  onCopy, onRegenerate, onReply,
+  onCopy, onRegenerate,
 }: {
   text: string; isLast: boolean; isLoading: boolean
   onCopy?: (t: string) => void
   onRegenerate?: () => void
-  onReply?: (t: string) => void
 }) {
   const [copied, setCopied] = useState(false)
   if (!text && !isLast) return null
@@ -125,20 +124,15 @@ function AiActions({
     onCopy?.(text)
   }
   return (
-    <div className="mt-2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+    <div className="mt-2 flex items-center gap-1">
       {text && (
-        <button onClick={doCopy} title="复制" className="rounded-full p-2 text-foreground/70 hover:bg-primary/10 hover:text-foreground transition-colors">
+        <button onClick={doCopy} title="复制" className="rounded-full p-2 text-muted-foreground hover:bg-primary/10 hover:text-foreground transition-colors">
           {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
         </button>
       )}
       {isLast && !isLoading && onRegenerate && text && (
-        <button onClick={onRegenerate} title="重新生成" className="rounded-full p-2 text-foreground/70 hover:bg-primary/10 hover:text-foreground transition-colors">
+        <button onClick={onRegenerate} title="重新生成" className="rounded-full p-2 text-muted-foreground hover:bg-primary/10 hover:text-foreground transition-colors">
           <RefreshCw className="size-4" />
-        </button>
-      )}
-      {text && onReply && (
-        <button onClick={() => onReply(text)} title="引用回复" className="rounded-full p-2 text-foreground/70 hover:bg-primary/10 hover:text-foreground transition-colors">
-          <CornerUpLeft className="size-4" />
         </button>
       )}
     </div>
@@ -188,7 +182,7 @@ export function MessageList({
                 </div>
               )}
               {m.content && (
-                <div className="max-w-[85%] min-w-0 rounded-[1.5rem] rounded-tr-md bg-secondary/70 dark:bg-[#0A0A0A] px-5 py-3.5">
+                <div className="max-w-[85%] min-w-0 rounded-[1.5rem] rounded-tr-md user-bubble-bg px-5 py-3.5">
                   <p className="break-words text-[15px] italic leading-[1.9] tracking-wide text-secondary-foreground [overflow-wrap:anywhere]">{m.content}</p>
                 </div>
               )}
@@ -200,7 +194,7 @@ export function MessageList({
                 <Image src="/companion-dark.png" alt="" width={40} height={40} priority className="avatar-dark size-8 select-none md:size-10" />
               </div>
               <div className="min-w-0 flex-1">
-                {m.thinking && <ThinkingBlock thinking={m.thinking} />}
+                {m.thinking && <ThinkingBlock thinking={m.thinking} active={!!isLoading && idx === lastAiIdx && !m.content?.trim()} />}
                 {m.searchNotes && m.searchNotes.length > 0 && <SearchBlock searches={m.searchNotes} replying={!!m.content} />}
                 {m.memoryNotes && m.memoryNotes.length > 0 && (
                   <div className="mb-3 space-y-1">
@@ -256,7 +250,6 @@ export function MessageList({
                                 isLast={idx === lastAiIdx}
                                 isLoading={!!isLoading}
                                 onRegenerate={onRegenerate}
-                                onReply={onReply}
                               />
                             </div>
                           )}

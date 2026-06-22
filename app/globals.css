@@ -267,3 +267,36 @@
   :root:not(.light) .avatar-light { display: none; }
   :root:not(.light) .avatar-dark { display: block; }
 }
+
+/* 用户消息气泡背景：浅色沿用 secondary(70%)，深色钉成近黑 #0A0A0A，与 #1F1F1F 背景拉开区分。
+   本应用深色靠系统 prefers-color-scheme（页面无 .dark 类），所以不能用 Tailwind 的 dark: 前缀。 */
+.user-bubble-bg { background-color: color-mix(in oklab, var(--secondary) 70%, transparent); }
+.dark .user-bubble-bg { background-color: #0A0A0A; }
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) .user-bubble-bg { background-color: #0A0A0A; }
+}
+
+/* 思考流光：一道高光在文字上不断流过，表示模型正在思考/落笔（明暗主题自动适配） */
+@keyframes thinkingFlow {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.thinking-flow {
+  background-image: linear-gradient(
+    100deg,
+    var(--muted-foreground) 0%,
+    var(--muted-foreground) 38%,
+    var(--foreground) 50%,
+    var(--muted-foreground) 62%,
+    var(--muted-foreground) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: thinkingFlow 1.8s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .thinking-flow { animation: none; -webkit-text-fill-color: var(--muted-foreground); color: var(--muted-foreground); }
+}

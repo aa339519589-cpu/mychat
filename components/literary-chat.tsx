@@ -191,7 +191,7 @@ export function LiteraryChat() {
     }
     const history = [...prefix, ...messages]
 
-    let fullReply = "", fullThinking = ""
+    let fullReply = "", fullThinking = "", shownLen = 0, streamEnded = false, hadError = false
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -215,6 +215,27 @@ export function LiteraryChat() {
       const reader = res.body.getReader()
       const dec = new TextDecoder()
       let buf = ""
+
+      // 节流播放器：把已收到的 fullReply 以稳定速度逐步"放"到前端。渲染组件本就支持
+      // 半成品容错渲染，所以放的过程中文字逐行冒出、图形逐笔画出——即使后端整块秒回，
+      // 也始终保持流式渲染的观感（纯前端噱头，与后端速度彻底解耦）。
+      const pace = new Promise<void>(resolve => {
+        const step = () => {
+          if (hadError) { resolve(); return }
+          if (shownLen < fullReply.length) {
+            const remaining = fullReply.length - shownLen
+            shownLen = Math.min(fullReply.length, shownLen + Math.max(4, Math.ceil(remaining / 12)))
+            const shown = fullReply.slice(0, shownLen)
+            setConversations(prev => prev.map(c => c.id !== convId ? c : {
+              ...c,
+              messages: c.messages.map(m => m.id !== msgId ? m : { ...m, content: shown, thinking: fullThinking || undefined }),
+            }))
+          }
+          if (streamEnded && shownLen >= fullReply.length) { resolve(); return }
+          requestAnimationFrame(step)
+        }
+        requestAnimationFrame(step)
+      })
 
       while (true) {
         const { done, value } = await reader.read()
@@ -251,20 +272,27 @@ export function LiteraryChat() {
               }))
               continue
             }
+            if (data.error) {
+              hadError = true
+              setConversations(prev => prev.map(c => c.id !== convId ? c : {
+                ...c,
+                messages: c.messages.map(m => m.id !== msgId ? m : { ...m, content: data.error, isError: true }),
+              }))
+              continue
+            }
             if (data.text) fullReply += data.text
-            if (data.thinking) fullThinking += data.thinking
-            setConversations(prev => prev.map(c => c.id !== convId ? c : {
-              ...c,
-              messages: c.messages.map(m => m.id !== msgId ? m : {
-                ...m,
-                content: data.error ? data.error : fullReply,
-                thinking: fullThinking || undefined,
-                isError: data.error ? true : m.isError,
-              }),
-            }))
+            if (data.thinking) {
+              fullThinking += data.thinking
+              setConversations(prev => prev.map(c => c.id !== convId ? c : {
+                ...c,
+                messages: c.messages.map(m => m.id !== msgId ? m : { ...m, thinking: fullThinking }),
+              }))
+            }
           } catch { /* skip bad event */ }
         }
       }
+      streamEnded = true
+      await pace
 
       if (fullReply) {
         insertMessage(user.id, convId, { id: msgId, role: "assistant", content: fullReply, thinking: fullThinking || undefined, time: "" })
@@ -282,6 +310,7 @@ export function LiteraryChat() {
         ),
       }))
     } finally {
+      streamEnded = true
       setIsLoading(false)
     }
     return fullReply
@@ -472,8 +501,8 @@ export function LiteraryChat() {
             <EmptyState endpointName={activeName} />
           )}
           {isLoading && (
-            <div className="mx-auto max-w-[44rem] px-5 pb-4 text-sm italic text-muted-foreground animate-pulse md:px-10">
-              {activeName} 正在落笔……
+            <div className="mx-auto max-w-[44rem] px-5 pb-4 text-sm italic md:px-10">
+              <span className="thinking-flow">{activeName} 正在落笔……</span>
             </div>
           )}
         </div>
@@ -536,7 +565,7 @@ export function LiteraryChat() {
             type="button"
             aria-label="收起侧栏"
             onClick={() => setDrawerOpen(false)}
-            className={cn("absolute inset-0 bg-foreground/40 dark:bg-black/40 transition-opacity duration-300", drawerOpen ? "opacity-100" : "opacity-0")}
+            className={cn("absolute inset-0 bg-black/50 transition-opacity duration-300", drawerOpen ? "opacity-100" : "opacity-0")}
           />
           <AppSidebar {...sidebarProps} mobile visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
         </div>
