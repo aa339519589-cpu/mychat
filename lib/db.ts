@@ -60,22 +60,30 @@ export async function saveCustomSystemPrompt(prompt: string): Promise<void> {
   if (error) console.error("saveCustomSystemPrompt", error)
 }
 
-// 读取当前用户的 Token 使用额度快照（列不存在时优雅返回 null）
-export async function fetchQuota(): Promise<QuotaSnapshot | null> {
+// 读取当前用户的 Token 使用额度快照
+export async function fetchQuota(): Promise<QuotaSnapshot> {
   const supabase = createClient()
   const { data: auth } = await supabase.auth.getUser()
-  if (!auth.user) return null
+  const nowIso = new Date().toISOString()
+  if (!auth.user) {
+    return {
+      tokens5h: 0,
+      window5hStart: nowIso,
+      tokens7d: 0,
+      window7dStart: nowIso,
+    }
+  }
   const { data } = await supabase
     .from("profiles")
     .select("tokens_5h, window_5h_start, tokens_7d, window_7d_start")
     .eq("user_id", auth.user.id)
     .maybeSingle()
-  if (!data) return null
+  // 即便字段为 NULL，也返回有效的快照（defaulting to 0）
   return {
-    tokens5h: (data.tokens_5h as number) ?? 0,
-    window5hStart: (data.window_5h_start as string) ?? new Date().toISOString(),
-    tokens7d: (data.tokens_7d as number) ?? 0,
-    window7dStart: (data.window_7d_start as string) ?? new Date().toISOString(),
+    tokens5h: (data?.tokens_5h as number) ?? 0,
+    window5hStart: (data?.window_5h_start as string) ?? nowIso,
+    tokens7d: (data?.tokens_7d as number) ?? 0,
+    window7dStart: (data?.window_7d_start as string) ?? nowIso,
   }
 }
 

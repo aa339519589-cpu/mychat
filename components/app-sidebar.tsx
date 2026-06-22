@@ -916,19 +916,16 @@ function SystemPromptScreen() {
 
   return (
     <div className="space-y-3 px-4">
-      <div className="rounded-2xl bg-sidebar-accent/30 px-4 py-3 text-[12px] leading-relaxed text-muted-foreground">
-        作为附加指令层注入对话。权限低于系统设定，不可覆盖内置规则。
-      </div>
       <textarea
         value={value}
         onChange={e => setValue(e.target.value)}
-        placeholder="例：始终优先引用中文资料。回复控制在三段以内。"
-        className="w-full min-h-[160px] resize-none rounded-2xl bg-sidebar-accent/30 px-4 py-3 text-[13px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/40 transition-colors focus:bg-sidebar-accent/50"
+        placeholder="比如：「回复尽量简短」「优先中文资料」「多用表格和列表」"
+        className="w-full min-h-[160px] resize-none rounded-2xl bg-sidebar-accent/20 px-4 py-3 text-[13px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/40 transition-colors focus:bg-sidebar-accent/40 border border-sidebar-accent/30 focus:border-sidebar-accent/50"
       />
       <button
         onClick={save}
         disabled={saving}
-        className="flex w-full items-center justify-center gap-1.5 rounded-2xl bg-sidebar-primary py-2.5 text-[13px] text-sidebar-primary-foreground transition-opacity disabled:opacity-60"
+        className="flex w-full items-center justify-center gap-1.5 rounded-2xl bg-sidebar-primary/90 hover:bg-sidebar-primary py-2 text-[13px] text-sidebar-primary-foreground transition-colors disabled:opacity-50"
       >
         {saved ? <><Check className="size-3.5" />已保存</> : saving ? '保存中…' : '保存'}
       </button>
@@ -942,7 +939,11 @@ function QuotaScreen() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetchQuota().then(q => { setQuota(q); setLoading(false) })
+    (async () => {
+      const q = await fetchQuota()
+      setQuota(q)
+      setLoading(false)
+    })()
   }, [])
 
   function fmtNum(n: number) { return n.toLocaleString() }
@@ -957,25 +958,23 @@ function QuotaScreen() {
   }
 
   if (loading) return <div className="px-4 py-8 text-center text-sm text-muted-foreground">加载中…</div>
-  if (!quota) return <div className="px-4 py-8 text-center text-sm text-muted-foreground">暂无额度数据</div>
 
-  const t5h = quota.tokens5h ?? 0
-  const t7d = quota.tokens7d ?? 0
+  const t5h = (quota?.tokens5h ?? 0)
+  const t7d = (quota?.tokens7d ?? 0)
   const max5h = 500_000
   const max7d = 1_000_000
+  const w5h = quota?.window5hStart ?? new Date().toISOString()
+  const w7d = quota?.window7dStart ?? new Date().toISOString()
 
   return (
     <div className="space-y-4 px-4">
-      <div className="rounded-2xl bg-sidebar-accent/30 px-4 py-3 text-[12px] leading-relaxed text-muted-foreground">
-        Token 消耗按倍率折算：绝句 ×0.8 · 正构 ×1 · 鸿篇/深研 ×3
-      </div>
 
-      <div className="space-y-2.5 rounded-2xl bg-sidebar-accent/30 p-4">
+      <div className="space-y-2.5 rounded-2xl bg-sidebar-accent/15 p-4 border border-sidebar-accent/20">
         <div className="flex items-baseline justify-between">
           <span className="text-[13px] font-medium text-foreground">5 小时用量</span>
-          <span className="text-[11px] text-muted-foreground">{fmtRemaining(quota.window5hStart, 5 * 3600 * 1000)}</span>
+          <span className="text-[11px] text-muted-foreground">{fmtRemaining(w5h, 5 * 3600 * 1000)}</span>
         </div>
-        <div className="h-1.5 overflow-hidden rounded-full bg-sidebar-accent/50">
+        <div className="h-1.5 overflow-hidden rounded-full bg-sidebar-accent/25">
           <div className="h-full rounded-full bg-sidebar-primary transition-all" style={{ width: `${pct(t5h, max5h)}%` }} />
         </div>
         <div className="flex justify-between text-[11px] text-muted-foreground">
@@ -984,12 +983,12 @@ function QuotaScreen() {
         </div>
       </div>
 
-      <div className="space-y-2.5 rounded-2xl bg-sidebar-accent/30 p-4">
+      <div className="space-y-2.5 rounded-2xl bg-sidebar-accent/15 p-4 border border-sidebar-accent/20">
         <div className="flex items-baseline justify-between">
           <span className="text-[13px] font-medium text-foreground">7 天用量</span>
-          <span className="text-[11px] text-muted-foreground">{fmtRemaining(quota.window7dStart, 7 * 86400 * 1000)}</span>
+          <span className="text-[11px] text-muted-foreground">{fmtRemaining(w7d, 7 * 86400 * 1000)}</span>
         </div>
-        <div className="h-1.5 overflow-hidden rounded-full bg-sidebar-accent/50">
+        <div className="h-1.5 overflow-hidden rounded-full bg-sidebar-accent/25">
           <div className="h-full rounded-full bg-sidebar-primary transition-all" style={{ width: `${pct(t7d, max7d)}%` }} />
         </div>
         <div className="flex justify-between text-[11px] text-muted-foreground">
