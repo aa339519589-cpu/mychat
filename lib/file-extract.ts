@@ -1,5 +1,5 @@
 // 把上传的文件转成可发送的附件：
-// - PDF 保留原始数据（base64），交给模型原生解析，质量最好
+// - PDF 用 pdfjs-dist 在浏览器提取文字（支持中文），结果存入 text 字段，后端直接使用
 // - 文本类文件直接在浏览器读取内容
 export type AttachedFile = { name: string; dataUrl: string; isPdf: boolean; text?: string }
 
@@ -14,21 +14,17 @@ function hasExt(name: string, exts: string[]) {
   return exts.some(e => lower.endsWith(e))
 }
 
-function readAsDataURL(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader()
-    r.onload = () => resolve(r.result as string)
-    r.onerror = () => reject(new Error("读取文件失败"))
-    r.readAsDataURL(file)
-  })
-}
-
 export async function prepareFile(file: File): Promise<AttachedFile> {
   const name = file.name
   const isPdf = file.type === "application/pdf" || name.toLowerCase().endsWith(".pdf")
   if (isPdf) {
-    const dataUrl = await readAsDataURL(file)
-    return { name, dataUrl, isPdf: true }
+    try {
+      const { extractPdfText } = await import('./pdf-extract')
+      const text = await extractPdfText(file)
+      return { name, dataUrl: "", isPdf: true, text: text || "（未能提取文字，可能是扫描件）" }
+    } catch {
+      return { name, dataUrl: "", isPdf: true, text: "（PDF 解析失败）" }
+    }
   }
   if (file.type.startsWith("text/") || hasExt(name, TEXT_EXTS)) {
     const text = await file.text()

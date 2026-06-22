@@ -1,5 +1,4 @@
 // OpenAI / DeepSeek / Gemini 兼容协议：消息转换、附件注入、单轮流式请求
-import pdfParse from 'pdf-parse'
 import type { RawMsg, Attachment } from './types'
 import { send, upstreamError } from './stream'
 
@@ -25,24 +24,14 @@ export function chatCompletionsUrl(baseUrl: string) {
   return `${base}/v1/chat/completions`
 }
 
-// OpenAI/DeepSeek 不支持原生 PDF，后端用 pdf-parse 提取文字再附上
+// 前端已通过 pdfjs-dist 提取文字，后端直接注入 text 字段，无需服务端 PDF 解析
 export async function injectAttachmentsOpenAI(msgs: any[], attachments?: Attachment[]) {
   if (!attachments?.length) return
   const last = msgs[msgs.length - 1]
   if (!last || last.role !== 'user') return
   const blocks: string[] = []
   for (const f of attachments) {
-    if (f.isPdf && f.dataUrl) {
-      try {
-        const data = f.dataUrl.split(',')[1] ?? ''
-        const buf = Buffer.from(data, 'base64')
-        const result = await pdfParse(buf)
-        const out = result.text || ''
-        blocks.push(`［附件：${f.name}］\n${out || '（未能提取文字，可能是扫描件）'}`)
-      } catch {
-        blocks.push(`［附件：${f.name}］（解析失败）`)
-      }
-    } else if (f.text) {
+    if (f.text) {
       blocks.push(`［附件：${f.name}］\n${f.text}`)
     }
   }

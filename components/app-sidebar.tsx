@@ -383,11 +383,11 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
 
         <div className="space-y-2">
           {memories.length === 0 && !adding && (
-            <p className="rounded-2xl border border-dashed border-sidebar-border px-4 py-6 text-center text-[13px] italic text-muted-foreground/70">还没有记忆</p>
+            <p className="rounded-2xl bg-sidebar-accent/20 px-4 py-6 text-center text-[13px] italic text-muted-foreground/70">还没有记忆</p>
           )}
 
           {memories.map(m => (
-            <div key={m.id} className="rounded-2xl border border-sidebar-border px-3 py-2.5">
+            <div key={m.id} className="rounded-2xl bg-sidebar-accent/30 px-3 py-2.5">
               {editingId === m.id ? (
                 <div className="space-y-2">
                   <textarea
@@ -395,12 +395,12 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
                     value={editValue}
                     onChange={e => setEditValue(e.target.value)}
                     onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveEdit() } if (e.key === "Escape") setEditingId(null) }}
-                    className="w-full resize-none rounded-xl border border-sidebar-border bg-background/50 px-3 py-2 text-[13px] outline-none focus:border-sidebar-primary/50"
+                    className="w-full resize-none rounded-xl bg-sidebar-accent/50 px-3 py-2 text-[13px] outline-none focus:bg-sidebar-accent/70"
                     rows={2}
                   />
                   <div className="flex gap-2">
                     <button onClick={saveEdit} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-primary py-1.5 text-[13px] text-sidebar-primary-foreground"><Check className="size-3.5" />保存</button>
-                    <button onClick={() => setEditingId(null)} className="flex flex-1 items-center justify-center gap-1 rounded-xl border border-sidebar-border py-1.5 text-[13px] text-muted-foreground"><X className="size-3.5" />取消</button>
+                    <button onClick={() => setEditingId(null)} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-accent/60 py-1.5 text-[13px] text-muted-foreground"><X className="size-3.5" />取消</button>
                   </div>
                 </div>
               ) : (
@@ -416,23 +416,23 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
           ))}
 
           {adding ? (
-            <div className="space-y-2 rounded-2xl border border-sidebar-border px-3 py-2.5">
+            <div className="space-y-2 rounded-2xl bg-sidebar-accent/30 px-3 py-2.5">
               <textarea
                 autoFocus
                 value={newValue}
                 onChange={e => setNewValue(e.target.value)}
                 onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addMemory() } if (e.key === "Escape") setAdding(false) }}
                 placeholder="输入要记住的内容……"
-                className="w-full resize-none rounded-xl border border-sidebar-border bg-background/50 px-3 py-2 text-[13px] outline-none placeholder:text-muted-foreground/40 focus:border-sidebar-primary/50"
+                className="w-full resize-none rounded-xl bg-sidebar-accent/50 px-3 py-2 text-[13px] outline-none placeholder:text-muted-foreground/40 focus:bg-sidebar-accent/70"
                 rows={2}
               />
               <div className="flex gap-2">
                 <button onClick={addMemory} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-primary py-1.5 text-[13px] text-sidebar-primary-foreground"><Check className="size-3.5" />添加</button>
-                <button onClick={() => setAdding(false)} className="flex flex-1 items-center justify-center gap-1 rounded-xl border border-sidebar-border py-1.5 text-[13px] text-muted-foreground"><X className="size-3.5" />取消</button>
+                <button onClick={() => setAdding(false)} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-accent/60 py-1.5 text-[13px] text-muted-foreground"><X className="size-3.5" />取消</button>
               </div>
             </div>
           ) : (
-            <button onClick={() => setAdding(true)} className="flex w-full items-center justify-center gap-1.5 rounded-2xl border border-dashed border-sidebar-border py-2.5 text-[13px] text-muted-foreground transition-colors hover:border-sidebar-primary/40 hover:text-foreground">
+            <button onClick={() => setAdding(true)} className="flex w-full items-center justify-center gap-1.5 rounded-2xl bg-sidebar-accent/40 py-2.5 text-[13px] text-muted-foreground transition-colors hover:bg-sidebar-accent/70 hover:text-foreground">
               <Plus className="size-4" />手动添加记忆
             </button>
           )}
@@ -468,30 +468,30 @@ function ProjectsScreen({ projects, conversations, onCreate, onOpen, onDelete }:
   return (
     <div className="px-4">
       {adding ? (
-        <div className="mb-3 space-y-2 rounded-2xl border border-sidebar-border px-3 py-2.5">
+        <div className="mb-3 space-y-2 rounded-2xl bg-sidebar-accent/30 px-3 py-2.5">
           <input
             autoFocus
             value={name}
             onChange={e => setName(e.target.value)}
             onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); create() } if (e.key === "Escape") { setAdding(false); setName("") } }}
             placeholder="项目名称……"
-            className="w-full rounded-xl border border-sidebar-border bg-background/50 px-3 py-2 text-sm outline-none placeholder:text-muted-foreground/40 focus:border-sidebar-primary/50"
+            className="w-full rounded-xl bg-sidebar-accent/50 px-3 py-2 text-sm outline-none placeholder:text-muted-foreground/40 focus:bg-sidebar-accent/70"
           />
           <div className="flex gap-2">
             <button onClick={create} disabled={busy} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-primary py-1.5 text-[13px] text-sidebar-primary-foreground disabled:opacity-50">
               {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}新建
             </button>
-            <button onClick={() => { setAdding(false); setName("") }} className="flex flex-1 items-center justify-center gap-1 rounded-xl border border-sidebar-border py-1.5 text-[13px] text-muted-foreground"><X className="size-3.5" />取消</button>
+            <button onClick={() => { setAdding(false); setName("") }} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-accent/60 py-1.5 text-[13px] text-muted-foreground"><X className="size-3.5" />取消</button>
           </div>
         </div>
       ) : (
-        <button onClick={() => setAdding(true)} className="mb-3 flex w-full items-center justify-center gap-1.5 rounded-2xl border border-dashed border-sidebar-border py-2.5 text-[13px] text-muted-foreground transition-colors hover:border-sidebar-primary/40 hover:text-foreground">
+        <button onClick={() => setAdding(true)} className="mb-3 flex w-full items-center justify-center gap-1.5 rounded-2xl bg-sidebar-accent/40 py-2.5 text-[13px] text-muted-foreground transition-colors hover:bg-sidebar-accent/70 hover:text-foreground">
           <FolderPlus className="size-4" />新建项目
         </button>
       )}
 
       {projects.length === 0 && !adding ? (
-        <p className="rounded-2xl border border-dashed border-sidebar-border px-4 py-8 text-center text-[13px] italic text-muted-foreground/70">还没有项目</p>
+        <p className="rounded-2xl bg-sidebar-accent/20 px-4 py-8 text-center text-[13px] italic text-muted-foreground/70">还没有项目</p>
       ) : (
         <div className="space-y-1">
           {projects.map(p => {
@@ -499,7 +499,7 @@ function ProjectsScreen({ projects, conversations, onCreate, onOpen, onDelete }:
             return (
               <div key={p.id} className="group relative">
                 <button onClick={() => onOpen(p.id)} className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 pr-9 text-left transition-all duration-150 hover:bg-sidebar-accent/60 active:scale-[0.985]">
-                  <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-sidebar-accent/60 text-sidebar-primary"><Folder className="size-4" /></span>
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-sidebar-primary/10 text-sidebar-primary"><Folder className="size-4" /></span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-heading text-[15px] tracking-wide text-sidebar-foreground">{p.name}</span>
                     <span className="block text-[12px] text-muted-foreground">{n > 0 ? `${n} 段对谈 · ` : ""}{p.date}</span>
@@ -627,7 +627,7 @@ function ProjectChatsTab({ project, chats, onOpenChat, onNewChat, renamingId, on
   const list = sortConvs(chats)
   return (
     <div className="space-y-1">
-      <button onClick={() => onNewChat(project.id)} className="mb-1 flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-sm tracking-wide text-sidebar-foreground transition-colors hover:bg-sidebar-accent">
+      <button onClick={() => onNewChat(project.id)} className="mb-1 flex w-full items-center gap-2.5 rounded-2xl bg-sidebar-accent/40 px-3 py-2.5 text-sm tracking-wide text-sidebar-foreground transition-colors hover:bg-sidebar-accent/70">
         <Plus className="size-4 text-sidebar-primary" />在此项目中起新对谈
       </button>
       {list.length === 0 ? (
@@ -695,7 +695,7 @@ function ProjectSourcesTab({ project, onLoadFiles, onAddFile, onDeleteFile }: {
       <input ref={inputRef} type="file" multiple
         accept=".pdf,.txt,.md,.markdown,.csv,.json,.log,.xml,.yaml,.yml,.html,.htm,text/*"
         className="hidden" onChange={handlePick} />
-      <button onClick={() => inputRef.current?.click()} disabled={uploading} className="mb-1 flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-sm tracking-wide text-sidebar-foreground transition-colors hover:bg-sidebar-accent disabled:opacity-50">
+      <button onClick={() => inputRef.current?.click()} disabled={uploading} className="mb-1 flex w-full items-center gap-2.5 rounded-2xl bg-sidebar-accent/40 px-3 py-2.5 text-sm tracking-wide text-sidebar-foreground transition-colors hover:bg-sidebar-accent/70 disabled:opacity-50">
         {uploading ? <Loader2 className="size-4 animate-spin text-sidebar-primary" /> : <Upload className="size-4 text-sidebar-primary" />}
         {uploading ? "正在添加……" : "添加资料"}
       </button>
@@ -711,7 +711,7 @@ function ProjectSourcesTab({ project, onLoadFiles, onAddFile, onDeleteFile }: {
         </div>
       ) : files.map(f => (
         <div key={f.id} className="group relative flex items-center gap-3 rounded-2xl px-3 py-2.5 pr-9 transition-colors hover:bg-sidebar-accent/40">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-sidebar-accent/60 text-sidebar-primary"><FileText className="size-4" /></span>
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-sidebar-primary/10 text-sidebar-primary"><FileText className="size-4" /></span>
           <span className="min-w-0 flex-1">
             <span className="block truncate text-sm text-foreground">{f.name}</span>
             <span className="block text-[12px] text-muted-foreground">{f.content ? `约 ${f.content.length} 字` : "未提取到文字"}</span>

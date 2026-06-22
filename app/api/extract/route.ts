@@ -1,17 +1,10 @@
 import { NextRequest } from 'next/server'
-import pdfParse from 'pdf-parse'
 
+// PDF 文字提取已移至前端（pdfjs-dist + CMap），此端点现在只透传已提取的 text 字段
 export async function POST(req: NextRequest) {
   try {
-    const { dataUrl, isPdf, text } = await req.json()
-    if (!isPdf) {
-      return Response.json({ text: typeof text === 'string' ? text : '' })
-    }
-    const b64 = typeof dataUrl === 'string' ? (dataUrl.split(',')[1] ?? '') : ''
-    if (!b64) return Response.json({ text: '' })
-    const buf = Buffer.from(b64, 'base64')
-    const data = await pdfParse(buf)
-    return Response.json({ text: data.text || '' })
+    const { text } = await req.json()
+    return Response.json({ text: typeof text === 'string' ? text : '' })
   } catch (e: any) {
     return Response.json({ text: '', error: e?.message ?? '解析失败' })
   }

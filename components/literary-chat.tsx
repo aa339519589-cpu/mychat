@@ -555,17 +555,8 @@ export function LiteraryChat() {
   async function handleAddProjectFile(projectId: string, file: File): Promise<ProjectFile | null> {
     if (!user) return null
     try {
-      const prepared = await prepareFile(file)  // 不支持的类型会抛错
-      let content = prepared.text ?? ""
-      if (prepared.isPdf) {
-        const res = await fetch("/api/extract", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(prepared),
-        })
-        const data = await res.json().catch(() => null)
-        content = data?.text ?? ""
-      }
+      const prepared = await prepareFile(file)  // PDF 在前端已提取文字，text 字段已填好
+      const content = prepared.text ?? ""
       const saved = await insertProjectFile(user.id, projectId, prepared.name, content)
       if (saved) projectCtxRef.current.delete(projectId)
       return saved

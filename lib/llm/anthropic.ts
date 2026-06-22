@@ -19,17 +19,14 @@ export function toAnthropic(msgs: RawMsg[]) {
   })
 }
 
-// 把附件注入最后一条用户消息：Anthropic 用原生 PDF document（解析质量最佳），文本直接附上
+// 把附件注入最后一条用户消息：前端已提取文字，直接注入 text 字段
 export function injectAttachmentsAnthropic(msgs: any[], attachments?: Attachment[]) {
   if (!attachments?.length) return
   const last = msgs[msgs.length - 1]
   if (!last || last.role !== 'user') return
   const extra: any[] = []
   for (const f of attachments) {
-    if (f.isPdf && f.dataUrl) {
-      const data = f.dataUrl.split(',')[1] ?? ''
-      if (data) extra.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data }, title: f.name })
-    } else if (f.text) {
+    if (f.text) {
       extra.push({ type: 'text', text: `［附件：${f.name}］\n${f.text}` })
     }
   }
