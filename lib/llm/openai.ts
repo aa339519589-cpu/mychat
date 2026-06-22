@@ -1,5 +1,5 @@
 // OpenAI / DeepSeek / Gemini 兼容协议：消息转换、附件注入、单轮流式请求
-import { extractText, getDocumentProxy } from 'unpdf'
+import pdfParse from 'pdf-parse'
 import type { RawMsg, Attachment } from './types'
 import { send, upstreamError } from './stream'
 
@@ -33,10 +33,9 @@ export async function injectAttachmentsOpenAI(msgs: any[], attachments?: Attachm
     if (f.isPdf && f.dataUrl) {
       try {
         const data = f.dataUrl.split(',')[1] ?? ''
-        const buf = new Uint8Array(Buffer.from(data, 'base64'))
-        const pdf = await getDocumentProxy(buf)
-        const { text } = await extractText(pdf, { mergePages: true })
-        const out = Array.isArray(text) ? text.join('\n\n') : text
+        const buf = Buffer.from(data, 'base64')
+        const result = await pdfParse(buf)
+        const out = result.text || ''
         blocks.push(`［附件：${f.name}］\n${out || '（未能提取文字，可能是扫描件）'}`)
       } catch {
         blocks.push(`［附件：${f.name}］（解析失败）`)
