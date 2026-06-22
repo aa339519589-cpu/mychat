@@ -74,9 +74,7 @@ export function LiteraryChat() {
     if (!user) {
       setConversations([])
       setMemories([])
-      setEndpoints([])
       setActiveId("")
-      setActiveEndpointId("")
       loadedRef.current = new Set()
       return
     }
