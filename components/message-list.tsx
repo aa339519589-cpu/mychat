@@ -7,6 +7,8 @@ import { ChevronDown, ChevronRight, Brain, FileText, Globe } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkMath from "remark-math"
 import rehypeKatex from "rehype-katex"
+import { parseArtifact } from "@/lib/artifact"
+import { ArtifactFrame } from "@/components/artifact-frame"
 
 function MdContent({ text }: { text: string }) {
   return (
@@ -136,15 +138,26 @@ export function MessageList({
                     ))}
                   </div>
                 )}
-                <div className="min-w-0 border-l border-border/70 pl-3">
-                  {m.isError ? (
-                    <p className="break-words whitespace-pre-wrap text-sm italic leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">{m.content}</p>
-                  ) : (
-                    <div className="min-w-0 space-y-4 text-[15px] text-foreground/90 md:text-[17px]">
-                      <MdContent text={m.content} />
+                {(() => {
+                  // 如果 artifactHtml 已经由流式解析器注入（streaming state），直接用；
+                  // 否则从 content 里解析（从数据库加载时 content 包含原始 <artifact> 标签）
+                  const hasPreParsed = m.artifactHtml !== undefined
+                  const { display, artifactHtml, artifactLoading } = hasPreParsed
+                    ? { display: m.content, artifactHtml: m.artifactHtml ?? null, artifactLoading: m.artifactLoading ?? false }
+                    : parseArtifact(m.content ?? '')
+                  return (
+                    <div className="min-w-0 border-l border-border/70 pl-3">
+                      {m.isError ? (
+                        <p className="break-words whitespace-pre-wrap text-sm italic leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">{m.content}</p>
+                      ) : (
+                        <div className="min-w-0 space-y-4 text-[15px] text-foreground/90 md:text-[17px]">
+                          {display && <MdContent text={display} />}
+                          <ArtifactFrame html={artifactHtml} loading={artifactLoading} />
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
+                  )
+                })()}
               </div>
             </div>
           )

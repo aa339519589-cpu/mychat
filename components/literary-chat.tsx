@@ -18,6 +18,7 @@ import { createClient } from "@/lib/supabase/client"
 import type { User } from "@supabase/supabase-js"
 import { cn } from "@/lib/utils"
 import { PanelLeft, X } from "lucide-react"
+import { parseArtifact } from "@/lib/artifact"
 
 type GithubContext = { repo: string; context: string }
 
@@ -302,12 +303,15 @@ export function LiteraryChat() {
               }
               if (data.text) fullReply += data.text
               if (data.thinking) fullThinking += data.thinking
+              const { display, artifactHtml: parsedArtifactHtml, artifactLoading } = parseArtifact(fullReply)
               setConversations(prev => prev.map(c => c.id !== convId ? c : {
                 ...c,
                 messages: c.messages.map(m => m.id !== msgId ? m : {
                   ...m,
-                  content: data.error ? data.error : m.content + (data.text ?? ""),
-                  thinking: data.thinking !== undefined ? (m.thinking ?? "") + data.thinking : m.thinking,
+                  content: data.error ? data.error : display,
+                  thinking: fullThinking || undefined,
+                  artifactHtml: parsedArtifactHtml,
+                  artifactLoading,
                   isError: data.error ? true : m.isError,
                 }),
               }))
