@@ -83,8 +83,8 @@ export function AppSidebar({
   const openConvMenu = (id: string, anchor: Anchor) => { setActionProjectPicker(false); setActionAnchor(anchor); setActionConvId(id) }
   const closeConvMenu = () => { setActionConvId(null); setActionProjectPicker(false) }
   const actionConv = conversations.find(c => c.id === actionConvId) ?? null
-  // 根列表只显示「未归入项目、且非草稿」的对谈；置顶在前
-  const rootConversations = sortConvs(conversations.filter(c => !c.projectId && !c.draft))
+  // 根列表显示所有非草稿对谈（包括项目对话）；置顶在前
+  const rootConversations = sortConvs(conversations.filter(c => !c.draft))
   const handleSelect = (id: string) => { setStack([]); setUserMenuOpen(false); props.onSelect(id) }
   const handleNew = () => { setStack([]); setUserMenuOpen(false); props.onNew() }
 
@@ -844,6 +844,7 @@ function ConversationRow({ c, isActive, renaming, onSelect, onOpenMenu, onCommit
         <div className="flex items-baseline justify-between gap-3">
           <span className="flex min-w-0 items-center gap-1.5">
             {c.pinned && <Pin className="size-3 shrink-0 rotate-45 fill-current text-sidebar-primary/70" />}
+            {c.projectId && <Folder className="size-3 shrink-0 text-sidebar-primary/60" />}
             <span className={cn("truncate text-[14px] font-medium leading-snug", isActive ? "text-sidebar-primary" : "text-sidebar-foreground")}>{c.title}</span>
             {c.starred && <Star className="size-3 shrink-0 fill-current text-sidebar-primary/70" />}
           </span>
