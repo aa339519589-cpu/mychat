@@ -80,11 +80,13 @@ export async function POST(req: NextRequest) {
         const msgs: any[] = [{ role: 'system', content: SYSTEM }, ...toOpenAI(messages)]
         const processedAttachments = await uploadScannedPdfs(attachments, DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL)
         await injectAttachmentsOpenAI(msgs, processedAttachments)
+        let lastHadToolCalls = false
         for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
           const { assistantMessage, toolCalls, failed } = await runOpenAITurn(
             url, DEEPSEEK_API_KEY, model, msgs, openaiTools, controller, { thinking }
           )
-          if (failed || !toolCalls.length) break
+          lastHadToolCalls = toolCalls.length > 0
+          if (failed || !lastHadToolCalls) break
           msgs.push(assistantMessage)
           for (const tc of toolCalls) {
             let input: any = {}
@@ -93,6 +95,10 @@ export async function POST(req: NextRequest) {
             if (event) send(controller, event)
             msgs.push({ role: 'tool', tool_call_id: tc.id, content: result })
           }
+        }
+        // 轮次用完但最后一轮还有工具调用 → 补一轮纯文本请求，确保有完整回复
+        if (lastHadToolCalls) {
+          await runOpenAITurn(url, DEEPSEEK_API_KEY, model, msgs, [], controller, { thinking })
         }
       } catch (error) {
         send(controller, { error: networkError(error) })

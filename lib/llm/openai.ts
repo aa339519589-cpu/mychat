@@ -70,7 +70,13 @@ export async function runOpenAITurn(
   opts?: { thinking?: boolean },
 ): Promise<{ assistantMessage: any; toolCalls: { id: string; name: string; args: string }[]; failed: boolean }> {
   const body: any = { model, messages, stream: true }
-  body.thinking = { type: opts?.thinking ? "enabled" : "disabled" }
+  if (opts?.thinking) {
+    body.thinking = { type: 'enabled', budget_tokens: 10000 }
+    body.max_tokens = 16000
+  } else {
+    body.thinking = { type: 'disabled' }
+    body.max_tokens = 8192
+  }
   if (tools.length) { body.tools = tools; body.tool_choice = 'auto' }
 
   const res = await fetch(url, {
