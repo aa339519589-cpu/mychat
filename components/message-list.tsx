@@ -127,18 +127,18 @@ function AiActions({
   return (
     <div className="mt-2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
       {text && (
-        <button onClick={doCopy} title="复制" className="rounded-lg p-1.5 text-muted-foreground/50 hover:bg-muted/60 hover:text-muted-foreground transition-colors">
-          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+        <button onClick={doCopy} title="复制" className="rounded-full p-2 text-foreground/70 hover:bg-primary/10 hover:text-foreground transition-colors">
+          {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
         </button>
       )}
       {isLast && !isLoading && onRegenerate && text && (
-        <button onClick={onRegenerate} title="重新生成" className="rounded-lg p-1.5 text-muted-foreground/50 hover:bg-muted/60 hover:text-muted-foreground transition-colors">
-          <RefreshCw className="size-3.5" />
+        <button onClick={onRegenerate} title="重新生成" className="rounded-full p-2 text-foreground/70 hover:bg-primary/10 hover:text-foreground transition-colors">
+          <RefreshCw className="size-4" />
         </button>
       )}
       {text && onReply && (
-        <button onClick={() => onReply(text)} title="引用回复" className="rounded-lg p-1.5 text-muted-foreground/50 hover:bg-muted/60 hover:text-muted-foreground transition-colors">
-          <CornerUpLeft className="size-3.5" />
+        <button onClick={() => onReply(text)} title="引用回复" className="rounded-full p-2 text-foreground/70 hover:bg-primary/10 hover:text-foreground transition-colors">
+          <CornerUpLeft className="size-4" />
         </button>
       )}
     </div>
@@ -188,7 +188,7 @@ export function MessageList({
                 </div>
               )}
               {m.content && (
-                <div className="max-w-[85%] min-w-0 rounded-[1.5rem] rounded-tr-md bg-secondary/70 dark:bg-[#121212] px-5 py-3.5">
+                <div className="max-w-[85%] min-w-0 rounded-[1.5rem] rounded-tr-md bg-secondary/70 dark:bg-[#0A0A0A] px-5 py-3.5">
                   <p className="break-words text-[15px] italic leading-[1.9] tracking-wide text-secondary-foreground [overflow-wrap:anywhere]">{m.content}</p>
                 </div>
               )}
@@ -225,7 +225,7 @@ export function MessageList({
                         <>
                           {/* 文字回复：引导线只包文字 */}
                           {display && (
-                            <div className="border-l border-border/70 pl-3 text-[15px] text-foreground/90 md:text-[17px]">
+                            <div className="border-l border-border/70 pl-3 text-[15px] text-foreground md:text-[17px]">
                               <MdContent text={display} />
                             </div>
                           )}
