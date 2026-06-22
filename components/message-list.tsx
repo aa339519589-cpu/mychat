@@ -194,32 +194,42 @@ export function MessageList({
                   // content 始终是模型原始全文，渲染时实时拆分两种 artifact
                   const { display, raw, done, inlineRaw, inlineDone } = parseArtifact(m.content ?? '')
                   return (
-                    <div className="min-w-0 border-l border-border/70 pl-3">
+                    <div className="min-w-0">
                       {m.isError ? (
-                        <p className="break-words whitespace-pre-wrap text-sm italic leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">{m.content}</p>
+                        <div className="border-l border-border/70 pl-3">
+                          <p className="break-words whitespace-pre-wrap text-sm italic leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">{m.content}</p>
+                        </div>
                       ) : (
                         <div className="min-w-0 space-y-3 text-[15px] text-foreground/90 md:text-[17px]">
-                          {display && <MdContent text={display} />}
-                          {/* 内联 artifact：透明背景，高度自适应，直接融在对话里 */}
+                          {display && (
+                            <div className="border-l border-border/70 pl-3">
+                              <MdContent text={display} />
+                            </div>
+                          )}
+                          {/* 内联 artifact：无左边框，全宽，透明背景，直接融在对话里 */}
                           {inlineRaw !== null && (
                             <ArtifactFrame raw={inlineRaw} done={inlineDone} inline />
                           )}
                           {/* 面板 artifact：卡片入口，点击右侧展开 */}
                           {raw !== null && (
-                            <ArtifactCard
-                              title={artifactTitle(raw)}
-                              done={done}
-                              active={openArtifactId === m.id}
-                              onClick={() => onOpenArtifact?.(m.id)}
-                            />
+                            <div className="border-l border-border/70 pl-3">
+                              <ArtifactCard
+                                title={artifactTitle(raw)}
+                                done={done}
+                                active={openArtifactId === m.id}
+                                onClick={() => onOpenArtifact?.(m.id)}
+                              />
+                            </div>
                           )}
-                          <AiActions
-                            text={display}
-                            isLast={idx === lastAiIdx}
-                            isLoading={!!isLoading}
-                            onRegenerate={onRegenerate}
-                            onReply={onReply}
-                          />
+                          <div className="border-l border-border/70 pl-3">
+                            <AiActions
+                              text={display}
+                              isLast={idx === lastAiIdx}
+                              isLoading={!!isLoading}
+                              onRegenerate={onRegenerate}
+                              onReply={onReply}
+                            />
+                          </div>
                         </div>
                       )}
                     </div>

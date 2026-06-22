@@ -27,14 +27,15 @@ if(window.ResizeObserver){try{new ResizeObserver(__report).observe(document.body
 window.addEventListener("load",function(){__report();[200,600,1500].forEach(function(t){setTimeout(__report,t);});});
 ` : ''
   const bodyStyle = inline
-    ? `html,body{background:transparent;margin:0;padding:0;color:var(--fg);font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;}`
-    : `html,body{background:transparent;margin:0;padding:16px;color:var(--fg);font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;min-height:100%;}`
+    ? `html,body{background:transparent!important;margin:0;padding:0;color:var(--fg);font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;}canvas,svg{background:transparent!important;max-width:100%;}`
+    : `html,body{background:transparent!important;margin:0;padding:16px;color:var(--fg);font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;min-height:100%;}canvas,svg{background:transparent!important;max-width:100%;}`
 
-  return `<!DOCTYPE html><html><head><meta charset="utf-8">
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <style>
 :root{--fg:${c.fg};--bg:${c.bg};color-scheme:${c.scheme};}
 ${bodyStyle}
-*{box-sizing:border-box;}#__v{width:100%;}
+*{box-sizing:border-box;max-width:100%;}#__v{width:100%;}
+img,canvas,svg,video{max-width:100%;height:auto;}
 </style>
 <script>(function(){
 ${heightScript}
@@ -57,6 +58,8 @@ window.addEventListener("load",function(){__report();[300,800,2000].forEach(func
   const inject = `<style>
 :root{--fg:${c.fg};--bg:${c.bg};color-scheme:${c.scheme};}
 html,body{background:transparent!important;${inline ? 'margin:0;padding:0;' : ''}color:var(--fg);}
+canvas,svg{background:transparent!important;max-width:100%;}
+*{max-width:100%;}img,canvas,svg,video{max-width:100%;height:auto;}
 </style>${heightScript}`
   if (/<head[^>]*>/i.test(raw)) return raw.replace(/(<head[^>]*>)/i, `$1${inject}`)
   if (/<\/head>/i.test(raw)) return raw.replace(/<\/head>/i, `${inject}</head>`)
