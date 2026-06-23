@@ -317,7 +317,7 @@ export function ChatInput({
         {/* 加号：展开 Add(拍照/照片/文件) + 联网/仓库 */}
         <div ref={plusMenuRef} className="relative mb-0.5 shrink-0">
           {plusOpen && (
-            <div className="absolute bottom-full left-0 mb-2 w-[10rem] overflow-hidden rounded-xl border border-border/60 bg-card shadow-lg">
+            <div className="absolute bottom-full left-0 mb-2 w-[8rem] overflow-hidden rounded-xl border border-border/60 bg-card shadow-lg">
               <PlusItem icon={<ImageIcon className="size-4" />} label="照片" onClick={() => { setPlusOpen(false); imageInputRef.current?.click() }} />
               <PlusItem icon={<Camera className="size-4" />} label="拍照" onClick={() => { setPlusOpen(false); cameraInputRef.current?.click() }} />
               <PlusItem icon={<FileText className="size-4" />} label="文件" onClick={() => { setPlusOpen(false); fileInputRef.current?.click() }} />
@@ -438,7 +438,7 @@ function PlusItem({ icon, label, onClick, active, suffix }: { icon: React.ReactN
   return (
     <button
       onClick={onClick}
-      className={cn("flex w-full items-center gap-2 px-3 py-2 text-[13px] transition-colors hover:bg-secondary/60", active ? "text-primary" : "text-muted-foreground")}
+      className={cn("flex w-full items-center gap-2 px-2.5 py-1.5 text-[13px] transition-colors hover:bg-secondary/60", active ? "text-primary" : "text-muted-foreground")}
     >
       <span className="shrink-0">{icon}</span>
       <span className="flex-1 truncate text-left">{label}</span>
