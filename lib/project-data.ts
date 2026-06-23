@@ -13,8 +13,9 @@ export type ProjectFile = {
   content: string
 }
 
-// 聊天时喂给模型的项目背景：专属指令 + 资料正文
+// 聊天时喂给模型的项目背景：专属指令 + 资料正文 + 项目记忆
 export type ProjectContext = {
   instructions: string
   files: { name: string; content: string }[]
+  projectMemories: { id: string; content: string }[]
 }

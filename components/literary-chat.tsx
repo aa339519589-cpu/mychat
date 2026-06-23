@@ -13,6 +13,7 @@ import {
   fetchProfile, ensureProfile, setMemoryEnabled,
   fetchProjects, insertProject, updateProject, deleteProjectRow,
   fetchProjectFiles, insertProjectFile, deleteProjectFileRow, fetchProjectContext,
+  fetchProjectMemories, insertProjectMemory, updateProjectMemory, deleteProjectMemoryRow,
 } from "@/lib/db"
 import { type AttachedFile, prepareFile } from "@/lib/file-extract"
 import type { Project, ProjectFile, ProjectContext } from "@/lib/project-data"
@@ -572,6 +573,24 @@ export function LiteraryChat() {
     projectCtxRef.current.clear()  // 不知归属哪个项目，直接清空缓存（仅是优化缓存）
   }
 
+  async function handleLoadProjectMemories(projectId: string): Promise<Memory[]> {
+    return fetchProjectMemories(projectId)
+  }
+  async function handleAddProjectMemory(projectId: string, content: string): Promise<Memory | null> {
+    if (!user) return null
+    const mem = await insertProjectMemory(user.id, projectId, content)
+    if (mem) projectCtxRef.current.delete(projectId)
+    return mem
+  }
+  function handleEditProjectMemory(id: string, content: string) {
+    updateProjectMemory(id, content)
+    projectCtxRef.current.clear()
+  }
+  function handleDeleteProjectMemory(id: string) {
+    deleteProjectMemoryRow(id)
+    projectCtxRef.current.clear()
+  }
+
   async function handleMemoryAdd(content: string) {
     if (!user) return
     const mem = await insertMemory(user.id, content)
@@ -625,6 +644,10 @@ export function LiteraryChat() {
     onLoadProjectFiles: handleLoadProjectFiles,
     onAddProjectFile: handleAddProjectFile,
     onDeleteProjectFile: handleDeleteProjectFile,
+    onLoadProjectMemories: handleLoadProjectMemories,
+    onAddProjectMemory: handleAddProjectMemory,
+    onEditProjectMemory: handleEditProjectMemory,
+    onDeleteProjectMemory: handleDeleteProjectMemory,
     onToggleStar: handleToggleStar,
     onTogglePin: handleTogglePin,
     onRenameConversation: handleRenameConversation,

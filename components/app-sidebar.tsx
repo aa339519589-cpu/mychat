@@ -49,6 +49,10 @@ export type AppSidebarProps = {
   onLoadProjectFiles: (projectId: string) => Promise<ProjectFile[]>
   onAddProjectFile: (projectId: string, file: File) => Promise<ProjectFile | null>
   onDeleteProjectFile: (fileId: string) => void
+  onLoadProjectMemories: (projectId: string) => Promise<Memory[]>
+  onAddProjectMemory: (projectId: string, content: string) => Promise<Memory | null>
+  onEditProjectMemory: (id: string, content: string) => void
+  onDeleteProjectMemory: (id: string) => void
   onToggleStar: (id: string) => void
   onTogglePin: (id: string) => void
   onRenameConversation: (id: string, title: string) => void
@@ -230,6 +234,10 @@ export function AppSidebar({
             onLoadFiles={props.onLoadProjectFiles}
             onAddFile={props.onAddProjectFile}
             onDeleteFile={props.onDeleteProjectFile}
+            onLoadProjectMemories={props.onLoadProjectMemories}
+            onAddProjectMemory={(content) => props.onAddProjectMemory(selectedProject.id, content)}
+            onEditProjectMemory={props.onEditProjectMemory}
+            onDeleteProjectMemory={props.onDeleteProjectMemory}
             renamingId={renamingId}
             onOpenConvMenu={openConvMenu}
             onRenameConversation={props.onRenameConversation}
@@ -406,34 +414,38 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
             <p className="rounded-2xl bg-sidebar-accent/55 border border-sidebar-border px-4 py-6 text-center text-[13px] italic text-muted-foreground/70">还没有记忆</p>
           )}
 
-          {memories.map(m => (
-            <div key={m.id} className="rounded-2xl bg-sidebar-accent/55 border border-sidebar-border px-3 py-2.5">
-              {editingId === m.id ? (
-                <div className="space-y-2">
-                  <textarea
-                    autoFocus
-                    value={editValue}
-                    onChange={e => setEditValue(e.target.value)}
-                    onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveEdit() } if (e.key === "Escape") setEditingId(null) }}
-                    className="w-full resize-none rounded-xl bg-sidebar-accent/60 border border-sidebar-accent/70 px-3 py-2 text-[13px] outline-none focus:bg-sidebar-accent/80"
-                    rows={2}
-                  />
-                  <div className="flex gap-2">
-                    <button onClick={saveEdit} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-primary py-1.5 text-[13px] text-sidebar-primary-foreground"><Check className="size-3.5" />保存</button>
-                    <button onClick={() => setEditingId(null)} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-accent/60 py-1.5 text-[13px] text-muted-foreground"><X className="size-3.5" />取消</button>
-                  </div>
+          {memories.length > 0 && (
+            <div className="max-h-[260px] overflow-y-auto space-y-2 pr-0.5">
+              {memories.map(m => (
+                <div key={m.id} className="rounded-2xl bg-sidebar-accent/55 border border-sidebar-border px-3 py-2.5">
+                  {editingId === m.id ? (
+                    <div className="space-y-2">
+                      <textarea
+                        autoFocus
+                        value={editValue}
+                        onChange={e => setEditValue(e.target.value)}
+                        onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveEdit() } if (e.key === "Escape") setEditingId(null) }}
+                        className="w-full resize-none rounded-xl bg-sidebar-accent/60 border border-sidebar-accent/70 px-3 py-2 text-[13px] outline-none focus:bg-sidebar-accent/80"
+                        rows={2}
+                      />
+                      <div className="flex gap-2">
+                        <button onClick={saveEdit} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-primary py-1.5 text-[13px] text-sidebar-primary-foreground"><Check className="size-3.5" />保存</button>
+                        <button onClick={() => setEditingId(null)} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-accent/60 py-1.5 text-[13px] text-muted-foreground"><X className="size-3.5" />取消</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-start gap-2">
+                      <p className="flex-1 text-[13px] leading-relaxed text-foreground/85">{m.content}</p>
+                      <div className="flex shrink-0 gap-0.5">
+                        <button onClick={() => startEdit(m)} className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground" aria-label="编辑"><Pencil className="size-3.5" /></button>
+                        <button onClick={() => onDelete(m.id)} className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-destructive" aria-label="删除"><Trash2 className="size-3.5" /></button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              ) : (
-                <div className="flex items-start gap-2">
-                  <p className="flex-1 text-[13px] leading-relaxed text-foreground/85">{m.content}</p>
-                  <div className="flex shrink-0 gap-0.5">
-                    <button onClick={() => startEdit(m)} className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground" aria-label="编辑"><Pencil className="size-3.5" /></button>
-                    <button onClick={() => onDelete(m.id)} className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-destructive" aria-label="删除"><Trash2 className="size-3.5" /></button>
-                  </div>
-                </div>
-              )}
+              ))}
             </div>
-          ))}
+          )}
 
           {adding ? (
             <div className="space-y-2 rounded-2xl bg-sidebar-accent/55 border border-sidebar-border px-3 py-2.5">
@@ -566,6 +578,7 @@ function ProjectsScreen({ projects, conversations, onCreate, onOpen, onDelete }:
 function ProjectDetailScreen({
   project, conversations, onOpenChat, onNewChat,
   onInstructions, onLoadFiles, onAddFile, onDeleteFile,
+  onLoadProjectMemories, onAddProjectMemory, onEditProjectMemory, onDeleteProjectMemory,
   renamingId, onOpenConvMenu, onRenameConversation, onStopRename,
 }: {
   project: Project
@@ -576,6 +589,10 @@ function ProjectDetailScreen({
   onLoadFiles: (projectId: string) => Promise<ProjectFile[]>
   onAddFile: (projectId: string, file: File) => Promise<ProjectFile | null>
   onDeleteFile: (fileId: string) => void
+  onLoadProjectMemories: (projectId: string) => Promise<Memory[]>
+  onAddProjectMemory: (content: string) => Promise<Memory | null>
+  onEditProjectMemory: (id: string, content: string) => void
+  onDeleteProjectMemory: (id: string) => void
   renamingId: string | null
   onOpenConvMenu: (id: string, anchor: Anchor) => void
   onRenameConversation: (id: string, title: string) => void
@@ -618,7 +635,13 @@ function ProjectDetailScreen({
 
       {/* 工作台分组卡：记忆 / 项目指令 / 资料 —— 一张卡内三段，靠分隔线区隔（学 Claude 项目页） */}
       <div className="divide-y divide-sidebar-border/60 overflow-hidden rounded-2xl border border-sidebar-border bg-sidebar-accent/25">
-        <ProjectMemorySection />
+        <ProjectMemorySection
+          projectId={project.id}
+          onLoad={onLoadProjectMemories}
+          onAdd={onAddProjectMemory}
+          onEdit={onEditProjectMemory}
+          onDelete={onDeleteProjectMemory}
+        />
         <ProjectInstructionsSection value={project.instructions} onSave={v => onInstructions(project.id, v)} />
         <ProjectFilesSection project={project} onLoadFiles={onLoadFiles} onAddFile={onAddFile} onDeleteFile={onDeleteFile} />
       </div>
@@ -644,8 +667,47 @@ function ProjectTitleEditor({ name, onSave, onCancel }: { name: string; onSave: 
   )
 }
 
-// 记忆段：项目级记忆尚未接后端，先按 Claude 做占位（仅你可见）
-function ProjectMemorySection() {
+// 项目级记忆：独立于全局记忆，仅在该项目对话时注入上下文
+function ProjectMemorySection({ projectId, onLoad, onAdd, onEdit, onDelete }: {
+  projectId: string
+  onLoad: (pid: string) => Promise<Memory[]>
+  onAdd: (content: string) => Promise<Memory | null>
+  onEdit: (id: string, content: string) => void
+  onDelete: (id: string) => void
+}) {
+  const [memories, setMemories] = useState<Memory[]>([])
+  const [loading, setLoading] = useState(true)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editValue, setEditValue] = useState("")
+  const [newValue, setNewValue] = useState("")
+  const [adding, setAdding] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    onLoad(projectId).then(mems => { if (!cancelled) { setMemories(mems); setLoading(false) } })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId])
+
+  function startEdit(m: Memory) { setEditingId(m.id); setEditValue(m.content) }
+  function saveEdit() {
+    if (!editingId || !editValue.trim()) return
+    onEdit(editingId, editValue.trim())
+    setMemories(prev => prev.map(m => m.id === editingId ? { ...m, content: editValue.trim() } : m))
+    setEditingId(null)
+  }
+  async function addMemory() {
+    if (!newValue.trim()) return
+    const mem = await onAdd(newValue.trim())
+    if (mem) setMemories(prev => [...prev, mem])
+    setNewValue(""); setAdding(false)
+  }
+  function removeMemory(id: string) {
+    setMemories(prev => prev.filter(m => m.id !== id))
+    onDelete(id)
+  }
+
   return (
     <div className="p-4">
       <div className="flex items-center justify-between gap-2">
@@ -654,7 +716,72 @@ function ProjectMemorySection() {
           <Lock className="size-3" />仅你可见
         </span>
       </div>
-      <p className="mt-1.5 text-[12px] leading-relaxed text-muted-foreground">小克会在几段对谈后，把本项目里值得记住的事记在这里。</p>
+      <p className="mt-1 mb-2.5 text-[12px] leading-relaxed text-muted-foreground">本项目中积累的重要信息，对话时自动注入，与全局记忆分隔。</p>
+
+      {loading ? (
+        <p className="text-[12px] italic text-muted-foreground/60">载入中……</p>
+      ) : (
+        <div className="space-y-1.5">
+          {memories.length === 0 && !adding && (
+            <p className="text-center text-[12px] italic text-muted-foreground/60 py-1">还没有记忆</p>
+          )}
+
+          {memories.length > 0 && (
+            <div className="max-h-[200px] overflow-y-auto space-y-1.5 pr-0.5">
+              {memories.map(m => (
+                <div key={m.id} className="rounded-xl bg-sidebar-accent/30 px-3 py-2">
+                  {editingId === m.id ? (
+                    <div className="space-y-1.5">
+                      <textarea
+                        autoFocus
+                        value={editValue}
+                        onChange={e => setEditValue(e.target.value)}
+                        onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveEdit() } if (e.key === "Escape") setEditingId(null) }}
+                        className="w-full resize-none rounded-xl bg-sidebar-accent/60 border border-sidebar-accent/70 px-2 py-1.5 text-[12px] outline-none focus:bg-sidebar-accent/80"
+                        rows={2}
+                      />
+                      <div className="flex gap-1.5">
+                        <button onClick={saveEdit} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-primary py-1 text-[12px] text-sidebar-primary-foreground"><Check className="size-3" />保存</button>
+                        <button onClick={() => setEditingId(null)} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-accent/60 py-1 text-[12px] text-muted-foreground"><X className="size-3" />取消</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-start gap-2">
+                      <p className="flex-1 text-[12px] leading-relaxed text-foreground/85">{m.content}</p>
+                      <div className="flex shrink-0 gap-0.5">
+                        <button onClick={() => startEdit(m)} className="rounded-lg p-1 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground" aria-label="编辑"><Pencil className="size-3" /></button>
+                        <button onClick={() => removeMemory(m.id)} className="rounded-lg p-1 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-destructive" aria-label="删除"><Trash2 className="size-3" /></button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {adding ? (
+            <div className="space-y-1.5 rounded-xl bg-sidebar-accent/30 px-3 py-2">
+              <textarea
+                autoFocus
+                value={newValue}
+                onChange={e => setNewValue(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addMemory() } if (e.key === "Escape") setAdding(false) }}
+                placeholder="输入要记住的内容……"
+                className="w-full resize-none rounded-xl bg-sidebar-accent/60 border border-sidebar-accent/70 px-2 py-1.5 text-[12px] outline-none placeholder:text-muted-foreground/40 focus:bg-sidebar-accent/80"
+                rows={2}
+              />
+              <div className="flex gap-1.5">
+                <button onClick={addMemory} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-primary py-1 text-[12px] text-sidebar-primary-foreground"><Check className="size-3" />添加</button>
+                <button onClick={() => setAdding(false)} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-accent/60 py-1 text-[12px] text-muted-foreground"><X className="size-3" />取消</button>
+              </div>
+            </div>
+          ) : (
+            <button onClick={() => setAdding(true)} className="flex w-full items-center justify-center gap-1 py-1 text-[12px] text-muted-foreground transition-colors hover:text-foreground">
+              <Plus className="size-3.5" />手动添加记忆
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -1227,8 +1354,6 @@ function SettingsScreen({ memories, memoryEnabled, onMemoryEnabledChange, onMemo
 
       {tab === 'general' ? (
         <div className="space-y-5 pt-2">
-          <BasicsScreen />
-          <div className="mx-4 border-t border-sidebar-border/50" />
           <MemoryScreen
             memories={memories}
             enabled={memoryEnabled}
@@ -1237,6 +1362,8 @@ function SettingsScreen({ memories, memoryEnabled, onMemoryEnabledChange, onMemo
             onEdit={onMemoryEdit}
             onDelete={onMemoryDelete}
           />
+          <div className="mx-4 border-t border-sidebar-border/50" />
+          <BasicsScreen />
         </div>
       ) : (
         <div className="pt-2">

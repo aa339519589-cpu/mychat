@@ -351,15 +351,58 @@ export async function deleteProjectFileRow(id: string): Promise<void> {
   if (error) console.error("deleteProjectFileRow", error)
 }
 
-// 聊天时取项目背景：专属指令 + 资料正文（喂给模型当上下文）
+// ───────────── 项目记忆（与全局 memories 完全分隔，按 project_id 隔离） ─────────────
+
+export async function fetchProjectMemories(projectId: string): Promise<Memory[]> {
+  const supabase = createClient()
+  const { data, error } = await supabase
+    .from("project_memories")
+    .select("id, content, created_at, updated_at")
+    .eq("project_id", projectId)
+    .order("created_at", { ascending: true })
+  if (error || !data) return []
+  return data.map(r => ({
+    id: r.id as string,
+    content: r.content as string,
+    timestamp: (r.updated_at as string) || (r.created_at as string) || undefined,
+  }))
+}
+
+export async function insertProjectMemory(userId: string, projectId: string, content: string): Promise<Memory | null> {
+  const supabase = createClient()
+  const id = crypto.randomUUID()
+  const ts = new Date().toISOString()
+  const { error } = await supabase.from("project_memories").insert({ id, user_id: userId, project_id: projectId, content })
+  if (error) { console.error("insertProjectMemory", error); return null }
+  return { id, content, timestamp: ts }
+}
+
+export async function updateProjectMemory(id: string, content: string): Promise<void> {
+  const supabase = createClient()
+  const { error } = await supabase
+    .from("project_memories")
+    .update({ content, updated_at: new Date().toISOString() })
+    .eq("id", id)
+  if (error) console.error("updateProjectMemory", error)
+}
+
+export async function deleteProjectMemoryRow(id: string): Promise<void> {
+  const supabase = createClient()
+  const { error } = await supabase.from("project_memories").delete().eq("id", id)
+  if (error) console.error("deleteProjectMemoryRow", error)
+}
+
+// 聊天时取项目背景：专属指令 + 资料正文 + 项目记忆（喂给模型当上下文）
 export async function fetchProjectContext(projectId: string): Promise<ProjectContext> {
   const supabase = createClient()
-  const [{ data: proj }, files] = await Promise.all([
+  const [{ data: proj }, files, mems] = await Promise.all([
     supabase.from("projects").select("instructions").eq("id", projectId).maybeSingle(),
     fetchProjectFiles(projectId),
+    fetchProjectMemories(projectId),
   ])
   return {
     instructions: (proj?.instructions as string) ?? "",
     files: files.map(f => ({ name: f.name, content: f.content })),
+    projectMemories: mems.map(m => ({ id: m.id, content: m.content })),
   }
 }

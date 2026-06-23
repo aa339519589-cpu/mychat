@@ -225,6 +225,10 @@ ${memBlock}`
     const parts: string[] = []
     const instr = p.instructions?.trim()
     if (instr) parts.push(`【项目设定 / 人设（背景参考）】\n${instr}`)
+    if (p.projectMemories?.length) {
+      const memBlock = p.projectMemories.map(m => `- ${m.content}`).join('\n')
+      parts.push(`【本项目记忆（仅在此项目内积累的、关于你的重要信息；与全局记忆相互独立）】\n${memBlock}`)
+    }
     const files = (p.files ?? []).filter(f => f.content?.trim())
     if (files.length) {
       const BUDGET = 16000
