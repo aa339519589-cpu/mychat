@@ -317,54 +317,32 @@ export function ChatInput({
         {/* 加号：展开 Add(拍照/照片/文件) + 联网/仓库 */}
         <div ref={plusMenuRef} className="relative mb-0.5 shrink-0">
           {plusOpen && (
-            <div className="absolute bottom-full left-0 mb-2 overflow-hidden rounded-2xl bg-popover shadow-xl ring-1 ring-black/10">
-              {/* 照片/拍照/文件：苹果原生大图标大字样式 */}
-              <PlusItem icon={<ImageIcon className="size-[18px]" />} label="照片图库" onClick={() => { setPlusOpen(false); imageInputRef.current?.click() }} />
-              <div className="mx-3 h-px bg-border/50" />
-              <PlusItem icon={<Camera className="size-[18px]" />} label="拍照" onClick={() => { setPlusOpen(false); cameraInputRef.current?.click() }} />
-              <div className="mx-3 h-px bg-border/50" />
-              <PlusItem icon={<FileText className="size-[18px]" />} label="选择文件" onClick={() => { setPlusOpen(false); fileInputRef.current?.click() }} />
-              <div className="border-t border-border/60 my-1" />
-              <button
+            <div className="absolute bottom-full left-0 mb-2 w-[10rem] overflow-hidden rounded-xl border border-border/60 bg-card shadow-lg">
+              <PlusItem icon={<ImageIcon className="size-4" />} label="照片" onClick={() => { setPlusOpen(false); imageInputRef.current?.click() }} />
+              <PlusItem icon={<Camera className="size-4" />} label="拍照" onClick={() => { setPlusOpen(false); cameraInputRef.current?.click() }} />
+              <PlusItem icon={<FileText className="size-4" />} label="文件" onClick={() => { setPlusOpen(false); fileInputRef.current?.click() }} />
+              <div className="border-t border-border/40" />
+              <PlusItem
+                icon={<Globe className={cn("size-4", webSearch && "text-primary")} />}
+                label="联网"
                 onClick={() => onWebSearchChange(!webSearch)}
-                className={cn(
-                  "flex w-full items-center gap-2 px-4 py-2 text-sm transition-colors",
-                  webSearch ? "text-primary" : "text-muted-foreground hover:bg-secondary/60",
-                )}
-              >
-                <Globe className="size-4" />
-                <span className="flex-1 text-left">联网</span>
-                {webSearch && <Check className="size-3.5" />}
-              </button>
-              <button
+                active={webSearch}
+              />
+              <PlusItem
+                icon={<Microscope className={cn("size-4", deepResearch && "text-primary")} />}
+                label="深度研究"
                 onClick={() => onDeepResearchChange(!deepResearch)}
-                className={cn(
-                  "flex w-full items-center gap-2 px-4 py-2 text-sm transition-colors",
-                  deepResearch ? "text-primary" : "text-muted-foreground hover:bg-secondary/60",
-                )}
-              >
-                <Microscope className="size-4" />
-                <span className="flex-1 text-left">深度研究</span>
-                {deepResearch && <Check className="size-3.5" />}
-              </button>
-              <button
+                active={deepResearch}
+              />
+              <PlusItem
+                icon={repoConnecting ? <Loader2 className="size-4 animate-spin" /> : <GitHubIcon className={cn("size-4", githubContext && "text-primary")} />}
+                label={githubLabel}
                 onClick={handleGithubEntry}
-                className="flex w-full items-center gap-2 px-4 py-2 text-sm text-muted-foreground transition-colors hover:bg-secondary/60"
-              >
-                {repoConnecting ? <Loader2 className="size-4 animate-spin" /> : <GitHubIcon className={cn("size-4", githubContext && "text-primary")} />}
-                <span className={cn("flex-1 truncate text-left", githubContext && "text-primary")}>{githubLabel}</span>
-                {githubContext && (
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    onClick={e => { e.stopPropagation(); onGithubConnect(null); setPlusOpen(false) }}
-                    className="rounded-full p-0.5 hover:bg-muted"
-                    aria-label="移除仓库"
-                  >
-                    <X className="size-3.5" />
-                  </span>
-                )}
-              </button>
+                active={!!githubContext}
+                suffix={githubContext ? (
+                  <span role="button" tabIndex={0} onClick={e => { e.stopPropagation(); onGithubConnect(null); setPlusOpen(false) }} className="rounded-full p-0.5 hover:bg-muted"><X className="size-3" /></span>
+                ) : undefined}
+              />
             </div>
           )}
           <button
@@ -456,15 +434,15 @@ export function ChatInput({
   )
 }
 
-// 加号菜单里的一项：苹果原生大图标大字样式
-function PlusItem({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {
+function PlusItem({ icon, label, onClick, active, suffix }: { icon: React.ReactNode; label: string; onClick: () => void; active?: boolean; suffix?: React.ReactNode }) {
   return (
     <button
       onClick={onClick}
-      className="flex w-full items-center gap-3 px-4 py-3 text-[15px] font-medium text-foreground transition-colors hover:bg-secondary/60 active:bg-secondary/80"
+      className={cn("flex w-full items-center gap-2 px-3 py-2 text-[13px] transition-colors hover:bg-secondary/60", active ? "text-primary" : "text-muted-foreground")}
     >
-      <span className="text-foreground/80">{icon}</span>
-      <span className="flex-1 text-left">{label}</span>
+      <span className="shrink-0">{icon}</span>
+      <span className="flex-1 truncate text-left">{label}</span>
+      {suffix}
     </button>
   )
 }
