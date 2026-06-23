@@ -14,12 +14,12 @@ import {
 } from "lucide-react"
 import { fetchQuota, fetchCustomSystemPrompt, saveCustomSystemPrompt, type QuotaSnapshot } from "@/lib/db"
 
-// 二级页面：除根视图（侧栏主体）外的可滑入页面。设置改走浮层 modal，不再占用滑入栈。
-type Screen = "projects" | "artifacts" | "project-detail"
+// 二级页面：除根视图（侧栏主体）外的可滑入全屏页面。设置＝真正的二级滑入页（带返回头）。
+type Screen = "settings" | "projects" | "artifacts" | "project-detail"
 
-// 层级 z：项目/作品为一级(20)，项目详情为二级(30)，均高于根面板(10)。
+// 层级 z：设置/项目/作品为一级(20)，项目详情为二级(30)，均高于根面板(10)。
 const Z: Record<Screen, number> = {
-  projects: 20, artifacts: 20, "project-detail": 30,
+  settings: 20, projects: 20, artifacts: 20, "project-detail": 30,
 }
 
 // 置顶的排在最前；同组内保持原顺序（V8 的 sort 稳定）
@@ -65,7 +65,6 @@ export function AppSidebar({
   const { conversations, activeId, onDelete, userEmail, onLogout } = props
   const [stack, setStack] = useState<Screen[]>([])
   const [userMenuOpen, setUserMenuOpen] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)                 // 设置浮层
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
   const [actionConvId, setActionConvId] = useState<string | null>(null)   // 打开"更多菜单"的会话
   const [actionAnchor, setActionAnchor] = useState<Anchor | null>(null)   // ⋯ 按钮的位置
@@ -75,7 +74,7 @@ export function AppSidebar({
   const [projectRenaming, setProjectRenaming] = useState(false)           // 项目详情顶部就地改名
 
   // 抽屉收起后复位到根视图
-  useEffect(() => { if (!visible) { setStack([]); setUserMenuOpen(false); setSettingsOpen(false); setSelectedProjectId(null); setActionConvId(null); setRenamingId(null); setProjectMenuAnchor(null); setProjectRenaming(false) } }, [visible])
+  useEffect(() => { if (!visible) { setStack([]); setUserMenuOpen(false); setSelectedProjectId(null); setActionConvId(null); setRenamingId(null); setProjectMenuAnchor(null); setProjectRenaming(false) } }, [visible])
 
   const push = (s: Screen) => { setUserMenuOpen(false); setStack(prev => [...prev, s]) }
   const pop = () => setStack(prev => prev.slice(0, -1))
@@ -162,7 +161,7 @@ export function AppSidebar({
         <div className="absolute inset-0 z-30">
           <button className="absolute inset-0 cursor-default" aria-label="关闭菜单" onClick={() => setUserMenuOpen(false)} />
           <div className="absolute bottom-[calc(4rem+env(safe-area-inset-bottom,0px))] left-3 right-3 overflow-hidden rounded-2xl border border-sidebar-border bg-card shadow-lg">
-            <button onClick={() => { setUserMenuOpen(false); setSettingsOpen(true) }} className="flex w-full items-center gap-3 px-4 py-3 text-sm text-foreground transition-colors hover:bg-sidebar-accent/60">
+            <button onClick={() => push("settings")} className="flex w-full items-center gap-3 px-4 py-3 text-sm text-foreground transition-colors hover:bg-sidebar-accent/60">
               <Settings className="size-4 text-muted-foreground" />设置
             </button>
             <div className="border-t border-sidebar-border/50" />
@@ -177,6 +176,17 @@ export function AppSidebar({
 
   const screens = (
     <>
+      <ScreenPanel style={screenStyle("settings")} title="设置" onBack={pop}>
+        <SettingsScreen
+          memories={props.memories}
+          memoryEnabled={props.memoryEnabled}
+          onMemoryEnabledChange={props.onMemoryEnabledChange}
+          onMemoryAdd={props.onMemoryAdd}
+          onMemoryEdit={props.onMemoryEdit}
+          onMemoryDelete={props.onMemoryDelete}
+        />
+      </ScreenPanel>
+
       <ScreenPanel style={screenStyle("projects")} title="项目" onBack={pop}>
         <ProjectsScreen
           projects={props.projects}
@@ -265,19 +275,6 @@ export function AppSidebar({
     />
   )
 
-  // 设置浮层：基础设定 / 记忆 / 使用额度 三个标签合并到一个 modal
-  const settingsModal = settingsOpen && (
-    <SettingsModal
-      memories={props.memories}
-      memoryEnabled={props.memoryEnabled}
-      onMemoryEnabledChange={props.onMemoryEnabledChange}
-      onMemoryAdd={props.onMemoryAdd}
-      onMemoryEdit={props.onMemoryEdit}
-      onMemoryDelete={props.onMemoryDelete}
-      onClose={() => setSettingsOpen(false)}
-    />
-  )
-
   // 手机：一级半屏面板（滑入/滑出）+ 二级整屏页面（相对外层 fixed 容器铺满）
   if (mobile) {
     return (
@@ -291,7 +288,6 @@ export function AppSidebar({
         {screens}
         {convMenu}
         {projectMenu}
-        {settingsModal}
       </>
     )
   }
@@ -303,7 +299,6 @@ export function AppSidebar({
       {screens}
       {convMenu}
       {projectMenu}
-      {settingsModal}
     </aside>
   )
 }
@@ -1208,68 +1203,46 @@ function QuotaScreen() {
   )
 }
 
-// ── 设置浮层：把「基础设定 / 记忆 / 使用额度」收进一个带标签的 modal（学 Claude 设置抽屉）──
-// 不再是逐层滑入的独立大页面；移动端从底部升起的 sheet，桌面端居中。
-function SettingsModal({ memories, memoryEnabled, onMemoryEnabledChange, onMemoryAdd, onMemoryEdit, onMemoryDelete, onClose }: {
+// ── 设置（二级全屏页内容）：两个板块 —— 「基础与记忆」｜「使用额度」──
+// 装在 ScreenPanel 里（顶部统一返回头由外壳提供），标签切换两块内容，不再逐层滑入碎片子页。
+function SettingsScreen({ memories, memoryEnabled, onMemoryEnabledChange, onMemoryAdd, onMemoryEdit, onMemoryDelete }: {
   memories: Memory[]
   memoryEnabled: boolean
   onMemoryEnabledChange: (v: boolean) => void
   onMemoryAdd: (content: string) => void
   onMemoryEdit: (id: string, content: string) => void
   onMemoryDelete: (id: string) => void
-  onClose: () => void
 }) {
-  const [tab, setTab] = useState<'basics' | 'memory' | 'quota'>('basics')
-  const [shown, setShown] = useState(false)
-  useEffect(() => { const r = requestAnimationFrame(() => setShown(true)); return () => cancelAnimationFrame(r) }, [])
-  if (typeof document === "undefined") return null
+  const [tab, setTab] = useState<'general' | 'quota'>('general')
 
-  const tabs: { id: 'basics' | 'memory' | 'quota'; label: string }[] = [
-    { id: 'basics', label: '基础设定' },
-    { id: 'memory', label: '记忆' },
-    { id: 'quota', label: '使用额度' },
-  ]
+  const pill = (active: boolean) =>
+    cn("rounded-full px-3.5 py-1.5 text-[13px] transition-colors", active ? "bg-sidebar-accent text-foreground" : "text-muted-foreground hover:text-foreground")
 
-  return createPortal(
-    <div className="fixed inset-0 z-[90] flex items-end justify-center sm:items-center">
-      <div className={cn("absolute inset-0 bg-black/40 transition-opacity duration-200", shown ? "opacity-100" : "opacity-0")} onClick={onClose} />
-      <div className={cn(
-        "relative flex max-h-[88vh] w-full max-w-md flex-col overflow-hidden rounded-t-3xl bg-sidebar text-sidebar-foreground shadow-2xl transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] sm:rounded-3xl",
-        shown ? "translate-y-0 opacity-100" : "translate-y-6 opacity-0",
-      )}>
-        <div className="flex items-center justify-between px-5 pb-3 pt-[max(1.25rem,env(safe-area-inset-top))]">
-          <h3 className="text-[17px] font-semibold tracking-tight">设置</h3>
-          <button onClick={onClose} aria-label="关闭" className="rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground">
-            <X className="size-5" />
-          </button>
-        </div>
-        <div className="flex gap-1.5 px-5 pb-3">
-          {tabs.map(t => (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className={cn("rounded-full px-3.5 py-1.5 text-[13px] transition-colors", tab === t.id ? "bg-sidebar-accent text-foreground" : "text-muted-foreground hover:text-foreground")}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-        <div className="flex-1 overflow-y-auto pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-1">
-          {tab === 'basics' && <BasicsScreen />}
-          {tab === 'memory' && (
-            <MemoryScreen
-              memories={memories}
-              enabled={memoryEnabled}
-              onEnabledChange={onMemoryEnabledChange}
-              onAdd={onMemoryAdd}
-              onEdit={onMemoryEdit}
-              onDelete={onMemoryDelete}
-            />
-          )}
-          {tab === 'quota' && <QuotaScreen />}
-        </div>
+  return (
+    <div>
+      <div className="mb-1 flex gap-1.5 px-4">
+        <button onClick={() => setTab('general')} className={pill(tab === 'general')}>基础与记忆</button>
+        <button onClick={() => setTab('quota')} className={pill(tab === 'quota')}>使用额度</button>
       </div>
-    </div>,
-    document.body,
+
+      {tab === 'general' ? (
+        <div className="space-y-5 pt-2">
+          <BasicsScreen />
+          <div className="mx-4 border-t border-sidebar-border/50" />
+          <MemoryScreen
+            memories={memories}
+            enabled={memoryEnabled}
+            onEnabledChange={onMemoryEnabledChange}
+            onAdd={onMemoryAdd}
+            onEdit={onMemoryEdit}
+            onDelete={onMemoryDelete}
+          />
+        </div>
+      ) : (
+        <div className="pt-2">
+          <QuotaScreen />
+        </div>
+      )}
+    </div>
   )
 }
