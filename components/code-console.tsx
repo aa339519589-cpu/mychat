@@ -136,11 +136,6 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
     } catch {}
   }, [])
 
-  useEffect(() => {
-    const el = scrollRef.current
-    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
-  }, [messages, pendingPlan])
-
   async function loadRepos() {
     if (repos) return
     try { const res = await fetch("/api/github/repos"); const d = await res.json(); setRepos(d.repos ?? []) }
@@ -482,12 +477,8 @@ function Shell({ children, onExit, repo, login, onSwitchRepo, onGhMenu, ghMenu, 
 function MessageView({ m, login, streaming }: { m: CodeMessage; login: string; streaming: boolean }) {
   if (m.role === "user")
     return (
-      <div className="pt-2">
-        <div className="flex items-center gap-2">
-          <span style={{ color: ACCENT }}>──</span>
-          <span className="whitespace-pre-wrap break-words text-[13.5px] text-foreground">{m.content}</span>
-          <span className="min-w-[1rem] flex-1 border-t border-border" />
-        </div>
+      <div className="border-t border-b py-2.5" style={{ borderColor: ACCENT }}>
+        <span className="whitespace-pre-wrap break-words text-[13.5px] text-foreground">{m.content}</span>
       </div>
     )
   return (
