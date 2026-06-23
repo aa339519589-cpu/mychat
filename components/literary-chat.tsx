@@ -39,8 +39,6 @@ export function LiteraryChat() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
-  const [loadingStartTime, setLoadingStartTime] = useState<number | null>(null)
-  const [elapsedLoading, setElapsedLoading] = useState(0)
   const [codeOpen, setCodeOpen] = useState(false)
   const [memories, setMemories] = useState<Memory[]>([])
   const [memoryEnabled, setMemoryEnabledState] = useState(true)
@@ -80,16 +78,6 @@ export function LiteraryChat() {
     })
     return () => sub.subscription.unsubscribe()
   }, [])
-
-  // 计时：加载中时每秒更新经过的时间
-  useEffect(() => {
-    if (!isLoading) { setLoadingStartTime(null); setElapsedLoading(0); return }
-    setLoadingStartTime(Date.now())
-    const tick = setInterval(() => {
-      setElapsedLoading(e => e + 1)
-    }, 1000)
-    return () => clearInterval(tick)
-  }, [isLoading])
 
   // 登录后从云端加载记忆 + 对话；登出则清空
   useEffect(() => {
@@ -719,7 +707,7 @@ export function LiteraryChat() {
           )}
           {isLoading && (
             <div className="mx-auto max-w-[44rem] px-5 pb-4 text-sm italic md:px-10">
-              <span>({elapsedLoading < 60 ? `${elapsedLoading}秒` : `${Math.floor(elapsedLoading / 60)}分钟${elapsedLoading % 60 ? elapsedLoading % 60 + '秒' : ''}`} thinking)</span>
+              <span className="thinking-flow">正在{activeName}思考……</span>
             </div>
           )}
         </div>

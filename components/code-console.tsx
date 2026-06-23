@@ -119,6 +119,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
   const [pendingPlan, setPendingPlan] = useState<PlanAction[]>([])
   const [applying, setApplying] = useState(false)
   const [applyError, setApplyError] = useState<string | null>(null)
+  const [elapsed, setElapsed] = useState(0)
 
   const [overlay, setOverlay] = useState<Overlay>(null)
   const [ghMenu, setGhMenu] = useState(false)
@@ -135,6 +136,13 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       setAuto(localStorage.getItem("code_auto") === "1")
     } catch {}
   }, [])
+
+  // 计时：streaming 或 executing 时每秒递增
+  useEffect(() => {
+    if (!streaming && !applying) { setElapsed(0); return }
+    const tick = setInterval(() => setElapsed(e => e + 1), 1000)
+    return () => clearInterval(tick)
+  }, [streaming, applying])
 
   async function loadRepos() {
     if (repos) return
@@ -329,7 +337,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
                 className="flex items-center gap-1 rounded-lg px-3.5 py-1.5 text-[12px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
                 style={{ background: ACCENT }}>
                 {applying ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
-                {applying ? "执行中…" : "确认并执行"}
+                {applying ? `执行中… (${elapsed}秒 thinking)` : "确认并执行"}
               </button>
             </div>
             </div>
@@ -338,7 +346,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       )}
       {applying && auto && (
         <div className="border-t border-border bg-secondary/40 px-4 py-2.5 md:px-8">
-          <div className="mx-auto flex max-w-3xl items-center gap-2 text-[12px] text-muted-foreground"><Loader2 className="size-3.5 animate-spin" />自动执行中…</div>
+          <div className="mx-auto flex max-w-3xl items-center gap-2 text-[12px] text-muted-foreground"><Loader2 className="size-3.5 animate-spin" />自动执行中… ({elapsed}秒 thinking)</div>
         </div>
       )}
 
