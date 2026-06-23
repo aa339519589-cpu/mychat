@@ -3,10 +3,19 @@ import type { RawMsg, Attachment } from './types'
 import { send, upstreamError } from './stream'
 import { makeContentFilter } from './sanitize'
 
+function toBeijingTime(iso: string): string {
+  const d = new Date(new Date(iso).getTime() + 8 * 3600 * 1000)
+  const Y = d.getUTCFullYear()
+  const M = String(d.getUTCMonth() + 1).padStart(2, '0')
+  const D = String(d.getUTCDate()).padStart(2, '0')
+  const h = String(d.getUTCHours()).padStart(2, '0')
+  const m = String(d.getUTCMinutes()).padStart(2, '0')
+  return `${Y}-${M}-${D} ${h}:${m} 北京时间`
+}
+
 export function toOpenAI(msgs: RawMsg[]) {
   return msgs.map(m => {
-    // 给用户消息附加 ISO 8601 时间戳（系统元数据，供模型做时间感知，非用户输入）
-    const content = m.role === 'user' && m.ts ? `${m.content}\n\n[发送时间：${m.ts}]` : m.content
+    const content = m.role === 'user' && m.ts ? `${m.content}\n\n[发送时间：${toBeijingTime(m.ts)}]` : m.content
     if (!m.images?.length) return { role: m.role, content }
     return {
       role: m.role,
