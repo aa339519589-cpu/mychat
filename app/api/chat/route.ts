@@ -209,7 +209,6 @@ export async function POST(req: NextRequest) {
   let supabase: ToolContext['supabase'] = null
   let userId: string | null = null
   let memoryEnabled = true
-  let customSystemPrompt = ''
   try {
     supabase = await createClient()
     const { data } = await supabase.auth.getUser()
@@ -217,11 +216,10 @@ export async function POST(req: NextRequest) {
     if (userId) {
       const { data: prof } = await supabase
         .from('profiles')
-        .select('memory_enabled, custom_system_prompt')
+        .select('memory_enabled')
         .eq('user_id', userId).maybeSingle()
       if (prof) {
         memoryEnabled = prof.memory_enabled !== false
-        customSystemPrompt = ((prof.custom_system_prompt as string) ?? '').trim()
       }
     }
   } catch { supabase = null }
@@ -255,7 +253,7 @@ export async function POST(req: NextRequest) {
   // 关闭记忆时：既不挂记忆工具（上面已过滤），也不注入已存的记忆
   const effectiveMemories = memoryEnabled ? (memories as Memory[] | undefined) : undefined
   const url = chatCompletionsUrl(DEEPSEEK_BASE_URL)
-  const SYSTEM = buildSystem(effectiveMemories, { webSearch: flags.webSearch, memoryEnabled, project, deepResearch: !!deepResearch, customSystemPrompt: customSystemPrompt || undefined })
+  const SYSTEM = buildSystem(effectiveMemories, { webSearch: flags.webSearch, memoryEnabled, project, deepResearch: !!deepResearch })
   const openaiTools = toOpenAITools(tools)
 
   const stream = new ReadableStream({

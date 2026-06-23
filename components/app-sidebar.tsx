@@ -12,7 +12,7 @@ import {
   FileText, Loader2, FolderPlus,
   MoreHorizontal, Star, Pin, Lock,
 } from "lucide-react"
-import { fetchQuota, fetchCustomSystemPrompt, saveCustomSystemPrompt, type QuotaSnapshot } from "@/lib/db"
+import { fetchQuota, type QuotaSnapshot } from "@/lib/db"
 
 // 二级页面：除根视图（侧栏主体）外的可滑入全屏页面。设置＝真正的二级滑入页（带返回头）。
 type Screen = "settings" | "projects" | "artifacts" | "project-detail"
@@ -1077,76 +1077,6 @@ function ProjectMenu({ anchor, onClose, onRename, onDelete }: {
   )
 }
 
-// ── 基础设定（对话偏好，Claude.ai 风格的纯文本框 + 字数 + 保存/取消）──
-const BASICS_MAX = 2000
-function BasicsScreen() {
-  const [value, setValue] = useState('')
-  const [saved, setSaved] = useState('')   // 最近一次已保存的值，供"取消"回退 + 脏检查
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [justSaved, setJustSaved] = useState(false)
-
-  useEffect(() => {
-    fetchCustomSystemPrompt().then(v => { setValue(v); setSaved(v); setLoading(false) })
-  }, [])
-
-  const dirty = value !== saved
-
-  async function save() {
-    setSaving(true)
-    await saveCustomSystemPrompt(value)
-    setSaved(value)
-    setSaving(false)
-    setJustSaved(true)
-    setTimeout(() => setJustSaved(false), 2000)
-  }
-
-  if (loading) return <div className="px-4 py-8 text-center text-sm text-muted-foreground">加载中…</div>
-
-  return (
-    <div className="space-y-4 px-4">
-      <div>
-        <p className="text-[13px] font-medium text-foreground">对话偏好</p>
-        <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
-          告诉它你希望被如何回应，这些偏好会在每段对话里默默生效。
-        </p>
-      </div>
-
-      <div className="overflow-hidden rounded-2xl border border-sidebar-border bg-card transition-colors focus-within:border-sidebar-primary/55">
-        <textarea
-          value={value}
-          maxLength={BASICS_MAX}
-          onChange={e => setValue(e.target.value)}
-          placeholder="比如：「回复尽量简短」「优先中文资料」「多用表格和列表」「语气随和一点」"
-          className="block min-h-[120px] w-full resize-none bg-transparent px-4 py-3 text-[13px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/45"
-        />
-        <div className="flex justify-end px-4 pb-2.5">
-          <span className={cn("text-[11px] tabular-nums", value.length > BASICS_MAX * 0.9 ? "text-destructive/80" : "text-muted-foreground/55")}>
-            {value.length} / {BASICS_MAX}
-          </span>
-        </div>
-      </div>
-
-      <div className="flex gap-2.5">
-        <button
-          onClick={save}
-          disabled={saving || !dirty}
-          className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-sidebar-primary py-2.5 text-[13px] font-medium text-sidebar-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
-        >
-          {justSaved ? <><Check className="size-3.5" />已保存</> : saving ? '保存中…' : '保存'}
-        </button>
-        <button
-          onClick={() => setValue(saved)}
-          disabled={!dirty || saving}
-          className="flex flex-1 items-center justify-center rounded-xl border border-sidebar-border bg-sidebar-accent/40 py-2.5 text-[13px] text-muted-foreground transition-colors hover:bg-sidebar-accent/70 hover:text-foreground disabled:opacity-40"
-        >
-          取消
-        </button>
-      </div>
-    </div>
-  )
-}
-
 // ── 使用额度展示 ──
 function QuotaScreen() {
   const [quota, setQuota] = useState<QuotaSnapshot | null>(null)
@@ -1352,26 +1282,20 @@ function SettingsScreen({ memories, memoryEnabled, onMemoryEnabledChange, onMemo
   return (
     <div>
       <div className="mb-1 flex gap-1.5 px-4">
-        <button onClick={() => setTab('general')} className={pill(tab === 'general')}>基础与记忆</button>
+        <button onClick={() => setTab('general')} className={pill(tab === 'general')}>记忆</button>
         <button onClick={() => setTab('quota')} className={pill(tab === 'quota')}>使用额度</button>
       </div>
 
       {tab === 'general' ? (
-        <div className="flex flex-col h-[calc(100vh-7rem)] pt-2 gap-4">
-          <div className="flex-1 min-w-0 overflow-y-auto">
-            <MemoryScreen
-              memories={memories}
-              enabled={memoryEnabled}
-              onEnabledChange={onMemoryEnabledChange}
-              onAdd={onMemoryAdd}
-              onEdit={onMemoryEdit}
-              onDelete={onMemoryDelete}
-            />
-          </div>
-          <div className="mx-4 border-t border-sidebar-border/50" />
-          <div className="shrink-0 pb-2">
-            <BasicsScreen />
-          </div>
+        <div className="pt-2">
+          <MemoryScreen
+            memories={memories}
+            enabled={memoryEnabled}
+            onEnabledChange={onMemoryEnabledChange}
+            onAdd={onMemoryAdd}
+            onEdit={onMemoryEdit}
+            onDelete={onMemoryDelete}
+          />
         </div>
       ) : (
         <div className="pt-2">

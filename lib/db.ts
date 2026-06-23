@@ -21,9 +21,9 @@ export function lastExcerpt(msgs: Message[]): string {
   return ""
 }
 
-// ───────────── 用户档案（记忆开关 / 自定义提示词 / 额度） ─────────────
+// ───────────── 用户档案（记忆开关 / 额度） ─────────────
 
-export type Profile = { memoryEnabled: boolean; customSystemPrompt: string }
+export type Profile = { memoryEnabled: boolean }
 
 export type QuotaSnapshot = {
   tokens5h: number
@@ -36,29 +36,10 @@ export type QuotaSnapshot = {
 // 读取当前登录用户的档案；没有行就返回默认值
 export async function fetchProfile(): Promise<Profile> {
   const supabase = createClient()
-  const { data } = await supabase.from("profiles").select("memory_enabled, custom_system_prompt").maybeSingle()
+  const { data } = await supabase.from("profiles").select("memory_enabled").maybeSingle()
   return {
     memoryEnabled: data?.memory_enabled ?? true,
-    customSystemPrompt: (data?.custom_system_prompt as string) ?? '',
   }
-}
-
-// 读取当前用户的自定义系统提示词
-export async function fetchCustomSystemPrompt(): Promise<string> {
-  const supabase = createClient()
-  const { data } = await supabase.from("profiles").select("custom_system_prompt").maybeSingle()
-  return (data?.custom_system_prompt as string) ?? ''
-}
-
-// 保存自定义系统提示词（从 auth 上下文取 user_id，不需要传参）
-export async function saveCustomSystemPrompt(prompt: string): Promise<void> {
-  const supabase = createClient()
-  const { data: auth } = await supabase.auth.getUser()
-  if (!auth.user) return
-  const { error } = await supabase
-    .from("profiles")
-    .upsert({ user_id: auth.user.id, custom_system_prompt: prompt }, { onConflict: "user_id" })
-  if (error) console.error("saveCustomSystemPrompt", error)
 }
 
 // 读取当前用户的 Token 使用额度快照
