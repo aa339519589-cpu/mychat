@@ -27,6 +27,7 @@ export type ToolFlags = {
   loggedIn: boolean       // 已登录 → 记忆类工具可用
   webSearch: boolean      // 用户开启联网开关 → 搜索工具可用
   memoryEnabled: boolean  // 用户开启记忆总开关 → 记忆类工具可用
+  projectId?: string | null  // 有值 = 当前在项目内
 }
 
 // 一个工具的完整定义

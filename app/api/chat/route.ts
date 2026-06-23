@@ -118,7 +118,7 @@ export async function POST(req: NextRequest) {
     usingBalance = q.usingBalance ?? false
   }
 
-  const flags = { loggedIn: !!userId, webSearch: !!webSearch, memoryEnabled }
+  const flags = { loggedIn: !!userId, webSearch: !!webSearch, memoryEnabled, projectId: project?.id ?? null }
   const tools = activeTools(flags)
   const ctx: ToolContext = { supabase, userId, projectId: project?.id ?? null }
 

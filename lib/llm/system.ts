@@ -165,15 +165,25 @@ type SystemFlags = { webSearch?: boolean; memoryEnabled?: boolean; project?: Pro
 // 拼装系统提示词：基础人设 + 已记住的用户信息（带 id 供模型修改/删除）+ 联网提示
 export function buildSystem(memories?: Memory[], flags?: SystemFlags): string {
   let system = BASE_SYSTEM
+  const isInProject = !!flags?.project
+
+  // 明确告诉模型当前对话位置
+  if (isInProject) {
+    system += `\n\n【当前位置】你现在在项目内对话。此时你拥有项目级记忆工具（remember_project / update_project_memory / forget_project），用来管理只在本项目内积累的记忆。`
+  } else {
+    system += `\n\n【当前位置】你现在在主聊天对话。此时你拥有全局记忆工具（remember / update_memory / forget），用来管理全局的长期记忆。`
+  }
+
   // 记忆总开关关闭：明确告诉模型本次没有任何记忆工具，不要尝试记忆或提及
   if (flags?.memoryEnabled === false) {
-    system += `\n\n【本次已关闭记忆功能】你没有任何记忆工具（remember / update_memory / forget 均不可用），也看不到任何既往记忆。不要尝试记忆、不要提及"记住"，正常对话即可。`
-  } else if (memories?.length) {
+    system += `\n\n【本次已关闭记忆功能】你没有任何记忆工具，也看不到任何既往记忆。不要尝试记忆、不要提及"记住"，正常对话即可。`
+  } else if (!isInProject && memories?.length) {
+    // 主聊天的全局记忆
     const memBlock = memories.map(m => `<memory id="${m.id}"${m.timestamp ? ` updated="${m.timestamp}"` : ''}>${m.content}</memory>`).join('\n')
     system += `
 
-## 你已经记住的关于这位用户的信息
-每条记忆的 updated 属性是它最后创建/更新的 ISO 时间（缺失则视为时间未知）。请据此具备时间感：
+## 你已经记住的关于这位用户的信息（全局记忆）
+这是你在主聊天积累的全局记忆，与项目记忆完全分隔。每条记忆的 updated 属性是它最后创建/更新的 ISO 时间（缺失则视为时间未知）。请据此具备时间感：
 - 同一主题若有多条记忆，以 updated 最新的为准；明显冲突时优先采信较新的。
 - 某条信息已久未更新（例如超过半年）且与近期对话不符时，酌情用 update_memory 更新，或用 forget 清理过时内容。
 - 在回答中引用记忆时可自然带出时间感（如"你上次提到这个大概是三个月前"），但不要机械复述时间戳。
@@ -191,7 +201,7 @@ ${memBlock}`
     if (instr) parts.push(`【项目设定 / 人设（背景参考）】\n${instr}`)
     if (p.projectMemories?.length) {
       const memBlock = p.projectMemories.map(m => `- ${m.content}`).join('\n')
-      parts.push(`【本项目记忆（仅在此项目内积累的、关于你的重要信息；与全局记忆相互独立）】\n${memBlock}`)
+      parts.push(`【本项目的积累记忆（仅在此项目内有效，与全局记忆完全独立）】\n${memBlock}`)
     }
     const files = (p.files ?? []).filter(f => f.content?.trim())
     if (files.length) {
@@ -199,7 +209,11 @@ ${memBlock}`
       parts.push(`【项目参考资料】（共 ${files.length} 份，可据此参考、必要时注明出处文件名）\n\n${blocks.join('\n\n')}`)
     }
     if (parts.length) {
-      system += `\n\n## 当前项目背景\n你正在某个「项目」内对话。下面是该项目的背景设定与参考资料，请优先理解并参考它们来贴合当前语境。\n注意：这些是**背景参考**而非硬性边界。当用户提出范围之外的合理请求时（例如换个话题、写点别的），照常灵活满足即可，**不要**机械地以"这里只能做某事"为由拒绝。资料与人设用来帮助你更好地回应，而不是用来限制你能回应的范围。\n\n${parts.join('\n\n')}`
+      system += `\n\n## 当前项目背景
+你正在某个「项目」内对话。下面是该项目的背景设定、项目专属记忆与参考资料，请优先理解并参考它们来贴合当前语境。
+注意：这些是**背景参考**而非硬性边界。当用户提出范围之外的合理请求时（例如换个话题、写点别的），照常灵活满足即可，**不要**机械地以"这里只能做某事"为由拒绝。资料与人设用来帮助你更好地回应，而不是用来限制你能回应的范围。
+
+${parts.join('\n\n')}`
     }
   }
   return system
