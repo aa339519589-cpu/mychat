@@ -25,23 +25,28 @@ function tokenMultiplier(model: string, isThinking: boolean) {
 
 // 发送前置检查：当前窗口内加权用量是否已达上限。
 // fail-open：任何读取异常（含额度列尚未建表）都放行，绝不因后台问题错杀正常发送。
-async function checkQuotaExceeded(supabase: any, userId: string): Promise<{ exceeded: boolean; which?: '5h' | '7d' }> {
+async function checkQuotaExceeded(supabase: any, userId: string): Promise<{ exceeded: boolean; which?: '5h' | '7d'; usingBalance?: boolean }> {
   if (!supabase || !userId) return { exceeded: false }
   try {
     const { data, error } = await supabase
       .from('profiles')
-      .select('tokens_5h, window_5h_start, tokens_7d, window_7d_start')
+      .select('tokens_5h, window_5h_start, tokens_7d, window_7d_start, balance')
       .eq('user_id', userId).maybeSingle()
     if (error || !data) return { exceeded: false }
     const now = Date.now()
     const start5h = new Date((data.window_5h_start as string) || 0).getTime()
     const start7d = new Date((data.window_7d_start as string) || 0).getTime()
-    // 窗口已过期 → 视为已清零（不阻断）
+    // 窗口已过期 → 视为已清零
     const t5h = now - start5h >= MS_5H ? 0 : ((data.tokens_5h as number) ?? 0)
     const t7d = now - start7d >= MS_7D ? 0 : ((data.tokens_7d as number) ?? 0)
-    if (t5h >= QUOTA_LIMIT_5H) return { exceeded: true, which: '5h' }
-    if (t7d >= QUOTA_LIMIT_7D) return { exceeded: true, which: '7d' }
-    return { exceeded: false }
+    const windowExceeded = t5h >= QUOTA_LIMIT_5H || t7d >= QUOTA_LIMIT_7D
+    if (!windowExceeded) return { exceeded: false }
+    // 窗口超限：看余额能不能兜底
+    const balance = (data.balance as number) ?? 0
+    if (balance > 0) return { exceeded: false, usingBalance: true }
+    // 余额也耗尽
+    const which: '5h' | '7d' = t5h >= QUOTA_LIMIT_5H ? '5h' : '7d'
+    return { exceeded: true, which }
   } catch {
     return { exceeded: false }
   }
@@ -51,14 +56,15 @@ async function checkQuotaExceeded(supabase: any, userId: string): Promise<{ exce
 // 关键修复：①每条失败路径都显式 console.error（原先 catch{} 静默吞错，是"额度不同步"看不到病因的根源）
 //           ②档案行不存在时先 upsert 建行，否则乐观锁 .eq(quota_version,0) 永远匹配 0 行、写不进去
 //           ③窗口为 NULL（首条消息）→ start=0 → 判定过期 → 赋当前时间，即"首条消息起算"倒计时
-async function addQuotaUsage(supabase: any, userId: string, rawTokens: number, model: string, isThinking: boolean) {
+// usingBalance=true 时：时间窗口继续累计（记录真实用量），同时从余额扣除
+async function addQuotaUsage(supabase: any, userId: string, rawTokens: number, model: string, isThinking: boolean, usingBalance = false) {
   if (!supabase || !userId || rawTokens <= 0) return
   const weighted = Math.round(rawTokens * tokenMultiplier(model, isThinking))
   for (let retry = 0; retry < 3; retry++) {
     try {
       const { data, error: selErr } = await supabase
         .from('profiles')
-        .select('tokens_5h, window_5h_start, tokens_7d, window_7d_start, quota_version')
+        .select('tokens_5h, window_5h_start, tokens_7d, window_7d_start, quota_version, balance')
         .eq('user_id', userId).maybeSingle()
       if (selErr) {
         console.error('[quota] 读取档案失败（额度列可能尚未建表，见 supabase/quota.sql）:', selErr.message)
@@ -83,15 +89,21 @@ async function addQuotaUsage(supabase: any, userId: string, rawTokens: number, m
       const newTokens7d = (now - start7d >= MS_7D ? 0 : ((data.tokens_7d as number) ?? 0)) + weighted
       const newWindow5h = now - start5h >= MS_5H ? nowIso : ((data.window_5h_start as string) ?? nowIso)
       const newWindow7d = now - start7d >= MS_7D ? nowIso : ((data.window_7d_start as string) ?? nowIso)
+      const updatePayload: Record<string, unknown> = {
+        tokens_5h: newTokens5h,
+        window_5h_start: newWindow5h,
+        tokens_7d: newTokens7d,
+        window_7d_start: newWindow7d,
+        quota_version: oldVersion + 1,
+      }
+      if (usingBalance) {
+        const currentBalance = (data.balance as number) ?? 0
+        // 允许轻微为负（pre-check 到扣款之间的时间差），下次 pre-check 会检测到 ≤0 并拦截
+        updatePayload.balance = Math.max(0, currentBalance - weighted)
+      }
       const { data: updated, error: updErr } = await supabase
         .from('profiles')
-        .update({
-          tokens_5h: newTokens5h,
-          window_5h_start: newWindow5h,
-          tokens_7d: newTokens7d,
-          window_7d_start: newWindow7d,
-          quota_version: oldVersion + 1,
-        })
+        .update(updatePayload)
         .eq('user_id', userId)
         .eq('quota_version', oldVersion)
         .select('quota_version')
@@ -167,15 +179,16 @@ export async function POST(req: NextRequest) {
     }
   } catch { supabase = null }
 
-  // 额度达限拦截：超限直接 429，前端 !res.ok 链路会把 error 文案显示为错误气泡
+  // 额度达限拦截：时间窗口超限时先看余额；余额也耗尽才返回 429
+  let usingBalance = false
   if (userId && supabase) {
     const q = await checkQuotaExceeded(supabase, userId)
     if (q.exceeded) {
-      const msg = q.which === '5h'
-        ? '5 小时用量已达上限，先歇一会儿吧。可在「设置 · 使用额度」查看多久后重置。'
-        : '7 天用量已达上限，先歇一会儿吧。可在「设置 · 使用额度」查看多久后重置。'
+      const window = q.which === '5h' ? '5 小时' : '7 天'
+      const msg = `${window}用量已达上限，余额也已耗尽，暂时无法发送消息。可在「设置 · 使用额度」充值，或等待窗口重置后继续。`
       return new Response(JSON.stringify({ error: msg }), { status: 429, headers: { 'Content-Type': 'application/json' } })
     }
+    usingBalance = q.usingBalance ?? false
   }
 
   const flags = { loggedIn: !!userId, webSearch: !!webSearch, memoryEnabled }
@@ -222,7 +235,7 @@ export async function POST(req: NextRequest) {
       } finally {
         // 写额度必须在关闭响应前完成，确保同步性
         if (userId && supabase) {
-          await addQuotaUsage(supabase, userId, totalTokensUsed, model, thinking)
+          await addQuotaUsage(supabase, userId, totalTokensUsed, model, thinking, usingBalance)
         }
         done(controller)
       }
