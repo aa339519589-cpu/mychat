@@ -2,7 +2,7 @@
 
 import { useRef, useState, useEffect } from "react"
 import { cn } from "@/lib/utils"
-import { ChevronDown, ChevronLeft, X, Loader2, Plus, Paperclip, ImageIcon, FileText, Globe, ArrowUp, ExternalLink, LogOut, Square, CornerUpLeft, Camera, Check, Microscope } from "lucide-react"
+import { ChevronDown, X, Loader2, Plus, ImageIcon, FileText, Globe, ArrowUp, ExternalLink, LogOut, Square, CornerUpLeft, Camera, Check, Microscope } from "lucide-react"
 import { TIERS, type Tier } from "@/lib/chat-data"
 import { prepareFile, type AttachedFile } from "@/lib/file-extract"
 
@@ -47,7 +47,6 @@ export function ChatInput({
   const [value, setValue] = useState("")
   const ref = useRef<HTMLTextAreaElement>(null)
   const [plusOpen, setPlusOpen] = useState(false)
-  const [attachOpen, setAttachOpen] = useState(false)
   const [images, setImages] = useState<string[]>([])
   const [files, setFiles] = useState<AttachedFile[]>([])
   const [fileLoading, setFileLoading] = useState(false)
@@ -96,7 +95,6 @@ export function ChatInput({
     function handleClickOutside(e: MouseEvent) {
       if (plusMenuRef.current && !plusMenuRef.current.contains(e.target as Node)) {
         setPlusOpen(false)
-        setAttachOpen(false)
       }
     }
     document.addEventListener("mousedown", handleClickOutside)
@@ -320,22 +318,9 @@ export function ChatInput({
         <div ref={plusMenuRef} className="relative mb-0.5 shrink-0">
           {plusOpen && (
             <div className="absolute bottom-full left-0 mb-2 min-w-[9.5rem] overflow-hidden rounded-2xl border border-border/60 bg-card shadow-lg">
-              {attachOpen ? (
-                <>
-                  <button
-                    onClick={() => setAttachOpen(false)}
-                    className="flex w-full items-center gap-1.5 px-4 py-2 text-[12px] text-muted-foreground/70 transition-colors hover:bg-secondary/60"
-                  >
-                    <ChevronLeft className="size-3.5" />返回
-                  </button>
-                  <div className="border-t border-border/40" />
-                  <PlusItem icon={<ImageIcon className="size-4" />} label="照片图库" onClick={() => { setPlusOpen(false); setAttachOpen(false); imageInputRef.current?.click() }} />
-                  <PlusItem icon={<Camera className="size-4" />} label="拍照" onClick={() => { setPlusOpen(false); setAttachOpen(false); cameraInputRef.current?.click() }} />
-                  <PlusItem icon={<FileText className="size-4" />} label="选择文件" onClick={() => { setPlusOpen(false); setAttachOpen(false); fileInputRef.current?.click() }} />
-                </>
-              ) : (
-              <>
-              <PlusItem icon={<Paperclip className="size-4" />} label="添加文件或照片" onClick={() => setAttachOpen(true)} />
+              <PlusItem icon={<ImageIcon className="size-4" />} label="照片图库" onClick={() => { setPlusOpen(false); imageInputRef.current?.click() }} />
+              <PlusItem icon={<Camera className="size-4" />} label="拍照" onClick={() => { setPlusOpen(false); cameraInputRef.current?.click() }} />
+              <PlusItem icon={<FileText className="size-4" />} label="选择文件" onClick={() => { setPlusOpen(false); fileInputRef.current?.click() }} />
               <div className="border-t border-border/40" />
               <button
                 onClick={() => onWebSearchChange(!webSearch)}
@@ -377,12 +362,10 @@ export function ChatInput({
                   </span>
                 )}
               </button>
-              </>
-              )}
             </div>
           )}
           <button
-            onClick={() => { setPlusOpen(v => !v); setAttachOpen(false) }}
+            onClick={() => setPlusOpen(v => !v)}
             aria-label="添加"
             className={cn(
               "relative flex size-8 items-center justify-center rounded-full transition-colors",

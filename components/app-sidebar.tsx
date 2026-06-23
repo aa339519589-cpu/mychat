@@ -9,19 +9,17 @@ import { cn } from "@/lib/utils"
 import {
   Feather, Plus, ChevronLeft, ChevronRight, Trash2, Brain, LogOut,
   Settings, Folder, Shapes, Pencil, Check, X, PanelLeft,
-  FileText, Upload, MessageCircle, Loader2, FolderPlus,
-  MoreHorizontal, Star, Pin, SlidersHorizontal, BarChart2,
+  FileText, Loader2, FolderPlus,
+  MoreHorizontal, Star, Pin, Lock,
 } from "lucide-react"
 import { fetchQuota, fetchCustomSystemPrompt, saveCustomSystemPrompt, type QuotaSnapshot } from "@/lib/db"
 
-// 二级页面：除根视图（侧栏主体）外的所有可滑入页面
-type Screen = "settings" | "memory" | "projects" | "artifacts" | "project-detail" | "basics" | "quota"
+// 二级页面：除根视图（侧栏主体）外的可滑入页面。设置改走浮层 modal，不再占用滑入栈。
+type Screen = "projects" | "artifacts" | "project-detail"
 
-// 层级 z：从根进入的为一级(20)，从设置再进入的为二级(30)，均高于根面板(10)。
-// 同级页面从不同时出现，静态 z 即可，退场时仍盖在被揭开的页面之上，滑出动画才完整。
+// 层级 z：项目/作品为一级(20)，项目详情为二级(30)，均高于根面板(10)。
 const Z: Record<Screen, number> = {
-  settings: 20, projects: 20, artifacts: 20,
-  memory: 30, "project-detail": 30, "basics": 30, "quota": 30,
+  projects: 20, artifacts: 20, "project-detail": 30,
 }
 
 // 置顶的排在最前；同组内保持原顺序（V8 的 sort 稳定）
@@ -67,14 +65,17 @@ export function AppSidebar({
   const { conversations, activeId, onDelete, userEmail, onLogout } = props
   const [stack, setStack] = useState<Screen[]>([])
   const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)                 // 设置浮层
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
   const [actionConvId, setActionConvId] = useState<string | null>(null)   // 打开"更多菜单"的会话
   const [actionAnchor, setActionAnchor] = useState<Anchor | null>(null)   // ⋯ 按钮的位置
   const [actionProjectPicker, setActionProjectPicker] = useState(false)   // 菜单内"添加进项目"二级
   const [renamingId, setRenamingId] = useState<string | null>(null)       // 正在改名的会话
+  const [projectMenuAnchor, setProjectMenuAnchor] = useState<Anchor | null>(null) // 项目详情 ⋯ 菜单位置
+  const [projectRenaming, setProjectRenaming] = useState(false)           // 项目详情顶部就地改名
 
   // 抽屉收起后复位到根视图
-  useEffect(() => { if (!visible) { setStack([]); setUserMenuOpen(false); setSelectedProjectId(null); setActionConvId(null); setRenamingId(null) } }, [visible])
+  useEffect(() => { if (!visible) { setStack([]); setUserMenuOpen(false); setSettingsOpen(false); setSelectedProjectId(null); setActionConvId(null); setRenamingId(null); setProjectMenuAnchor(null); setProjectRenaming(false) } }, [visible])
 
   const push = (s: Screen) => { setUserMenuOpen(false); setStack(prev => [...prev, s]) }
   const pop = () => setStack(prev => prev.slice(0, -1))
@@ -161,7 +162,7 @@ export function AppSidebar({
         <div className="absolute inset-0 z-30">
           <button className="absolute inset-0 cursor-default" aria-label="关闭菜单" onClick={() => setUserMenuOpen(false)} />
           <div className="absolute bottom-[calc(4rem+env(safe-area-inset-bottom,0px))] left-3 right-3 overflow-hidden rounded-2xl border border-sidebar-border bg-card shadow-lg">
-            <button onClick={() => push("settings")} className="flex w-full items-center gap-3 px-4 py-3 text-sm text-foreground transition-colors hover:bg-sidebar-accent/60">
+            <button onClick={() => { setUserMenuOpen(false); setSettingsOpen(true) }} className="flex w-full items-center gap-3 px-4 py-3 text-sm text-foreground transition-colors hover:bg-sidebar-accent/60">
               <Settings className="size-4 text-muted-foreground" />设置
             </button>
             <div className="border-t border-sidebar-border/50" />
@@ -176,33 +177,6 @@ export function AppSidebar({
 
   const screens = (
     <>
-      <ScreenPanel style={screenStyle("settings")} title="设置" onBack={pop}>
-        <div className="space-y-1 px-3">
-          <MenuRow icon={<Brain className="size-4" />} label="记忆" hint={`${props.memories.length} 条`} onClick={() => push("memory")} />
-          <MenuRow icon={<BarChart2 className="size-4" />} label="使用额度" onClick={() => push("quota")} />
-          <MenuRow icon={<SlidersHorizontal className="size-4" />} label="基础设定" onClick={() => push("basics")} />
-        </div>
-      </ScreenPanel>
-
-      <ScreenPanel style={screenStyle("memory")} title="记忆" onBack={pop}>
-        <MemoryScreen
-          memories={props.memories}
-          enabled={props.memoryEnabled}
-          onEnabledChange={props.onMemoryEnabledChange}
-          onAdd={props.onMemoryAdd}
-          onEdit={props.onMemoryEdit}
-          onDelete={props.onMemoryDelete}
-        />
-      </ScreenPanel>
-
-      <ScreenPanel style={screenStyle("quota")} title="使用额度" onBack={pop}>
-        <QuotaScreen />
-      </ScreenPanel>
-
-      <ScreenPanel style={screenStyle("basics")} title="基础设定" onBack={pop}>
-        <BasicsScreen />
-      </ScreenPanel>
-
       <ScreenPanel style={screenStyle("projects")} title="项目" onBack={pop}>
         <ProjectsScreen
           projects={props.projects}
@@ -213,7 +187,28 @@ export function AppSidebar({
         />
       </ScreenPanel>
 
-      <ScreenPanel style={screenStyle("project-detail")} title={selectedProject?.name ?? "项目"} onBack={pop}>
+      <ScreenPanel
+        style={screenStyle("project-detail")}
+        onBack={pop}
+        title={
+          projectRenaming && selectedProject ? (
+            <ProjectTitleEditor
+              name={selectedProject.name}
+              onSave={(n) => { props.onProjectRename(selectedProject.id, n); setProjectRenaming(false) }}
+              onCancel={() => setProjectRenaming(false)}
+            />
+          ) : (selectedProject?.name ?? "项目")
+        }
+        action={selectedProject && !projectRenaming ? (
+          <button
+            aria-label="项目操作"
+            onClick={e => { const r = e.currentTarget.getBoundingClientRect(); setProjectMenuAnchor({ top: r.top, bottom: r.bottom, right: r.right }) }}
+            className="rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground"
+          >
+            <MoreHorizontal className="size-5" />
+          </button>
+        ) : undefined}
+      >
         {selectedProject && (
           <ProjectDetailScreen
             key={selectedProject.id}
@@ -221,9 +216,7 @@ export function AppSidebar({
             conversations={conversations}
             onOpenChat={handleSelect}
             onNewChat={props.onNewInProject}
-            onRename={props.onProjectRename}
             onInstructions={props.onProjectInstructions}
-            onDeleteProject={(id) => { props.onProjectDelete(id); pop() }}
             onLoadFiles={props.onLoadProjectFiles}
             onAddFile={props.onAddProjectFile}
             onDeleteFile={props.onDeleteProjectFile}
@@ -262,6 +255,29 @@ export function AppSidebar({
     />
   )
 
+  // 项目「更多菜单」：锚定在项目详情顶部 ⋯ 旁，重命名 / 删除
+  const projectMenu = selectedProject && projectMenuAnchor && (
+    <ProjectMenu
+      anchor={projectMenuAnchor}
+      onClose={() => setProjectMenuAnchor(null)}
+      onRename={() => { setProjectRenaming(true); setProjectMenuAnchor(null) }}
+      onDelete={() => { props.onProjectDelete(selectedProject.id); setProjectMenuAnchor(null); pop() }}
+    />
+  )
+
+  // 设置浮层：基础设定 / 记忆 / 使用额度 三个标签合并到一个 modal
+  const settingsModal = settingsOpen && (
+    <SettingsModal
+      memories={props.memories}
+      memoryEnabled={props.memoryEnabled}
+      onMemoryEnabledChange={props.onMemoryEnabledChange}
+      onMemoryAdd={props.onMemoryAdd}
+      onMemoryEdit={props.onMemoryEdit}
+      onMemoryDelete={props.onMemoryDelete}
+      onClose={() => setSettingsOpen(false)}
+    />
+  )
+
   // 手机：一级半屏面板（滑入/滑出）+ 二级整屏页面（相对外层 fixed 容器铺满）
   if (mobile) {
     return (
@@ -274,6 +290,8 @@ export function AppSidebar({
         </div>
         {screens}
         {convMenu}
+        {projectMenu}
+        {settingsModal}
       </>
     )
   }
@@ -284,24 +302,32 @@ export function AppSidebar({
       {rootContent}
       {screens}
       {convMenu}
+      {projectMenu}
+      {settingsModal}
     </aside>
   )
 }
 
-// ── 二级页面外壳：统一返回头 + 滑动动画 ──
-function ScreenPanel({ style, title, onBack, children }: {
+// ── 二级页面外壳：统一返回头（可带右侧操作）+ 滑动动画 ──
+function ScreenPanel({ style, title, onBack, action, children }: {
   style: React.CSSProperties
-  title: string
+  title: React.ReactNode
   onBack: () => void
+  action?: React.ReactNode
   children: React.ReactNode
 }) {
   return (
     <div className="absolute inset-0 flex flex-col bg-sidebar transition-transform duration-[360ms] ease-[cubic-bezier(0.32,0.72,0,1)]" style={style}>
       <div className="flex shrink-0 items-center gap-2 px-4 pb-4 pt-[max(1rem,env(safe-area-inset-top))]">
-        <button onClick={onBack} className="-ml-1 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground" aria-label="返回">
+        <button onClick={onBack} className="-ml-1 shrink-0 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground" aria-label="返回">
           <ChevronLeft className="size-5" />
         </button>
-        <h3 className="text-[17px] font-semibold tracking-tight">{title}</h3>
+        <div className="min-w-0 flex-1">
+          {typeof title === "string"
+            ? <h3 className="truncate text-[17px] font-semibold tracking-tight">{title}</h3>
+            : title}
+        </div>
+        {action}
       </div>
       <div className="flex-1 overflow-y-auto pb-[max(1.5rem,env(safe-area-inset-bottom))]">{children}</div>
     </div>
@@ -312,17 +338,6 @@ function NavRow({ icon, label, onClick }: { icon: React.ReactNode; label: string
   return (
     <button onClick={onClick} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-sm font-medium text-sidebar-foreground transition-colors hover:bg-sidebar-accent">
       <span className="text-muted-foreground">{icon}</span>{label}
-    </button>
-  )
-}
-
-function MenuRow({ icon, label, hint, onClick }: { icon: React.ReactNode; label: string; hint?: string; onClick: () => void }) {
-  return (
-    <button onClick={onClick} className="flex w-full items-center gap-3 rounded-2xl px-4 py-3.5 text-left transition-colors hover:bg-sidebar-accent/60">
-      <span className="text-muted-foreground">{icon}</span>
-      <span className="flex-1 text-sm text-foreground">{label}</span>
-      {hint && <span className="text-[12px] text-muted-foreground">{hint}</span>}
-      <ChevronRight className="size-4 text-muted-foreground/50" />
     </button>
   )
 }
@@ -551,19 +566,18 @@ function ProjectsScreen({ projects, conversations, onCreate, onOpen, onDelete }:
   )
 }
 
-// ── 项目详情（二级页面内容）：指令/人设 + 对谈 / 资料 ──
+// ── 项目详情＝工作台（单页纵向滚动）：起新对谈 + 对谈列表 + 记忆/指令/资料分组 ──
+// 重命名、删除收进顶部 ⋯ 菜单（由 ScreenPanel 的 action 触发），此处不再出现管理型大按钮。
 function ProjectDetailScreen({
   project, conversations, onOpenChat, onNewChat,
-  onRename, onInstructions, onDeleteProject, onLoadFiles, onAddFile, onDeleteFile,
+  onInstructions, onLoadFiles, onAddFile, onDeleteFile,
   renamingId, onOpenConvMenu, onRenameConversation, onStopRename,
 }: {
   project: Project
   conversations: Conversation[]
   onOpenChat: (id: string) => void
   onNewChat: (projectId: string) => void
-  onRename: (id: string, name: string) => void
   onInstructions: (id: string, instructions: string) => void
-  onDeleteProject: (id: string) => void
   onLoadFiles: (projectId: string) => Promise<ProjectFile[]>
   onAddFile: (projectId: string, file: File) => Promise<ProjectFile | null>
   onDeleteFile: (fileId: string) => void
@@ -572,62 +586,99 @@ function ProjectDetailScreen({
   onRenameConversation: (id: string, title: string) => void
   onStopRename: () => void
 }) {
-  const [tab, setTab] = useState<"chats" | "sources">("chats")
-  const chats = conversations.filter(c => c.projectId === project.id && !c.draft)
+  const chats = sortConvs(conversations.filter(c => c.projectId === project.id && !c.draft))
 
   return (
-    <div className="px-4">
-      <InstructionsCard value={project.instructions} onSave={v => onInstructions(project.id, v)} />
+    <div className="space-y-5 px-4">
+      {/* 起新对谈：本项目的主要入口 */}
+      <button
+        onClick={() => onNewChat(project.id)}
+        className="flex w-full items-center gap-2.5 rounded-2xl bg-sidebar-primary/12 px-4 py-3 text-sm font-medium text-foreground transition-colors hover:bg-sidebar-primary/20 active:scale-[0.99]"
+      >
+        <Plus className="size-4 text-sidebar-primary" />在此项目中起新对谈
+      </button>
 
-      <div className="mb-3 mt-4 flex gap-2">
-        <TabButton active={tab === "chats"} onClick={() => setTab("chats")}>对谈{chats.length > 0 ? ` ${chats.length}` : ""}</TabButton>
-        <TabButton active={tab === "sources"} onClick={() => setTab("sources")}>资料</TabButton>
-      </div>
+      {/* 对谈列表 */}
+      <section>
+        <p className="mb-2 px-1 text-[11px] tracking-[0.18em] text-muted-foreground/70">本项目对谈{chats.length > 0 ? ` · ${chats.length}` : ""}</p>
+        {chats.length === 0 ? (
+          <p className="rounded-2xl bg-sidebar-accent/25 px-4 py-6 text-center text-[13px] italic text-muted-foreground/70">还没有对谈，从上方开始第一段</p>
+        ) : (
+          <div className="space-y-1">
+            {chats.map(c => (
+              <ConversationRow
+                key={c.id}
+                c={c}
+                isActive={false}
+                renaming={renamingId === c.id}
+                onSelect={onOpenChat}
+                onOpenMenu={onOpenConvMenu}
+                onCommitRename={(id, t) => { onRenameConversation(id, t); onStopRename() }}
+                onCancelRename={onStopRename}
+              />
+            ))}
+          </div>
+        )}
+      </section>
 
-      {tab === "chats" ? (
-        <ProjectChatsTab
-          project={project} chats={chats}
-          onOpenChat={onOpenChat} onNewChat={onNewChat}
-          renamingId={renamingId} onOpenConvMenu={onOpenConvMenu}
-          onRenameConversation={onRenameConversation} onStopRename={onStopRename}
-        />
-      ) : (
-        <ProjectSourcesTab project={project} onLoadFiles={onLoadFiles} onAddFile={onAddFile} onDeleteFile={onDeleteFile} />
-      )}
-
-      <div className="mt-8 space-y-1 border-t border-sidebar-border/50 pt-4">
-        <RenameRow project={project} onRename={onRename} />
-        <button onClick={() => onDeleteProject(project.id)} className="flex w-full items-center justify-center gap-1.5 rounded-2xl py-2.5 text-[13px] text-muted-foreground transition-colors hover:text-destructive">
-          <Trash2 className="size-3.5" />删除此项目
-        </button>
+      {/* 工作台分组卡：记忆 / 项目指令 / 资料 —— 一张卡内三段，靠分隔线区隔（学 Claude 项目页） */}
+      <div className="divide-y divide-sidebar-border/60 overflow-hidden rounded-2xl border border-sidebar-border bg-sidebar-accent/25">
+        <ProjectMemorySection />
+        <ProjectInstructionsSection value={project.instructions} onSave={v => onInstructions(project.id, v)} />
+        <ProjectFilesSection project={project} onLoadFiles={onLoadFiles} onAddFile={onAddFile} onDeleteFile={onDeleteFile} />
       </div>
     </div>
   )
 }
 
-function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+// 顶部就地改名输入框（替换 ScreenPanel 标题）
+function ProjectTitleEditor({ name, onSave, onCancel }: { name: string; onSave: (n: string) => void; onCancel: () => void }) {
+  const [v, setV] = useState(name)
   return (
-    <button onClick={onClick} className={cn("rounded-full px-4 py-1.5 text-sm transition-colors", active ? "bg-sidebar-accent text-foreground" : "text-muted-foreground hover:text-foreground")}>
-      {children}
-    </button>
+    <input
+      autoFocus
+      value={v}
+      onChange={e => setV(e.target.value)}
+      onKeyDown={e => {
+        if (e.key === "Enter") { e.preventDefault(); const n = v.trim(); n ? onSave(n) : onCancel() }
+        if (e.key === "Escape") onCancel()
+      }}
+      onBlur={() => { const n = v.trim(); n && n !== name ? onSave(n) : onCancel() }}
+      className="w-full rounded-lg border border-sidebar-border bg-background/50 px-2.5 py-1 text-[16px] font-semibold outline-none focus:border-sidebar-primary/50"
+    />
   )
 }
 
-// 项目指令 / 人设：点开成多行编辑器
-function InstructionsCard({ value, onSave }: { value: string; onSave: (v: string) => void }) {
+// 记忆段：项目级记忆尚未接后端，先按 Claude 做占位（仅你可见）
+function ProjectMemorySection() {
+  return (
+    <div className="p-4">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-sm font-medium text-foreground">记忆</span>
+        <span className="flex items-center gap-1 rounded-full bg-sidebar-accent/60 px-2 py-0.5 text-[11px] text-muted-foreground">
+          <Lock className="size-3" />仅你可见
+        </span>
+      </div>
+      <p className="mt-1.5 text-[12px] leading-relaxed text-muted-foreground">小克会在几段对谈后，把本项目里值得记住的事记在这里。</p>
+    </div>
+  )
+}
+
+// 项目指令段：点开就地编辑
+function ProjectInstructionsSection({ value, onSave }: { value: string; onSave: (v: string) => void }) {
   const [editing, setEditing] = useState(false)
-  const [expanded, setExpanded] = useState(false)
   const [draft, setDraft] = useState(value)
   useEffect(() => { setDraft(value) }, [value])
+  const has = value.trim().length > 0
 
   if (editing) {
     return (
-      <div className="space-y-2 rounded-2xl bg-sidebar-accent/30 p-3">
-        <p className="text-[12px] font-medium tracking-[0.08em] text-muted-foreground">项目指令 / 人设</p>
+      <div className="space-y-2 p-4">
+        <span className="text-sm font-medium text-foreground">项目指令</span>
         <textarea
           autoFocus value={draft} onChange={e => setDraft(e.target.value)}
           placeholder="例如：你是我的英语学习教练，回答时多结合本项目里的资料……"
-          className="w-full resize-none rounded-xl border border-sidebar-border bg-background/50 px-3 py-2 text-[13px] leading-relaxed outline-none placeholder:text-muted-foreground/40 focus:border-sidebar-primary/50"
+          className="w-full resize-none rounded-xl border border-sidebar-border bg-background/40 px-3 py-2 text-[13px] leading-relaxed outline-none placeholder:text-muted-foreground/45 focus:border-sidebar-primary/50"
           rows={4}
         />
         <div className="flex gap-2">
@@ -638,81 +689,23 @@ function InstructionsCard({ value, onSave }: { value: string; onSave: (v: string
     )
   }
 
-  const text = value.trim() || "设定后，本项目每段对谈都会自动沿用。点此编辑。"
-  const lineCount = text.split('\n').length
-  const isTruncated = lineCount > 3 || text.length > 200
-
   return (
-    <button
-      onClick={() => expanded ? setExpanded(false) : setEditing(true)}
-      className="flex w-full items-start gap-3 rounded-2xl bg-sidebar-accent/30 p-3 text-left transition-colors hover:bg-sidebar-accent/55"
-    >
-      <Pencil className="mt-0.5 size-4 shrink-0 text-sidebar-primary" />
+    <button onClick={() => setEditing(true)} className="flex w-full items-start gap-3 p-4 text-left transition-colors hover:bg-sidebar-accent/30">
       <span className="min-w-0 flex-1">
-        <span className="block text-sm text-foreground">项目指令 / 人设</span>
-        <span className={cn("mt-0.5 block text-[12px] leading-relaxed text-muted-foreground", !expanded && "line-clamp-3")}>
-          {text}
+        <span className="flex items-center justify-between gap-2">
+          <span className="text-sm font-medium text-foreground">项目指令</span>
+          <Pencil className="size-3.5 shrink-0 text-muted-foreground/60" />
         </span>
-        {isTruncated && !expanded && (
-          <button
-            onClick={e => { e.stopPropagation(); setExpanded(true) }}
-            className="mt-1 text-[11px] text-sidebar-primary transition-colors hover:text-sidebar-primary/80"
-          >
-            展开全文
-          </button>
-        )}
-        {isTruncated && expanded && (
-          <button
-            onClick={e => { e.stopPropagation(); setExpanded(false) }}
-            className="mt-1 text-[11px] text-sidebar-primary transition-colors hover:text-sidebar-primary/80"
-          >
-            收起
-          </button>
-        )}
+        <span className={cn("mt-1 block text-[12px] leading-relaxed", has ? "text-muted-foreground line-clamp-3" : "text-muted-foreground/70")}>
+          {has ? value : "添加指令，定制小克在本项目中的回答与人设。"}
+        </span>
       </span>
     </button>
   )
 }
 
-function ProjectChatsTab({ project, chats, onOpenChat, onNewChat, renamingId, onOpenConvMenu, onRenameConversation, onStopRename }: {
-  project: Project
-  chats: Conversation[]
-  onOpenChat: (id: string) => void
-  onNewChat: (projectId: string) => void
-  renamingId: string | null
-  onOpenConvMenu: (id: string, anchor: Anchor) => void
-  onRenameConversation: (id: string, title: string) => void
-  onStopRename: () => void
-}) {
-  const list = sortConvs(chats)
-  return (
-    <div className="space-y-1">
-      <button onClick={() => onNewChat(project.id)} className="mb-1 flex w-full items-center gap-2.5 rounded-2xl bg-sidebar-accent/40 px-3 py-2.5 text-sm tracking-wide text-sidebar-foreground transition-colors hover:bg-sidebar-accent/70">
-        <Plus className="size-4 text-sidebar-primary" />在此项目中起新对谈
-      </button>
-      {list.length === 0 ? (
-        <div className="flex flex-col items-center px-6 py-10 text-center">
-          <MessageCircle className="mb-3 size-7 text-muted-foreground/40" />
-          <p className="text-[13px] text-muted-foreground">还没有对谈</p>
-          <p className="mt-1 text-[12px] text-muted-foreground/60">在上方新建，开始这个项目的第一段对话</p>
-        </div>
-      ) : list.map(c => (
-        <ConversationRow
-          key={c.id}
-          c={c}
-          isActive={false}
-          renaming={renamingId === c.id}
-          onSelect={onOpenChat}
-          onOpenMenu={onOpenConvMenu}
-          onCommitRename={(id, t) => { onRenameConversation(id, t); onStopRename() }}
-          onCancelRename={onStopRename}
-        />
-      ))}
-    </div>
-  )
-}
-
-function ProjectSourcesTab({ project, onLoadFiles, onAddFile, onDeleteFile }: {
+// 资料段：列表 + 右上角「+」上传
+function ProjectFilesSection({ project, onLoadFiles, onAddFile, onDeleteFile }: {
   project: Project
   onLoadFiles: (projectId: string) => Promise<ProjectFile[]>
   onAddFile: (projectId: string, file: File) => Promise<ProjectFile | null>
@@ -751,61 +744,39 @@ function ProjectSourcesTab({ project, onLoadFiles, onAddFile, onDeleteFile }: {
   }
 
   return (
-    <div className="space-y-1">
+    <div className="p-4">
       <input ref={inputRef} type="file" multiple
         accept=".pdf,.txt,.md,.markdown,.csv,.json,.log,.xml,.yaml,.yml,.html,.htm,text/*"
         className="hidden" onChange={handlePick} />
-      <button onClick={() => inputRef.current?.click()} disabled={uploading} className="mb-1 flex w-full items-center gap-2.5 rounded-2xl bg-sidebar-accent/40 px-3 py-2.5 text-sm tracking-wide text-sidebar-foreground transition-colors hover:bg-sidebar-accent/70 disabled:opacity-50">
-        {uploading ? <Loader2 className="size-4 animate-spin text-sidebar-primary" /> : <Upload className="size-4 text-sidebar-primary" />}
-        {uploading ? "正在添加……" : "添加资料"}
-      </button>
-      {err && <p className="px-3 pb-1 text-[12px] text-destructive">{err}</p>}
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-sm font-medium text-foreground">资料{files.length > 0 ? ` · ${files.length}` : ""}</span>
+        <button onClick={() => inputRef.current?.click()} disabled={uploading} className="flex size-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground disabled:opacity-50" aria-label="添加资料">
+          {uploading ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+        </button>
+      </div>
+      {err && <p className="mt-1 text-[12px] text-destructive">{err}</p>}
 
       {loading ? (
-        <p className="px-4 py-8 text-center text-[13px] italic text-muted-foreground/60">载入中……</p>
+        <p className="mt-2 text-[13px] italic text-muted-foreground/60">载入中……</p>
       ) : files.length === 0 ? (
-        <div className="flex flex-col items-center px-6 py-10 text-center">
-          <FileText className="mb-3 size-7 text-muted-foreground/40" />
-          <p className="text-[13px] text-muted-foreground">还没有资料</p>
-          <p className="mt-1 text-[12px] text-muted-foreground/60">上传 PDF 或文本，项目里的对谈会以它为参考</p>
+        <p className="mt-1.5 text-[12px] leading-relaxed text-muted-foreground">上传 PDF 或文本，本项目的对谈会以它为参考。</p>
+      ) : (
+        <div className="mt-2.5 space-y-1.5">
+          {files.map(f => (
+            <div key={f.id} className="group flex items-center gap-3 rounded-xl bg-sidebar-accent/30 px-3 py-2">
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary/10 text-sidebar-primary"><FileText className="size-4" /></span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13px] text-foreground">{f.name}</span>
+                <span className="block text-[11px] text-muted-foreground">{f.content ? `约 ${f.content.length} 字` : "未提取到文字"}</span>
+              </span>
+              <button onClick={() => remove(f.id)} className="shrink-0 rounded-full p-1.5 text-muted-foreground/50 transition-colors hover:bg-sidebar-accent hover:text-destructive" aria-label="删除资料">
+                <Trash2 className="size-3.5" />
+              </button>
+            </div>
+          ))}
         </div>
-      ) : files.map(f => (
-        <div key={f.id} className="group relative flex items-center gap-3 rounded-2xl px-3 py-2.5 pr-9 transition-colors hover:bg-sidebar-accent/40">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-sidebar-primary/10 text-sidebar-primary"><FileText className="size-4" /></span>
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm text-foreground">{f.name}</span>
-            <span className="block text-[12px] text-muted-foreground">{f.content ? `约 ${f.content.length} 字` : "未提取到文字"}</span>
-          </span>
-          <button onClick={() => remove(f.id)} className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-muted-foreground/40 transition-colors hover:bg-sidebar-accent hover:text-destructive" aria-label="删除资料">
-            <Trash2 className="size-3.5" />
-          </button>
-        </div>
-      ))}
+      )}
     </div>
-  )
-}
-
-function RenameRow({ project, onRename }: { project: Project; onRename: (id: string, name: string) => void }) {
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState(project.name)
-  useEffect(() => { setDraft(project.name) }, [project.name])
-
-  function save() { const n = draft.trim(); if (n) onRename(project.id, n); setEditing(false) }
-
-  if (editing) {
-    return (
-      <div className="flex gap-2 py-1">
-        <input autoFocus value={draft} onChange={e => setDraft(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); save() } if (e.key === "Escape") { setDraft(project.name); setEditing(false) } }}
-          className="flex-1 rounded-xl border border-sidebar-border bg-background/50 px-3 py-1.5 text-[13px] outline-none focus:border-sidebar-primary/50" />
-        <button onClick={save} className="rounded-xl bg-sidebar-primary px-3 text-[13px] text-sidebar-primary-foreground">保存</button>
-      </div>
-    )
-  }
-  return (
-    <button onClick={() => setEditing(true)} className="flex w-full items-center justify-center gap-1.5 rounded-2xl py-2.5 text-[13px] text-muted-foreground transition-colors hover:text-foreground">
-      <Pencil className="size-3.5" />重命名项目
-    </button>
   )
 }
 
@@ -866,14 +837,52 @@ function ConversationRow({ c, isActive, renaming, onSelect, onOpenMenu, onCommit
 
 function ActionRow({ icon, label, onClick, danger }: { icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean }) {
   return (
-    <button onClick={onClick} className={cn("flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-[13px] transition-colors active:scale-[0.98]", danger ? "text-destructive hover:bg-destructive/10" : "text-foreground hover:bg-sidebar-accent/60")}>
+    <button onClick={onClick} className={cn("flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors active:scale-[0.98]", danger ? "text-destructive hover:bg-destructive/10" : "text-foreground hover:bg-sidebar-accent/60")}>
       <span className={cn("shrink-0", danger ? "text-destructive" : "text-muted-foreground")}>{icon}</span>
       <span className="truncate">{label}</span>
     </button>
   )
 }
 
-// 会话"更多菜单"弹层：锚定在 ⋯ 旁，portal 到 body，淡入+轻微缩放（自然手感，且不被裁切）
+// ── 共享弹层外壳：右锚定在触发点旁，portal 到 body，淡入+轻微缩放 ──
+// 宽度贴合内容（w-max）并夹在 192–272px 之间，避免半屏宽的大片留白；竖向超界时朝上展开。
+function PopoverShell({ anchor, estH, onClose, children }: {
+  anchor: Anchor
+  estH: number
+  onClose: () => void
+  children: React.ReactNode
+}) {
+  const [shown, setShown] = useState(false)
+  useEffect(() => { const r = requestAnimationFrame(() => setShown(true)); return () => cancelAnimationFrame(r) }, [])
+  if (typeof document === "undefined") return null
+
+  const vw = window.innerWidth, vh = window.innerHeight
+  const openUp = anchor.bottom + estH > vh - 12
+  const right = Math.max(10, vw - anchor.right)
+  const pos: React.CSSProperties = {
+    position: "fixed", right,
+    transformOrigin: openUp ? "bottom right" : "top right",
+    ...(openUp ? { bottom: vh - anchor.top + 6 } : { top: anchor.bottom + 6 }),
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-[80]" onClick={onClose}>
+      <div
+        onClick={e => e.stopPropagation()}
+        style={pos}
+        className={cn(
+          "w-max min-w-[12rem] max-w-[17rem] overflow-hidden rounded-2xl border border-sidebar-border bg-card p-1.5 shadow-xl transition-all duration-150 ease-out",
+          shown ? "scale-100 opacity-100" : "scale-95 opacity-0",
+        )}
+      >
+        {children}
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
+// 会话"更多菜单"：收藏 / 编辑标题 / 加入项目 / 置顶 / 删除
 function ConvMenu({ conv, anchor, projects, picker, onPicker, onClose, onToggleStar, onTogglePin, onStartRename, onAddToProject, onDelete }: {
   conv: Conversation
   anchor: Anchor
@@ -887,61 +896,58 @@ function ConvMenu({ conv, anchor, projects, picker, onPicker, onClose, onToggleS
   onAddToProject: (projectId: string | null) => void
   onDelete: () => void
 }) {
-  const [shown, setShown] = useState(false)
-  useEffect(() => { const r = requestAnimationFrame(() => setShown(true)); return () => cancelAnimationFrame(r) }, [])
-  if (typeof document === "undefined") return null
+  return (
+    <PopoverShell anchor={anchor} estH={picker ? 320 : 256} onClose={onClose}>
+      {!picker ? (
+        <>
+          <ActionRow icon={<Star className={cn("size-4", conv.starred && "fill-current text-sidebar-primary")} />} label={conv.starred ? "取消收藏" : "收藏"} onClick={onToggleStar} />
+          <ActionRow icon={<Pencil className="size-4" />} label="编辑标题" onClick={onStartRename} />
+          <ActionRow icon={<FolderPlus className="size-4" />} label="加入项目" onClick={() => onPicker(true)} />
+          <ActionRow icon={<Pin className="size-4" />} label={conv.pinned ? "取消置顶" : "置顶"} onClick={onTogglePin} />
+          <div className="my-1 border-t border-sidebar-border/60" />
+          <ActionRow icon={<Trash2 className="size-4" />} label="删除" danger onClick={onDelete} />
+        </>
+      ) : (
+        <>
+          <button onClick={() => onPicker(false)} className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/60">
+            <ChevronLeft className="size-4" />加入项目
+          </button>
+          <div className="max-h-[44vh] overflow-y-auto">
+            {conv.projectId && (
+              <ActionRow icon={<X className="size-4" />} label="移出当前项目" onClick={() => onAddToProject(null)} />
+            )}
+            {projects.filter(p => p.id !== conv.projectId).map(p => (
+              <ActionRow key={p.id} icon={<Folder className="size-4" />} label={p.name} onClick={() => onAddToProject(p.id)} />
+            ))}
+            {projects.filter(p => p.id !== conv.projectId).length === 0 && !conv.projectId && (
+              <p className="px-3 py-4 text-center text-[12px] italic text-muted-foreground/70">还没有项目</p>
+            )}
+          </div>
+        </>
+      )}
+    </PopoverShell>
+  )
+}
 
-  const vw = window.innerWidth, vh = window.innerHeight
-  const W = 172
-  const estH = picker ? 300 : 212
-  const openUp = anchor.bottom + estH > vh - 12
-  const right = Math.max(10, vw - anchor.right)
-  const pos: React.CSSProperties = {
-    position: "fixed", right, width: W,
-    transformOrigin: openUp ? "bottom right" : "top right",
-    ...(openUp ? { bottom: vh - anchor.top + 6 } : { top: anchor.bottom + 6 }),
-  }
-
-  return createPortal(
-    <div className="fixed inset-0 z-[80]" onClick={onClose}>
-      <div
-        onClick={e => e.stopPropagation()}
-        style={pos}
-        className={cn(
-          "overflow-hidden rounded-2xl border border-sidebar-border bg-card p-1 shadow-xl transition-all duration-150 ease-out",
-          shown ? "scale-100 opacity-100" : "scale-95 opacity-0",
-        )}
-      >
-        {!picker ? (
-          <>
-            <ActionRow icon={<Star className={cn("size-4", conv.starred && "fill-current text-sidebar-primary")} />} label={conv.starred ? "取消收藏" : "收藏"} onClick={onToggleStar} />
-            <ActionRow icon={<Pencil className="size-4" />} label="编辑标题" onClick={onStartRename} />
-            <ActionRow icon={<FolderPlus className="size-4" />} label="添加进项目" onClick={() => onPicker(true)} />
-            <ActionRow icon={<Pin className="size-4" />} label={conv.pinned ? "取消置顶" : "置顶"} onClick={onTogglePin} />
-            <div className="my-1 border-t border-sidebar-border/60" />
-            <ActionRow icon={<Trash2 className="size-4" />} label="删除" danger onClick={onDelete} />
-          </>
-        ) : (
-          <>
-            <button onClick={() => onPicker(false)} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-[13px] text-muted-foreground transition-colors hover:bg-sidebar-accent/60">
-              <ChevronLeft className="size-4" />添加进项目
-            </button>
-            <div className="max-h-[44vh] overflow-y-auto">
-              {conv.projectId && (
-                <ActionRow icon={<X className="size-4" />} label="移出当前项目" onClick={() => onAddToProject(null)} />
-              )}
-              {projects.filter(p => p.id !== conv.projectId).map(p => (
-                <ActionRow key={p.id} icon={<Folder className="size-4" />} label={p.name} onClick={() => onAddToProject(p.id)} />
-              ))}
-              {projects.filter(p => p.id !== conv.projectId).length === 0 && !conv.projectId && (
-                <p className="px-3 py-4 text-center text-[12px] italic text-muted-foreground/70">还没有项目</p>
-              )}
-            </div>
-          </>
-        )}
-      </div>
-    </div>,
-    document.body,
+// 项目"更多菜单"：重命名 / 删除（删除二次确认，避免误删整个项目）
+function ProjectMenu({ anchor, onClose, onRename, onDelete }: {
+  anchor: Anchor
+  onClose: () => void
+  onRename: () => void
+  onDelete: () => void
+}) {
+  const [confirm, setConfirm] = useState(false)
+  return (
+    <PopoverShell anchor={anchor} estH={128} onClose={onClose}>
+      <ActionRow icon={<Pencil className="size-4" />} label="重命名项目" onClick={onRename} />
+      <div className="my-1 border-t border-sidebar-border/60" />
+      <ActionRow
+        icon={<Trash2 className="size-4" />}
+        label={confirm ? "确认删除此项目" : "删除此项目"}
+        danger
+        onClick={() => { if (confirm) onDelete(); else setConfirm(true) }}
+      />
+    </PopoverShell>
   )
 }
 
@@ -1199,5 +1205,71 @@ function QuotaScreen() {
       </div>
 
     </div>
+  )
+}
+
+// ── 设置浮层：把「基础设定 / 记忆 / 使用额度」收进一个带标签的 modal（学 Claude 设置抽屉）──
+// 不再是逐层滑入的独立大页面；移动端从底部升起的 sheet，桌面端居中。
+function SettingsModal({ memories, memoryEnabled, onMemoryEnabledChange, onMemoryAdd, onMemoryEdit, onMemoryDelete, onClose }: {
+  memories: Memory[]
+  memoryEnabled: boolean
+  onMemoryEnabledChange: (v: boolean) => void
+  onMemoryAdd: (content: string) => void
+  onMemoryEdit: (id: string, content: string) => void
+  onMemoryDelete: (id: string) => void
+  onClose: () => void
+}) {
+  const [tab, setTab] = useState<'basics' | 'memory' | 'quota'>('basics')
+  const [shown, setShown] = useState(false)
+  useEffect(() => { const r = requestAnimationFrame(() => setShown(true)); return () => cancelAnimationFrame(r) }, [])
+  if (typeof document === "undefined") return null
+
+  const tabs: { id: 'basics' | 'memory' | 'quota'; label: string }[] = [
+    { id: 'basics', label: '基础设定' },
+    { id: 'memory', label: '记忆' },
+    { id: 'quota', label: '使用额度' },
+  ]
+
+  return createPortal(
+    <div className="fixed inset-0 z-[90] flex items-end justify-center sm:items-center">
+      <div className={cn("absolute inset-0 bg-black/40 transition-opacity duration-200", shown ? "opacity-100" : "opacity-0")} onClick={onClose} />
+      <div className={cn(
+        "relative flex max-h-[88vh] w-full max-w-md flex-col overflow-hidden rounded-t-3xl bg-sidebar text-sidebar-foreground shadow-2xl transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] sm:rounded-3xl",
+        shown ? "translate-y-0 opacity-100" : "translate-y-6 opacity-0",
+      )}>
+        <div className="flex items-center justify-between px-5 pb-3 pt-[max(1.25rem,env(safe-area-inset-top))]">
+          <h3 className="text-[17px] font-semibold tracking-tight">设置</h3>
+          <button onClick={onClose} aria-label="关闭" className="rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground">
+            <X className="size-5" />
+          </button>
+        </div>
+        <div className="flex gap-1.5 px-5 pb-3">
+          {tabs.map(t => (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={cn("rounded-full px-3.5 py-1.5 text-[13px] transition-colors", tab === t.id ? "bg-sidebar-accent text-foreground" : "text-muted-foreground hover:text-foreground")}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex-1 overflow-y-auto pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-1">
+          {tab === 'basics' && <BasicsScreen />}
+          {tab === 'memory' && (
+            <MemoryScreen
+              memories={memories}
+              enabled={memoryEnabled}
+              onEnabledChange={onMemoryEnabledChange}
+              onAdd={onMemoryAdd}
+              onEdit={onMemoryEdit}
+              onDelete={onMemoryDelete}
+            />
+          )}
+          {tab === 'quota' && <QuotaScreen />}
+        </div>
+      </div>
+    </div>,
+    document.body,
   )
 }
