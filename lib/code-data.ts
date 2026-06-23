@@ -4,25 +4,26 @@ import { createClient } from "@/lib/supabase/client"
 
 export type CodeRole = "user" | "assistant"
 
-// 一条提议的修改（propose_edit 推来的，等用户确认）
-export type CodeEdit = {
-  path: string
-  oldContent: string
-  newContent: string
-  sha: string
-  summary: string
-}
+// AI 规划的一个动作（建仓库 / 写文件 / 删文件 / 上线），等用户确认或自动执行
+export type PlanAction =
+  | { kind: "create_repo"; name: string; description?: string; private?: boolean }
+  | { kind: "write_file"; path: string; oldContent: string; newContent: string }
+  | { kind: "delete_file"; path: string }
+  | { kind: "enable_pages" }
+
+// 执行结果（直接推送后的回执）
+export type ApplyResult = { repo?: string; repoUrl?: string; pagesUrl?: string; commitSha?: string; created?: boolean }
 
 // 终端里的一个步骤（工具调用进度）
-export type CodeStep = { kind: "list" | "read" | "edit" | "memory"; label: string }
+export type CodeStep = { kind: "list" | "read" | "edit" | "memory" | "repo" | "deploy"; label: string }
 
 export type CodeMessage = {
   id: string
   role: CodeRole
   content: string
   steps?: CodeStep[]
-  edits?: CodeEdit[]
-  pr?: { url: string; number: number }
+  plan?: PlanAction[]
+  result?: ApplyResult
   isError?: boolean
 }
 
@@ -82,8 +83,8 @@ export async function fetchCodeMessages(sessionId: string): Promise<CodeMessage[
     role: r.role,
     content: r.content,
     steps: r.meta?.steps,
-    edits: r.meta?.edits,
-    pr: r.meta?.pr,
+    plan: r.meta?.plan,
+    result: r.meta?.result,
   }))
 }
 
@@ -93,8 +94,8 @@ export async function insertCodeMessage(
   const supabase = createClient()
   const meta: any = {}
   if (msg.steps?.length) meta.steps = msg.steps
-  if (msg.edits?.length) meta.edits = msg.edits
-  if (msg.pr) meta.pr = msg.pr
+  if (msg.plan?.length) meta.plan = msg.plan
+  if (msg.result) meta.result = msg.result
   await supabase.from("code_messages").insert({
     id: msg.id, session_id: sessionId, user_id: userId, role: msg.role, content: msg.content,
     meta: Object.keys(meta).length ? meta : null,

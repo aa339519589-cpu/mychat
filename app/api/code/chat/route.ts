@@ -13,40 +13,35 @@ import { checkQuotaExceeded, addQuotaUsage } from '@/lib/quota'
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY ?? ''
 const DEEPSEEK_BASE_URL = 'https://api.deepseek.com'
 
-// Code 是 agentic：模型要先浏览、再读文件、才能改。给足轮次。/goal 自主模式给更多。
-const ROUNDS_NORMAL = 8
-const ROUNDS_GOAL = 20
-const MAX_FILE_READS = 24      // 单次请求最多读这么多文件，防失控
-const MAX_PROPOSED_EDITS = 5   // 单次 PR 最多 5 个文件
+const ROUNDS_NORMAL = 10
+const ROUNDS_GOAL = 24
+const MAX_FILE_READS = 30
 
-function buildCodeSystem(repo: string, defaultBranch: string, memories: string[], goal: boolean): string {
-  let s = `你是「小克 · 代码」，一个能真正读写 GitHub 仓库的编程助手，运行在用户自建网页应用的 Code 板块里。
+function buildCodeSystem(repo: string | null, defaultBranch: string | null, login: string, memories: string[], goal: boolean): string {
+  let s = `你是「小克 · 代码」，一个能真正操作用户 GitHub 账号的编程助手，运行在网页应用的 Code 板块里。当前用户的 GitHub 用户名是 ${login}。
 
-当前仓库：${repo}（默认分支 ${defaultBranch}）。这是真实代码，不是示例。
+你能像 Claude Code / GPT 的仓库助手那样真正动手做事，工具如下：
+- list_files / read_file：浏览、阅读仓库里的真实文件（修改前先读，了解上下文）。
+- create_repo：新建一个仓库。用户想从零做新项目（比如「做个番茄钟」）时，先建仓库。仓库名用英文小写连字符（如 pomodoro-timer）。
+- write_files：写入一个或多个文件（新建或覆盖）。从零搭项目就一次把所有文件都写出来（如 index.html / style.css / script.js）。传完整文件内容。
+- delete_files：删除文件。
+- enable_pages：对纯静态/前端项目开启 GitHub Pages，让它有一个能直接打开的网址（部署上线）。
+- code_remember：记住关于本仓库的长期事实（架构、技术栈、易错点、用户偏好）。只属于本仓库。
 
-你拥有以下工具，必须靠它们自己定位问题，不要让用户告诉你文件路径或行号：
-- list_files：列出仓库完整文件路径。开始排查前先调用它了解结构。
-- read_file：读取某个文件的真实内容。修改前必须先读，了解上下文。
-- propose_edit：提出对某个文件的修改。传入修改后的【完整文件内容】（不要省略任何未改动的行）。这一步只生成「修改前 vs 修改后」的对比给用户看，不会真正写入——必须等用户在界面上点「确认提交」才会建分支、提交、开 PR。
-- code_remember：当你了解到关于本仓库的、值得长期记住的事实（架构约定、技术栈、易错点、用户偏好），调用它记下来。这份记忆只属于本仓库的 Code 板块。
+工作方式（重要）：
+1. 用户用大白话描述要做什么，往往不懂代码、说不出文件名。你要自己判断、自己动手。
+2. 改现有项目：先 list_files / read_file 定位，再 write_files 给出完整新内容。
+3. 做新项目：create_repo → write_files 写全部文件 →（若是纯前端）enable_pages 上线。
+4. 你调用 create_repo / write_files / delete_files / enable_pages 只是把动作【加入待执行计划】，会先展示给用户；用户确认后（或在自动模式下）才真正提交并直接推送上线。所以你尽管一次把该做的都规划好。
+5. 做完用中文简明说明你做了什么、（若上线了）网址是什么。像个干练的工程师，别啰嗦，不要用 emoji。
 
-工作方式：
-1. 用户描述一个问题或需求（往往不懂代码、说不出文件名）。
-2. 你主动 list_files → read_file 若干个最相关的文件，定位真正的根因。
-3. 找到后，用 propose_edit 给出完整的修改方案；可对多个文件分别 propose_edit（一次最多 ${MAX_PROPOSED_EDITS} 个文件）。
-4. 简明地用中文向用户说明你改了什么、为什么。不要长篇大论，像一个干练的工程师。
+注意：你无法真正运行/测试代码，是在"盲写"，所以代码要尽量正确、自包含。纯前端项目优先（HTML/CSS/JS 单页应用最稳，可直接 Pages 上线）。`
 
-约束：
-- 绝不直接提交到默认分支；所有改动都通过「新分支 + PR」，且必须用户确认。
-- 不确定就先多读几个文件，宁可多看也不要猜。
-- 回复用中文，技术术语保留英文。不要用 emoji。`
+  if (repo) s += `\n\n用户当前选中的仓库：${repo}（默认分支 ${defaultBranch}）。`
+  else s += `\n\n用户还没有选择仓库。如果他要做新项目，用 create_repo 新建；如果他要改某个现有项目，请提示他先在上方选择仓库。`
 
-  if (memories.length) {
-    s += `\n\n关于本仓库你已经记住的事（${memories.length} 条）：\n${memories.map(m => `- ${m}`).join('\n')}`
-  }
-  if (goal) {
-    s += `\n\n【目标模式】用户设定了一个目标，希望你自主连续工作、尽可能一次推进到位：充分浏览和阅读相关文件，把需要改的文件都用 propose_edit 提出来，不要中途停下来反问无关紧要的细节。完成后总结你做了哪些改动。`
-  }
+  if (memories.length) s += `\n\n关于本仓库你已经记住的事（${memories.length} 条）：\n${memories.map(m => `- ${m}`).join('\n')}`
+  if (goal) s += `\n\n【目标模式】用户设定了一个目标，请自主连续工作、尽可能一次推进到位，把需要的仓库、文件、上线都规划好，不要中途停下问无关紧要的细节。`
   return s
 }
 
@@ -54,10 +49,10 @@ export async function POST(req: NextRequest) {
   let body: any = {}
   try { body = await req.json() } catch { return new Response(JSON.stringify({ error: '请求体格式错误' }), { status: 400 }) }
 
-  const { repo, tier = '正构', goal = false, messages } = body
+  const { repo = null, tier = '正构', goal = false, messages } = body
   try {
     validate.array(messages, 'messages', { minLength: 1 })
-    if (!repo || typeof repo !== 'string' || !repo.includes('/')) throw new Error('缺少有效的仓库')
+    if (repo !== null && (typeof repo !== 'string' || !repo.includes('/'))) throw new Error('仓库参数无效')
   } catch (e) {
     return new Response(JSON.stringify({ error: (e as Error).message }), { status: 400 })
   }
@@ -66,6 +61,7 @@ export async function POST(req: NextRequest) {
 
   const store = await cookies()
   const token = store.get('gh_access_token')?.value
+  const login = store.get('gh_login')?.value ?? 'me'
   if (!token) return new Response(JSON.stringify({ error: '未连接 GitHub' }), { status: 401 })
 
   const tierCfg = TIER_MAP[tier as keyof typeof TIER_MAP] ?? TIER_MAP['正构']
@@ -80,13 +76,11 @@ export async function POST(req: NextRequest) {
     userId = data.user?.id ?? null
   } catch { supabase = null }
 
-  // 速率限制
   if (userId) {
     const { allowed } = checkRateLimit(userId)
     if (!allowed) return new Response(JSON.stringify({ error: '请求过于频繁，请稍后再试' }), { status: 429 })
   }
 
-  // 额度
   let usingBalance = false
   if (userId && supabase) {
     const q = await checkQuotaExceeded(supabase, userId)
@@ -97,29 +91,33 @@ export async function POST(req: NextRequest) {
     usingBalance = q.usingBalance ?? false
   }
 
-  // 校验写权限 + 取默认分支（写操作前置校验，防 token 过期竞态）
-  const meta = await repoMeta(token, repo)
-  if (!meta) return new Response(JSON.stringify({ error: '仓库访问失败，请重新连接 GitHub' }), { status: 502 })
-  const defaultBranch = meta.defaultBranch
+  // 选了仓库才校验 + 取默认分支；没选（新建项目模式）则跳过
+  let defaultBranch: string | null = null
+  if (repo) {
+    const meta = await repoMeta(token, repo)
+    if (!meta) return new Response(JSON.stringify({ error: '仓库访问失败，请重新连接 GitHub' }), { status: 502 })
+    defaultBranch = meta.defaultBranch
+  }
 
-  // 取本仓库的 Code 记忆（与系统记忆隔离）
   let memContents: string[] = []
-  if (userId && supabase) {
+  if (repo && userId && supabase) {
     try {
       const { data } = await supabase.from('code_memories').select('content').eq('user_id', userId).eq('repo', repo).order('created_at')
       memContents = (data ?? []).map((r: any) => r.content as string)
     } catch { /* 表未建时静默 */ }
   }
 
-  const SYSTEM = buildCodeSystem(repo, defaultBranch, memContents, !!goal)
+  const SYSTEM = buildCodeSystem(repo, defaultBranch, login, memContents, !!goal)
   const url = chatCompletionsUrl(DEEPSEEK_BASE_URL)
 
-  // 工具定义（OpenAI 格式）
   const tools = [
-    { type: 'function', function: { name: 'list_files', description: '列出仓库完整文件路径列表（默认分支）。排查前先调用了解结构。', parameters: { type: 'object', properties: {} } } },
-    { type: 'function', function: { name: 'read_file', description: '读取仓库中某个文件的真实完整内容。修改前必须先读。', parameters: { type: 'object', properties: { path: { type: 'string', description: '文件路径，如 components/literary-chat.tsx' } }, required: ['path'] } } },
-    { type: 'function', function: { name: 'propose_edit', description: '提出对某文件的修改（传修改后的完整内容）。只生成 diff 给用户确认，不会真正写入。', parameters: { type: 'object', properties: { path: { type: 'string' }, new_content: { type: 'string', description: '修改后的完整文件内容，不省略任何行' }, summary: { type: 'string', description: '一句话说明这个文件改了什么' } }, required: ['path', 'new_content', 'summary'] } } },
-    { type: 'function', function: { name: 'code_remember', description: '记住一条关于本仓库的长期事实（架构、技术栈、易错点、用户偏好）。', parameters: { type: 'object', properties: { content: { type: 'string' } }, required: ['content'] } } },
+    { type: 'function', function: { name: 'list_files', description: '列出当前仓库完整文件路径列表。', parameters: { type: 'object', properties: {} } } },
+    { type: 'function', function: { name: 'read_file', description: '读取当前仓库某文件的真实完整内容。修改前必须先读。', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } },
+    { type: 'function', function: { name: 'create_repo', description: '新建一个 GitHub 仓库（做新项目时用）。', parameters: { type: 'object', properties: { name: { type: 'string', description: '英文小写连字符，如 pomodoro-timer' }, description: { type: 'string' }, private: { type: 'boolean', description: '是否私有，默认 false' } }, required: ['name'] } } },
+    { type: 'function', function: { name: 'write_files', description: '写入一个或多个文件（新建或覆盖），传完整内容。从零搭项目就一次写全部文件。', parameters: { type: 'object', properties: { files: { type: 'array', items: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string', description: '完整文件内容，不省略' } }, required: ['path', 'content'] } } }, required: ['files'] } } },
+    { type: 'function', function: { name: 'delete_files', description: '删除一个或多个文件。', parameters: { type: 'object', properties: { paths: { type: 'array', items: { type: 'string' } } }, required: ['paths'] } } },
+    { type: 'function', function: { name: 'enable_pages', description: '对纯静态/前端项目开启 GitHub Pages，让项目有可访问网址（上线）。', parameters: { type: 'object', properties: {} } } },
+    { type: 'function', function: { name: 'code_remember', description: '记住一条关于本仓库的长期事实。', parameters: { type: 'object', properties: { content: { type: 'string' } }, required: ['content'] } } },
   ]
 
   const maxRounds = goal ? ROUNDS_GOAL : ROUNDS_NORMAL
@@ -128,58 +126,75 @@ export async function POST(req: NextRequest) {
     async start(controller) {
       let totalTokensUsed = 0
       let fileReads = 0
-      const proposedPaths = new Set<string>()
-      const shaCache = new Map<string, { content: string; sha: string }>()  // path → 读过的内容+sha
+      const shaCache = new Map<string, string>()  // path → 读过的旧内容（给前端做 diff）
       const msgs: any[] = [{ role: 'system', content: SYSTEM }, ...toOpenAI(messages)]
 
-      // 派发一个工具调用，返回回灌模型的文字
       async function execCodeTool(name: string, input: any): Promise<string> {
         if (name === 'list_files') {
+          if (!repo) return '尚未选择仓库。'
           send(controller, { step: { kind: 'list', label: '浏览仓库文件结构' } })
-          const { paths, truncated } = await listTree(token!, repo, defaultBranch)
-          if (!paths.length) return '无法获取文件列表（可能是空仓库）。'
-          return `仓库共 ${paths.length} 个文件${truncated ? '（已截断，仅列出前部分）' : ''}：\n${paths.join('\n')}`
+          const { paths, truncated } = await listTree(token!, repo, defaultBranch!)
+          if (!paths.length) return '仓库为空或无法获取文件列表。'
+          return `仓库共 ${paths.length} 个文件${truncated ? '（已截断）' : ''}：\n${paths.join('\n')}`
         }
         if (name === 'read_file') {
+          if (!repo) return '尚未选择仓库。'
           const path = String(input?.path ?? '').trim()
-          if (!path) return '缺少 path 参数。'
-          if (fileReads >= MAX_FILE_READS) return '本次读取文件数已达上限，请基于已读内容继续。'
+          if (!path) return '缺少 path。'
+          if (fileReads >= MAX_FILE_READS) return '读取文件数已达上限，请基于已读内容继续。'
           fileReads++
           send(controller, { step: { kind: 'read', label: `读取 ${path}` } })
           const r = await readFile(token!, repo, path)
           if ('error' in r) return `读取失败：${r.error}`
-          shaCache.set(path, { content: r.content, sha: r.sha })
-          return `文件 ${path} 的内容：\n\`\`\`\n${r.content}\n\`\`\``
+          shaCache.set(path, r.content)
+          return `文件 ${path} 内容：\n\`\`\`\n${r.content}\n\`\`\``
         }
-        if (name === 'propose_edit') {
-          const path = String(input?.path ?? '').trim()
-          const newContent = String(input?.new_content ?? '')
-          const summary = String(input?.summary ?? '').trim()
-          if (!path || !newContent) return '缺少 path 或 new_content。'
-          if (proposedPaths.size >= MAX_PROPOSED_EDITS && !proposedPaths.has(path)) return `一次最多修改 ${MAX_PROPOSED_EDITS} 个文件。`
-          // 拿旧内容 + sha（优先用读过的缓存，没有就现读）
-          let cached = shaCache.get(path)
-          if (!cached) {
-            const r = await readFile(token!, repo, path)
-            if ('error' in r) return `无法读取原文件以生成对比：${r.error}`
-            cached = { content: r.content, sha: r.sha }
-            shaCache.set(path, cached)
+        if (name === 'create_repo') {
+          const name2 = String(input?.name ?? '').trim()
+          if (!name2) return '缺少仓库名。'
+          send(controller, { step: { kind: 'repo', label: `新建仓库 ${name2}` } })
+          send(controller, { plan: { kind: 'create_repo', name: name2, description: String(input?.description ?? ''), private: !!input?.private } })
+          return `已加入计划：新建仓库 ${login}/${name2}。继续写入文件。`
+        }
+        if (name === 'write_files') {
+          const files = Array.isArray(input?.files) ? input.files : []
+          if (!files.length) return '没有要写的文件。'
+          for (const f of files) {
+            const path = String(f?.path ?? '').trim()
+            const content = String(f?.content ?? '')
+            if (!path) continue
+            // 取旧内容做 diff（已读过用缓存；没读过且选了仓库就现读；否则当新文件）
+            let oldContent = shaCache.get(path) ?? ''
+            if (!oldContent && repo) {
+              const r = await readFile(token!, repo, path)
+              if (!('error' in r)) oldContent = r.content
+            }
+            send(controller, { step: { kind: 'edit', label: `写入 ${path}` } })
+            send(controller, { plan: { kind: 'write_file', path, oldContent, newContent: content } })
           }
-          proposedPaths.add(path)
-          send(controller, { step: { kind: 'edit', label: `生成修改建议：${path}` } })
-          // 推给前端：展示 diff + 等待确认（不写入）
-          send(controller, { codeEdit: { path, oldContent: cached.content, newContent, sha: cached.sha, summary } })
-          return `已为 ${path} 生成修改建议并展示给用户（等待其点击「确认提交」）。继续处理其他文件或总结你的改动。`
+          return `已加入计划：写入 ${files.length} 个文件（等待用户确认/自动执行）。`
+        }
+        if (name === 'delete_files') {
+          const paths = Array.isArray(input?.paths) ? input.paths : []
+          for (const p of paths) {
+            const path = String(p ?? '').trim()
+            if (!path) continue
+            send(controller, { step: { kind: 'edit', label: `删除 ${path}` } })
+            send(controller, { plan: { kind: 'delete_file', path } })
+          }
+          return `已加入计划：删除 ${paths.length} 个文件。`
+        }
+        if (name === 'enable_pages') {
+          send(controller, { step: { kind: 'deploy', label: '开启 GitHub Pages 上线' } })
+          send(controller, { plan: { kind: 'enable_pages' } })
+          return '已加入计划：开启 GitHub Pages。'
         }
         if (name === 'code_remember') {
           const content = String(input?.content ?? '').trim()
-          if (!content) return '内容为空。'
+          if (!content || !repo) return content ? '尚未选择仓库，无法记忆。' : '内容为空。'
           let ok = false
           if (userId && supabase) {
-            try {
-              const { error } = await supabase.from('code_memories').insert({ user_id: userId, repo, content })
-              ok = !error
-            } catch { ok = false }
+            try { const { error } = await supabase.from('code_memories').insert({ user_id: userId, repo, content }); ok = !error } catch { ok = false }
           }
           send(controller, { step: { kind: 'memory', label: `记住：${content.slice(0, 40)}` } })
           return ok ? '已记住。' : '记忆保存失败（可能未建表）。'
@@ -205,7 +220,6 @@ export async function POST(req: NextRequest) {
             msgs.push({ role: 'tool', tool_call_id: tc.id, content: result })
           }
         }
-        // 轮次用尽但还在调工具 → 补一轮纯文本总结
         if (lastHadToolCalls) {
           lastTurn = await runOpenAITurn(url, DEEPSEEK_API_KEY, model, msgs, [], controller, { thinking })
           totalTokensUsed += lastTurn.totalTokens

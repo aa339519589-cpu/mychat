@@ -286,6 +286,16 @@
   0%   { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
+
+/* Code 终端思考球：GPT 同款呼吸效果（缩放 + 透明度脉冲） */
+@keyframes codeBreathe {
+  0%, 100% { transform: scale(0.7); opacity: 0.45; }
+  50%      { transform: scale(1.05); opacity: 1; }
+}
+.code-breathe { animation: codeBreathe 1.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .code-breathe { animation: none; opacity: 0.8; }
+}
 .thinking-flow {
   background-image: linear-gradient(
     100deg,

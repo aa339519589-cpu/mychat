@@ -1,6 +1,6 @@
 // GitHub API 共享库：列仓库、列文件树、读文件、校验写权限、建分支+提交+开 PR。
 // access token 只在服务端使用（从 gh_access_token Cookie 取），绝不下发前端。
-// Code 的 agentic loop 与 /api/github/commit 都复用这一份，杜绝重复实现。
+// Code 的 agentic loop（/api/code/chat）与执行端点（/api/code/apply）都复用这一份，杜绝重复实现。
 
 const GH = 'https://api.github.com'
 
@@ -64,60 +64,98 @@ export async function readFile(token: string, repo: string, path: string, maxByt
   return { content, sha: data.sha as string }
 }
 
-export type CommitFile = { path: string; content: string; sha: string }
-export type CommitResult = { prUrl: string; prNumber: number; branch: string } | { error: string }
-
-// 建新分支 → 逐文件提交 → 开 PR。严禁直接写默认分支。
-export async function commitAndOpenPR(token: string, repo: string, files: CommitFile[], message: string, timestamp: number): Promise<CommitResult> {
-  const meta = await repoMeta(token, repo)
-  if (!meta) return { error: '仓库访问失败' }
-  if (!meta.canPush) return { error: '你对该仓库没有写入权限' }
-  const defaultBranch = meta.defaultBranch
-
-  // 默认分支最新 commit SHA
-  const branchRes = await fetch(`${GH}/repos/${repo}/branches/${defaultBranch}`, { headers: ghHeaders(token) }).catch(() => null)
-  if (!branchRes?.ok) return { error: '获取分支信息失败' }
-  const baseSha = ((await branchRes.json()).commit as any).sha as string
-
-  // 新分支
-  const branch = `claude/edit-${timestamp}`
-  const refRes = await fetch(`${GH}/repos/${repo}/git/refs`, {
+// 新建仓库（auto_init 让它带一个初始提交，后续可直接提交文件）
+export async function createRepo(token: string, name: string, description: string, isPrivate: boolean): Promise<{ fullName: string; defaultBranch: string; htmlUrl: string } | { error: string }> {
+  const res = await fetch(`${GH}/user/repos`, {
     method: 'POST', headers: ghHeaders(token, true),
-    body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: baseSha }),
+    body: JSON.stringify({ name, description: description || '', private: isPrivate, auto_init: true }),
+  }).catch(() => null)
+  if (!res?.ok) {
+    const err = await res?.json().catch(() => null)
+    return { error: `建仓库失败：${(err as any)?.message ?? '未知错误'}` }
+  }
+  const d = await res.json()
+  return { fullName: d.full_name as string, defaultBranch: d.default_branch as string, htmlUrl: d.html_url as string }
+}
+
+// 取某分支 HEAD 的 commit sha
+export async function getHeadSha(token: string, repo: string, branch: string): Promise<string | null> {
+  const res = await fetch(`${GH}/repos/${repo}/git/ref/heads/${branch}`, { headers: ghHeaders(token) }).catch(() => null)
+  if (!res?.ok) return null
+  return ((await res.json()).object as any)?.sha ?? null
+}
+
+// 一个文件写操作：content=null 表示删除该文件
+export type FileWrite = { path: string; content: string | null }
+
+// 用 Git Data API 把多个文件改动打成【一个原子提交】直接推到分支。
+// 创建/更新/删除统一处理，无需逐文件 sha；新仓库、新文件都适用。直接写默认分支（用户已选直接推送）。
+export async function commitFiles(token: string, repo: string, branch: string, files: FileWrite[], message: string): Promise<{ commitSha: string } | { error: string }> {
+  const baseSha = await getHeadSha(token, repo, branch)
+  if (!baseSha) return { error: '获取分支 HEAD 失败' }
+
+  // 基树
+  const commitRes = await fetch(`${GH}/repos/${repo}/git/commits/${baseSha}`, { headers: ghHeaders(token) }).catch(() => null)
+  if (!commitRes?.ok) return { error: '获取基树失败' }
+  const baseTreeSha = ((await commitRes.json()).tree as any).sha as string
+
+  // 为写入的文件创建 blob；删除项 sha 置 null
+  const treeItems: any[] = []
+  for (const f of files) {
+    if (f.content === null) {
+      treeItems.push({ path: f.path, mode: '100644', type: 'blob', sha: null })
+      continue
+    }
+    const blobRes = await fetch(`${GH}/repos/${repo}/git/blobs`, {
+      method: 'POST', headers: ghHeaders(token, true),
+      body: JSON.stringify({ content: Buffer.from(f.content, 'utf-8').toString('base64'), encoding: 'base64' }),
+    }).catch(() => null)
+    if (!blobRes?.ok) return { error: `创建 blob 失败 (${f.path})` }
+    treeItems.push({ path: f.path, mode: '100644', type: 'blob', sha: (await blobRes.json()).sha })
+  }
+
+  // 新树
+  const treeRes = await fetch(`${GH}/repos/${repo}/git/trees`, {
+    method: 'POST', headers: ghHeaders(token, true),
+    body: JSON.stringify({ base_tree: baseTreeSha, tree: treeItems }),
+  }).catch(() => null)
+  if (!treeRes?.ok) return { error: '创建树失败' }
+  const newTreeSha = (await treeRes.json()).sha as string
+
+  // 新提交
+  const newCommitRes = await fetch(`${GH}/repos/${repo}/git/commits`, {
+    method: 'POST', headers: ghHeaders(token, true),
+    body: JSON.stringify({ message: message || 'Claude 代码改动', tree: newTreeSha, parents: [baseSha] }),
+  }).catch(() => null)
+  if (!newCommitRes?.ok) return { error: '创建提交失败' }
+  const newCommitSha = (await newCommitRes.json()).sha as string
+
+  // 推进分支引用
+  const refRes = await fetch(`${GH}/repos/${repo}/git/refs/heads/${branch}`, {
+    method: 'PATCH', headers: ghHeaders(token, true),
+    body: JSON.stringify({ sha: newCommitSha, force: false }),
   }).catch(() => null)
   if (!refRes?.ok) {
     const err = await refRes?.json().catch(() => null)
-    return { error: `创建分支失败：${(err as any)?.message ?? '未知错误'}` }
+    return { error: `推送失败：${(err as any)?.message ?? '未知错误'}` }
   }
+  return { commitSha: newCommitSha }
+}
 
-  // 逐文件提交到新分支（带旧 sha 防覆盖）
-  for (const f of files) {
-    const putRes = await fetch(`${GH}/repos/${repo}/contents/${encodeURIComponent(f.path).replace(/%2F/g, '/')}`, {
-      method: 'PUT', headers: ghHeaders(token, true),
-      body: JSON.stringify({
-        message: `${message || 'Claude 代码修改'}: ${f.path}`,
-        content: Buffer.from(f.content, 'utf-8').toString('base64'),
-        sha: f.sha,
-        branch,
-      }),
-    }).catch(() => null)
-    if (!putRes?.ok) {
-      const err = await putRes?.json().catch(() => null)
-      return { error: `提交文件失败 (${f.path})：${(err as any)?.message ?? '未知错误'}` }
-    }
-  }
-
-  // 开 PR
-  const title = (message || 'Claude 代码修改').split('\n')[0].slice(0, 72)
-  const body = `由 Claude（Code 板块）自动生成。\n\n**改动文件：**\n${files.map(f => `- \`${f.path}\``).join('\n')}\n\n---\n${message || ''}`
-  const prRes = await fetch(`${GH}/repos/${repo}/pulls`, {
+// 开启 GitHub Pages（静态站上线），返回可访问网址
+export async function enablePages(token: string, repo: string, branch: string): Promise<{ url: string } | { error: string }> {
+  const res = await fetch(`${GH}/repos/${repo}/pages`, {
     method: 'POST', headers: ghHeaders(token, true),
-    body: JSON.stringify({ title, body, head: branch, base: defaultBranch }),
+    body: JSON.stringify({ source: { branch, path: '/' } }),
   }).catch(() => null)
-  if (!prRes?.ok) {
-    const err = await prRes?.json().catch(() => null)
-    return { error: `创建 PR 失败：${(err as any)?.message ?? '未知错误'}` }
+  // 已开启过会返回 409，视为成功
+  if (res?.ok || res?.status === 409) {
+    const owner = repo.split('/')[0]
+    const name = repo.split('/')[1]
+    let url = `https://${owner}.github.io/${name}/`
+    try { const d = await res!.json(); if (d?.html_url) url = d.html_url } catch {}
+    return { url }
   }
-  const pr = await prRes.json()
-  return { prUrl: pr.html_url as string, prNumber: pr.number as number, branch }
+  const err = await res?.json().catch(() => null)
+  return { error: `开启 Pages 失败：${(err as any)?.message ?? '未知错误'}` }
 }
