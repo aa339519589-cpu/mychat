@@ -963,7 +963,7 @@ function ConversationRow({ c, isActive, renaming, onSelect, onOpenMenu, onCommit
 
 function ActionRow({ icon, label, onClick, danger }: { icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean }) {
   return (
-    <button onClick={onClick} className={cn("flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-[13px] transition-colors active:scale-[0.98]", danger ? "text-destructive hover:bg-destructive/10" : "text-foreground hover:bg-sidebar-accent/60")}>
+    <button onClick={onClick} className={cn("flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors active:scale-[0.98]", danger ? "text-destructive hover:bg-destructive/10" : "text-foreground hover:bg-sidebar-accent/60")}>
       <span className={cn("shrink-0", danger ? "text-destructive" : "text-muted-foreground")}>{icon}</span>
       <span className="truncate">{label}</span>
     </button>
@@ -997,7 +997,7 @@ function PopoverShell({ anchor, estH, onClose, children }: {
         onClick={e => e.stopPropagation()}
         style={pos}
         className={cn(
-          "w-max min-w-[160px] max-w-[200px] overflow-hidden rounded-2xl border border-sidebar-border bg-card p-1 shadow-xl transition-all duration-150 ease-out",
+          "w-max min-w-[148px] max-w-[192px] overflow-hidden rounded-2xl border border-sidebar-border bg-card p-0.5 shadow-xl transition-all duration-150 ease-out",
           shown ? "scale-100 opacity-100" : "scale-95 opacity-0",
         )}
       >

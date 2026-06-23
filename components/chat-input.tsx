@@ -317,15 +317,14 @@ export function ChatInput({
         {/* 加号：展开 Add(拍照/照片/文件) + 联网/仓库 */}
         <div ref={plusMenuRef} className="relative mb-0.5 shrink-0">
           {plusOpen && (
-            <div className="absolute bottom-full left-0 mb-2 w-[11rem] overflow-hidden rounded-2xl border border-border/60 bg-card shadow-lg">
-              {/* Add 区域：苹果原生风格 */}
-              <div className="px-3 pt-2.5 pb-1">
-                <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/50">Add</p>
-              </div>
-              <PlusItem icon={<Camera className="size-4" />} label="拍照" onClick={() => { setPlusOpen(false); cameraInputRef.current?.click() }} />
-              <PlusItem icon={<ImageIcon className="size-4" />} label="照片" onClick={() => { setPlusOpen(false); imageInputRef.current?.click() }} />
-              <PlusItem icon={<FileText className="size-4" />} label="文件" onClick={() => { setPlusOpen(false); fileInputRef.current?.click() }} />
-              <div className="border-t border-border/40" />
+            <div className="absolute bottom-full left-0 mb-2 overflow-hidden rounded-2xl bg-popover shadow-xl ring-1 ring-black/10">
+              {/* 照片/拍照/文件：苹果原生大图标大字样式 */}
+              <PlusItem icon={<ImageIcon className="size-[18px]" />} label="照片图库" onClick={() => { setPlusOpen(false); imageInputRef.current?.click() }} />
+              <div className="mx-3 h-px bg-border/50" />
+              <PlusItem icon={<Camera className="size-[18px]" />} label="拍照" onClick={() => { setPlusOpen(false); cameraInputRef.current?.click() }} />
+              <div className="mx-3 h-px bg-border/50" />
+              <PlusItem icon={<FileText className="size-[18px]" />} label="选择文件" onClick={() => { setPlusOpen(false); fileInputRef.current?.click() }} />
+              <div className="border-t border-border/60 my-1" />
               <button
                 onClick={() => onWebSearchChange(!webSearch)}
                 className={cn(
@@ -457,14 +456,14 @@ export function ChatInput({
   )
 }
 
-// 加号菜单里的一项（拍照/图片/文件）：点完即收起菜单
+// 加号菜单里的一项：苹果原生大图标大字样式
 function PlusItem({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      className="flex w-full items-center gap-2 px-4 py-2 text-sm text-muted-foreground transition-colors hover:bg-secondary/60"
+      className="flex w-full items-center gap-3 px-4 py-3 text-[15px] font-medium text-foreground transition-colors hover:bg-secondary/60 active:bg-secondary/80"
     >
-      <span className="text-muted-foreground">{icon}</span>
+      <span className="text-foreground/80">{icon}</span>
       <span className="flex-1 text-left">{label}</span>
     </button>
   )
