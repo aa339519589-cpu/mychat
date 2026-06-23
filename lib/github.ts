@@ -78,23 +78,35 @@ export async function createRepo(token: string, name: string, description: strin
   const base = sanitizeRepoName(name)
   for (let attempt = 0; attempt < 5; attempt++) {
     const tryName = attempt === 0 ? base : `${base}-${attempt + 1}`
-    const res = await fetch(`${GH}/user/repos`, {
-      method: 'POST', headers: ghHeaders(token, true),
-      body: JSON.stringify({ name: tryName, description: description || '', private: isPrivate, auto_init: true }),
-    }).catch(() => null)
-    if (res?.ok) {
+    let res: Response | null = null
+    try {
+      res = await fetch(`${GH}/user/repos`, {
+        method: 'POST', headers: ghHeaders(token, true),
+        body: JSON.stringify({ name: tryName, description: description || '', private: isPrivate, auto_init: true }),
+      })
+    } catch (e) {
+      return { error: `网络错误：${e instanceof Error ? e.message : '无法连接到 GitHub'}` }
+    }
+    if (res.ok) {
       const d = await res.json()
       return { fullName: d.full_name as string, defaultBranch: d.default_branch as string, htmlUrl: d.html_url as string }
     }
-    const err = await res?.json().catch(() => null)
+    let err: any = null
+    try {
+      err = await res.json()
+    } catch {
+      err = { message: `HTTP ${res.status} ${res.statusText || ''}`.trim() }
+    }
     const raw = JSON.stringify(err ?? {})
     // 重名 → 换个后缀再试
-    if (res?.status === 422 && /already exists/i.test(raw)) continue
+    if (res.status === 422 && /already exists/i.test(raw)) continue
     // 权限/scope 不足
-    if (res?.status === 403 || res?.status === 404) {
+    if (res.status === 403 || res.status === 404) {
       return { error: '当前 GitHub 授权没有创建仓库的权限。请点右上角 @用户名 → 断开 GitHub，再重新连接（会重新授权完整权限）。' }
     }
-    return { error: `建仓库失败：${(err as any)?.message ?? `HTTP ${res?.status ?? '网络错误'}`}` }
+    // 其他错误
+    const msg = (err as any)?.message || (err as any)?.errors?.[0]?.message || `HTTP ${res.status}`
+    return { error: `创建仓库失败：${msg}` }
   }
   return { error: '同名仓库已存在多个，请换一个项目名再试。' }
 }

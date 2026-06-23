@@ -55,7 +55,15 @@ function MdContent({ text }: { text: string }) {
 
 function ThinkingBlock({ thinking, active }: { thinking: string; active?: boolean }) {
   const [open, setOpen] = useState(false)
+  const [elapsed, setElapsed] = useState(0)
+  useEffect(() => {
+    if (!active) return
+    const tick = setInterval(() => setElapsed(e => e + 1), 1000)
+    return () => clearInterval(tick)
+  }, [active])
+  useEffect(() => { if (!active) setElapsed(0) }, [active])
   if (!thinking.trim()) return null
+  const formatTime = (sec: number) => sec < 60 ? `${sec}秒` : `${Math.floor(sec / 60)}分钟${sec % 60 ? sec % 60 + '秒' : ''}`
   return (
     <div className="mb-4">
       <button
@@ -63,7 +71,7 @@ function ThinkingBlock({ thinking, active }: { thinking: string; active?: boolea
         className="flex items-center gap-1.5 text-xs italic text-muted-foreground/70 hover:text-muted-foreground transition-colors"
       >
         {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
-        <span className={active ? "thinking-flow not-italic font-medium tracking-wide" : undefined}>thinking</span>
+        <span className="not-italic font-medium">thinking{active ? ` (${formatTime(elapsed)})` : ''}</span>
       </button>
       {open && (
         <div className="mt-2 break-words whitespace-pre-wrap rounded-xl border border-border/40 bg-muted/20 px-4 py-3 text-[13px] italic leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
