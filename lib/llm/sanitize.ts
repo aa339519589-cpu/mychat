@@ -7,6 +7,8 @@
 const PAIR_RULES: { open: string; close: string }[] = [
   { open: "<｜tool▁calls▁begin｜>", close: "<｜tool▁calls▁end｜>" },
   { open: "<|tool_calls_begin|>", close: "<|tool_calls_end|>" },
+  { open: "<｜DSML｜tool_calls>", close: "</｜DSML｜tool_calls>" }, // deepseek-v4-pro 文本式工具调用，整段丢弃
+  { open: "<｜DSML｜invoke", close: "</｜DSML｜invoke>" },          // 同上，缺外层包裹时兜底
   { open: "<function_calls>", close: "</function_calls>" },
   { open: "<invoke", close: "</invoke>" },
 ]
@@ -16,7 +18,9 @@ const STANDALONE_RES: RegExp[] = [
   /<｜tool▁sep｜>/g,
   /<｜\/?tool[^｜]*｜>/g, // 其它 <｜tool…｜> 单标记（不含 begin/end，已被成对规则处理）
   /<\|tool▁sep\|>/g,
-  /<\|\|?\s*DSML[^>]*>/gi, // <|| DSML ...>
+  /<\/?｜DSML｜[^>]*>/g,     // 全角 <｜DSML｜…> / </｜DSML｜…>（deepseek-v4-pro）
+  /<\|\|?\s*DSML[^>]*>/gi,  // 半角 <|| DSML ...>
+  /<\/?\s*[｜|]\s*DSML\s*[｜|][^>]*>/gi, // DSML 标记宽松兜底（全/半角竖线混用）
   /<\/?parameter\b[^>]*>/gi,
 ]
 
@@ -25,6 +29,7 @@ const ORPHAN_RES: RegExp[] = [
   /<\/?(?:invoke|function_calls|tool_call|tool_calls)\b[^>]*>/gi,
   /<｜tool▁calls?▁(?:begin|end)｜>/g,
   /<\|tool_calls?_(?:begin|end)\|>/g,
+  /<\/?\s*[｜|]?\s*DSML\s*[｜|]?[^>]*>/gi, // DSML 残留标签兜底
 ]
 
 // 最长可能被截断的标记长度（流式时保留这么多尾巴，防半个标记被放行）。
@@ -114,4 +119,24 @@ export function makeContentFilter() {
   }
 
   return { feed, flush }
+}
+
+// 解析 deepseek-v4-pro 用 DSML 文本写出的工具调用（而非标准 tool_calls 字段），
+// 转成标准 {id,name,args}，让 route 的多轮循环能照常执行工具、模型不至于中断。
+// 格式示例：<｜DSML｜invoke name="web_search"><｜DSML｜parameter name="query" ...>关键词</｜DSML｜parameter></｜DSML｜invoke>
+export function parseDsmlToolCalls(raw: string): { id: string; name: string; args: string }[] {
+  if (!raw || !/DSML/i.test(raw)) return []
+  const calls: { id: string; name: string; args: string }[] = []
+  const invokeRe = /<[｜|]+\s*DSML\s*[｜|]*\s*invoke\s+name="([^"]+)"[^>]*>([\s\S]*?)<\/[｜|]+\s*DSML\s*[｜|]*\s*invoke\s*>/gi
+  let m: RegExpExecArray | null
+  while ((m = invokeRe.exec(raw)) !== null) {
+    const name = m[1].trim()
+    const inner = m[2]
+    const args: Record<string, string> = {}
+    const paramRe = /<[｜|]+\s*DSML\s*[｜|]*\s*parameter\s+name="([^"]+)"[^>]*>([\s\S]*?)<\/[｜|]+\s*DSML\s*[｜|]*\s*parameter\s*>/gi
+    let pm: RegExpExecArray | null
+    while ((pm = paramRe.exec(inner)) !== null) args[pm[1].trim()] = pm[2].trim()
+    if (name) calls.push({ id: `dsml_${calls.length}_${Math.random().toString(36).slice(2, 8)}`, name, args: JSON.stringify(args) })
+  }
+  return calls
 }

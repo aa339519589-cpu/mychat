@@ -1,7 +1,7 @@
 // OpenAI / DeepSeek / Gemini 兼容协议：消息转换、附件注入、单轮流式请求
 import type { RawMsg, Attachment } from './types'
 import { send, upstreamError } from './stream'
-import { makeContentFilter } from './sanitize'
+import { makeContentFilter, parseDsmlToolCalls } from './sanitize'
 
 function toBeijingTime(iso: string): string {
   const d = new Date(new Date(iso).getTime() + 8 * 3600 * 1000)
@@ -71,7 +71,7 @@ export async function runOpenAITurn(
   }
 
   let content = ''        // 过滤后、真正发给前端的可见正文
-  let rawContentLen = 0   // 上游 content 原始长度（用于判断是否泄漏了工具协议）
+  let rawContent = ''     // 上游 content 原始文本（判断泄漏 + 解析 DSML 文本工具调用）
   let totalTokens = 0
   let finishReason: string | null = null
   let sawDone = false
@@ -86,7 +86,7 @@ export async function runOpenAITurn(
     const delta = choice.delta ?? choice.message ?? {}
     if (delta.reasoning_content) send(controller, { thinking: delta.reasoning_content })
     if (delta.content) {
-      rawContentLen += String(delta.content).length
+      rawContent += String(delta.content)
       const safe = filter.feed(String(delta.content))
       if (safe) { content += safe; send(controller, { text: safe }) }
     }
@@ -128,7 +128,13 @@ export async function runOpenAITurn(
   const tail = filter.flush()
   if (tail) { content += tail; send(controller, { text: tail }) }
 
-  const toolCalls = Object.values(callMap).filter(t => t.name)
+  let toolCalls = Object.values(callMap).filter(t => t.name)
+  // 标准 tool_calls 字段没拿到调用，但模型可能把调用用 DSML 文本写进了 content（deepseek-v4-pro 常见）
+  // —— 从原始文本解析出来转成标准调用，让多轮循环照常执行工具、模型不至于中断
+  if (toolCalls.length === 0) {
+    const parsed = parseDsmlToolCalls(rawContent)
+    if (parsed.length) toolCalls = parsed
+  }
   let assistantMessage: any = null
   if (toolCalls.length) {
     assistantMessage = {
@@ -138,8 +144,8 @@ export async function runOpenAITurn(
     }
   }
   // leaked：上游 content 比过滤后长 = 剥掉了工具协议标记
-  const leaked = content.length < rawContentLen
+  const leaked = content.length < rawContent.length
   // truncated：收到了正文、但既无 finish_reason 也无 [DONE] = 上游异常掐断
-  const truncated = !finishReason && !sawDone && rawContentLen > 0
+  const truncated = !finishReason && !sawDone && rawContent.length > 0
   return { assistantMessage, toolCalls, failed: false, totalTokens, content, finishReason, truncated, leaked }
 }
