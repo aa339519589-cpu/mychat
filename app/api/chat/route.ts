@@ -14,7 +14,7 @@ const MAX_TOOL_ROUNDS = 6
 
 // 加权额度上限（与 QuotaScreen 展示的 max 一致）
 const QUOTA_LIMIT_5H = 500_000
-const QUOTA_LIMIT_7D = 1_000_000
+const QUOTA_LIMIT_7D = 10_000_000
 const MS_5H = 5 * 3600 * 1000
 const MS_7D = 7 * 86400 * 1000
 

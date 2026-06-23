@@ -30,6 +30,7 @@ export type QuotaSnapshot = {
   window5hStart: string
   tokens7d: number
   window7dStart: string
+  balance: number
 }
 
 // 读取当前登录用户的档案；没有行就返回默认值
@@ -71,11 +72,12 @@ export async function fetchQuota(): Promise<QuotaSnapshot> {
       window5hStart: nowIso,
       tokens7d: 0,
       window7dStart: nowIso,
+      balance: 0,
     }
   }
   const { data } = await supabase
     .from("profiles")
-    .select("tokens_5h, window_5h_start, tokens_7d, window_7d_start")
+    .select("tokens_5h, window_5h_start, tokens_7d, window_7d_start, balance")
     .eq("user_id", auth.user.id)
     .maybeSingle()
   // 即便字段为 NULL，也返回有效的快照（defaulting to 0）
@@ -84,6 +86,7 @@ export async function fetchQuota(): Promise<QuotaSnapshot> {
     window5hStart: (data?.window_5h_start as string) ?? nowIso,
     tokens7d: (data?.tokens_7d as number) ?? 0,
     window7dStart: (data?.window_7d_start as string) ?? nowIso,
+    balance: (data?.balance as number) ?? 0,
   }
 }
 

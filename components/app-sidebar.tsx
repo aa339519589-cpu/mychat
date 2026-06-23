@@ -13,6 +13,7 @@ import {
   MoreHorizontal, Star, Pin, SlidersHorizontal, BarChart2,
 } from "lucide-react"
 import { fetchQuota, fetchCustomSystemPrompt, saveCustomSystemPrompt, type QuotaSnapshot } from "@/lib/db"
+import { createClient } from "@/lib/supabase/client"
 
 // 二级页面：除根视图（侧栏主体）外的所有可滑入页面
 type Screen = "settings" | "memory" | "projects" | "artifacts" | "project-detail" | "basics" | "quota"
@@ -1019,6 +1020,9 @@ function BasicsScreen() {
 function QuotaScreen() {
   const [quota, setQuota] = useState<QuotaSnapshot | null>(null)
   const [loading, setLoading] = useState(true)
+  const [codeInput, setCodeInput] = useState('')
+  const [codeLoading, setCodeLoading] = useState(false)
+  const [codeMsg, setCodeMsg] = useState('')
 
   useEffect(() => {
     (async () => {
@@ -1026,7 +1030,48 @@ function QuotaScreen() {
       setQuota(q)
       setLoading(false)
     })()
+
+    const supabase = createClient()
+    const channel = supabase
+      .channel('quota-realtime')
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'profiles' },
+        async () => {
+          const q = await fetchQuota()
+          setQuota(q)
+        }
+      )
+      .subscribe()
+
+    return () => { channel.unsubscribe() }
   }, [])
+
+  async function handleRedeemCode() {
+    if (!codeInput.trim()) return
+    setCodeLoading(true)
+    setCodeMsg('')
+    try {
+      const res = await fetch('/api/redeem-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: codeInput }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setCodeMsg(`✓ 兑换成功，获得 ${(data.tokensAdded / 1_000_000).toFixed(0)} 百万额度`)
+        setCodeInput('')
+        const q = await fetchQuota()
+        setQuota(q)
+      } else {
+        setCodeMsg(data.error || '兑换失败')
+      }
+    } catch {
+      setCodeMsg('网络错误')
+    } finally {
+      setCodeLoading(false)
+    }
+  }
 
   function fmtNum(n: number) { return n.toLocaleString() }
   function pct(n: number, max: number) { return Math.min(100, (n / max) * 100) }
@@ -1044,7 +1089,7 @@ function QuotaScreen() {
   const t5h = (quota?.tokens5h ?? 0)
   const t7d = (quota?.tokens7d ?? 0)
   const max5h = 500_000
-  const max7d = 1_000_000
+  const max7d = 10_000_000
   const w5h = quota?.window5hStart ?? new Date().toISOString()
   const w7d = quota?.window7dStart ?? new Date().toISOString()
 
@@ -1056,6 +1101,13 @@ function QuotaScreen() {
 
   return (
     <div className="space-y-4 px-4">
+
+      {/* 账户余额 */}
+      <div className="rounded-2xl bg-sidebar-primary/15 px-4 py-3 border border-sidebar-primary/30">
+        <div className="text-[12px] text-muted-foreground">账户余额</div>
+        <div className="mt-1.5 text-[22px] font-semibold text-foreground">{fmtNum(quota?.balance ?? 0)}</div>
+        <div className="mt-0.5 text-[11px] text-muted-foreground">token（不受时间窗口限制）</div>
+      </div>
 
       <div className="space-y-2.5 rounded-2xl bg-sidebar-accent/55 p-4 border border-sidebar-border">
         <div className="flex items-baseline justify-between">
@@ -1124,6 +1176,34 @@ function QuotaScreen() {
           </button>
         </div>
         <p className="px-1 text-[11px] text-muted-foreground">购买功能即将开放</p>
+      </div>
+
+      {/* 邀请码兑换 */}
+      <div className="space-y-2">
+        <div className="text-[13px] font-medium text-foreground">邀请码兑换</div>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={codeInput}
+            onChange={e => setCodeInput(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') handleRedeemCode() }}
+            placeholder="输入邀请码"
+            className="flex-1 rounded-xl bg-sidebar-accent/50 px-3 py-2 text-sm outline-none focus:bg-sidebar-accent/75 placeholder:text-muted-foreground/50"
+            disabled={codeLoading}
+          />
+          <button
+            onClick={handleRedeemCode}
+            disabled={codeLoading || !codeInput.trim()}
+            className="rounded-xl bg-sidebar-primary px-4 py-2 text-sm text-sidebar-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            {codeLoading ? '兑换中…' : '兑换'}
+          </button>
+        </div>
+        {codeMsg && (
+          <p className={cn('text-[12px]', codeMsg.startsWith('✓') ? 'text-green-600' : 'text-destructive')}>
+            {codeMsg}
+          </p>
+        )}
       </div>
     </div>
   )
