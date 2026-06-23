@@ -2,40 +2,45 @@
 // 在项目内 → 写 project_memories 表（按 project_id 隔离）
 // 在主聊天 → 写全局 memories 表（按 user_id 隔离）
 import type { ToolDef, ToolContext, ToolOutcome, ToolSchema } from './types'
+import { log } from '@/lib/logger'
 
 type MemoryResult = { action: 'create' | 'update' | 'delete'; id?: string; content?: string; ok: boolean; timestamp?: string }
 
 async function runMemoryOp(ctx: ToolContext, name: string, input: any): Promise<MemoryResult> {
   const { supabase, userId, projectId } = ctx
   if (!supabase || !userId) return { action: 'create', ok: false }
+  // 有 projectId → 写项目记忆表；否则写全局记忆表
+  const table = projectId ? 'project_memories' : 'memories'
   try {
     if (name === 'remember') {
       const content = String(input?.content ?? '').trim()
       if (!content) return { action: 'create', ok: false }
       const id = crypto.randomUUID()
       const ts = new Date().toISOString()
-      if (projectId) {
-        const { error } = await supabase.from('project_memories').insert({ id, user_id: userId, project_id: projectId, content })
-        return { action: 'create', id, content, ok: !error, timestamp: ts }
-      }
-      const { error } = await supabase.from('memories').insert({ id, user_id: userId, content })
+      const row: Record<string, unknown> = { id, user_id: userId, content }
+      if (projectId) row.project_id = projectId
+      const { error } = await supabase.from(table).insert(row)
+      if (error) log.error('memory', `remember 写入失败 (${table})`, error)
+      else log.info('memory', `remember 成功`, { table, projectId: projectId ?? null })
       return { action: 'create', id, content, ok: !error, timestamp: ts }
     }
     if (name === 'update_memory') {
       const id = String(input?.id ?? '')
       const content = String(input?.content ?? '').trim()
       const ts = new Date().toISOString()
-      const table = projectId ? 'project_memories' : 'memories'
       const { error } = await supabase.from(table).update({ content, updated_at: ts }).eq('id', id)
+      if (error) log.error('memory', `update 失败 (${table})`, error)
       return { action: 'update', id, content, ok: !error, timestamp: ts }
     }
     if (name === 'forget') {
       const id = String(input?.id ?? '')
-      const table = projectId ? 'project_memories' : 'memories'
       const { error } = await supabase.from(table).delete().eq('id', id)
+      if (error) log.error('memory', `forget 失败 (${table})`, error)
       return { action: 'delete', id, ok: !error }
     }
-  } catch { /* fall through */ }
+  } catch (e) {
+    log.error('memory', `${name} 异常`, e)
+  }
   return { action: 'create', ok: false }
 }
 

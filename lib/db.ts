@@ -382,6 +382,7 @@ export async function fetchProjectContext(projectId: string): Promise<ProjectCon
     fetchProjectMemories(projectId),
   ])
   return {
+    id: projectId,
     instructions: (proj?.instructions as string) ?? "",
     files: files.map(f => ({ name: f.name, content: f.content })),
     projectMemories: mems.map(m => ({ id: m.id, content: m.content })),

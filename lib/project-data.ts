@@ -15,6 +15,7 @@ export type ProjectFile = {
 
 // 聊天时喂给模型的项目背景：专属指令 + 资料正文 + 项目记忆
 export type ProjectContext = {
+  id: string   // 当前项目 id：发给后端，让记忆工具写进 project_memories 而非全局
   instructions: string
   files: { name: string; content: string }[]
   projectMemories: { id: string; content: string }[]
