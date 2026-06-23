@@ -358,7 +358,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       )}
 
       {/* 输入区：上下两条线 + Enter 键 */}
-      <div className="border-y border-border px-4 py-3 md:px-8">
+      <div className="border-y border-border px-4 py-2 md:px-8">
         <div className="mx-auto flex max-w-3xl items-end gap-2">
           {goalArmed && <span className="mb-2 shrink-0 rounded px-1.5 py-0.5 text-[10px] text-white" style={{ background: ACCENT }}>目标</span>}
           <span className="mb-2 shrink-0 select-none" style={{ color: ACCENT, fontFamily: MONO }}>›</span>
