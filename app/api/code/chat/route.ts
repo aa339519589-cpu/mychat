@@ -1,18 +1,19 @@
 import { NextRequest } from 'next/server'
 import { cookies } from 'next/headers'
-import { createClient } from '@/lib/supabase/server'
 import { TIER_MAP } from '@/lib/chat-data'
 import { send, done, networkError } from '@/lib/llm/stream'
-import { toOpenAI, chatCompletionsUrl, runOpenAITurn } from '@/lib/llm/openai'
+import { toOpenAI, chatCompletionsUrl } from '@/lib/llm/openai'
+import { runAgentLoop, type ExecuteTool } from '@/lib/llm/agent-loop'
+import type { Emit } from '@/lib/llm/events'
 import { listTree, readFile, repoMeta } from '@/lib/github'
 import { log } from '@/lib/logger'
 import { validate } from '@/lib/validation'
-import { checkRateLimit } from '@/lib/rate-limit'
-import { checkQuotaExceeded, addQuotaUsage } from '@/lib/quota'
+import { addQuotaUsage } from '@/lib/quota'
+import { resolveAuth, enforceLimits } from '@/lib/api/guard'
 
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY ?? ''
 const DEEPSEEK_BASE_URL = 'https://api.deepseek.com'
-const TAVILY_API_KEY = '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'
+const TAVILY_API_KEY = process.env.TAVILY_API_KEY ?? ''
 
 const ROUNDS_NORMAL = 10
 const ROUNDS_GOAL = 24
@@ -69,28 +70,12 @@ export async function POST(req: NextRequest) {
   const model = tierCfg.model
   const thinking = tierCfg.thinking
 
-  let supabase: any = null
-  let userId: string | null = null
-  try {
-    supabase = await createClient()
-    const { data } = await supabase.auth.getUser()
-    userId = data.user?.id ?? null
-  } catch { supabase = null }
-
-  if (userId) {
-    const { allowed } = checkRateLimit(userId)
-    if (!allowed) return new Response(JSON.stringify({ error: '请求过于频繁，请稍后再试' }), { status: 429 })
-  }
-
-  let usingBalance = false
-  if (userId && supabase) {
-    const q = await checkQuotaExceeded(supabase, userId)
-    if (q.exceeded) {
-      const window = q.which === '5h' ? '5 小时' : '7 天'
-      return new Response(JSON.stringify({ error: `${window}用量已达上限，余额也已耗尽。可在「设置 · 使用额度」充值。` }), { status: 429 })
-    }
-    usingBalance = q.usingBalance ?? false
-  }
+  // 鉴权 + 限流/额度闸门（与 /api/chat 共用 guard 层）
+  const auth = await resolveAuth()
+  const { supabase, userId } = auth
+  const gate = await enforceLimits(auth)
+  if (gate.response) return gate.response
+  const usingBalance = gate.usingBalance
 
   // 选了仓库才校验 + 取默认分支；没选（新建项目模式）则跳过
   let defaultBranch: string | null = null
@@ -126,15 +111,16 @@ export async function POST(req: NextRequest) {
 
   const stream = new ReadableStream({
     async start(controller) {
+      const emit: Emit = (e) => send(controller, e)
       let totalTokensUsed = 0
       let fileReads = 0
       const shaCache = new Map<string, string>()  // path → 读过的旧内容（给前端做 diff）
       const msgs: any[] = [{ role: 'system', content: SYSTEM }, ...toOpenAI(messages)]
 
-      async function execCodeTool(name: string, input: any): Promise<string> {
+      const executeTool: ExecuteTool = async (name, input) => {
         if (name === 'list_files') {
           if (!repo) return '尚未选择仓库。'
-          send(controller, { step: { kind: 'list', label: '浏览仓库文件结构' } })
+          emit({ step: { kind: 'list', label: '浏览仓库文件结构' } })
           const { paths, truncated } = await listTree(token!, repo, defaultBranch!)
           if (!paths.length) return '仓库为空或无法获取文件列表。'
           return `仓库共 ${paths.length} 个文件${truncated ? '（已截断）' : ''}：\n${paths.join('\n')}`
@@ -145,7 +131,7 @@ export async function POST(req: NextRequest) {
           if (!path) return '缺少 path。'
           if (fileReads >= MAX_FILE_READS) return '读取文件数已达上限，请基于已读内容继续。'
           fileReads++
-          send(controller, { step: { kind: 'read', label: `读取 ${path}` } })
+          emit({ step: { kind: 'read', label: `读取 ${path}` } })
           const r = await readFile(token!, repo, path)
           if ('error' in r) return `读取失败：${r.error}`
           shaCache.set(path, r.content)
@@ -154,8 +140,8 @@ export async function POST(req: NextRequest) {
         if (name === 'create_repo') {
           const name2 = String(input?.name ?? '').trim()
           if (!name2) return '缺少仓库名。'
-          send(controller, { step: { kind: 'repo', label: `新建仓库 ${name2}` } })
-          send(controller, { plan: { kind: 'create_repo', name: name2, description: String(input?.description ?? ''), private: !!input?.private } })
+          emit({ step: { kind: 'repo', label: `新建仓库 ${name2}` } })
+          emit({ plan: { kind: 'create_repo', name: name2, description: String(input?.description ?? ''), private: !!input?.private } })
           return `已加入计划：新建仓库 ${login}/${name2}。继续写入文件。`
         }
         if (name === 'write_files') {
@@ -171,8 +157,8 @@ export async function POST(req: NextRequest) {
               const r = await readFile(token!, repo, path)
               if (!('error' in r)) oldContent = r.content
             }
-            send(controller, { step: { kind: 'edit', label: `写入 ${path}` } })
-            send(controller, { plan: { kind: 'write_file', path, oldContent, newContent: content } })
+            emit({ step: { kind: 'edit', label: `写入 ${path}` } })
+            emit({ plan: { kind: 'write_file', path, oldContent, newContent: content } })
           }
           return `已加入计划：写入 ${files.length} 个文件（等待用户确认/自动执行）。`
         }
@@ -181,14 +167,14 @@ export async function POST(req: NextRequest) {
           for (const p of paths) {
             const path = String(p ?? '').trim()
             if (!path) continue
-            send(controller, { step: { kind: 'edit', label: `删除 ${path}` } })
-            send(controller, { plan: { kind: 'delete_file', path } })
+            emit({ step: { kind: 'edit', label: `删除 ${path}` } })
+            emit({ plan: { kind: 'delete_file', path } })
           }
           return `已加入计划：删除 ${paths.length} 个文件。`
         }
         if (name === 'enable_pages') {
-          send(controller, { step: { kind: 'deploy', label: '开启 GitHub Pages 上线' } })
-          send(controller, { plan: { kind: 'enable_pages' } })
+          emit({ step: { kind: 'deploy', label: '开启 GitHub Pages 上线' } })
+          emit({ plan: { kind: 'enable_pages' } })
           return '已加入计划：开启 GitHub Pages。'
         }
         if (name === 'code_remember') {
@@ -198,13 +184,14 @@ export async function POST(req: NextRequest) {
           if (userId && supabase) {
             try { const { error } = await supabase.from('code_memories').insert({ user_id: userId, repo, content }); ok = !error } catch { ok = false }
           }
-          send(controller, { step: { kind: 'memory', label: `记住：${content.slice(0, 40)}` } })
+          emit({ step: { kind: 'memory', label: `记住：${content.slice(0, 40)}` } })
           return ok ? '已记住。' : '记忆保存失败（可能未建表）。'
         }
         if (name === 'search') {
           const query = String(input?.query ?? '').trim()
           if (!query) return '查询为空。'
-          send(controller, { step: { kind: 'read', label: `搜索：${query}` } })
+          if (!TAVILY_API_KEY) return '搜索功能未配置。'
+          emit({ step: { kind: 'read', label: `搜索：${query}` } })
           try {
             const res = await fetch('https://api.tavily.com/search', {
               method: 'POST',
@@ -229,29 +216,17 @@ export async function POST(req: NextRequest) {
       }
 
       try {
-        let lastHadToolCalls = false
-        let lastTurn: any = null
-        for (let round = 0; round < maxRounds; round++) {
-          const turn = await runOpenAITurn(url, DEEPSEEK_API_KEY, model, msgs, tools, controller, { thinking })
-          totalTokensUsed += turn.totalTokens
-          log.info('codeChat', 'Turn finished', { round, finishReason: turn.finishReason, toolCalls: turn.toolCalls.length, contentLen: turn.content.length })
-          lastTurn = turn
-          lastHadToolCalls = turn.toolCalls.length > 0
-          if (turn.failed || !lastHadToolCalls) break
-          msgs.push(turn.assistantMessage)
-          for (const tc of turn.toolCalls) {
-            let input: any = {}
-            try { input = JSON.parse(tc.args || '{}') } catch {}
-            const result = await execCodeTool(tc.name, input)
-            msgs.push({ role: 'tool', tool_call_id: tc.id, content: result })
-          }
-        }
-        if (lastHadToolCalls) {
-          lastTurn = await runOpenAITurn(url, DEEPSEEK_API_KEY, model, msgs, [], controller, { thinking })
-          totalTokensUsed += lastTurn.totalTokens
-        }
+        const { totalTokens } = await runAgentLoop({
+          url, apiKey: DEEPSEEK_API_KEY, model, thinking,
+          messages: msgs, tools, emit, executeTool,
+          maxRounds,
+          onTurn: ({ phase, round, turn }) => {
+            if (phase === 'round') log.info('codeChat', 'Turn finished', { round, finishReason: turn.finishReason, toolCalls: turn.toolCalls.length, contentLen: turn.content.length })
+          },
+        })
+        totalTokensUsed += totalTokens
       } catch (error) {
-        send(controller, { error: networkError(error) })
+        emit({ error: networkError(error) })
       } finally {
         if (userId && supabase) await addQuotaUsage(supabase, userId, totalTokensUsed, model, thinking, usingBalance)
         done(controller)
