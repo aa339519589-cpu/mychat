@@ -19,6 +19,7 @@ type RepoItem = { name: string; full_name: string; private: boolean; description
 type Overlay = null | "model" | "memory" | "resume" | "context"
 
 const COMMANDS = [
+  { cmd: "/new", desc: "在当前项目内开启新对话" },
   { cmd: "/model", desc: "切换模型（快速 / 均衡 / 深度）" },
   { cmd: "/memory", desc: "查看 / 编辑本仓库的记忆" },
   { cmd: "/context", desc: "查看当前上下文用量" },
@@ -66,9 +67,15 @@ function DiffBody({ oldContent, newContent }: { oldContent: string; newContent: 
   )
 }
 
-// GPT 同款呼吸圆球
-function ThinkingBall() {
-  return <span className="code-breathe inline-block size-3 rounded-full align-middle" style={{ background: ACCENT }} />
+// 计时器：进行中显示「(N秒 thinking)」，每秒递增——替代呼吸灯，让进度始终可见
+function ThinkingTimer() {
+  const [sec, setSec] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => setSec(s => s + 1), 1000)
+    return () => clearInterval(t)
+  }, [])
+  const fmt = sec < 60 ? `${sec}秒` : `${Math.floor(sec / 60)}分钟${sec % 60 ? `${sec % 60}秒` : ""}`
+  return <span className="text-[12px] text-muted-foreground" style={{ fontFamily: MONO }}>({fmt} thinking)</span>
 }
 
 // 单个计划动作的展示（含 diff）
@@ -119,7 +126,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
   const [pendingPlan, setPendingPlan] = useState<PlanAction[]>([])
   const [applying, setApplying] = useState(false)
   const [applyError, setApplyError] = useState<string | null>(null)
-  const [elapsed, setElapsed] = useState(0)
+  const [hiddenRepos, setHiddenRepos] = useState<string[]>([])
 
   const [overlay, setOverlay] = useState<Overlay>(null)
   const [ghMenu, setGhMenu] = useState(false)
@@ -137,12 +144,21 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
     } catch {}
   }, [])
 
-  // 计时：streaming 或 executing 时每秒递增
+  // 从 localStorage 恢复「已隐藏的仓库」列表
   useEffect(() => {
-    if (!streaming && !applying) { setElapsed(0); return }
-    const tick = setInterval(() => setElapsed(e => e + 1), 1000)
-    return () => clearInterval(tick)
-  }, [streaming, applying])
+    try { setHiddenRepos(JSON.parse(localStorage.getItem("code_hidden_repos") || "[]")) } catch {}
+  }, [])
+
+  function hideRepo(full: string) {
+    setHiddenRepos(prev => {
+      const next = [...new Set([...prev, full])]
+      try { localStorage.setItem("code_hidden_repos", JSON.stringify(next)) } catch {}
+      return next
+    })
+  }
+  function resetHiddenRepos() {
+    setHiddenRepos([]); try { localStorage.removeItem("code_hidden_repos") } catch {}
+  }
 
   async function loadRepos() {
     if (repos) return
@@ -150,8 +166,21 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
     catch { setRepos([]) }
   }
 
-  function enterRepo(full: string | null) {
-    setRepo(full); setEntered(true); setSessionId(null); setMessages([]); setPendingPlan([])
+  async function enterRepo(full: string | null) {
+    setRepo(full); setEntered(true); setSessionId(null); setMessages([]); setPendingPlan([]); setApplyError(null)
+    // 恢复该仓库最近一次会话的上下文（退出再进不重置）
+    if (full) {
+      const sessions = await fetchCodeSessions(full)
+      if (sessions.length) {
+        const msgs = await fetchCodeMessages(sessions[0].id)
+        setSessionId(sessions[0].id); setMessages(msgs)
+      }
+    }
+  }
+
+  // 在当前仓库内开启全新对话（旧对话仍可用 /resume 找回）
+  function startNewSession() {
+    setSessionId(null); setMessages([]); setPendingPlan([]); setApplyError(null); setOverlay(null)
   }
 
   function toggleAuto() { setAuto(v => { const n = !v; try { localStorage.setItem("code_auto", n ? "1" : "0") } catch {} ; return n }) }
@@ -264,6 +293,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       if (cmd === "/context") { setInput(""); setOverlay("context"); return }
       if (cmd === "/resume") { setInput(""); setOverlay("resume"); return }
       if (cmd === "/goal") { setInput(""); if (arg) { runSend(arg, true); return } setGoalArmed(true); return }
+      if (cmd === "/new") { setInput(""); startNewSession(); return }
     }
     setInput("")
     const g = goalArmed; setGoalArmed(false)
@@ -299,13 +329,13 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
   if (!entered)
     return (
       <Shell onExit={onExit} login={login} onGhMenu={() => setGhMenu(true)} ghMenu={ghMenu} onCloseGh={() => setGhMenu(false)} onDisconnect={disconnect}>
-        <RepoPicker repos={repos} onLoad={loadRepos} onPick={enterRepo} />
+        <RepoPicker repos={repos} hidden={hiddenRepos} onLoad={loadRepos} onPick={enterRepo} onHide={hideRepo} onReset={resetHiddenRepos} />
       </Shell>
     )
 
   // 终端聊天
   return (
-    <Shell onExit={onExit} login={login} repo={repo} onSwitchRepo={() => { setEntered(false); setGhMenu(false) }}
+    <Shell onExit={() => { setEntered(false); setGhMenu(false) }} login={login} repo={repo} onSwitchRepo={() => { setEntered(false); setGhMenu(false) }}
       onGhMenu={() => setGhMenu(true)} ghMenu={ghMenu} onCloseGh={() => setGhMenu(false)} onDisconnect={disconnect}
       auto={auto} onToggleAuto={toggleAuto}>
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-5 md:px-8" style={{ fontFamily: MONO }}>
@@ -337,7 +367,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
                 className="flex items-center gap-1 rounded-lg px-3.5 py-1.5 text-[12px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
                 style={{ background: ACCENT }}>
                 {applying ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
-                {applying ? `执行中… (${elapsed}秒 thinking)` : "确认并执行"}
+                {applying ? <>执行中… <ThinkingTimer /></> : "确认并执行"}
               </button>
             </div>
             </div>
@@ -346,7 +376,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       )}
       {applying && auto && (
         <div className="border-t border-border bg-secondary/40 px-4 py-2.5 md:px-8">
-          <div className="mx-auto flex max-w-3xl items-center gap-2 text-[12px] text-muted-foreground"><Loader2 className="size-3.5 animate-spin" />自动执行中… ({elapsed}秒 thinking)</div>
+          <div className="mx-auto flex max-w-3xl items-center gap-2 text-[12px] text-muted-foreground"><Loader2 className="size-3.5 animate-spin" />自动执行中… <ThinkingTimer /></div>
         </div>
       )}
 
@@ -355,7 +385,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
         <div className="border-t border-border px-4 md:px-8">
           <div className="mx-auto max-w-3xl py-1.5">
             {matchedCmds.map(c => (
-              <button key={c.cmd} onClick={() => { if (c.cmd === "/goal") { setInput("/goal "); taRef.current?.focus() } else { setInput(""); setOverlay(c.cmd.slice(1) as Overlay) } }}
+              <button key={c.cmd} onClick={() => { if (c.cmd === "/goal") { setInput("/goal "); taRef.current?.focus() } else if (c.cmd === "/new") { setInput(""); startNewSession() } else { setInput(""); setOverlay(c.cmd.slice(1) as Overlay) } }}
                 className="flex w-full items-center gap-3 rounded-md px-2 py-1 text-left transition-colors hover:bg-secondary/60">
                 <span className="text-[12px] font-medium" style={{ color: ACCENT, fontFamily: MONO }}>{c.cmd}</span>
                 <span className="text-[11px] text-muted-foreground">{c.desc}</span>
@@ -380,7 +410,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
           />
           {streaming ? (
             <div className="flex items-center gap-2">
-              <ThinkingBall />
+              <ThinkingTimer />
               <button onClick={() => abortRef.current?.abort()} aria-label="停止"
                 className="flex h-7 items-center justify-center rounded-lg border border-border bg-secondary px-2.5 text-foreground transition-colors hover:bg-secondary/70">
                 <Square className="size-3.5 fill-current" />
@@ -499,8 +529,8 @@ function MessageView({ m, login, streaming }: { m: CodeMessage; login: string; s
           <span style={{ color: ACCENT }}>⏺</span>{s.label}
         </div>
       ))}
-      {/* 思考球：流式中、还没出正文时显示 */}
-      {streaming && !m.content && <div className="flex items-center gap-2 py-1"><ThinkingBall /><span className="text-[12px] text-muted-foreground">思考中</span></div>}
+      {/* 进行中计时器：流式中、还没出正文时显示「(N秒 thinking)」 */}
+      {streaming && !m.content && <div className="flex items-center gap-2 py-1"><ThinkingTimer /></div>}
       {m.content && <p className={cn("whitespace-pre-wrap break-words text-[13.5px] leading-[1.7]", m.isError ? "text-destructive" : "text-foreground/90")}>{m.content}</p>}
       {m.plan?.map((a, i) => <PlanActionView key={i} a={a} login={login} />)}
       {m.result && <ResultCard r={m.result} />}
@@ -519,8 +549,10 @@ function ResultCard({ r }: { r: ApplyResult }) {
 }
 
 // ── 仓库选择（含新建项目入口）──
-function RepoPicker({ repos, onLoad, onPick }: { repos: RepoItem[] | null; onLoad: () => void; onPick: (full: string | null) => void }) {
+function RepoPicker({ repos, hidden, onLoad, onPick, onHide, onReset }: { repos: RepoItem[] | null; hidden: string[]; onLoad: () => void; onPick: (full: string | null) => void; onHide: (full: string) => void; onReset: () => void }) {
   useEffect(() => { if (repos === null) onLoad() }, [repos, onLoad])
+  const visible = repos?.filter(r => !hidden.includes(r.full_name)) ?? null
+  const hiddenCount = repos && visible ? repos.length - visible.length : 0
   return (
     <div className="flex-1 overflow-y-auto px-4 py-6 md:px-8">
       <div className="mx-auto max-w-2xl space-y-2">
@@ -529,20 +561,31 @@ function RepoPicker({ repos, onLoad, onPick }: { repos: RepoItem[] | null; onLoa
           <span className="text-[13px] font-medium text-foreground" style={{ fontFamily: MONO }}>从零做个新项目（我来建仓库）</span>
         </button>
         <p className="px-1 pt-2 text-[12px] text-muted-foreground" style={{ fontFamily: MONO }}>或选一个已有仓库改：</p>
-        {repos === null ? (
+        {visible === null ? (
           <div className="flex justify-center py-10 text-muted-foreground"><Loader2 className="size-5 animate-spin" /></div>
-        ) : repos.length === 0 ? (
-          <p className="py-6 text-center text-[13px] text-muted-foreground">没有可访问的仓库</p>
-        ) : repos.map(r => (
-          <button key={r.full_name} onClick={() => onPick(r.full_name)} className="flex w-full items-center gap-3 rounded-lg border border-border px-4 py-2.5 text-left transition-colors hover:bg-secondary/50">
-            <GitBranch className="size-4 shrink-0" style={{ color: ACCENT }} />
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-[13px] text-foreground" style={{ fontFamily: MONO }}>{r.full_name}</span>
-              {r.description && <span className="block truncate text-[11px] text-muted-foreground">{r.description}</span>}
-            </span>
-            {r.private && <span className="shrink-0 rounded bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground">私有</span>}
-          </button>
+        ) : visible.length === 0 ? (
+          <p className="py-6 text-center text-[13px] text-muted-foreground">没有可显示的仓库</p>
+        ) : visible.map(r => (
+          <div key={r.full_name} className="group flex w-full items-center gap-2 rounded-lg border border-border px-4 py-2.5 transition-colors hover:bg-secondary/50">
+            <button onClick={() => onPick(r.full_name)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+              <GitBranch className="size-4 shrink-0" style={{ color: ACCENT }} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13px] text-foreground" style={{ fontFamily: MONO }}>{r.full_name}</span>
+                {r.description && <span className="block truncate text-[11px] text-muted-foreground">{r.description}</span>}
+              </span>
+              {r.private && <span className="shrink-0 rounded bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground">私有</span>}
+            </button>
+            <button onClick={() => onHide(r.full_name)} aria-label="从列表移除" title="从列表移除（不会删除 GitHub 上的真实仓库）"
+              className="shrink-0 rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-secondary hover:text-destructive group-hover:opacity-100">
+              <Trash2 className="size-3.5" />
+            </button>
+          </div>
         ))}
+        {hiddenCount > 0 && (
+          <button onClick={onReset} className="w-full pt-2 text-center text-[11px] text-muted-foreground transition-colors hover:text-foreground" style={{ fontFamily: MONO }}>
+            已隐藏 {hiddenCount} 个 · 点此恢复全部
+          </button>
+        )}
       </div>
     </div>
   )
