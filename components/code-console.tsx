@@ -13,7 +13,7 @@ import {
 } from "@/lib/code-data"
 
 const MONO = "ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Courier New',monospace"
-const ORANGE = "oklch(0.68 0.19 45)"   // Claude 橙：终端唯一强调色
+const ACCENT = "oklch(0.52 0.12 256)"   // 普通蓝：终端强调色（不艳不亮）
 
 type RepoItem = { name: string; full_name: string; private: boolean; description: string }
 type Overlay = null | "model" | "memory" | "resume" | "context"
@@ -68,7 +68,7 @@ function DiffBody({ oldContent, newContent }: { oldContent: string; newContent: 
 
 // GPT 同款呼吸圆球
 function ThinkingBall() {
-  return <span className="code-breathe inline-block size-3 rounded-full align-middle" style={{ background: ORANGE }} />
+  return <span className="code-breathe inline-block size-3 rounded-full align-middle" style={{ background: ACCENT }} />
 }
 
 // 单个计划动作的展示（含 diff）
@@ -96,7 +96,7 @@ function PlanActionView({ a, login }: { a: PlanAction; login: string }) {
 function Row({ icon, label }: { icon: React.ReactNode; label: string }) {
   return (
     <div className="flex items-center gap-2 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[12px] text-foreground/85">
-      <span style={{ color: ORANGE }}>{icon}</span>{label}
+      <span style={{ color: ACCENT }}>{icon}</span>{label}
     </div>
   )
 }
@@ -284,11 +284,11 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
     return (
       <Shell onExit={onExit}>
         <div className="flex flex-1 flex-col items-center justify-center gap-4 px-8 text-center">
-          <GitBranch className="size-8" style={{ color: ORANGE }} />
+          <GitBranch className="size-8" style={{ color: ACCENT }} />
           <p className="text-foreground" style={{ fontFamily: MONO }}>连接你自己的 GitHub，就能让它读写你的仓库</p>
           <button onClick={() => { window.location.href = "/api/auth/github" }}
             className="rounded-lg px-5 py-2.5 text-sm font-medium text-white transition-opacity hover:opacity-90"
-            style={{ background: ORANGE, fontFamily: MONO }}>连接 GitHub</button>
+            style={{ background: ACCENT, fontFamily: MONO }}>连接 GitHub</button>
         </div>
       </Shell>
     )
@@ -321,9 +321,10 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       {/* 待确认计划条（确认模式）*/}
       {pendingPlan.length > 0 && !auto && (
         <div className="border-t border-border bg-secondary/40 px-4 py-3 md:px-8">
-          <div className="mx-auto flex max-w-3xl items-center gap-3">
+          <div className="mx-auto max-w-3xl">
+            {applyError && <p className="mb-2 text-[12px] leading-relaxed text-destructive">{applyError}</p>}
+            <div className="flex items-center gap-3">
             <span className="text-[12px] text-foreground" style={{ fontFamily: MONO }}>{planSummary(pendingPlan)}</span>
-            {applyError && <span className="text-[12px] text-destructive">{applyError}</span>}
             <div className="ml-auto flex gap-2">
               <button onClick={() => { setPendingPlan([]); setApplyError(null) }} disabled={applying}
                 className="flex items-center gap-1 rounded-lg border border-border px-3 py-1.5 text-[12px] text-muted-foreground transition-colors hover:bg-secondary">
@@ -331,10 +332,11 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
               </button>
               <button onClick={() => applyPlan(pendingPlan, [...messages].reverse().find(m => m.role === "assistant")?.id ?? "")} disabled={applying}
                 className="flex items-center gap-1 rounded-lg px-3.5 py-1.5 text-[12px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
-                style={{ background: ORANGE }}>
+                style={{ background: ACCENT }}>
                 {applying ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
                 {applying ? "执行中…" : "确认并执行"}
               </button>
+            </div>
             </div>
           </div>
         </div>
@@ -352,7 +354,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
             {matchedCmds.map(c => (
               <button key={c.cmd} onClick={() => { if (c.cmd === "/goal") { setInput("/goal "); taRef.current?.focus() } else { setInput(""); setOverlay(c.cmd.slice(1) as Overlay) } }}
                 className="flex w-full items-center gap-3 rounded-md px-2 py-1 text-left transition-colors hover:bg-secondary/60">
-                <span className="text-[12px] font-medium" style={{ color: ORANGE, fontFamily: MONO }}>{c.cmd}</span>
+                <span className="text-[12px] font-medium" style={{ color: ACCENT, fontFamily: MONO }}>{c.cmd}</span>
                 <span className="text-[11px] text-muted-foreground">{c.desc}</span>
               </button>
             ))}
@@ -363,8 +365,8 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       {/* 输入区：上下两条线 + Enter 键 */}
       <div className="border-y border-border px-4 py-3 md:px-8">
         <div className="mx-auto flex max-w-3xl items-end gap-2">
-          {goalArmed && <span className="mb-2 shrink-0 rounded px-1.5 py-0.5 text-[10px] text-white" style={{ background: ORANGE }}>目标</span>}
-          <span className="mb-2 shrink-0 select-none" style={{ color: ORANGE, fontFamily: MONO }}>›</span>
+          {goalArmed && <span className="mb-2 shrink-0 rounded px-1.5 py-0.5 text-[10px] text-white" style={{ background: ACCENT }}>目标</span>}
+          <span className="mb-2 shrink-0 select-none" style={{ color: ACCENT, fontFamily: MONO }}>›</span>
           <textarea
             ref={taRef} rows={1} value={input}
             onChange={e => { setInput(e.target.value); const el = e.target; el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 160) + "px" }}
@@ -382,7 +384,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
             <button onClick={onSubmit} disabled={!canSend} aria-label="发送"
               title="Enter 发送"
               className={cn("mb-0.5 flex h-8 items-center gap-1 rounded-lg border px-2.5 text-[12px] font-medium transition-all", canSend ? "border-transparent text-white" : "border-border text-muted-foreground/40")}
-              style={canSend ? { background: ORANGE } : undefined}>
+              style={canSend ? { background: ACCENT } : undefined}>
               <CornerDownLeft className="size-3.5" />
             </button>
           )}
@@ -432,17 +434,17 @@ function Shell({ children, onExit, repo, login, onSwitchRepo, onGhMenu, ghMenu, 
         <button onClick={onExit} className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[12px] text-muted-foreground transition-colors hover:bg-secondary" style={{ fontFamily: MONO }}>
           <ChevronLeft className="size-4" />退出
         </button>
-        <span className="text-[12px] tracking-[0.25em]" style={{ color: ORANGE, fontFamily: MONO }}>CODE</span>
+        <span className="text-[12px] tracking-[0.25em]" style={{ color: ACCENT, fontFamily: MONO }}>CODE</span>
 
         <div className="ml-auto flex items-center gap-2">
           {onToggleAuto && (
-            <button onClick={onToggleAuto} title="自主模式" className="rounded-md border border-border px-2 py-1 text-[11px] transition-colors hover:bg-secondary" style={{ fontFamily: MONO, color: auto ? ORANGE : undefined, borderColor: auto ? ORANGE : undefined }}>
+            <button onClick={onToggleAuto} title="自主模式" className="rounded-md border border-border px-2 py-1 text-[11px] transition-colors hover:bg-secondary" style={{ fontFamily: MONO, color: auto ? ACCENT : undefined, borderColor: auto ? ACCENT : undefined }}>
               {auto ? "自动" : "确认"}
             </button>
           )}
           {repo !== undefined && repo && (
             <button onClick={onSwitchRepo} className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12px] text-foreground/80 transition-colors hover:bg-secondary" style={{ fontFamily: MONO }}>
-              <GitBranch className="size-3.5" style={{ color: ORANGE }} />{repo}
+              <GitBranch className="size-3.5" style={{ color: ACCENT }} />{repo}
             </button>
           )}
           {repo !== undefined && !repo && login !== undefined && (
@@ -482,7 +484,7 @@ function MessageView({ m, login, streaming }: { m: CodeMessage; login: string; s
     return (
       <div className="pt-2">
         <div className="flex items-center gap-2">
-          <span style={{ color: ORANGE }}>──</span>
+          <span style={{ color: ACCENT }}>──</span>
           <span className="whitespace-pre-wrap break-words text-[13.5px] text-foreground">{m.content}</span>
           <span className="min-w-[1rem] flex-1 border-t border-border" />
         </div>
@@ -492,7 +494,7 @@ function MessageView({ m, login, streaming }: { m: CodeMessage; login: string; s
     <div className="space-y-1.5">
       {m.steps?.map((s, i) => (
         <div key={i} className="flex items-center gap-2 text-[12px] text-muted-foreground">
-          <span style={{ color: ORANGE }}>⏺</span>{s.label}
+          <span style={{ color: ACCENT }}>⏺</span>{s.label}
         </div>
       ))}
       {/* 思考球：流式中、还没出正文时显示 */}
@@ -506,10 +508,10 @@ function MessageView({ m, login, streaming }: { m: CodeMessage; login: string; s
 
 function ResultCard({ r }: { r: ApplyResult }) {
   return (
-    <div className="mt-1 space-y-1 rounded-lg border px-3 py-2.5 text-[12px]" style={{ borderColor: ORANGE, background: "color-mix(in oklab, " + ORANGE + " 8%, transparent)" }}>
-      <div className="flex items-center gap-2 font-medium text-foreground"><Check className="size-3.5" style={{ color: ORANGE }} />已提交并推送{r.created ? "（新仓库已创建）" : ""}</div>
+    <div className="mt-1 space-y-1 rounded-lg border px-3 py-2.5 text-[12px]" style={{ borderColor: ACCENT, background: "color-mix(in oklab, " + ACCENT + " 8%, transparent)" }}>
+      <div className="flex items-center gap-2 font-medium text-foreground"><Check className="size-3.5" style={{ color: ACCENT }} />已提交并推送{r.created ? "（新仓库已创建）" : ""}</div>
       {r.repoUrl && <a href={r.repoUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-muted-foreground underline-offset-2 hover:underline"><ExternalLink className="size-3" />在 GitHub 查看仓库</a>}
-      {r.pagesUrl && <a href={r.pagesUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 underline-offset-2 hover:underline" style={{ color: ORANGE }}><Rocket className="size-3" />已上线：{r.pagesUrl}</a>}
+      {r.pagesUrl && <a href={r.pagesUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 underline-offset-2 hover:underline" style={{ color: ACCENT }}><Rocket className="size-3" />已上线：{r.pagesUrl}</a>}
     </div>
   )
 }
@@ -520,8 +522,8 @@ function RepoPicker({ repos, onLoad, onPick }: { repos: RepoItem[] | null; onLoa
   return (
     <div className="flex-1 overflow-y-auto px-4 py-6 md:px-8">
       <div className="mx-auto max-w-2xl space-y-2">
-        <button onClick={() => onPick(null)} className="flex w-full items-center gap-3 rounded-lg border px-4 py-3 text-left transition-colors hover:bg-secondary/50" style={{ borderColor: ORANGE }}>
-          <Plus className="size-4 shrink-0" style={{ color: ORANGE }} />
+        <button onClick={() => onPick(null)} className="flex w-full items-center gap-3 rounded-lg border px-4 py-3 text-left transition-colors hover:bg-secondary/50" style={{ borderColor: ACCENT }}>
+          <Plus className="size-4 shrink-0" style={{ color: ACCENT }} />
           <span className="text-[13px] font-medium text-foreground" style={{ fontFamily: MONO }}>从零做个新项目（我来建仓库）</span>
         </button>
         <p className="px-1 pt-2 text-[12px] text-muted-foreground" style={{ fontFamily: MONO }}>或选一个已有仓库改：</p>
@@ -531,7 +533,7 @@ function RepoPicker({ repos, onLoad, onPick }: { repos: RepoItem[] | null; onLoa
           <p className="py-6 text-center text-[13px] text-muted-foreground">没有可访问的仓库</p>
         ) : repos.map(r => (
           <button key={r.full_name} onClick={() => onPick(r.full_name)} className="flex w-full items-center gap-3 rounded-lg border border-border px-4 py-2.5 text-left transition-colors hover:bg-secondary/50">
-            <GitBranch className="size-4 shrink-0" style={{ color: ORANGE }} />
+            <GitBranch className="size-4 shrink-0" style={{ color: ACCENT }} />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-[13px] text-foreground" style={{ fontFamily: MONO }}>{r.full_name}</span>
               {r.description && <span className="block truncate text-[11px] text-muted-foreground">{r.description}</span>}
@@ -572,10 +574,10 @@ function ModelOverlay({ tier, onPick, onClose }: { tier: Tier; onPick: (t: Tier)
       <div className="space-y-1.5">
         {TIERS.map(t => (
           <button key={t.id} onClick={() => onPick(t.id)} className="flex w-full items-center gap-3 rounded-lg border px-4 py-2.5 text-left transition-colors hover:bg-secondary/60"
-            style={{ borderColor: tier === t.id ? ORANGE : "var(--border)" }}>
+            style={{ borderColor: tier === t.id ? ACCENT : "var(--border)" }}>
             <span className="flex-1 text-[13px] text-foreground" style={{ fontFamily: MONO }}>{t.label}</span>
             <span className="text-[11px] text-muted-foreground">{t.desc}</span>
-            {tier === t.id && <Check className="size-4" style={{ color: ORANGE }} />}
+            {tier === t.id && <Check className="size-4" style={{ color: ACCENT }} />}
           </button>
         ))}
       </div>
@@ -605,7 +607,7 @@ function MemoryOverlay({ repo, userId, onClose }: { repo: string; userId: string
       <div className="mt-2 flex gap-2">
         <input value={adding} onChange={e => setAdding(e.target.value)} onKeyDown={e => { if (e.key === "Enter") add() }} placeholder="手动添加一条记忆…"
           className="flex-1 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[12px] text-foreground outline-none" />
-        <button onClick={add} className="rounded-lg px-3 py-2 text-white" style={{ background: ORANGE }}><Plus className="size-4" /></button>
+        <button onClick={add} className="rounded-lg px-3 py-2 text-white" style={{ background: ACCENT }}><Plus className="size-4" /></button>
       </div>
     </OverlayShell>
   )
@@ -621,7 +623,7 @@ function ContextOverlay({ messages, onClose }: { messages: CodeMessage[]; onClos
       <div className="space-y-3" style={{ fontFamily: MONO }}>
         <div className="flex justify-between text-[12px]"><span className="text-muted-foreground">消息条数</span><span className="text-foreground">{messages.length}</span></div>
         <div className="flex justify-between text-[12px]"><span className="text-muted-foreground">约 token</span><span className="text-foreground">{approx.toLocaleString()} / {max.toLocaleString()}</span></div>
-        <div className="h-1.5 overflow-hidden rounded-full bg-secondary"><div className="h-full rounded-full" style={{ width: `${pct}%`, background: ORANGE }} /></div>
+        <div className="h-1.5 overflow-hidden rounded-full bg-secondary"><div className="h-full rounded-full" style={{ width: `${pct}%`, background: ACCENT }} /></div>
         <p className="text-[11px] text-muted-foreground">估算值（按字符粗略折算），仅供参考。</p>
       </div>
     </OverlayShell>

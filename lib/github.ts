@@ -64,25 +64,49 @@ export async function readFile(token: string, repo: string, path: string, maxByt
   return { content, sha: data.sha as string }
 }
 
-// 新建仓库（auto_init 让它带一个初始提交，后续可直接提交文件）
-export async function createRepo(token: string, name: string, description: string, isPrivate: boolean): Promise<{ fullName: string; defaultBranch: string; htmlUrl: string } | { error: string }> {
-  const res = await fetch(`${GH}/user/repos`, {
-    method: 'POST', headers: ghHeaders(token, true),
-    body: JSON.stringify({ name, description: description || '', private: isPrivate, auto_init: true }),
-  }).catch(() => null)
-  if (!res?.ok) {
-    const err = await res?.json().catch(() => null)
-    return { error: `建仓库失败：${(err as any)?.message ?? '未知错误'}` }
-  }
-  const d = await res.json()
-  return { fullName: d.full_name as string, defaultBranch: d.default_branch as string, htmlUrl: d.html_url as string }
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+
+// 仓库名清洗成 GitHub 合法格式：小写、非法字符转连字符、去首尾连字符
+function sanitizeRepoName(raw: string): string {
+  const n = raw.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 90)
+  return n || 'project'
 }
 
-// 取某分支 HEAD 的 commit sha
-export async function getHeadSha(token: string, repo: string, branch: string): Promise<string | null> {
-  const res = await fetch(`${GH}/repos/${repo}/git/ref/heads/${branch}`, { headers: ghHeaders(token) }).catch(() => null)
-  if (!res?.ok) return null
-  return ((await res.json()).object as any)?.sha ?? null
+// 新建仓库（auto_init 让它带一个初始提交，后续可直接提交文件）。
+// 名字清洗；重名自动加后缀重试；权限不足给出"重连 GitHub"的明确指引。
+export async function createRepo(token: string, name: string, description: string, isPrivate: boolean): Promise<{ fullName: string; defaultBranch: string; htmlUrl: string } | { error: string }> {
+  const base = sanitizeRepoName(name)
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const tryName = attempt === 0 ? base : `${base}-${attempt + 1}`
+    const res = await fetch(`${GH}/user/repos`, {
+      method: 'POST', headers: ghHeaders(token, true),
+      body: JSON.stringify({ name: tryName, description: description || '', private: isPrivate, auto_init: true }),
+    }).catch(() => null)
+    if (res?.ok) {
+      const d = await res.json()
+      return { fullName: d.full_name as string, defaultBranch: d.default_branch as string, htmlUrl: d.html_url as string }
+    }
+    const err = await res?.json().catch(() => null)
+    const raw = JSON.stringify(err ?? {})
+    // 重名 → 换个后缀再试
+    if (res?.status === 422 && /already exists/i.test(raw)) continue
+    // 权限/scope 不足
+    if (res?.status === 403 || res?.status === 404) {
+      return { error: '当前 GitHub 授权没有创建仓库的权限。请点右上角 @用户名 → 断开 GitHub，再重新连接（会重新授权完整权限）。' }
+    }
+    return { error: `建仓库失败：${(err as any)?.message ?? `HTTP ${res?.status ?? '网络错误'}`}` }
+  }
+  return { error: '同名仓库已存在多个，请换一个项目名再试。' }
+}
+
+// 取某分支 HEAD 的 commit sha；可重试（新建仓库 auto_init 后引用可能稍有延迟）
+export async function getHeadSha(token: string, repo: string, branch: string, retries = 0): Promise<string | null> {
+  for (let i = 0; i <= retries; i++) {
+    const res = await fetch(`${GH}/repos/${repo}/git/ref/heads/${branch}`, { headers: ghHeaders(token) }).catch(() => null)
+    if (res?.ok) { const sha = ((await res.json()).object as any)?.sha; if (sha) return sha }
+    if (i < retries) await sleep(600)
+  }
+  return null
 }
 
 // 一个文件写操作：content=null 表示删除该文件
@@ -91,7 +115,7 @@ export type FileWrite = { path: string; content: string | null }
 // 用 Git Data API 把多个文件改动打成【一个原子提交】直接推到分支。
 // 创建/更新/删除统一处理，无需逐文件 sha；新仓库、新文件都适用。直接写默认分支（用户已选直接推送）。
 export async function commitFiles(token: string, repo: string, branch: string, files: FileWrite[], message: string): Promise<{ commitSha: string } | { error: string }> {
-  const baseSha = await getHeadSha(token, repo, branch)
+  const baseSha = await getHeadSha(token, repo, branch, 3)  // 新仓库刚建好，引用可能稍有延迟，重试几次
   if (!baseSha) return { error: '获取分支 HEAD 失败' }
 
   // 基树
