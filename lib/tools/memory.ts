@@ -1,11 +1,12 @@
 // 长期记忆工具：remember / update_memory / forget
-// 在当前登录用户身份下写 memories 表，受 RLS 隔离（用户只能写自己的）
+// 在项目内 → 写 project_memories 表（按 project_id 隔离）
+// 在主聊天 → 写全局 memories 表（按 user_id 隔离）
 import type { ToolDef, ToolContext, ToolOutcome, ToolSchema } from './types'
 
 type MemoryResult = { action: 'create' | 'update' | 'delete'; id?: string; content?: string; ok: boolean; timestamp?: string }
 
 async function runMemoryOp(ctx: ToolContext, name: string, input: any): Promise<MemoryResult> {
-  const { supabase, userId } = ctx
+  const { supabase, userId, projectId } = ctx
   if (!supabase || !userId) return { action: 'create', ok: false }
   try {
     if (name === 'remember') {
@@ -13,6 +14,10 @@ async function runMemoryOp(ctx: ToolContext, name: string, input: any): Promise<
       if (!content) return { action: 'create', ok: false }
       const id = crypto.randomUUID()
       const ts = new Date().toISOString()
+      if (projectId) {
+        const { error } = await supabase.from('project_memories').insert({ id, user_id: userId, project_id: projectId, content })
+        return { action: 'create', id, content, ok: !error, timestamp: ts }
+      }
       const { error } = await supabase.from('memories').insert({ id, user_id: userId, content })
       return { action: 'create', id, content, ok: !error, timestamp: ts }
     }
@@ -20,12 +25,14 @@ async function runMemoryOp(ctx: ToolContext, name: string, input: any): Promise<
       const id = String(input?.id ?? '')
       const content = String(input?.content ?? '').trim()
       const ts = new Date().toISOString()
-      const { error } = await supabase.from('memories').update({ content, updated_at: ts }).eq('id', id)
+      const table = projectId ? 'project_memories' : 'memories'
+      const { error } = await supabase.from(table).update({ content, updated_at: ts }).eq('id', id)
       return { action: 'update', id, content, ok: !error, timestamp: ts }
     }
     if (name === 'forget') {
       const id = String(input?.id ?? '')
-      const { error } = await supabase.from('memories').delete().eq('id', id)
+      const table = projectId ? 'project_memories' : 'memories'
+      const { error } = await supabase.from(table).delete().eq('id', id)
       return { action: 'delete', id, ok: !error }
     }
   } catch { /* fall through */ }
@@ -48,7 +55,7 @@ function memoryTool(name: string, description: string, schema: ToolSchema): Tool
 export const memoryTools: ToolDef[] = [
   memoryTool(
     'remember',
-    '保存一条关于用户的长期记忆。当用户透露值得长期记住的信息时调用。',
+    '保存一条关于用户的长期记忆。在项目内调用时，记忆仅保存在本项目，不影响全局记忆；在主聊天调用时保存为全局记忆。',
     { type: 'object', properties: { content: { type: 'string', description: "要记住的内容，用简洁的第三人称陈述，例如'用户是一名前端工程师'" } }, required: ['content'] },
   ),
   memoryTool(

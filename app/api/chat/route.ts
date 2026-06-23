@@ -120,7 +120,7 @@ export async function POST(req: NextRequest) {
 
   const flags = { loggedIn: !!userId, webSearch: !!webSearch, memoryEnabled }
   const tools = activeTools(flags)
-  const ctx: ToolContext = { supabase, userId }
+  const ctx: ToolContext = { supabase, userId, projectId: project?.id ?? null }
 
   // 关闭记忆时：既不挂记忆工具（上面已过滤），也不注入已存的记忆
   const effectiveMemories = memoryEnabled ? (memories as Memory[] | undefined) : undefined
