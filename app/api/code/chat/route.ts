@@ -12,6 +12,7 @@ import { checkQuotaExceeded, addQuotaUsage } from '@/lib/quota'
 
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY ?? ''
 const DEEPSEEK_BASE_URL = 'https://api.deepseek.com'
+const TAVILY_API_KEY = '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'
 
 const ROUNDS_NORMAL = 10
 const ROUNDS_GOAL = 24
@@ -118,6 +119,7 @@ export async function POST(req: NextRequest) {
     { type: 'function', function: { name: 'delete_files', description: '删除一个或多个文件。', parameters: { type: 'object', properties: { paths: { type: 'array', items: { type: 'string' } } }, required: ['paths'] } } },
     { type: 'function', function: { name: 'enable_pages', description: '对纯静态/前端项目开启 GitHub Pages，让项目有可访问网址（上线）。', parameters: { type: 'object', properties: {} } } },
     { type: 'function', function: { name: 'code_remember', description: '记住一条关于本仓库的长期事实。', parameters: { type: 'object', properties: { content: { type: 'string' } }, required: ['content'] } } },
+    { type: 'function', function: { name: 'search', description: '网络搜索（文档、API、技术资料等）。需要查阅外部资源时用。', parameters: { type: 'object', properties: { query: { type: 'string', description: '搜索关键词或短语' } }, required: ['query'] } } },
   ]
 
   const maxRounds = goal ? ROUNDS_GOAL : ROUNDS_NORMAL
@@ -198,6 +200,30 @@ export async function POST(req: NextRequest) {
           }
           send(controller, { step: { kind: 'memory', label: `记住：${content.slice(0, 40)}` } })
           return ok ? '已记住。' : '记忆保存失败（可能未建表）。'
+        }
+        if (name === 'search') {
+          const query = String(input?.query ?? '').trim()
+          if (!query) return '查询为空。'
+          send(controller, { step: { kind: 'read', label: `搜索：${query}` } })
+          try {
+            const res = await fetch('https://api.tavily.com/search', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ api_key: TAVILY_API_KEY, query, max_results: 5, include_answer: true }),
+            }).catch(() => null)
+            if (!res?.ok) return '搜索失败'
+            const data = await res.json()
+            const answer = (data.answer as string) ?? ''
+            const results = (data.results as any[]) ?? []
+            let out = answer ? `直接回答：${answer}\n\n` : ''
+            if (results.length) {
+              out += '相关资源：\n'
+              results.forEach((r: any, i: number) => {
+                out += `${i + 1}. ${r.title ?? r.url}\n   ${(r.content as string)?.slice(0, 200)}\n   来源：${r.url}\n`
+              })
+            }
+            return out || '未找到相关结果。'
+          } catch { return '搜索异常。' }
         }
         return '未知工具。'
       }
