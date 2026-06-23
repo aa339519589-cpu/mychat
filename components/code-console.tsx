@@ -13,7 +13,7 @@ import {
 } from "@/lib/code-data"
 
 const MONO = "ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Courier New',monospace"
-const ACCENT = "oklch(0.52 0.12 256)"   // 普通蓝：终端强调色（不艳不亮）
+const ACCENT = "var(--code-accent)"  // 亮色=Claude橙 oklch(0.62 0.15 38)；暗色=蓝 oklch(0.52 0.12 256)；在 globals.css 定义
 
 type RepoItem = { name: string; full_name: string; private: boolean; description: string }
 type Overlay = null | "model" | "memory" | "resume" | "context"
@@ -371,10 +371,13 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
             style={{ fontFamily: MONO }}
           />
           {streaming ? (
-            <button onClick={() => abortRef.current?.abort()} aria-label="停止"
-              className="flex h-7 items-center justify-center rounded-lg border border-border bg-secondary px-2.5 text-foreground transition-colors hover:bg-secondary/70">
-              <Square className="size-3.5 fill-current" />
-            </button>
+            <div className="flex items-center gap-2">
+              <ThinkingBall />
+              <button onClick={() => abortRef.current?.abort()} aria-label="停止"
+                className="flex h-7 items-center justify-center rounded-lg border border-border bg-secondary px-2.5 text-foreground transition-colors hover:bg-secondary/70">
+                <Square className="size-3.5 fill-current" />
+              </button>
+            </div>
           ) : (
             <button onClick={onSubmit} disabled={!canSend} aria-label="发送"
               title="Enter 发送"
