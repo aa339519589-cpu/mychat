@@ -16,14 +16,8 @@ function toBeijingTime(iso: string): string {
 export function toOpenAI(msgs: RawMsg[]) {
   return msgs.map(m => {
     const content = m.role === 'user' && m.ts ? `${m.content}\n\n[发送时间：${toBeijingTime(m.ts)}]` : m.content
-    if (!m.images?.length) return { role: m.role, content }
-    return {
-      role: m.role,
-      content: [
-        ...m.images.map(img => ({ type: 'image_url', image_url: { url: img } })),
-        { type: 'text', text: content || ' ' },
-      ],
-    }
+    // DeepSeek 纯文本，不支持图片；图片走小米 MiMo 视觉模型后台处理，用户看不到
+    return { role: m.role, content }
   })
 }
 
