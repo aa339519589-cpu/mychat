@@ -65,12 +65,12 @@ export const memoryTools: ToolDef[] = [
   ),
   memoryTool(
     'update_memory',
-    '修正或补充一条已有的记忆，需要提供该记忆的 id。',
+    '修正或补充一条已有的记忆，需要提供该记忆的 id。在项目内调用时修改该项目的记忆，在主聊天调用时修改全局记忆。',
     { type: 'object', properties: { id: { type: 'string', description: '要更新的记忆 id' }, content: { type: 'string', description: '更新后的完整内容' } }, required: ['id', 'content'] },
   ),
   memoryTool(
     'forget',
-    '删除一条过时、错误或用户要求忘记的记忆，需要提供该记忆的 id。',
+    '删除一条过时、错误或用户要求忘记的记忆，需要提供该记忆的 id。在项目内调用时删除该项目的记忆，在主聊天调用时删除全局记忆。',
     { type: 'object', properties: { id: { type: 'string', description: '要删除的记忆 id' } }, required: ['id'] },
   ),
 ]
