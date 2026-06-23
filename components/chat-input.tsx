@@ -442,7 +442,7 @@ function PlusItem({ icon, label, onClick, active, suffix }: { icon: React.ReactN
     >
       <span className="shrink-0">{icon}</span>
       <span className="flex-1 truncate text-left">{label}</span>
-      {suffix}
+      {suffix ?? (active ? <Check className="size-3.5 shrink-0 text-primary" /> : null)}
     </button>
   )
 }
