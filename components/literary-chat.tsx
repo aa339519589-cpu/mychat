@@ -360,39 +360,49 @@ export function LiteraryChat() {
 
     // 2) 草稿此刻才落库（在后台进行，不阻塞上面的显示）；拿到真实 id 后把临时 id 悄悄换掉
     let convId = draftId
-    if (wasDraft) {
-      const realId = await insertConversation(user.id, "未命名的篇章", active.projectId ?? undefined)
-      if (!realId) {
-        setConversations(prev => prev.map(c => c.id === draftId
-          ? { ...c, draft: true, messages: c.messages.map(m => m.id === msgId ? { ...m, content: "创建会话失败，请重试", isError: true } : m) }
-          : c))
-        setIsLoading(false)
-        return
+    // 整段用 try/catch 兜底：落库 / 取项目背景 等任一 await 抛错（如网络抖动）时，
+    // 绝不能让 isLoading 卡在 true、界面静默卡死——这正是"消息发出却像消失了，退出重进才好"的根因。
+    try {
+      if (wasDraft) {
+        const realId = await insertConversation(user.id, "未命名的篇章", active.projectId ?? undefined)
+        if (!realId) {
+          setConversations(prev => prev.map(c => c.id === draftId
+            ? { ...c, draft: true, messages: c.messages.map(m => m.id === msgId ? { ...m, content: "创建会话失败，请重试", isError: true } : m) }
+            : c))
+          setIsLoading(false)
+          return
+        }
+        convId = realId
+        loadedRef.current.add(realId)
+        draftIdRef.current = null
+        setConversations(prev => prev.map(c => c.id === draftId ? { ...c, id: realId } : c))
+        setActiveId(realId)
+        insertMessage(user.id, realId, userMsg)
+      } else {
+        insertMessage(user.id, convId, userMsg)
       }
-      convId = realId
-      loadedRef.current.add(realId)
-      draftIdRef.current = null
-      setConversations(prev => prev.map(c => c.id === draftId ? { ...c, id: realId } : c))
-      setActiveId(realId)
-      insertMessage(user.id, realId, userMsg)
-    } else {
-      insertMessage(user.id, convId, userMsg)
+
+      const history = [...baseHistory, userMsg].map(m => ({
+        role: m.role,
+        content: m.content,
+        ...(m.images?.length ? { images: m.images } : {}),
+        ...(m.ts ? { ts: m.ts } : {}),
+      }))
+
+      const projectCtx = await getProjectContext(active.projectId)
+      const controller = new AbortController()
+      abortRef.current = controller
+      const fullReply = await runAiStream(history, msgId, convId, controller, files?.length ? files : undefined, projectCtx)
+
+      if (isFirstExchange && fullReply) generateTitle(convId, text, fullReply)
+      setReplyTo(null)
+    } catch (e) {
+      console.error("handleSend failed", e)
+      setIsLoading(false)
+      setConversations(prev => prev.map(c => c.id === convId
+        ? { ...c, messages: c.messages.map(m => m.id === msgId ? { ...m, content: m.content || "发送失败，请重试", isError: true } : m) }
+        : c))
     }
-
-    const history = [...baseHistory, userMsg].map(m => ({
-      role: m.role,
-      content: m.content,
-      ...(m.images?.length ? { images: m.images } : {}),
-      ...(m.ts ? { ts: m.ts } : {}),
-    }))
-
-    const projectCtx = await getProjectContext(active.projectId)
-    const controller = new AbortController()
-    abortRef.current = controller
-    const fullReply = await runAiStream(history, msgId, convId, controller, files?.length ? files : undefined, projectCtx)
-
-    if (isFirstExchange && fullReply) generateTitle(convId, text, fullReply)
-    setReplyTo(null)
   }
 
   // ── 重新生成最后一条 AI 回复 ──
@@ -422,10 +432,15 @@ export function LiteraryChat() {
     deleteMessageRow(lastAiMsg.id)
 
     setIsLoading(true)
-    const projectCtx = await getProjectContext(active.projectId)
-    const controller = new AbortController()
-    abortRef.current = controller
-    await runAiStream(historyBeforeAi, newMsgId, activeId, controller, undefined, projectCtx)
+    try {
+      const projectCtx = await getProjectContext(active.projectId)
+      const controller = new AbortController()
+      abortRef.current = controller
+      await runAiStream(historyBeforeAi, newMsgId, activeId, controller, undefined, projectCtx)
+    } catch (e) {
+      console.error("handleRegenerate failed", e)
+      setIsLoading(false)
+    }
   }
 
   // ── 引用回复 ──
