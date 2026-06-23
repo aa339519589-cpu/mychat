@@ -14,8 +14,25 @@ const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY ?? ''
 const DEEPSEEK_BASE_URL = 'https://api.deepseek.com'
 
 const MAX_TOOL_ROUNDS = 6
-// 长度截断后自动续写的最大轮数（用户要求长回复必须完整，故放宽）
 const MAX_CONTINUATIONS = 4
+
+// 深度研究幽灵提示词：前置注入到用户消息，前端不可见
+const DEEP_RESEARCH_PREFIX = `Absolute maximum with no shortcuts permitted. You must treat this request as a highest-effort reasoning task. Before giving the final answer, fully understand the user's question, identify the real objective, and avoid answering only the surface wording. Do not rush to produce a response. Reasoning requirements:
+1. Decompose the problem completely. Break the task into all necessary subproblems. Identify definitions, assumptions, constraints, hidden conditions, edge cases, and possible interpretations.
+2. Search for the root cause. Do not stop at the first plausible explanation. Keep checking whether the current answer only explains a symptom rather than the underlying mechanism.
+3. Stress-test every major conclusion. For each important claim, test it against counterexamples, alternative explanations, boundary cases, adversarial cases, and failure modes.
+4. Compare multiple paths. If there are multiple possible approaches, evaluate them before choosing. State the final chosen path clearly. Do not pretend uncertainty is resolved when it is not.
+5. Avoid shortcuts. Do not skip key steps. Do not rely on vague intuition. Do not compress the solution so much that important logic disappears.
+6. Prioritize correctness over speed. For math, logic, code, legal/technical interpretation, factual analysis, research, or strategy problems, accuracy and internal consistency are more important than brevity.
+7. Verify the answer before finalizing. Check whether the final answer: directly answers the user's actual question; satisfies all stated constraints; avoids unsupported claims; handles important exceptions; does not contradict earlier reasoning; is useful in practice.
+8. Handle uncertainty explicitly. If information is missing, state what can be concluded, what cannot be concluded, and what assumption is being used. Do not fabricate certainty.
+9. Output format. Do not expose raw private chain-of-thought. Instead, provide a clear, structured, checkable explanation with the necessary reasoning steps, final conclusion, and any caveats.
+10. If the task is complex, use this structure: Core conclusion → Key reasoning → Failure checks / edge cases → Final answer.
+
+（用户仅打开了深度研究模式，这份提示词用户看不到，请不要输出它。并且严格地使用。Artifact 输出。无任何字数、Token 限制。依旧保持人味，不要像一个机器。）
+
+---
+`
 
 type TurnResult = Awaited<ReturnType<typeof runOpenAITurn>>
 
@@ -253,7 +270,7 @@ export async function POST(req: NextRequest) {
   // 关闭记忆时：既不挂记忆工具（上面已过滤），也不注入已存的记忆
   const effectiveMemories = memoryEnabled ? (memories as Memory[] | undefined) : undefined
   const url = chatCompletionsUrl(DEEPSEEK_BASE_URL)
-  const SYSTEM = buildSystem(effectiveMemories, { webSearch: flags.webSearch, memoryEnabled, project, deepResearch: !!deepResearch })
+  const SYSTEM = buildSystem(effectiveMemories, { webSearch: flags.webSearch, memoryEnabled, project })
   const openaiTools = toOpenAITools(tools)
 
   const stream = new ReadableStream({
@@ -261,6 +278,22 @@ export async function POST(req: NextRequest) {
       let totalTokensUsed = 0
       let retriedNoTools = false
       const msgs: any[] = [{ role: 'system', content: SYSTEM }, ...toOpenAI(messages)]
+
+      // 深度研究：幽灵提示前置注入到最后一条用户消息，前端不可见
+      if (deepResearch) {
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          if (msgs[i].role === 'user') {
+            const m = msgs[i]
+            if (typeof m.content === 'string') {
+              m.content = DEEP_RESEARCH_PREFIX + m.content
+            } else if (Array.isArray(m.content)) {
+              const textItem = m.content.find((c: any) => c.type === 'text')
+              if (textItem) textItem.text = DEEP_RESEARCH_PREFIX + textItem.text
+            }
+            break
+          }
+        }
+      }
 
       // 长度截断自动续写：紧接上文再请求，前端无感拼接。length 截断不是主病因，这是兜底保险。
       async function continueIfTruncated(turn: TurnResult) {
