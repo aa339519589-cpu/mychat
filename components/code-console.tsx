@@ -477,7 +477,7 @@ function Shell({ children, onExit, repo, login, onSwitchRepo, onGhMenu, ghMenu, 
 function MessageView({ m, login, streaming }: { m: CodeMessage; login: string; streaming: boolean }) {
   if (m.role === "user")
     return (
-      <div className="border-t border-b py-2.5" style={{ borderColor: ACCENT }}>
+      <div className="border-t border-b py-2" style={{ borderColor: ACCENT }}>
         <span className="whitespace-pre-wrap break-words text-[13.5px] text-foreground">{m.content}</span>
       </div>
     )
