@@ -409,63 +409,67 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
           <span className="text-[12px] tracking-[0.15em] text-muted-foreground">已记住 {memories.length} 条</span>
         </div>
 
-        <div className="space-y-2">
-          {memories.length === 0 && !adding && (
-            <p className="rounded-2xl bg-sidebar-accent/55 border border-sidebar-border px-4 py-6 text-center text-[13px] italic text-muted-foreground/70">还没有记忆</p>
-          )}
-
-          {memories.length > 0 && (
-            <div className="max-h-[360px] overflow-y-auto space-y-2 pr-0.5">
-              {memories.map(m => (
-                <div key={m.id} className="rounded-2xl bg-sidebar-accent/55 border border-sidebar-border px-3 py-2.5">
-                  {editingId === m.id ? (
-                    <div className="space-y-2">
-                      <textarea
-                        autoFocus
-                        value={editValue}
-                        onChange={e => setEditValue(e.target.value)}
-                        onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveEdit() } if (e.key === "Escape") setEditingId(null) }}
-                        className="w-full resize-none rounded-xl bg-sidebar-accent/60 border border-sidebar-accent/70 px-3 py-2 text-[13px] outline-none focus:bg-sidebar-accent/80"
-                        rows={2}
-                      />
-                      <div className="flex gap-2">
-                        <button onClick={saveEdit} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-primary py-1.5 text-[13px] text-sidebar-primary-foreground"><Check className="size-3.5" />保存</button>
-                        <button onClick={() => setEditingId(null)} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-accent/60 py-1.5 text-[13px] text-muted-foreground"><X className="size-3.5" />取消</button>
+        {/* 统一记忆卡片：空态/列表/添加表单都在一个有边界的容器内 */}
+        <div className="rounded-2xl border border-sidebar-border bg-sidebar-accent/30 overflow-hidden">
+          {/* 滚动区域 */}
+          <div className="max-h-[340px] overflow-y-auto">
+            {memories.length === 0 && !adding && (
+              <p className="px-4 py-8 text-center text-[13px] italic text-muted-foreground/60">还没有记忆</p>
+            )}
+            {memories.length > 0 && (
+              <div className="space-y-0 divide-y divide-sidebar-border/40">
+                {memories.map(m => (
+                  <div key={m.id} className="px-3 py-2.5">
+                    {editingId === m.id ? (
+                      <div className="space-y-2">
+                        <textarea
+                          autoFocus
+                          value={editValue}
+                          onChange={e => setEditValue(e.target.value)}
+                          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveEdit() } if (e.key === "Escape") setEditingId(null) }}
+                          className="w-full resize-none rounded-xl bg-sidebar-accent/60 border border-sidebar-accent/70 px-3 py-2 text-[13px] outline-none focus:bg-sidebar-accent/80"
+                          rows={2}
+                        />
+                        <div className="flex gap-2">
+                          <button onClick={saveEdit} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-primary py-1.5 text-[13px] text-sidebar-primary-foreground"><Check className="size-3.5" />保存</button>
+                          <button onClick={() => setEditingId(null)} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-accent/60 py-1.5 text-[13px] text-muted-foreground"><X className="size-3.5" />取消</button>
+                        </div>
                       </div>
-                    </div>
-                  ) : (
-                    <div className="flex items-start gap-2">
-                      <p className="flex-1 text-[13px] leading-relaxed text-foreground/85">{m.content}</p>
-                      <div className="flex shrink-0 gap-0.5">
-                        <button onClick={() => startEdit(m)} className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground" aria-label="编辑"><Pencil className="size-3.5" /></button>
-                        <button onClick={() => onDelete(m.id)} className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-destructive" aria-label="删除"><Trash2 className="size-3.5" /></button>
+                    ) : (
+                      <div className="flex items-start gap-2">
+                        <p className="flex-1 text-[13px] leading-relaxed text-foreground/85">{m.content}</p>
+                        <div className="flex shrink-0 gap-0.5">
+                          <button onClick={() => startEdit(m)} className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground" aria-label="编辑"><Pencil className="size-3.5" /></button>
+                          <button onClick={() => onDelete(m.id)} className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-destructive" aria-label="删除"><Trash2 className="size-3.5" /></button>
+                        </div>
                       </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-
-          {adding ? (
-            <div className="space-y-2 rounded-2xl bg-sidebar-accent/55 border border-sidebar-border px-3 py-2.5">
-              <textarea
-                autoFocus
-                value={newValue}
-                onChange={e => setNewValue(e.target.value)}
-                onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addMemory() } if (e.key === "Escape") setAdding(false) }}
-                placeholder="输入要记住的内容……"
-                className="w-full resize-none rounded-xl bg-sidebar-accent/60 border border-sidebar-accent/70 px-3 py-2 text-[13px] outline-none placeholder:text-muted-foreground/40 focus:bg-sidebar-accent/80"
-                rows={2}
-              />
-              <div className="flex gap-2">
-                <button onClick={addMemory} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-primary py-1.5 text-[13px] text-sidebar-primary-foreground"><Check className="size-3.5" />添加</button>
-                <button onClick={() => setAdding(false)} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-accent/60 py-1.5 text-[13px] text-muted-foreground"><X className="size-3.5" />取消</button>
+                    )}
+                  </div>
+                ))}
               </div>
-            </div>
-          ) : (
-            <button onClick={() => setAdding(true)} className="flex w-full items-center justify-center gap-1.5 rounded-2xl bg-sidebar-accent/55 border border-sidebar-border py-2.5 text-[13px] text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-foreground">
-              <Plus className="size-4" />手动添加记忆
+            )}
+            {adding && (
+              <div className="px-3 py-2.5 space-y-2 border-t border-sidebar-border/40">
+                <textarea
+                  autoFocus
+                  value={newValue}
+                  onChange={e => setNewValue(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addMemory() } if (e.key === "Escape") setAdding(false) }}
+                  placeholder="输入要记住的内容……"
+                  className="w-full resize-none rounded-xl bg-sidebar-accent/60 border border-sidebar-accent/70 px-3 py-2 text-[13px] outline-none placeholder:text-muted-foreground/40 focus:bg-sidebar-accent/80"
+                  rows={2}
+                />
+                <div className="flex gap-2">
+                  <button onClick={addMemory} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-primary py-1.5 text-[13px] text-sidebar-primary-foreground"><Check className="size-3.5" />添加</button>
+                  <button onClick={() => setAdding(false)} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-accent/60 py-1.5 text-[13px] text-muted-foreground"><X className="size-3.5" />取消</button>
+                </div>
+              </div>
+            )}
+          </div>
+          {/* 添加按钮固定在卡片底部 */}
+          {!adding && (
+            <button onClick={() => setAdding(true)} className="flex w-full items-center justify-center gap-1.5 border-t border-sidebar-border/40 py-2.5 text-[13px] text-muted-foreground transition-colors hover:bg-sidebar-accent/40 hover:text-foreground">
+              <Plus className="size-4" />添加记忆
             </button>
           )}
         </div>
@@ -959,7 +963,7 @@ function ConversationRow({ c, isActive, renaming, onSelect, onOpenMenu, onCommit
 
 function ActionRow({ icon, label, onClick, danger }: { icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean }) {
   return (
-    <button onClick={onClick} className={cn("flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm transition-colors active:scale-[0.98]", danger ? "text-destructive hover:bg-destructive/10" : "text-foreground hover:bg-sidebar-accent/60")}>
+    <button onClick={onClick} className={cn("flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-[13px] transition-colors active:scale-[0.98]", danger ? "text-destructive hover:bg-destructive/10" : "text-foreground hover:bg-sidebar-accent/60")}>
       <span className={cn("shrink-0", danger ? "text-destructive" : "text-muted-foreground")}>{icon}</span>
       <span className="truncate">{label}</span>
     </button>
@@ -993,7 +997,7 @@ function PopoverShell({ anchor, estH, onClose, children }: {
         onClick={e => e.stopPropagation()}
         style={pos}
         className={cn(
-          "w-max min-w-[180px] max-w-[220px] overflow-hidden rounded-2xl border border-sidebar-border bg-card p-1 shadow-xl transition-all duration-150 ease-out",
+          "w-max min-w-[160px] max-w-[200px] overflow-hidden rounded-2xl border border-sidebar-border bg-card p-1 shadow-xl transition-all duration-150 ease-out",
           shown ? "scale-100 opacity-100" : "scale-95 opacity-0",
         )}
       >

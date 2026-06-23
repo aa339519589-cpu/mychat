@@ -873,7 +873,7 @@ function HeaderConvMenu({ conv, anchor, projects, onClose, onToggleStar, onToggl
         onClick={e => e.stopPropagation()}
         style={pos}
         className={cn(
-          "w-max min-w-[200px] max-w-[240px] overflow-hidden rounded-2xl bg-popover p-1 shadow-xl ring-1 ring-black/5 transition-all duration-150 ease-out",
+          "w-max min-w-[160px] max-w-[200px] overflow-hidden rounded-2xl bg-popover p-1 shadow-xl ring-1 ring-black/5 transition-all duration-150 ease-out",
           shown ? "scale-100 opacity-100" : "scale-95 opacity-0",
         )}
       >
@@ -912,7 +912,7 @@ function HeaderConvMenu({ conv, anchor, projects, onClose, onToggleStar, onToggl
 
 function HeaderMenuRow({ icon, label, onClick, danger }: { icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean }) {
   return (
-    <button onClick={onClick} className={cn("flex w-full items-center gap-2.5 rounded-xl px-3 py-3 text-left text-sm transition-colors active:scale-[0.98]", danger ? "text-destructive hover:bg-destructive/10" : "text-foreground hover:bg-secondary/60")}>
+    <button onClick={onClick} className={cn("flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-[13px] transition-colors active:scale-[0.98]", danger ? "text-destructive hover:bg-destructive/10" : "text-foreground hover:bg-secondary/60")}>
       <span className={cn("shrink-0", danger ? "text-destructive" : "text-muted-foreground")}>{icon}</span>
       <span className="truncate">{label}</span>
     </button>
