@@ -415,7 +415,7 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
           )}
 
           {memories.length > 0 && (
-            <div className="max-h-[260px] overflow-y-auto space-y-2 pr-0.5">
+            <div className="max-h-[360px] overflow-y-auto space-y-2 pr-0.5">
               {memories.map(m => (
                 <div key={m.id} className="rounded-2xl bg-sidebar-accent/55 border border-sidebar-border px-3 py-2.5">
                   {editingId === m.id ? (
@@ -959,7 +959,7 @@ function ConversationRow({ c, isActive, renaming, onSelect, onOpenMenu, onCommit
 
 function ActionRow({ icon, label, onClick, danger }: { icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean }) {
   return (
-    <button onClick={onClick} className={cn("flex w-full items-center gap-2.5 rounded-xl px-3 py-3 text-left text-sm transition-colors active:scale-[0.98]", danger ? "text-destructive hover:bg-destructive/10" : "text-foreground hover:bg-sidebar-accent/60")}>
+    <button onClick={onClick} className={cn("flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm transition-colors active:scale-[0.98]", danger ? "text-destructive hover:bg-destructive/10" : "text-foreground hover:bg-sidebar-accent/60")}>
       <span className={cn("shrink-0", danger ? "text-destructive" : "text-muted-foreground")}>{icon}</span>
       <span className="truncate">{label}</span>
     </button>
@@ -993,7 +993,7 @@ function PopoverShell({ anchor, estH, onClose, children }: {
         onClick={e => e.stopPropagation()}
         style={pos}
         className={cn(
-          "w-max min-w-[200px] max-w-[240px] overflow-hidden rounded-2xl border border-sidebar-border bg-card p-1.5 shadow-xl transition-all duration-150 ease-out",
+          "w-max min-w-[180px] max-w-[220px] overflow-hidden rounded-2xl border border-sidebar-border bg-card p-1 shadow-xl transition-all duration-150 ease-out",
           shown ? "scale-100 opacity-100" : "scale-95 opacity-0",
         )}
       >
@@ -1114,7 +1114,7 @@ function BasicsScreen() {
           maxLength={BASICS_MAX}
           onChange={e => setValue(e.target.value)}
           placeholder="比如：「回复尽量简短」「优先中文资料」「多用表格和列表」「语气随和一点」"
-          className="block min-h-[180px] w-full resize-none bg-transparent px-4 py-3.5 text-[14px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/45"
+          className="block min-h-[120px] w-full resize-none bg-transparent px-4 py-3 text-[13px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/45"
         />
         <div className="flex justify-end px-4 pb-2.5">
           <span className={cn("text-[11px] tabular-nums", value.length > BASICS_MAX * 0.9 ? "text-destructive/80" : "text-muted-foreground/55")}>
@@ -1353,17 +1353,21 @@ function SettingsScreen({ memories, memoryEnabled, onMemoryEnabledChange, onMemo
       </div>
 
       {tab === 'general' ? (
-        <div className="space-y-5 pt-2">
-          <MemoryScreen
-            memories={memories}
-            enabled={memoryEnabled}
-            onEnabledChange={onMemoryEnabledChange}
-            onAdd={onMemoryAdd}
-            onEdit={onMemoryEdit}
-            onDelete={onMemoryDelete}
-          />
+        <div className="flex flex-col h-[calc(100vh-7rem)] pt-2 gap-4">
+          <div className="flex-1 min-w-0 overflow-y-auto">
+            <MemoryScreen
+              memories={memories}
+              enabled={memoryEnabled}
+              onEnabledChange={onMemoryEnabledChange}
+              onAdd={onMemoryAdd}
+              onEdit={onMemoryEdit}
+              onDelete={onMemoryDelete}
+            />
+          </div>
           <div className="mx-4 border-t border-sidebar-border/50" />
-          <BasicsScreen />
+          <div className="shrink-0 pb-2">
+            <BasicsScreen />
+          </div>
         </div>
       ) : (
         <div className="pt-2">
