@@ -1,17 +1,26 @@
 import { NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { log } from '@/lib/logger'
+import { validate } from '@/lib/validation'
 
 export async function POST(req: NextRequest) {
-  const { code } = await req.json()
-  if (!code || typeof code !== 'string') {
-    return new Response(JSON.stringify({ error: '邀请码不能为空' }), { status: 400 })
+  let body: any = {}
+  try {
+    body = await req.json()
+  } catch (e) {
+    log.error('redeemCode', 'Invalid JSON in request body', e)
+    return new Response(JSON.stringify({ error: '请求体格式错误' }), { status: 400, headers: { 'Content-Type': 'application/json' } })
   }
 
   try {
+    const code = validate.string(body.code, 'code', { minLength: 1 })
+    log.info('redeemCode', 'Attempting to redeem code', { code: code.substring(0, 6) + '...' })
+
     const supabase = await createClient()
     const { data: user } = await supabase.auth.getUser()
     if (!user.user?.id) {
-      return new Response(JSON.stringify({ error: '未登录' }), { status: 401 })
+      log.warn('redeemCode', 'Not logged in')
+      return new Response(JSON.stringify({ error: '未登录' }), { status: 401, headers: { 'Content-Type': 'application/json' } })
     }
 
     // 查找邀请码
@@ -22,11 +31,13 @@ export async function POST(req: NextRequest) {
       .maybeSingle()
 
     if (selectErr || !codeRecord) {
-      return new Response(JSON.stringify({ error: '邀请码无效' }), { status: 404 })
+      log.warn('redeemCode', 'Code not found or invalid', { error: selectErr })
+      return new Response(JSON.stringify({ error: '邀请码无效' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
     }
 
     if (codeRecord.used_by) {
-      return new Response(JSON.stringify({ error: '邀请码已被使用' }), { status: 400 })
+      log.warn('redeemCode', 'Code already used', { codeId: codeRecord.id, usedBy: codeRecord.used_by })
+      return new Response(JSON.stringify({ error: '邀请码已被使用' }), { status: 400, headers: { 'Content-Type': 'application/json' } })
     }
 
     // 标记邀请码为已使用
@@ -36,7 +47,8 @@ export async function POST(req: NextRequest) {
       .eq('id', codeRecord.id)
 
     if (updateCodeErr) {
-      return new Response(JSON.stringify({ error: '兑换失败' }), { status: 500 })
+      log.error('redeemCode', 'Failed to mark code as used', updateCodeErr)
+      return new Response(JSON.stringify({ error: '兑换失败' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
     }
 
     // 增加用户余额
@@ -53,13 +65,14 @@ export async function POST(req: NextRequest) {
       .upsert({ user_id: user.user.id, balance: newBalance }, { onConflict: 'user_id' })
 
     if (updateBalanceErr) {
-      console.error('[redeem-code] 更新余额失败:', updateBalanceErr)
-      return new Response(JSON.stringify({ error: '余额更新失败' }), { status: 500 })
+      log.error('redeemCode', 'Failed to update balance', updateBalanceErr)
+      return new Response(JSON.stringify({ error: '余额更新失败' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
     }
 
-    return new Response(JSON.stringify({ success: true, tokensAdded: codeRecord.tokens, newBalance }))
+    log.info('redeemCode', 'Code redeemed successfully', { userId: user.user.id, tokens: codeRecord.tokens, newBalance })
+    return new Response(JSON.stringify({ success: true, tokensAdded: codeRecord.tokens, newBalance }), { headers: { 'Content-Type': 'application/json' } })
   } catch (e) {
-    console.error('[redeem-code]', e)
-    return new Response(JSON.stringify({ error: '服务错误' }), { status: 500 })
+    log.error('redeemCode', 'Exception during code redemption', e)
+    return new Response(JSON.stringify({ error: '服务错误' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
   }
 }

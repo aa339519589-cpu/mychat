@@ -9,9 +9,12 @@ create table if not exists public.invitation_codes (
   used_at timestamptz
 );
 alter table public.invitation_codes enable row level security;
-create policy "codes_read" on public.invitation_codes for select using (true);
+-- 仅允许已使用的码或创建者可读（防止暴力枚举）
+create policy "codes_read" on public.invitation_codes for select
+  using (used_by is not null or created_by = auth.uid());
+-- 允许兑换未使用的码
 create policy "codes_redeem" on public.invitation_codes for update
-  using (used_by is null) with check (auth.uid() is not null);
+  using (used_by is null and auth.uid() is not null) with check (used_by = auth.uid());
 
 -- profiles 加余额字段
 alter table public.profiles add column if not exists balance bigint default 0;
