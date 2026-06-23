@@ -18,6 +18,7 @@ import {
 import { type AttachedFile, prepareFile } from "@/lib/file-extract"
 import type { Project, ProjectFile, ProjectContext } from "@/lib/project-data"
 import { AppSidebar } from "@/components/app-sidebar"
+import { CodeConsole } from "@/components/code-console"
 import { MessageList } from "@/components/message-list"
 import { ChatInput } from "@/components/chat-input"
 import { LoginScreen } from "@/components/login-screen"
@@ -28,7 +29,6 @@ import { PanelLeft, Folder, ChevronDown, Star, Pin, Pencil, Trash2, X, Check, Ch
 import { parseArtifact, artifactTitle } from "@/lib/artifact"
 import { ArtifactPanel } from "@/components/artifact-panel"
 
-type GithubContext = { repo: string; context: string }
 type HistoryMsg = { role: string; content: string; images?: string[] }
 
 export function LiteraryChat() {
@@ -39,9 +39,7 @@ export function LiteraryChat() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
-  const [githubContext, setGithubContext] = useState<GithubContext | null>(null)
-  const [githubConnected, setGithubConnected] = useState(false)
-  const [githubLogin, setGithubLogin] = useState<string | null>(null)
+  const [codeOpen, setCodeOpen] = useState(false)
   const [memories, setMemories] = useState<Memory[]>([])
   const [memoryEnabled, setMemoryEnabledState] = useState(true)
   const [webSearch, setWebSearch] = useState(false)
@@ -59,13 +57,10 @@ export function LiteraryChat() {
   const projectCtxRef = useRef<Map<string, ProjectContext>>(new Map())
   const draftIdRef = useRef<string | null>(null)   // 当前本地草稿会话的 id（最多一个）
 
-  // 页面加载时检查 GitHub 连接状态
+  // OAuth 在 Code 板块内发起，授权回跳后带 ?github=connected：自动重新打开 Code
   useEffect(() => {
-    fetch("/api/github/status")
-      .then(r => r.json())
-      .then(d => { setGithubConnected(!!d.connected); setGithubLogin(d.login ?? null) })
-      .catch(() => {})
     if (typeof window !== "undefined" && window.location.search.includes("github=")) {
+      if (window.location.search.includes("github=connected")) setCodeOpen(true)
       window.history.replaceState({}, "", window.location.pathname)
     }
   }, [])
@@ -211,12 +206,7 @@ export function LiteraryChat() {
   ): Promise<string> {
     if (!user) { setIsLoading(false); return "" }
 
-    const prefix: HistoryMsg[] = []
-    if (githubContext) {
-      prefix.push({ role: "user", content: `GitHub 仓库上下文 (${githubContext.repo}):\n${githubContext.context.slice(0, 2000)}` })
-      prefix.push({ role: "assistant", content: "已了解仓库信息。" })
-    }
-    const history = [...prefix, ...messages]
+    const history = messages
 
     let fullReply = "", fullThinking = "", shownLen = 0, streamEnded = false, hadError = false
     try {
@@ -611,13 +601,6 @@ export function LiteraryChat() {
     if (user) setMemoryEnabled(user.id, v)
   }
 
-  async function handleGithubDisconnect() {
-    await fetch("/api/auth/github/disconnect", { method: "POST" })
-    setGithubConnected(false)
-    setGithubLogin(null)
-    setGithubContext(null)
-  }
-
   async function handleLogout() {
     const supabase = createClient()
     await supabase.auth.signOut()
@@ -654,6 +637,7 @@ export function LiteraryChat() {
     onAddToProject: handleAddToProject,
     userEmail: user?.email ?? "",
     onLogout: handleLogout,
+    onOpenCode: () => { setDrawerOpen(false); setCodeOpen(true) },
   }
 
   function renderChatPane(mobile: boolean) {
@@ -733,11 +717,6 @@ export function LiteraryChat() {
           activeTier={activeTier}
           onTierChange={handleTierChange}
           mobile={mobile}
-          githubContext={githubContext}
-          onGithubConnect={(ctx) => { setGithubContext(ctx); if (ctx) setGithubConnected(true) }}
-          githubConnected={githubConnected}
-          githubLogin={githubLogin}
-          onGithubDisconnect={handleGithubDisconnect}
           webSearch={webSearch}
           onWebSearchChange={setWebSearch}
           deepResearch={deepResearch}
@@ -761,6 +740,7 @@ export function LiteraryChat() {
 
   return (
     <>
+      {codeOpen && <CodeConsole userId={user.id} onExit={() => setCodeOpen(false)} />}
       <div className="hidden h-dvh min-h-0 w-full overflow-hidden bg-background p-4 paper-grain md:flex">
         <div className={cn("shrink-0 overflow-hidden transition-[width] duration-300 ease-in-out", sidebarCollapsed ? "w-0" : "w-[20rem]")}>
           <div className="h-full w-[20rem] overflow-hidden border-r border-border/50 bg-sidebar/40">

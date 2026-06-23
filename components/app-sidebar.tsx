@@ -11,6 +11,7 @@ import {
   Settings, Folder, Shapes, Pencil, Check, X, PanelLeft,
   FileText, Loader2, FolderPlus,
   MoreHorizontal, Star, Pin, Lock,
+  Code2,
 } from "lucide-react"
 import { fetchQuota, type QuotaSnapshot } from "@/lib/db"
 
@@ -59,6 +60,7 @@ export type AppSidebarProps = {
   onAddToProject: (id: string, projectId: string | null) => void
   userEmail: string
   onLogout: () => void
+  onOpenCode: () => void
 }
 
 // mobile：一级侧栏只占半屏（露出后面的对话），二级页面铺满整屏
@@ -126,6 +128,7 @@ export function AppSidebar({
       <nav className="mx-4 space-y-0.5">
         <NavRow icon={<Folder className="size-4" />} label="项目" onClick={() => push("projects")} />
         <NavRow icon={<Shapes className="size-4" />} label="作品" onClick={() => push("artifacts")} />
+        <NavRow icon={<Code2 className="size-4" />} label="代码" onClick={() => { setStack([]); setUserMenuOpen(false); props.onOpenCode() }} />
       </nav>
 
       <div className="mx-7 my-3 border-t border-sidebar-border/60" />
@@ -253,6 +256,7 @@ export function AppSidebar({
           desc="你与小克共同创作过的可交互页面会收藏在这里，随时回看、下载。"
         />
       </ScreenPanel>
+
     </>
   )
 

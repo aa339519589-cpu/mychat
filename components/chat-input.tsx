@@ -2,25 +2,12 @@
 
 import { useRef, useState, useEffect } from "react"
 import { cn } from "@/lib/utils"
-import { ChevronDown, X, Loader2, Plus, ImageIcon, FileText, Globe, ArrowUp, ExternalLink, LogOut, Square, CornerUpLeft, Camera, Check, Microscope } from "lucide-react"
+import { ChevronDown, X, Loader2, Plus, ImageIcon, FileText, Globe, ArrowUp, Square, CornerUpLeft, Camera, Check, Microscope } from "lucide-react"
 import { TIERS, TIER_MAP, type Tier } from "@/lib/chat-data"
 import { prepareFile, type AttachedFile } from "@/lib/file-extract"
 
-type GithubContext = { repo: string; context: string }
-type GithubRepo = { name: string; full_name: string; private: boolean; description: string }
-
-function GitHubIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z" />
-    </svg>
-  )
-}
-
 export function ChatInput({
   onSend, activeTier, onTierChange, mobile,
-  githubContext, onGithubConnect,
-  githubConnected, githubLogin, onGithubDisconnect,
   webSearch, onWebSearchChange,
   deepResearch, onDeepResearchChange,
   isLoading, onStop,
@@ -30,11 +17,6 @@ export function ChatInput({
   activeTier: Tier
   onTierChange: (t: Tier) => void
   mobile: boolean
-  githubContext: GithubContext | null
-  onGithubConnect: (ctx: GithubContext | null) => void
-  githubConnected: boolean
-  githubLogin: string | null
-  onGithubDisconnect: () => void
   webSearch: boolean
   onWebSearchChange: (on: boolean) => void
   deepResearch: boolean
@@ -56,26 +38,8 @@ export function ChatInput({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const plusMenuRef = useRef<HTMLDivElement>(null)
 
-  const [repoPickerOpen, setRepoPickerOpen] = useState(false)
-  const [repos, setRepos] = useState<GithubRepo[]>([])
-  const [reposLoading, setReposLoading] = useState(false)
-  const [repoConnecting, setRepoConnecting] = useState(false)
-  const repoPickerRef = useRef<HTMLDivElement>(null)
-
   const [tierMenuOpen, setTierMenuOpen] = useState(false)
   const tierMenuRef = useRef<HTMLDivElement>(null)
-
-  // 点选择器外部时关闭
-  useEffect(() => {
-    if (!repoPickerOpen) return
-    function handleClickOutside(e: MouseEvent) {
-      if (repoPickerRef.current && !repoPickerRef.current.contains(e.target as Node)) {
-        setRepoPickerOpen(false)
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside)
-    return () => document.removeEventListener("mousedown", handleClickOutside)
-  }, [repoPickerOpen])
 
   // 点模型菜单外部时关闭
   useEffect(() => {
@@ -152,46 +116,7 @@ export function ChatInput({
     }
   }
 
-  async function openRepoPicker() {
-    setPlusOpen(false)
-    setRepoPickerOpen(true)
-    if (repos.length > 0) return
-    setReposLoading(true)
-    try {
-      const res = await fetch("/api/github/repos")
-      if (res.ok) {
-        const data = await res.json()
-        setRepos(data.repos ?? [])
-      }
-    } finally {
-      setReposLoading(false)
-    }
-  }
-
-  async function selectRepo(fullName: string) {
-    setRepoPickerOpen(false)
-    setRepoConnecting(true)
-    try {
-      const res = await fetch(`/api/github?repo=${encodeURIComponent(fullName)}`)
-      const data = await res.json()
-      if (res.ok) onGithubConnect({ repo: data.repo, context: data.context })
-    } finally {
-      setRepoConnecting(false)
-    }
-  }
-
-  // 加号菜单里点“仓库”：已连且选了仓库 / 已连未选 → 打开选择器；未连 → 去授权
-  function handleGithubEntry() {
-    if (githubConnected || githubContext) {
-      openRepoPicker()
-    } else {
-      setPlusOpen(false)
-      window.location.href = "/api/auth/github"
-    }
-  }
-
-  const githubLabel = githubContext ? githubContext.repo : githubConnected ? "选择仓库" : "连接仓库"
-  const hasActiveTools = webSearch || !!githubContext || deepResearch
+  const hasActiveTools = webSearch || deepResearch
   const canSend = !isLoading && (!!value.trim() || images.length > 0 || files.length > 0)
 
   return (
@@ -208,61 +133,6 @@ export function ChatInput({
         onChange={e => { readImagesAsBase64(e.target.files); e.currentTarget.value = "" }} />
       <input ref={fileInputRef} type="file" accept=".pdf,.txt,.md,.csv,.json,.log,.xml,.html,.yaml,.yml,text/*,application/pdf" multiple className="hidden"
         onChange={e => { handleFiles(e.target.files); e.currentTarget.value = "" }} />
-
-      {/* 仓库选择器（点外部关闭） */}
-      {repoPickerOpen && (
-        <div ref={repoPickerRef} className="mb-2 overflow-hidden rounded-2xl border border-border/60 bg-card shadow-lg">
-          <div className="max-h-64 overflow-y-auto">
-            {reposLoading ? (
-              <div className="flex items-center gap-2 px-4 py-3 text-sm text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" />
-                <span>加载仓库列表……</span>
-              </div>
-            ) : repos.length === 0 ? (
-              <div className="px-4 py-3 text-sm text-muted-foreground">没有找到仓库</div>
-            ) : (
-              repos.map(r => (
-                <button
-                  key={r.full_name}
-                  onClick={() => selectRepo(r.full_name)}
-                  className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-secondary/60 transition-colors"
-                >
-                  <GitHubIcon className="size-4 shrink-0 text-muted-foreground" />
-                  <span className="flex-1 min-w-0 truncate text-sm">{r.name}</span>
-                  <span className={cn(
-                    "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium",
-                    r.private ? "bg-muted text-muted-foreground" : "bg-primary/10 text-primary/80"
-                  )}>
-                    {r.private ? "私有" : "公开"}
-                  </span>
-                </button>
-              ))
-            )}
-          </div>
-          <div className="border-t border-border/40">
-            <a
-              href="https://github.com/settings/connections/applications/Ov23li6Pfgts4Ye4a5FL"
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center gap-2 px-4 py-2.5 text-xs text-muted-foreground hover:bg-secondary/60 transition-colors"
-            >
-              <ExternalLink className="size-3" />
-              管理仓库权限
-            </a>
-            <button
-              onClick={async () => {
-                setRepoPickerOpen(false)
-                await fetch("/api/auth/github/disconnect", { method: "POST" })
-                onGithubDisconnect()
-              }}
-              className="flex w-full items-center gap-2 px-4 py-2.5 text-xs text-destructive/80 hover:bg-destructive/5 transition-colors"
-            >
-              <LogOut className="size-3" />
-              断开 GitHub{githubLogin ? `（${githubLogin}）` : ""}
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* 引用回复条 */}
       {replyTo && (
@@ -333,15 +203,6 @@ export function ChatInput({
                 label="深度研究"
                 onClick={() => onDeepResearchChange(!deepResearch)}
                 active={deepResearch}
-              />
-              <PlusItem
-                icon={repoConnecting ? <Loader2 className="size-4 animate-spin" /> : <GitHubIcon className={cn("size-4", githubContext && "text-primary")} />}
-                label={githubLabel}
-                onClick={handleGithubEntry}
-                active={!!githubContext}
-                suffix={githubContext ? (
-                  <span role="button" tabIndex={0} onClick={e => { e.stopPropagation(); onGithubConnect(null); setPlusOpen(false) }} className="rounded-full p-0.5 hover:bg-muted"><X className="size-3" /></span>
-                ) : undefined}
               />
             </div>
           )}
@@ -434,7 +295,7 @@ export function ChatInput({
   )
 }
 
-function PlusItem({ icon, label, onClick, active, suffix }: { icon: React.ReactNode; label: string; onClick: () => void; active?: boolean; suffix?: React.ReactNode }) {
+function PlusItem({ icon, label, onClick, active }: { icon: React.ReactNode; label: string; onClick: () => void; active?: boolean }) {
   return (
     <button
       onClick={onClick}
@@ -442,7 +303,7 @@ function PlusItem({ icon, label, onClick, active, suffix }: { icon: React.ReactN
     >
       <span className="shrink-0">{icon}</span>
       <span className="flex-1 truncate text-left">{label}</span>
-      {suffix ?? (active ? <Check className="size-3.5 shrink-0 text-primary" /> : null)}
+      {active ? <Check className="size-3.5 shrink-0 text-primary" /> : null}
     </button>
   )
 }
