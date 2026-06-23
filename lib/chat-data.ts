@@ -2,10 +2,11 @@ export type Tier = "绝句" | "正构" | "鸿篇"
 
 export type TierConfig = { id: Tier; label: string; desc: string; model: string; thinking: boolean }
 
+// id 是内部 value（传后端、存 localStorage，绝不改）；label 是 UI 显示名。
 export const TIERS: TierConfig[] = [
-  { id: "绝句", label: "绝句", desc: "迅捷",  model: "deepseek-v4-flash", thinking: false },
-  { id: "正构", label: "正构", desc: "思考",  model: "deepseek-v4-flash", thinking: true  },
-  { id: "鸿篇", label: "鸿篇", desc: "深推",  model: "deepseek-v4-pro",   thinking: true  },
+  { id: "绝句", label: "快速", desc: "迅捷",  model: "deepseek-v4-flash", thinking: false },
+  { id: "正构", label: "均衡", desc: "稳健",  model: "deepseek-v4-flash", thinking: true  },
+  { id: "鸿篇", label: "深度", desc: "深推",  model: "deepseek-v4-pro",   thinking: true  },
 ]
 
 export const TIER_MAP: Record<Tier, TierConfig> = Object.fromEntries(TIERS.map(t => [t.id, t])) as Record<Tier, TierConfig>

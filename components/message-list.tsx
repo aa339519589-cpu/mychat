@@ -8,6 +8,7 @@ import ReactMarkdown from "react-markdown"
 import remarkMath from "remark-math"
 import rehypeKatex from "rehype-katex"
 import { parseArtifact, artifactTitle } from "@/lib/artifact"
+import { stripToolMarkup } from "@/lib/llm/sanitize"
 import { ArtifactCard } from "@/components/artifact-card"
 import { InlineArtifact } from "@/components/inline-artifact"
 import { VegaChart } from "@/components/vega-chart"
@@ -208,7 +209,8 @@ export function MessageList({
                 )}
                 {(() => {
                   // content 始终是模型原始全文，渲染时实时拆分两种 artifact
-                  const { display, raw, done, inlineRaw, inlineDone, vegaRaw, vegaDone, mermaidRaw, mermaidDone, fnPlotRaw, fnPlotDone } = parseArtifact(m.content ?? '')
+                  // stripToolMarkup 兜底：万一后端有漏网的工具协议标记（DSML 等），前端也绝不渲染出来
+                  const { display, raw, done, inlineRaw, inlineDone, vegaRaw, vegaDone, mermaidRaw, mermaidDone, fnPlotRaw, fnPlotDone } = parseArtifact(stripToolMarkup(m.content ?? ''))
                   return (
                     <div className="min-w-0 space-y-3">
                       {m.isError ? (

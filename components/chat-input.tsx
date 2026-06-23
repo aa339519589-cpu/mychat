@@ -3,7 +3,7 @@
 import { useRef, useState, useEffect } from "react"
 import { cn } from "@/lib/utils"
 import { ChevronDown, X, Loader2, Plus, ImageIcon, FileText, Globe, ArrowUp, ExternalLink, LogOut, Square, CornerUpLeft, Camera, Check, Microscope } from "lucide-react"
-import { TIERS, type Tier } from "@/lib/chat-data"
+import { TIERS, TIER_MAP, type Tier } from "@/lib/chat-data"
 import { prepareFile, type AttachedFile } from "@/lib/file-extract"
 
 type GithubContext = { repo: string; context: string }
@@ -394,7 +394,7 @@ export function ChatInput({
           )}
         />
 
-        {/* 模型选择（可展开，从上到下：鸿篇＞正构＞绝句） */}
+        {/* 模型选择（可展开，从上到下：深度＞均衡＞快速） */}
         <div ref={tierMenuRef} className="relative mb-0.5 shrink-0">
           {tierMenuOpen && (
             <div className="absolute bottom-full right-0 mb-2 min-w-[6.5rem] overflow-hidden rounded-2xl border border-border/60 bg-card shadow-lg">
@@ -409,7 +409,7 @@ export function ChatInput({
                       : "text-muted-foreground hover:bg-secondary/50",
                   )}
                 >
-                  {t.id}
+                  {t.label}
                 </button>
               ))}
             </div>
@@ -420,7 +420,7 @@ export function ChatInput({
             aria-label="选择模型"
             className="flex h-8 items-center gap-1 rounded-full px-3 text-xs text-muted-foreground transition-colors hover:bg-background/40 hover:text-foreground"
           >
-            <span>{activeTier}</span>
+            <span>{TIER_MAP[activeTier]?.label ?? activeTier}</span>
             <ChevronDown className={cn("size-3 transition-transform", tierMenuOpen && "rotate-180")} />
           </button>
         </div>

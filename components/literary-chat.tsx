@@ -2,7 +2,7 @@
 
 import { useMemo, useRef, useState, useEffect } from "react"
 import { createPortal } from "react-dom"
-import { type Conversation, type Message, type Tier, TIERS } from "@/lib/chat-data"
+import { type Conversation, type Message, type Tier, TIERS, TIER_MAP } from "@/lib/chat-data"
 import { type Memory } from "@/lib/memory-data"
 import {
   fetchMemories, insertMemory, updateMemory, deleteMemoryRow,
@@ -136,7 +136,7 @@ export function LiteraryChat() {
     try { localStorage.setItem("chat_active_tier", t) } catch {}
   }
 
-  const activeName = activeTier
+  const activeName = TIER_MAP[activeTier]?.label ?? activeTier
 
   const active = useMemo(
     () => conversations.find(c => c.id === activeId),
@@ -723,7 +723,7 @@ export function LiteraryChat() {
           )}
           {isLoading && (
             <div className="mx-auto max-w-[44rem] px-5 pb-4 text-sm italic md:px-10">
-              <span className="thinking-flow">{activeName} 正在落笔……</span>
+              <span className="thinking-flow">正在{activeName}思考……</span>
             </div>
           )}
         </div>
@@ -864,8 +864,8 @@ function HeaderConvMenu({ conv, anchor, projects, onClose, onToggleStar, onToggl
   useEffect(() => { const r = requestAnimationFrame(() => setShown(true)); return () => cancelAnimationFrame(r) }, [])
   if (typeof document === "undefined") return null
 
-  const left = Math.min(anchor.left, window.innerWidth - 236)
-  const pos: React.CSSProperties = { position: "fixed", left: Math.max(8, left), top: anchor.bottom + 6, width: 220 }
+  const left = Math.min(anchor.left, window.innerWidth - 248)
+  const pos: React.CSSProperties = { position: "fixed", left: Math.max(8, left), top: anchor.bottom + 6 }
 
   return createPortal(
     <div className="fixed inset-0 z-[80]" onClick={onClose}>
@@ -873,7 +873,7 @@ function HeaderConvMenu({ conv, anchor, projects, onClose, onToggleStar, onToggl
         onClick={e => e.stopPropagation()}
         style={pos}
         className={cn(
-          "overflow-hidden rounded-2xl bg-popover p-1 shadow-xl ring-1 ring-black/5 transition-all duration-150 ease-out",
+          "w-max min-w-[200px] max-w-[240px] overflow-hidden rounded-2xl bg-popover p-1 shadow-xl ring-1 ring-black/5 transition-all duration-150 ease-out",
           shown ? "scale-100 opacity-100" : "scale-95 opacity-0",
         )}
       >
@@ -912,8 +912,9 @@ function HeaderConvMenu({ conv, anchor, projects, onClose, onToggleStar, onToggl
 
 function HeaderMenuRow({ icon, label, onClick, danger }: { icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean }) {
   return (
-    <button onClick={onClick} className={cn("flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors active:scale-[0.98]", danger ? "text-destructive hover:bg-destructive/10" : "text-foreground hover:bg-secondary/60")}>
-      <span className={danger ? "text-destructive" : "text-muted-foreground"}>{icon}</span>{label}
+    <button onClick={onClick} className={cn("flex w-full items-center gap-2.5 rounded-xl px-3 py-3 text-left text-sm transition-colors active:scale-[0.98]", danger ? "text-destructive hover:bg-destructive/10" : "text-foreground hover:bg-secondary/60")}>
+      <span className={cn("shrink-0", danger ? "text-destructive" : "text-muted-foreground")}>{icon}</span>
+      <span className="truncate">{label}</span>
     </button>
   )
 }

@@ -1,6 +1,7 @@
 // OpenAI / DeepSeek / Gemini 兼容协议：消息转换、附件注入、单轮流式请求
 import type { RawMsg, Attachment } from './types'
 import { send, upstreamError } from './stream'
+import { makeContentFilter } from './sanitize'
 
 export function toOpenAI(msgs: RawMsg[]) {
   return msgs.map(m => {
@@ -68,7 +69,7 @@ export async function runOpenAITurn(
   url: string, apiKey: string, model: string,
   messages: any[], tools: any[], controller: ReadableStreamDefaultController,
   opts?: { thinking?: boolean },
-): Promise<{ assistantMessage: any; toolCalls: { id: string; name: string; args: string }[]; failed: boolean; totalTokens: number }> {
+): Promise<{ assistantMessage: any; toolCalls: { id: string; name: string; args: string }[]; failed: boolean; totalTokens: number; content: string; finishReason: string | null; truncated: boolean; leaked: boolean }> {
   const body: any = { model, messages, stream: true }
   body.thinking = { type: opts?.thinking ? 'enabled' : 'disabled' }
   body.max_tokens = 65536
@@ -82,20 +83,29 @@ export async function runOpenAITurn(
   })
   if (!res.ok || !res.body) {
     send(controller, { error: upstreamError(res.status, await res.text()) })
-    return { assistantMessage: null, toolCalls: [], failed: true, totalTokens: 0 }
+    return { assistantMessage: null, toolCalls: [], failed: true, totalTokens: 0, content: '', finishReason: null, truncated: false, leaked: false }
   }
 
-  let content = ''
+  let content = ''        // 过滤后、真正发给前端的可见正文
+  let rawContentLen = 0   // 上游 content 原始长度（用于判断是否泄漏了工具协议）
   let totalTokens = 0
+  let finishReason: string | null = null
+  let sawDone = false
+  const filter = makeContentFilter()
   const callMap: Record<number, { id: string; name: string; args: string }> = {}
 
   function handle(obj: any) {
     if (obj?.usage?.total_tokens) totalTokens = obj.usage.total_tokens
     const choice = obj?.choices?.[0]
     if (!choice) return
+    if (choice.finish_reason) finishReason = choice.finish_reason
     const delta = choice.delta ?? choice.message ?? {}
     if (delta.reasoning_content) send(controller, { thinking: delta.reasoning_content })
-    if (delta.content) { content += delta.content; send(controller, { text: delta.content }) }
+    if (delta.content) {
+      rawContentLen += String(delta.content).length
+      const safe = filter.feed(String(delta.content))
+      if (safe) { content += safe; send(controller, { text: safe }) }
+    }
     if (Array.isArray(delta.tool_calls)) {
       for (const tc of delta.tool_calls) {
         const idx = tc.index ?? 0
@@ -121,13 +131,18 @@ export async function runOpenAITurn(
       buf = parts.pop() ?? ''
       for (const part of parts) {
         const line = part.trim()
-        if (!line || line === 'data: [DONE]') continue
+        if (!line) continue
+        if (line === 'data: [DONE]') { sawDone = true; continue }
         const payload = line.startsWith('data:') ? line.slice(5).trim() : line
         if (!payload) continue
         try { handle(JSON.parse(payload)) } catch {}
       }
     }
   }
+
+  // 放出过滤器里暂存的尾巴（确保被 hold 的安全文本最终也发出去）
+  const tail = filter.flush()
+  if (tail) { content += tail; send(controller, { text: tail }) }
 
   const toolCalls = Object.values(callMap).filter(t => t.name)
   let assistantMessage: any = null
@@ -138,5 +153,9 @@ export async function runOpenAITurn(
       tool_calls: toolCalls.map(t => ({ id: t.id, type: 'function', function: { name: t.name, arguments: t.args || '{}' } })),
     }
   }
-  return { assistantMessage, toolCalls, failed: false, totalTokens }
+  // leaked：上游 content 比过滤后长 = 剥掉了工具协议标记
+  const leaked = content.length < rawContentLen
+  // truncated：收到了正文、但既无 finish_reason 也无 [DONE] = 上游异常掐断
+  const truncated = !finishReason && !sawDone && rawContentLen > 0
+  return { assistantMessage, toolCalls, failed: false, totalTokens, content, finishReason, truncated, leaked }
 }

@@ -959,7 +959,7 @@ function ConversationRow({ c, isActive, renaming, onSelect, onOpenMenu, onCommit
 
 function ActionRow({ icon, label, onClick, danger }: { icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean }) {
   return (
-    <button onClick={onClick} className={cn("flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors active:scale-[0.98]", danger ? "text-destructive hover:bg-destructive/10" : "text-foreground hover:bg-sidebar-accent/60")}>
+    <button onClick={onClick} className={cn("flex w-full items-center gap-2.5 rounded-xl px-3 py-3 text-left text-sm transition-colors active:scale-[0.98]", danger ? "text-destructive hover:bg-destructive/10" : "text-foreground hover:bg-sidebar-accent/60")}>
       <span className={cn("shrink-0", danger ? "text-destructive" : "text-muted-foreground")}>{icon}</span>
       <span className="truncate">{label}</span>
     </button>
@@ -993,7 +993,7 @@ function PopoverShell({ anchor, estH, onClose, children }: {
         onClick={e => e.stopPropagation()}
         style={pos}
         className={cn(
-          "w-max min-w-[12rem] max-w-[17rem] overflow-hidden rounded-2xl border border-sidebar-border bg-card p-1.5 shadow-xl transition-all duration-150 ease-out",
+          "w-max min-w-[200px] max-w-[240px] overflow-hidden rounded-2xl border border-sidebar-border bg-card p-1.5 shadow-xl transition-all duration-150 ease-out",
           shown ? "scale-100 opacity-100" : "scale-95 opacity-0",
         )}
       >
@@ -1261,11 +1261,11 @@ function QuotaScreen() {
       <div className="rounded-2xl bg-sidebar-accent/55 px-4 py-3 border border-sidebar-border">
         <div className="text-[12px] font-medium text-foreground">按模型计费倍率</div>
         <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
-          <span>绝句 <span className="font-medium text-foreground">×0.8</span></span>
+          <span>快速 <span className="font-medium text-foreground">×0.8</span></span>
           <span className="text-sidebar-border">·</span>
-          <span>正构 <span className="font-medium text-foreground">×1</span></span>
+          <span>均衡 <span className="font-medium text-foreground">×1</span></span>
           <span className="text-sidebar-border">·</span>
-          <span>鸿篇／深研 <span className="font-medium text-foreground">×3</span></span>
+          <span>深度／深研 <span className="font-medium text-foreground">×3</span></span>
         </div>
       </div>
 
