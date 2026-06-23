@@ -358,27 +358,27 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       )}
 
       {/* 输入区：上下两条线 + Enter 键 */}
-      <div className="border-y border-border px-4 py-2 md:px-8">
-        <div className="mx-auto flex max-w-3xl items-end gap-2">
-          {goalArmed && <span className="mb-2 shrink-0 rounded px-1.5 py-0.5 text-[10px] text-white" style={{ background: ACCENT }}>目标</span>}
-          <span className="mb-2 shrink-0 select-none" style={{ color: ACCENT, fontFamily: MONO }}>›</span>
+      <div className="border-y border-border px-4 py-1 md:px-8">
+        <div className="mx-auto flex max-w-3xl items-center gap-2">
+          {goalArmed && <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-white" style={{ background: ACCENT }}>目标</span>}
+          <span className="shrink-0 select-none" style={{ color: ACCENT, fontFamily: MONO }}>›</span>
           <textarea
             ref={taRef} rows={1} value={input}
             onChange={e => { setInput(e.target.value); const el = e.target; el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 160) + "px" }}
             onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (!streaming) onSubmit() } }}
             placeholder={goalArmed ? "描述目标，我会自主多轮完成……" : (repo ? "描述问题，或输入 / 调用命令……" : "想做什么？比如「做个番茄钟」……")}
-            className="min-h-0 flex-1 resize-none bg-transparent py-1.5 text-[14px] text-foreground outline-none placeholder:text-muted-foreground/60"
+            className="min-h-0 flex-1 resize-none bg-transparent py-0 text-[14px] leading-6 text-foreground outline-none placeholder:text-muted-foreground/60"
             style={{ fontFamily: MONO }}
           />
           {streaming ? (
             <button onClick={() => abortRef.current?.abort()} aria-label="停止"
-              className="mb-0.5 flex h-8 items-center justify-center rounded-lg border border-border bg-secondary px-3 text-foreground transition-colors hover:bg-secondary/70">
+              className="flex h-7 items-center justify-center rounded-lg border border-border bg-secondary px-2.5 text-foreground transition-colors hover:bg-secondary/70">
               <Square className="size-3.5 fill-current" />
             </button>
           ) : (
             <button onClick={onSubmit} disabled={!canSend} aria-label="发送"
               title="Enter 发送"
-              className={cn("mb-0.5 flex h-8 items-center gap-1 rounded-lg border px-2.5 text-[12px] font-medium transition-all", canSend ? "border-transparent text-white" : "border-border text-muted-foreground/40")}
+              className={cn("flex h-7 items-center gap-1 rounded-lg border px-2.5 text-[12px] font-medium transition-all", canSend ? "border-transparent text-white" : "border-border text-muted-foreground/40")}
               style={canSend ? { background: ACCENT } : undefined}>
               <CornerDownLeft className="size-3.5" />
             </button>
@@ -477,8 +477,8 @@ function Shell({ children, onExit, repo, login, onSwitchRepo, onGhMenu, ghMenu, 
 function MessageView({ m, login, streaming }: { m: CodeMessage; login: string; streaming: boolean }) {
   if (m.role === "user")
     return (
-      <div className="border-t border-b py-2" style={{ borderColor: ACCENT }}>
-        <span className="whitespace-pre-wrap break-words text-[13.5px] text-foreground">{m.content}</span>
+      <div className="border-t border-b py-1" style={{ borderColor: ACCENT }}>
+        <span className="whitespace-pre-wrap break-words text-[13.5px] leading-5 text-foreground">{m.content}</span>
       </div>
     )
   return (
