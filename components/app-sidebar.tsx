@@ -13,7 +13,6 @@ import {
   MoreHorizontal, Star, Pin, SlidersHorizontal, BarChart2,
 } from "lucide-react"
 import { fetchQuota, fetchCustomSystemPrompt, saveCustomSystemPrompt, type QuotaSnapshot } from "@/lib/db"
-import { createClient } from "@/lib/supabase/client"
 
 // 二级页面：除根视图（侧栏主体）外的所有可滑入页面
 type Screen = "settings" | "memory" | "projects" | "artifacts" | "project-detail" | "basics" | "quota"
@@ -1035,20 +1034,12 @@ function QuotaScreen() {
       setLoading(false)
     })()
 
-    const supabase = createClient()
-    const channel = supabase
-      .channel('quota-realtime')
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'profiles' },
-        async () => {
-          const q = await fetchQuota()
-          setQuota(q)
-        }
-      )
-      .subscribe()
+    const timer = setInterval(async () => {
+      const q = await fetchQuota()
+      setQuota(q)
+    }, 10_000)
 
-    return () => { channel.unsubscribe() }
+    return () => { clearInterval(timer) }
   }, [])
 
   async function handleRedeemCode() {
