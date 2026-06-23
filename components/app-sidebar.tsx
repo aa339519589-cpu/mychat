@@ -1022,10 +1022,6 @@ function QuotaScreen() {
   const [codeInput, setCodeInput] = useState('')
   const [codeLoading, setCodeLoading] = useState(false)
   const [codeMsg, setCodeMsg] = useState('')
-  const [genCount, setGenCount] = useState('1')
-  const [genLoading, setGenLoading] = useState(false)
-  const [genMsg, setGenMsg] = useState('')
-  const [generatedCodes, setGeneratedCodes] = useState<string[]>([])
 
   useEffect(() => {
     (async () => {
@@ -1068,34 +1064,6 @@ function QuotaScreen() {
     }
   }
 
-  async function handleGenerateCodes() {
-    const n = parseInt(genCount)
-    if (!n || n < 1 || n > 100) {
-      setGenMsg('数量需要在 1-100 之间')
-      return
-    }
-    setGenLoading(true)
-    setGenMsg('')
-    setGeneratedCodes([])
-    try {
-      const res = await fetch('/api/generate-code', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ count: n }),
-      })
-      const data = await res.json()
-      if (res.ok) {
-        setGeneratedCodes(data.codes)
-        setGenMsg(`✓ 生成了 ${data.codes.length} 个邀请码`)
-      } else {
-        setGenMsg(data.error || '生成失败')
-      }
-    } catch {
-      setGenMsg('网络错误')
-    } finally {
-      setGenLoading(false)
-    }
-  }
 
   function fmtNum(n: number) { return n.toLocaleString() }
   function pct(n: number, max: number) { return Math.min(100, (n / max) * 100) }
@@ -1230,51 +1198,6 @@ function QuotaScreen() {
         )}
       </div>
 
-      {/* 邀请码生成（内部使用） */}
-      <div className="space-y-2">
-        <div className="text-[13px] font-medium text-foreground">生成邀请码</div>
-        <div className="flex gap-2">
-          <input
-            type="number"
-            min="1"
-            max="100"
-            value={genCount}
-            onChange={e => setGenCount(e.target.value)}
-            placeholder="数量"
-            className="w-16 rounded-xl bg-sidebar-accent/50 px-3 py-2 text-sm outline-none focus:bg-sidebar-accent/75"
-            disabled={genLoading}
-          />
-          <button
-            onClick={handleGenerateCodes}
-            disabled={genLoading}
-            className="flex-1 rounded-xl bg-sidebar-primary px-4 py-2 text-sm text-sidebar-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-          >
-            {genLoading ? '生成中…' : '生成'}
-          </button>
-        </div>
-        {genMsg && (
-          <p className={cn('text-[12px]', genMsg.startsWith('✓') ? 'text-green-600' : 'text-destructive')}>
-            {genMsg}
-          </p>
-        )}
-        {generatedCodes.length > 0 && (
-          <div className="space-y-1 rounded-xl bg-sidebar-accent/40 p-2">
-            {generatedCodes.map(code => (
-              <div key={code} className="flex items-center justify-between text-[12px] text-muted-foreground">
-                <code className="font-mono">{code}</code>
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(code)
-                  }}
-                  className="px-2 py-0.5 rounded text-[11px] hover:bg-sidebar-accent"
-                >
-                  复制
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
     </div>
   )
 }
