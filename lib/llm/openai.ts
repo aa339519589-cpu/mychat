@@ -34,42 +34,23 @@ export function chatCompletionsUrl(baseUrl: string) {
   return `${base}/v1/chat/completions`
 }
 
-// 注入附件：文本附件直接拼文字；扫描件 PDF（已由路由上传至 Files API）用 file 类型引用
+// 注入附件：附件最终都已是纯文字（文本文件 / 有文字层的 PDF / 扫描件经小米 Omni OCR），直接拼进末条用户消息
 export async function injectAttachmentsOpenAI(msgs: any[], attachments?: Attachment[]) {
   if (!attachments?.length) return
   const last = msgs[msgs.length - 1]
   if (!last || last.role !== 'user') return
 
   const textParts: string[] = []
-  const fileRefs: { type: 'file'; file: { file_id: string } }[] = []
-
   for (const f of attachments) {
-    if (f.fileId) {
-      textParts.push(`［附件：${f.name}］`)
-      fileRefs.push({ type: 'file', file: { file_id: f.fileId } })
-    } else if (f.text) {
-      textParts.push(`［附件：${f.name}］\n${f.text}`)
-    }
+    if (f.text) textParts.push(`［附件：${f.name}］\n${f.text}`)
   }
-
-  if (!textParts.length && !fileRefs.length) return
+  if (!textParts.length) return
 
   const textBlock = textParts.join('\n\n')
-
-  if (fileRefs.length) {
-    // 有文件引用时，content 必须是数组格式
-    const existingText = typeof last.content === 'string' ? last.content
-      : (Array.isArray(last.content) ? last.content.find((b: any) => b.type === 'text')?.text ?? '' : '')
-    last.content = [
-      { type: 'text', text: [existingText, textBlock].filter(Boolean).join('\n\n').trim() || ' ' },
-      ...fileRefs,
-    ]
-  } else if (textBlock) {
-    if (typeof last.content === 'string') {
-      last.content = `${last.content}\n\n${textBlock}`.trim()
-    } else if (Array.isArray(last.content)) {
-      last.content.push({ type: 'text', text: textBlock })
-    }
+  if (typeof last.content === 'string') {
+    last.content = `${last.content}\n\n${textBlock}`.trim()
+  } else if (Array.isArray(last.content)) {
+    last.content.push({ type: 'text', text: textBlock })
   }
 }
 

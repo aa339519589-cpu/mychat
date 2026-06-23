@@ -10,6 +10,7 @@ import { log } from '@/lib/logger'
 import { validate } from '@/lib/validation'
 import { checkRateLimit } from '@/lib/rate-limit'
 import { checkQuotaExceeded, addQuotaUsage } from '@/lib/quota'
+import { ocrPageImages } from '@/lib/mimo'
 
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY ?? ''
 const DEEPSEEK_BASE_URL = 'https://api.deepseek.com'
@@ -37,36 +38,15 @@ const DEEP_RESEARCH_PREFIX = `Absolute maximum with no shortcuts permitted. You 
 
 type TurnResult = Awaited<ReturnType<typeof runOpenAITurn>>
 
-// 扫描件 PDF：上传到 DeepSeek Files API，返回 file_id；失败则原样返回（后端会降级为文字提示）
-const MAX_PDF_SIZE = 50 * 1024 * 1024 // 50MB
-async function uploadScannedPdfs(attachments: any[], apiKey: string, baseUrl: string): Promise<any[]> {
+// 扫描件 PDF：前端已把每页渲染成图片放进 pageImages，这里用小米 MiMo-Omni 视觉模型 OCR 成文字，
+// 替换进 text；DeepSeek 随后只看到精确文字。彻底替代之前那条走不通的 DeepSeek /v1/files 上传。
+async function ocrScannedPdfs(attachments: any[]): Promise<any[]> {
   if (!attachments?.length) return attachments ?? []
   return Promise.all(attachments.map(async (f) => {
-    if (!f.isPdf || !f.dataUrl) return f
-    try {
-      const b64 = typeof f.dataUrl === 'string' ? (f.dataUrl.split(',')[1] ?? '') : ''
-      if (!b64) return f
-      const buffer = Buffer.from(b64, 'base64')
-      if (buffer.length > MAX_PDF_SIZE) {
-        log.warn('uploadPdf', `PDF exceeds 50MB limit`, { name: f.name, size: buffer.length })
-        return f
-      }
-      const blob = new Blob([buffer], { type: 'application/pdf' })
-      const form = new FormData()
-      form.append('file', blob, f.name)
-      form.append('purpose', 'file-extract')
-      const res = await fetch(`${baseUrl}/v1/files`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${apiKey}` },
-        body: form,
-      })
-      if (!res.ok) return f
-      const data = await res.json()
-      return { ...f, fileId: data.id, dataUrl: '' }
-    } catch (e) {
-      log.error('uploadPdf', `Failed to upload PDF`, e)
-      return f
-    }
+    if (!Array.isArray(f.pageImages) || !f.pageImages.length) return f
+    const text = await ocrPageImages(f.pageImages)
+    log.info('ocrPdf', 'Scanned PDF OCR done', { name: f.name, pages: f.pageImages.length, textLen: text.length })
+    return { ...f, text: text || '（扫描件识别失败，请重试或换一份更清晰的文件）', pageImages: undefined }
   }))
 }
 
@@ -190,7 +170,10 @@ export async function POST(req: NextRequest) {
       }
 
       try {
-        const processedAttachments = await uploadScannedPdfs(attachments, DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL)
+        // 扫描件 OCR 较慢，先给个状态提示，避免用户干等 + 保持连接活跃
+        const hasScanned = Array.isArray(attachments) && attachments.some((a: any) => a?.pageImages?.length)
+        if (hasScanned) send(controller, { thinking: '正在识别扫描件内容，请稍候……' })
+        const processedAttachments = await ocrScannedPdfs(attachments)
         await injectAttachmentsOpenAI(msgs, processedAttachments)
         let lastHadToolCalls = false
         let lastTurn: TurnResult | null = null

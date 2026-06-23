@@ -3,5 +3,7 @@
 // 前端传来的一条原始消息
 export type RawMsg = { role: string; content: string; images?: string[]; ts?: string }
 
-// 前端传来的一个附件；扫描件 PDF 经后端上传 DeepSeek Files API 后会填入 fileId
-export type Attachment = { name: string; dataUrl: string; isPdf: boolean; text?: string; fileId?: string }
+// 前端传来的一个附件。
+// - 文本 / 有文字层的 PDF：text 直接带文字
+// - 扫描件 PDF：前端把每页渲染成图片放进 pageImages，后端用小米 Omni OCR 成文字
+export type Attachment = { name: string; dataUrl: string; isPdf: boolean; text?: string; pageImages?: string[] }
