@@ -96,6 +96,9 @@ const MEDIUM_RISK_PATTERNS = [
   /payment/i,
 ]
 
+const AGENT_GIT_NAME = "mychat-agent"
+const AGENT_GIT_EMAIL = "mychat-agent@users.noreply.github.com"
+
 function checkRiskFiles(files: string[]): { blocked: string[]; warnings: string[] } {
   const blocked: string[] = []
   const warnings: string[] = []
@@ -107,6 +110,27 @@ function checkRiskFiles(files: string[]): { blocked: string[]; warnings: string[
     }
   }
   return { blocked, warnings }
+}
+
+function gitCommitEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    GIT_AUTHOR_NAME: AGENT_GIT_NAME,
+    GIT_AUTHOR_EMAIL: AGENT_GIT_EMAIL,
+    GIT_COMMITTER_NAME: AGENT_GIT_NAME,
+    GIT_COMMITTER_EMAIL: AGENT_GIT_EMAIL,
+  }
+}
+
+function ensureWorkspaceGitIdentity(root: string): NodeJS.ProcessEnv {
+  const env = gitCommitEnv()
+  execSync(`git config user.name "${AGENT_GIT_NAME}"`, {
+    cwd: root, timeout: 5000, encoding: "utf-8", env,
+  })
+  execSync(`git config user.email "${AGENT_GIT_EMAIL}"`, {
+    cwd: root, timeout: 5000, encoding: "utf-8", env,
+  })
+  return env
 }
 
 // ───────────── 公开 API ─────────────
@@ -243,24 +267,27 @@ export async function commitWorkspaceChanges(
 
   // 执行 commit
   try {
+    const commitEnv = ensureWorkspaceGitIdentity(root)
     // git add all
-    execSync("git add -A", { cwd: root, timeout: 15000, maxBuffer: 256 * 1024, encoding: "utf-8" })
+    execSync("git add -A", {
+      cwd: root, timeout: 15000, maxBuffer: 256 * 1024, encoding: "utf-8", env: commitEnv,
+    })
     // 再次确认没有高危文件被 staged
     let stagedFiles: string[] = []
     try {
       stagedFiles = execSync("git diff --cached --name-only", {
-        cwd: root, timeout: 10000, maxBuffer: 128 * 1024, encoding: "utf-8",
+        cwd: root, timeout: 10000, maxBuffer: 128 * 1024, encoding: "utf-8", env: commitEnv,
       }).trim().split("\n").filter(Boolean)
     } catch {}
     const { blocked: stageBlocked } = checkRiskFiles(stagedFiles)
     if (stageBlocked.length > 0) {
       // unstage and abort
-      execSync("git reset HEAD -- .", { cwd: root, timeout: 10000, encoding: "utf-8" })
+      execSync("git reset HEAD -- .", { cwd: root, timeout: 10000, encoding: "utf-8", env: commitEnv })
       return { ok: false, error: `禁止提交高危文件：${stageBlocked.join("、")}` }
     }
 
     execSync(`git commit -m "${safeMessage.replace(/"/g, '\\"')}"`, {
-      cwd: root, timeout: 30000, maxBuffer: 256 * 1024, encoding: "utf-8",
+      cwd: root, timeout: 30000, maxBuffer: 256 * 1024, encoding: "utf-8", env: commitEnv,
     })
   } catch (err: any) {
     const stderr = err?.stderr ?? err?.message ?? ""
