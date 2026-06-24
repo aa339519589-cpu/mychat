@@ -11,6 +11,7 @@ import { validate } from '@/lib/validation'
 import { addQuotaUsage } from '@/lib/quota'
 import { resolveAuth, enforceLimits } from '@/lib/api/guard'
 import { runInSandbox } from '@/lib/sandbox'
+import { runInWorkspace } from '@/lib/agent/shell'
 import { createRecorder, type RecordCtx } from '@/lib/agent/recorder'
 
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY ?? ''
@@ -235,6 +236,22 @@ export async function POST(req: NextRequest) {
           const command = String(input?.command ?? '').trim()
           if (!command) return '缺少 command。'
           emit({ step: { kind: 'read', label: `执行：${command.slice(0, 60)}` } })
+
+          // 优先走真实 workspace（如果有 taskId）
+          if (effectiveTaskId && supabase && userId) {
+            const wsResult = await runInWorkspace(supabase, userId, effectiveTaskId, command, {
+              timeoutMs: 120_000,
+            })
+            if (wsResult.blocked) return `命令被安全策略拦截：${wsResult.blockedReason}`
+            if (wsResult.exitCode !== null || wsResult.stdout || wsResult.stderr) {
+              let out = ''
+              if (wsResult.stdout) out += wsResult.stdout
+              if (wsResult.stderr) out += (out ? '\n' : '') + wsResult.stderr
+              if (wsResult.timedOut) out += '\n(命令超时)'
+              if (wsResult.exitCode !== null && wsResult.exitCode !== 0) out += `\n退出码: ${wsResult.exitCode}`
+              return out || '(无输出)'
+            }
+          }
 
           // 判断是否可能是重任务（构建/测试类）
           const heavyPatterns = ['npm run build', 'npm test', 'npx tsc', 'npm run typecheck', 'npm run ci', 'make', 'npm install']

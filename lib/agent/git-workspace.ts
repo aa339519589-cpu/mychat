@@ -15,16 +15,26 @@ const GIT_TIMEOUT_MS = 30_000    // 其他 git 操作 30 秒
 const ROOT = "/tmp/mychat-agent-workspaces"
 
 // branch slug：目标摘要 + 时间戳
+// 确保不会出现空 slug（如 agent/-5e1l）
 function slugify(text: string): string {
-  return text
-    .replace(/[^a-zA-Z0-9一-鿿_-]/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 40) || "task"
+  if (!text || !text.trim()) return "task"
+  let s = text
+    .replace(/[^a-z0-9一-鿿_-]/gi, "-")  // 非法字符 → 横线
+    .replace(/-+/g, "-")                  // 合并连续横线
+    .replace(/^-|-$/g, "")                // 去除首尾横线
+    .slice(0, 40)                         // 截断
+  // 去掉后必须是纯小写字母数字横线组合，开头必须是字母
+  s = s.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "")
+  if (!s || s.length < 1) s = "task"
+  return s
 }
 
-function agentBranch(taskGoal: string): string {
-  const slug = slugify(taskGoal)
+function agentBranch(taskGoal: string, fallback?: string): string {
+  let slug = slugify(taskGoal)
+  // 双重保险：若 slug 仍为空或不合法，用 fallback 或 taskId 前 8 位
+  if (!slug || slug === "-" || slug.length < 1) {
+    slug = fallback?.slice(0, 8) || "task"
+  }
   const ts = Date.now().toString(36)
   return `agent/${slug}-${ts}`
 }
