@@ -122,7 +122,10 @@ export async function POST(req: Request) {
   const totalSize = writes.reduce((s, w) => s + (w.newContent?.length ?? 0), 0)
   if (totalSize > 1_000_000) return Response.json({ error: '内容总量超过 1MB 限制' }, { status: 400 })
 
-  const result: { repoUrl?: string; pagesUrl?: string; commitSha?: string; repo?: string; created?: boolean } = {}
+  const result: {
+    repoUrl?: string; pagesUrl?: string; commitSha?: string; repo?: string; created?: boolean
+    pagesStatus?: "ready" | "pending" | "failed"; pagesError?: string
+  } = {}
 
   const created = await createRepo(token, createAction.name, createAction.description ?? '', !!createAction.private)
   if ('error' in created) return Response.json({ error: created.error }, { status: 502 })
@@ -143,8 +146,10 @@ export async function POST(req: Request) {
 
   // 3) 开启 Pages（若有）
   if (actions.some(a => a.kind === 'enable_pages')) {
-    const p = await enablePages(token, targetRepo, targetBranch)
-    if (!('error' in p)) result.pagesUrl = p.url
+    const pages = await enablePages(token, targetRepo, targetBranch, { verifyUrl: !createAction.private })
+    result.pagesUrl = pages.url
+    result.pagesStatus = pages.status
+    if (pages.status === 'failed') result.pagesError = pages.error
   }
 
   return Response.json({ ...result, mode: "direct_push" })

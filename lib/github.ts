@@ -178,20 +178,53 @@ export async function commitFiles(token: string, repo: string, branch: string, f
   return { commitSha: newCommitSha }
 }
 
-// 开启 GitHub Pages（静态站上线），返回可访问网址
-export async function enablePages(token: string, repo: string, branch: string): Promise<{ url: string } | { error: string }> {
+export type PagesResult =
+  | { status: 'ready'; url: string }
+  | { status: 'pending'; url: string }
+  | { status: 'failed'; url: string; error: string }
+
+// 开启 Pages 后等待 GitHub 构建完成，并验证最终网址确实可访问。
+export async function enablePages(
+  token: string,
+  repo: string,
+  branch: string,
+  options: { timeoutMs?: number; intervalMs?: number; verifyUrl?: boolean } = {},
+): Promise<PagesResult> {
   const res = await fetch(`${GH}/repos/${repo}/pages`, {
     method: 'POST', headers: ghHeaders(token, true),
     body: JSON.stringify({ source: { branch, path: '/' } }),
   }).catch(() => null)
-  // 已开启过会返回 409，视为成功
-  if (res?.ok || res?.status === 409) {
-    const owner = repo.split('/')[0]
-    const name = repo.split('/')[1]
-    let url = `https://${owner}.github.io/${name}/`
-    try { const d = await res!.json(); if (d?.html_url) url = d.html_url } catch {}
-    return { url }
+  const owner = repo.split('/')[0]
+  const name = repo.split('/')[1]
+  let url = `https://${owner}.github.io/${name}/`
+  if (!res?.ok && res?.status !== 409) {
+    const err = await res?.json().catch(() => null)
+    return { status: 'failed', url, error: `开启 Pages 失败：${(err as any)?.message ?? '未知错误'}` }
   }
-  const err = await res?.json().catch(() => null)
-  return { error: `开启 Pages 失败：${(err as any)?.message ?? '未知错误'}` }
+  try {
+    const data = await res.json()
+    if (data?.html_url) url = data.html_url
+  } catch {}
+
+  const timeoutMs = options.timeoutMs ?? 90_000
+  const intervalMs = options.intervalMs ?? 3_000
+  const deadline = Date.now() + timeoutMs
+  do {
+    const statusRes = await fetch(`${GH}/repos/${repo}/pages`, { headers: ghHeaders(token) }).catch(() => null)
+    if (statusRes?.ok) {
+      const data = await statusRes.json().catch(() => null)
+      if (data?.html_url) url = data.html_url
+      if (data?.status === 'errored') {
+        return { status: 'failed', url, error: 'GitHub Pages 构建失败' }
+      }
+      if (data?.status === 'built') {
+        if (options.verifyUrl === false) return { status: 'ready', url }
+        const site = await fetch(url, { redirect: 'follow', cache: 'no-store' }).catch(() => null)
+        if (site?.ok) return { status: 'ready', url }
+      }
+    }
+    if (Date.now() < deadline) await sleep(intervalMs)
+  } while (Date.now() < deadline)
+
+  return { status: 'pending', url }
 }

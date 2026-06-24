@@ -27,18 +27,23 @@ export type AgentLoopOpts = {
   leakedRetry?: boolean
   // chat：finish_reason === 'length' 时自动续写，前端无感拼接
   autoContinue?: { maxContinuations: number }
+  idleContinuation?: {
+    maxContinuations: number
+    prompt: (info: { turn: TurnResult; idleCount: number }) => string | null | Promise<string | null>
+  }
   // 诊断日志钩子（循环本身不做日志，交给调用方）
   onTurn?: (info: { phase: TurnPhase; round?: number; turn: TurnResult }) => void
 }
 
 export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: number }> {
-  const { url, apiKey, model, adapter, thinking, messages: msgs, tools, emit, executeTool, maxRounds, leakedRetry, autoContinue, onTurn } = opts
+  const { url, apiKey, model, adapter, thinking, messages: msgs, tools, emit, executeTool, maxRounds, leakedRetry, autoContinue, idleContinuation, onTurn } = opts
   let totalTokens = 0
   let lastHadToolCalls = false
   let lastTurn: TurnResult | null = null
   let consecutiveFailures = 0
   const MAX_CONSECUTIVE_FAILURES = 2
   const MAX_LEAKED_RETRIES_PER_ROUND = 2
+  let idleCount = 0
 
   for (let round = 0; round < maxRounds; round++) {
     let turn = await runTurn(url, apiKey, model, msgs, tools, emit, { thinking, adapter })
@@ -85,9 +90,20 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
 
     lastTurn = turn
     lastHadToolCalls = turn.toolCalls.length > 0
-    // 非泄漏场景下无工具调用 = 模型认为任务完成，结束
-    if (!lastHadToolCalls) break
+    if (!lastHadToolCalls) {
+      if (idleContinuation && idleCount < idleContinuation.maxContinuations) {
+        const prompt = await idleContinuation.prompt({ turn, idleCount })
+        if (prompt) {
+          if (turn.content.trim()) msgs.push({ role: 'assistant', content: turn.content })
+          msgs.push({ role: 'user', content: prompt })
+          idleCount++
+          continue
+        }
+      }
+      break
+    }
 
+    idleCount = 0
     msgs.push(turn.assistantMessage)
     for (const tc of turn.toolCalls) {
       let input: any = {}

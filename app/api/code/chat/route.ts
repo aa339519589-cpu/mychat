@@ -13,6 +13,7 @@ import { resolveAuth, enforceLimits } from '@/lib/api/guard'
 import { runInSandbox } from '@/lib/sandbox'
 import { runInWorkspace } from '@/lib/agent/shell'
 import { createRecorder } from '@/lib/agent/recorder'
+import { codeContinuationPrompt } from '@/lib/agent/continuation'
 import {
   writeWorkspaceFile, editWorkspaceFile, deleteWorkspaceFile,
   getChangedFiles, readWorkspaceFile,
@@ -28,7 +29,7 @@ const TAVILY_API_KEY = process.env.TAVILY_API_KEY ?? ''
 
 const SAFETY_ROUNDS = 32
 
-function buildCodeSystem(repo: string | null, login: string, memories: string[], goal: boolean, hasWorkspace: boolean): string {
+function buildCodeSystem(repo: string | null, login: string, memories: string[], hasWorkspace: boolean): string {
   const wsSection = hasWorkspace ? `
 🚫 你已进入 Workspace 模式。你没有直接推 main 的能力，也没有 GitHub 认证信息。
 你唯一能做的发布方式：完成文件修改 → 展示 diff → 让用户点击底部「确认并创建 PR」按钮。
@@ -92,7 +93,7 @@ ${hasWorkspace
   else s += `\n\n用户尚未选择仓库。做新项目用 create_repo 新建。`
 
   if (memories.length) s += `\n\n本仓库记忆（${memories.length} 条）：\n${memories.map(m => `- ${m}`).join('\n')}`
-  if (goal) s += `\n\n【目标模式】请自主连续工作，一次推进到位，不要在细节上反复确认。`
+  s += `\n\n【Agent 模式】这是持续执行任务，不是一问一答。请自主连续使用工具推进，读取结果后决定下一步，直到目标完成、验证通过，或确实需要用户授权。不要让用户反复说“继续”。`
   return s
 }
 
@@ -120,7 +121,7 @@ export async function POST(req: NextRequest) {
   let body: any = {}
   try { body = await req.json() } catch { return new Response(JSON.stringify({ error: '请求体格式错误' }), { status: 400 }) }
 
-  const { repo = null, tier = '正构', goal = false, messages, taskId = null } = body
+  const { repo = null, tier = '正构', messages, taskId = null } = body
   try {
     validate.array(messages, 'messages', { minLength: 1 })
     if (repo !== null && (typeof repo !== 'string' || !repo.includes('/'))) throw new Error('仓库参数无效')
@@ -235,7 +236,7 @@ export async function POST(req: NextRequest) {
   }
 
   // 5. 构建系统提示词和工具（repo 存在 = 永远是 workspace 模式）
-  const SYSTEM = buildCodeSystem(repo, login, memContents, !!goal, hasWorkspace)
+  const SYSTEM = buildCodeSystem(repo, login, memContents, hasWorkspace)
   const url = chatCompletionsUrl(DEEPSEEK_BASE_URL)
 
   // 工具描述：有 repo 一律 workspace 话术
@@ -275,8 +276,19 @@ export async function POST(req: NextRequest) {
       const wsReady = hasWorkspace && wsPreReady
       const wsTaskId = effectiveTaskId ?? ""
       const wsUserId = userId ?? ""
+      let usedTools = false
+      let publishCalled = false
+      let plannedRepo = false
+      let plannedFiles = 0
+
+      const workspaceHasChanges = () => {
+        if (!wsReady) return false
+        const changed = getChangedFiles(wsTaskId, wsUserId)
+        return changed.ok && changed.data.files.length > 0
+      }
 
       const executeTool: ExecuteTool = async (name, input) => {
+        usedTools = true
         if (name === 'list_files') {
           // 如果有 workspace，列 workspace 文件；否则走 GitHub
           if (wsReady) {
@@ -316,6 +328,7 @@ export async function POST(req: NextRequest) {
           if (!name2) return '缺少仓库名。'
           emit({ step: { kind: 'repo', label: `新建仓库 ${name2}` } })
           emit({ plan: { kind: 'create_repo', name: name2, description: String(input?.description ?? ''), private: !!input?.private } })
+          plannedRepo = true
           return `已加入计划：新建仓库 ${login}/${name2}。继续写入文件。`
         }
         if (name === 'write_files') {
@@ -356,6 +369,7 @@ export async function POST(req: NextRequest) {
             }
             emit({ step: { kind: 'edit', label: `写入 ${path}` } })
             emit({ plan: { kind: 'write_file', path, oldContent, newContent: content } })
+            plannedFiles++
           }
           return `已加入计划：写入 ${files.length} 个文件（等待用户确认/自动执行）。`
         }
@@ -469,6 +483,8 @@ export async function POST(req: NextRequest) {
           // 检查是否有改动
           const changed = getChangedFiles(wsTaskId, wsUserId)
           const fileList = changed.ok ? changed.data.files.map(f => `  ${f.status} ${f.path}`).join('\n') : ''
+          if (!fileList) return 'Workspace 还没有文件改动，不能发布。继续完成原始任务。'
+          publishCalled = true
           return `✅ 改动已就绪，等待用户确认创建 PR。
 
 变更文件：
@@ -509,6 +525,7 @@ ${fileList || '（请先修改文件）'}
         return '未知工具。'
       }
 
+      let loopFailed = false
       try {
         const { totalTokens } = await runAgentLoop({
           url, apiKey: DEEPSEEK_API_KEY, model, adapter: 'deepseek-openai', thinking,
@@ -516,14 +533,30 @@ ${fileList || '（请先修改文件）'}
           maxRounds,
           leakedRetry: true,
           autoContinue: { maxContinuations: 4 },
+          idleContinuation: {
+            maxContinuations: 4,
+            prompt: ({ idleCount }) => codeContinuationPrompt({
+              workspace: wsReady,
+              idleCount,
+              usedTools,
+              hasChanges: workspaceHasChanges(),
+              published: publishCalled,
+              plannedRepo,
+              plannedFiles,
+            }),
+          },
           onTurn: ({ phase, round, turn }) => {
             log.info('codeChat', `Turn ${phase}`, { round, finishReason: turn.finishReason, leaked: turn.leaked, toolCalls: turn.toolCalls.length, contentLen: turn.content.length, truncated: turn.truncated })
           },
         })
         totalTokensUsed += totalTokens
       } catch (error) {
+        loopFailed = true
         emit({ error: networkError(error) })
       } finally {
+        if (effectiveTaskId) {
+          await recorder.setTaskStatus(loopFailed ? "failed" : workspaceHasChanges() ? "waiting_for_user" : "completed")
+        }
         if (userId && supabase) await addQuotaUsage(supabase, userId, totalTokensUsed, model, thinking, usingBalance)
         done(controller)
       }

@@ -10,6 +10,7 @@ import {
   fetchCodeSessions, createCodeSession, touchCodeSession,
   fetchCodeMessages, insertCodeMessage,
   fetchCodeMemories, insertCodeMemory, deleteCodeMemory,
+  toCodeModelMessages,
 } from "@/lib/code-data"
 import { WorkingDots } from "@/components/working-dots"
 import { AgentTasksPanel } from "@/components/agent-tasks-panel"
@@ -31,7 +32,6 @@ const COMMANDS = [
   { cmd: "/memory", desc: "查看 / 编辑本仓库的记忆" },
   { cmd: "/context", desc: "查看当前上下文用量" },
   { cmd: "/resume", desc: "恢复本仓库的历史排查" },
-  { cmd: "/goal", desc: "设定目标，让它自主多轮完成" },
   { cmd: "/tasks", desc: "查看 Agent 任务列表与状态" },
 ]
 
@@ -129,7 +129,6 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
   const [input, setInput] = useState("")
   const [streaming, setStreaming] = useState(false)
   const [tier, setTier] = useState<Tier>("正构")
-  const [goalArmed, setGoalArmed] = useState(false)
   const [auto, setAuto] = useState(false)         // 自动模式（不确认直接执行）
 
   const [pendingPlan, setPendingPlan] = useState<PlanAction[]>([])
@@ -189,11 +188,28 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
     // 恢复该仓库最近一次会话的上下文（退出再进不重置）
     if (full) {
       const sessions = await fetchCodeSessions(full)
+      let msgs: CodeMessage[] = []
       if (sessions.length) {
-        const msgs = await fetchCodeMessages(sessions[0].id)
+        msgs = await fetchCodeMessages(sessions[0].id)
         setSessionId(sessions[0].id); setMessages(msgs)
       }
+      await restoreTask(full, msgs)
     }
+  }
+
+  async function restoreTask(full: string, msgs: CodeMessage[]) {
+    const saved = [...msgs].reverse().find(m => m.taskId)?.taskId
+    try {
+      const res = await fetch(`/api/agent/tasks?repo=${encodeURIComponent(full)}`)
+      if (!res.ok) return
+      const tasks = await res.json() as { id: string; status: string }[]
+      const active = new Set(["queued", "planning", "editing", "running", "waiting_for_user", "creating_pr"])
+      const task = tasks.find(t => t.id === saved && active.has(t.status)) ?? tasks.find(t => active.has(t.status))
+      if (task) {
+        setCurrentTaskId(task.id)
+        await detectWorkspaceChanges(task.id)
+      }
+    } catch {}
   }
 
   // 在当前仓库内开启全新对话（旧对话仍可用 /resume 找回）
@@ -209,6 +225,17 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
     setConnected(false); setLogin(""); setEntered(false); setRepo(null); setRepos(null); setGhMenu(false)
   }
 
+  async function appendReceipt(result: ApplyResult, taskId: string | null, base = messages) {
+    const receipt: CodeMessage = {
+      id: crypto.randomUUID(), role: "assistant", content: "", result,
+      taskId: taskId ?? undefined,
+    }
+    const next = [...base, receipt]
+    setMessages(next)
+    if (sessionId) await insertCodeMessage(userId, sessionId, receipt).catch(() => {})
+    return next
+  }
+
   // ── Workspace PR 发布（不依赖模型决策，不依赖 plan/actions）──
   async function publishWorkspacePR() {
     if (!currentTaskId || !repo) return
@@ -221,12 +248,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       const data = await res.json()
       if (res.ok) {
         const result = data as ApplyResult
-        const lastAi = [...messages].reverse().find(m => m.role === "assistant")
-        if (lastAi) {
-          setMessages(prev => prev.map(m => m.id === lastAi.id ? { ...m, result } : m))
-          const sid = sessionId
-          if (sid) insertCodeMessage(userId, sid, { ...lastAi, result })
-        }
+        await appendReceipt(result, currentTaskId)
         setWorkspaceDirty(false)
       } else {
         setApplyError(data.error ?? "PR 创建失败")
@@ -239,15 +261,15 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
   }
 
   // ── 执行计划：直接推送（用户已选）──
-  async function applyPlan(plan: PlanAction[], aiMsgId: string) {
+  async function applyPlan(plan: PlanAction[], aiMsgId: string, base = messages) {
     if (!plan.length) return
     setApplying(true); setApplyError(null)
     try {
       // 提取 git commit message：跳过对话碎片行，取第一条有实质内容的行
-          const lines = (messages.find(m => m.id === aiMsgId)?.content || "").split("\n").map(l => l.trim()).filter(Boolean)
-          const conversationalPrefix = /^(好的|我来|让我|先|这个|那个|嗯|哦|好|可以|收到|明白|懂了|行|OK|ok|OK\.|Yes|yes|Sure|sure|Let|let|I'll|I will)/
-          const commitLine = lines.find(l => !conversationalPrefix.test(l)) || lines[0] || ""
-          const summary = commitLine.slice(0, 80) || "Claude 代码改动"
+      const lines = (base.find(m => m.id === aiMsgId)?.content || "").split("\n").map(l => l.trim()).filter(Boolean)
+      const conversationalPrefix = /^(好的|我来|让我|先|这个|那个|嗯|哦|好|可以|收到|明白|懂了|行|OK|ok|OK\.|Yes|yes|Sure|sure|Let|let|I'll|I will)/
+      const commitLine = lines.find(l => !conversationalPrefix.test(l)) || lines[0] || ""
+      const summary = commitLine.slice(0, 80) || "Code Agent 代码改动"
       const res = await fetch("/api/code/apply", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ repo, actions: plan, message: summary }),
@@ -256,48 +278,56 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       if (res.ok) {
         const result = data as ApplyResult
         if (result.created && result.repo) { setRepo(result.repo); setRepos(null) }
-        setMessages(prev => prev.map(m => m.id === aiMsgId ? { ...m, result } : m))
+        const next = await appendReceipt(result, null, base)
         setPendingPlan([])
         setWorkspaceDirty(false)
-        // 落库（结果）
-        const sid = sessionId
-        if (sid) {
-          const m = messages.find(x => x.id === aiMsgId)
-          if (m) insertCodeMessage(userId, sid, { ...m, plan, result })
+        if (result.created && result.repo) {
+          setApplying(false)
+          void runSend("平台已执行确认操作。根据执行回执继续完成原始任务，检查真实仓库和部署状态；只有全部完成并验证后才结束。", {
+            internal: true, baseMessages: next, repo: result.repo,
+          })
         }
       } else setApplyError(data.error ?? "执行失败")
     } catch { setApplyError("网络错误") } finally { setApplying(false) }
   }
 
   // ── 发送 ──
-  async function runSend(text: string, goal: boolean) {
-    if (streaming) return
+  async function runSend(text: string, options?: { internal?: boolean; baseMessages?: CodeMessage[]; repo?: string | null }) {
+    if (streaming && !options?.internal) return
+    const activeRepo = options?.repo !== undefined ? options.repo : repo
+    const baseMessages = options?.baseMessages ?? messages
 
     // ═══ 第一步：立即显示用户消息 + 创建 AI placeholder（在任何 async 之前） ═══
     const userMsg: CodeMessage = { id: crypto.randomUUID(), role: "user", content: text }
     const aiId = crypto.randomUUID()
     const aiMsg: CodeMessage = { id: aiId, role: "assistant", content: "", steps: [], plan: [] }
-    setMessages(prev => [...prev, userMsg, aiMsg])
+    setMessages(options?.internal ? [...baseMessages, aiMsg] : [...baseMessages, userMsg, aiMsg])
     setStreaming(true)
     setApplyError(null)
-    setWorkspaceDirty(false)
+    if (!currentTaskId) setWorkspaceDirty(false)
 
     // ═══ 第二步：异步准备（session / task 创建失败不吞消息，只影响能力） ═══
     let sid = sessionId
     try {
-      if (!sid && repo) {
-        const newSid = await createCodeSession(userId, repo, text.slice(0, 40) || "未命名")
-        if (newSid) { sid = newSid; setSessionId(sid) }
+      if (!sid && activeRepo) {
+        const firstUser = baseMessages.find(m => m.role === "user")?.content ?? text
+        const newSid = await createCodeSession(userId, activeRepo, firstUser.slice(0, 40) || "未命名")
+        if (newSid) {
+          sid = newSid
+          setSessionId(sid)
+          for (const msg of baseMessages) await insertCodeMessage(userId, sid, msg)
+        }
       }
-      if (sid) insertCodeMessage(userId, sid, userMsg)
+      if (sid && !options?.internal) insertCodeMessage(userId, sid, userMsg)
     } catch {}
 
     let taskId: string | null = currentTaskId
-    if (!taskId && repo) {
+    if (!taskId && activeRepo) {
       try {
+        const taskGoal = baseMessages.find(m => m.role === "user")?.content ?? text
         const tres = await fetch("/api/agent/tasks", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ goal: text, mode: "auto", repo }),
+          body: JSON.stringify({ goal: taskGoal, mode: "auto", repo: activeRepo }),
         })
         if (tres.ok) {
           const t = await tres.json()
@@ -311,7 +341,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
     }
     // 注意：taskId 创建失败不 return — 消息已显示，降级为无 workspace 模式
 
-    const history = [...messages, userMsg].map(m => ({ role: m.role, content: m.content }))
+    const history = toCodeModelMessages([...baseMessages, userMsg])
 
     // ═══ 第三步：发 chat 请求 ═══
     const steps: CodeStep[] = []
@@ -325,7 +355,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       const res = await fetch("/api/code/chat", {
         method: "POST", signal: controller.signal,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ repo, tier, goal, messages: history, taskId }),
+        body: JSON.stringify({ repo: activeRepo, tier, messages: history, taskId }),
       })
       if (!res.ok) {
         const e = await res.json().catch(() => null)
@@ -375,13 +405,21 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
           id: aiId, role: "assistant", content: fullText,
           steps: steps.length ? steps : undefined,
           plan: plan.length ? plan : undefined,
+          taskId: taskId ?? undefined,
           isError: hadError || undefined,
         }).catch(() => {})
         touchCodeSession(sid).catch(() => {})
       }
       // 有计划：自动模式直接执行，否则挂起等确认（有 taskId 时禁止走旧 plan 路径）
       if (plan.length && !hadError && !taskId) {
-        if (auto) applyPlan(plan, aiId)
+        const completedAi: CodeMessage = {
+          id: aiId, role: "assistant", content: fullText,
+          steps: steps.length ? steps : undefined,
+          plan: plan.length ? plan : undefined,
+          isError: hadError || undefined,
+        }
+        const completed = options?.internal ? [...baseMessages, completedAi] : [...baseMessages, userMsg, completedAi]
+        if (auto) applyPlan(plan, aiId, completed)
         else setPendingPlan(plan)
       }
       // workspace 模式：异步检测 git status（失败不影响 UI）
@@ -410,24 +448,23 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
     const text = input.trim()
     if (!text) return
     if (text.startsWith("/")) {
-      const [cmd, ...rest] = text.split(" ")
-      const arg = rest.join(" ").trim()
+      const cmd = text.split(" ")[0]
       if (cmd === "/model") { setInput(""); setOverlay("model"); return }
       if (cmd === "/memory") { setInput(""); setOverlay("memory"); return }
       if (cmd === "/context") { setInput(""); setOverlay("context"); return }
       if (cmd === "/resume") { setInput(""); setOverlay("resume"); return }
-      if (cmd === "/goal") { setInput(""); if (arg) { runSend(arg, true); return } setGoalArmed(true); return }
       if (cmd === "/tasks") { setInput(""); setOverlay("tasks"); return }
       if (cmd === "/new") { setInput(""); startNewSession(); return }
     }
     setInput("")
-    const g = goalArmed; setGoalArmed(false)
-    runSend(text, g)
+    runSend(text)
   }
 
   async function loadSession(s: CodeSession) {
     setOverlay(null); setSessionId(s.id); setPendingPlan([])
-    setMessages(await fetchCodeMessages(s.id))
+    const msgs = await fetchCodeMessages(s.id)
+    setMessages(msgs)
+    await restoreTask(s.repo, msgs)
   }
 
   const showCmdHint = input.startsWith("/") && !input.includes(" ")
@@ -530,7 +567,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
         <div className="border-t border-border px-4 md:px-8">
           <div className="mx-auto max-w-3xl py-1.5">
             {matchedCmds.map(c => (
-              <button key={c.cmd} onClick={() => { if (c.cmd === "/goal") { setInput("/goal "); taRef.current?.focus() } else if (c.cmd === "/new") { setInput(""); startNewSession() } else { setInput(""); setOverlay(c.cmd.slice(1) as Overlay) } }}
+              <button key={c.cmd} onClick={() => { if (c.cmd === "/new") { setInput(""); startNewSession() } else { setInput(""); setOverlay(c.cmd.slice(1) as Overlay) } }}
                 className="flex w-full items-center gap-3 rounded-md px-2 py-1 text-left transition-colors hover:bg-secondary/60">
                 <span className="text-[12px] font-medium" style={{ color: ACCENT, fontFamily: MONO }}>{c.cmd}</span>
                 <span className="text-[11px] text-muted-foreground">{c.desc}</span>
@@ -543,13 +580,12 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       {/* 输入区：上下两条线 + Enter 键 */}
       <div className="border-y border-border px-4 py-1 md:px-8">
         <div className="mx-auto flex max-w-3xl items-center gap-2">
-          {goalArmed && <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] text-white" style={{ background: ACCENT }}>目标</span>}
           <span className="shrink-0 select-none" style={{ color: ACCENT, fontFamily: MONO }}>›</span>
           <textarea
             ref={taRef} rows={1} value={input}
             onChange={e => { setInput(e.target.value); const el = e.target; el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 160) + "px" }}
             onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (!streaming) onSubmit() } }}
-            placeholder={goalArmed ? "描述目标，我会自主多轮完成……" : (repo ? "描述问题，或输入 / 调用命令……" : "想做什么？比如「做个番茄钟」……")}
+            placeholder={repo ? "描述目标，我会自主执行到完成……" : "想做什么？比如「做个番茄钟」……"}
             className="min-h-0 flex-1 resize-none bg-transparent py-0 text-base leading-6 text-foreground outline-none placeholder:text-muted-foreground/60"
             style={{ fontFamily: MONO }}
           />
@@ -792,7 +828,9 @@ function ResultCard({ r }: { r: ApplyResult }) {
         <span className="min-w-0 break-all">已提交并推送（mode: {r.mode || "direct_push"}）{r.created ? "（新仓库已创建）" : ""}</span>
       </div>
       {r.repoUrl && <a href={r.repoUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-muted-foreground underline-offset-2 hover:underline min-w-0"><ExternalLink className="size-3 shrink-0" /><span className="truncate">在 GitHub 查看仓库</span></a>}
-      {r.pagesUrl && <a href={r.pagesUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 underline-offset-2 hover:underline min-w-0" style={{ color: ACCENT }}><Rocket className="size-3 shrink-0" /><span className="truncate">已上线：{r.pagesUrl}</span></a>}
+      {r.pagesUrl && (!r.pagesStatus || r.pagesStatus === "ready") && <a href={r.pagesUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 underline-offset-2 hover:underline min-w-0" style={{ color: ACCENT }}><Rocket className="size-3 shrink-0" /><span className="truncate">已上线：{r.pagesUrl}</span></a>}
+      {r.pagesUrl && r.pagesStatus === "pending" && <p className="text-muted-foreground">Pages 已开启，仍在部署：{r.pagesUrl}</p>}
+      {r.pagesStatus === "failed" && <p className="text-destructive">Pages 上线失败：{r.pagesError}</p>}
       {r.message && <p className="text-muted-foreground/60 italic break-all">{r.message}</p>}
     </div>
   )

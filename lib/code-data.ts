@@ -16,6 +16,8 @@ export type ApplyResult = {
   repo?: string; repoUrl?: string; pagesUrl?: string; commitSha?: string; created?: boolean
   mode?: "workspace_pr" | "direct_push"
   pullRequestUrl?: string; pullRequestNumber?: number; branch?: string
+  pagesStatus?: "ready" | "pending" | "failed"
+  pagesError?: string
   message?: string
 }
 
@@ -29,6 +31,7 @@ export type CodeMessage = {
   steps?: CodeStep[]
   plan?: PlanAction[]
   result?: ApplyResult
+  taskId?: string
   isError?: boolean
 }
 
@@ -81,6 +84,7 @@ export async function fetchCodeMessages(sessionId: string): Promise<CodeMessage[
     steps: r.meta?.steps,
     plan: r.meta?.plan,
     result: r.meta?.result,
+    taskId: r.meta?.taskId,
   }))
 }
 
@@ -92,10 +96,32 @@ export async function insertCodeMessage(
   if (msg.steps?.length) meta.steps = msg.steps
   if (msg.plan?.length) meta.plan = msg.plan
   if (msg.result) meta.result = msg.result
+  if (msg.taskId) meta.taskId = msg.taskId
   await supabase.from("code_messages").insert({
     id: msg.id, session_id: sessionId, user_id: userId, role: msg.role, content: msg.content,
     meta: Object.keys(meta).length ? meta : null,
   })
+}
+
+export function modelContent(msg: CodeMessage): string {
+  if (!msg.result) return msg.content
+  const r = msg.result
+  const facts = [
+    r.repo && `仓库：${r.repo}`,
+    r.repoUrl && `仓库地址：${r.repoUrl}`,
+    r.commitSha && `提交：${r.commitSha}`,
+    r.branch && `分支：${r.branch}`,
+    r.pullRequestUrl && `Pull Request：${r.pullRequestUrl}`,
+    r.pagesUrl && `Pages 地址：${r.pagesUrl}`,
+    r.pagesStatus && `Pages 状态：${r.pagesStatus}`,
+    r.pagesError && `Pages 错误：${r.pagesError}`,
+    r.message && `执行说明：${r.message}`,
+  ].filter(Boolean)
+  return [msg.content, `[平台执行回执]\n${facts.join("\n")}`].filter(Boolean).join("\n\n")
+}
+
+export function toCodeModelMessages(messages: CodeMessage[]) {
+  return messages.map(msg => ({ role: msg.role, content: modelContent(msg) }))
 }
 
 // ───────────── 记忆（按 repo 隔离）─────────────
