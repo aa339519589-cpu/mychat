@@ -181,6 +181,7 @@
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
     overflow: hidden;
+    touch-action: pan-y;
   }
   html {
     @apply font-sans;
