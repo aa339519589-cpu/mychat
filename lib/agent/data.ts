@@ -410,6 +410,29 @@ export async function addWorkspace(
   return mapWorkspace(data)
 }
 
+export async function updateWorkspaceStatus(
+  supabase: SupabaseClient,
+  userId: string,
+  taskId: string,
+  status: string,
+  extra?: { commitSha?: string; path?: string },
+): Promise<AgentWorkspace | { error: string }> {
+  const update: Record<string, unknown> = { status, updated_at: new Date().toISOString() }
+  if (extra?.commitSha) update.commit_sha = extra.commitSha
+  if (extra?.path) update.path = extra.path
+
+  const { error, data } = await supabase
+    .from("agent_workspaces")
+    .update(update)
+    .eq("task_id", taskId)
+    .eq("user_id", userId)
+    .select()
+    .single()
+
+  if (error || !data) return { error: error?.message ?? "更新 workspace 失败" }
+  return mapWorkspace(data)
+}
+
 // ───────────── 产物 ─────────────
 
 export async function addArtifact(

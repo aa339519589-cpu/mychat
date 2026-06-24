@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { X, ChevronLeft, Loader2, RefreshCw, Square } from "lucide-react"
+import { X, ChevronLeft, Loader2, RefreshCw, FolderGit2 } from "lucide-react"
 import type { AgentTask, AgentTaskDetail } from "@/lib/agent/types"
 import { cn } from "@/lib/utils"
 
@@ -112,12 +112,31 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
           )}
 
           {/* Workspace */}
-          {detail.workspace && (
+          {detail.workspace ? (
             <div>
               <p className="text-[11px] text-muted-foreground mb-1">Workspace</p>
-              <div className="text-[11px] rounded bg-secondary/30 px-2 py-1 text-muted-foreground">
-                {detail.workspace.repo} @ {detail.workspace.branch}
+              <div className="text-[11px] rounded bg-secondary/30 px-2 py-1 text-muted-foreground space-y-0.5">
+                <div>repo: {detail.workspace.repo}</div>
+                <div>branch: {detail.workspace.branch}</div>
+                {detail.workspace.path && <div className="truncate">path: {detail.workspace.path}</div>}
+                <div>status: {detail.workspace.status}</div>
               </div>
+            </div>
+          ) : (
+            <div>
+              <button
+                onClick={async () => {
+                  try {
+                    await fetch(`/api/agent/tasks/${detail.id}/workspace`, { method: "POST" })
+                    // refresh detail
+                    const res = await fetch(`/api/agent/tasks/${detail.id}`)
+                    if (res.ok) setDetail(await res.json())
+                  } catch {}
+                }}
+                className="flex items-center gap-1.5 text-[11px] rounded bg-secondary/40 px-2 py-1.5 text-muted-foreground transition-colors hover:bg-secondary/60"
+              >
+                <FolderGit2 className="size-3" /> 创建 Workspace
+              </button>
             </div>
           )}
 

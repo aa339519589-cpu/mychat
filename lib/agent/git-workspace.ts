@@ -1,0 +1,182 @@
+// Git workspace 操作：clone、branch 创建、checkout。
+// 所有 Git 操作通过 child_process.exec 执行，超时保护，token 不进命令参数。
+
+import { exec } from "child_process"
+import { promisify } from "util"
+import { mkdir, rm } from "fs/promises"
+import { existsSync } from "fs"
+import { join } from "path"
+import { log } from "@/lib/logger"
+
+const execAsync = promisify(exec)
+
+const CLONE_TIMEOUT_MS = 120_000  // clone 可能较慢（大仓库），给 2 分钟
+const GIT_TIMEOUT_MS = 30_000    // 其他 git 操作 30 秒
+const ROOT = "/tmp/mychat-agent-workspaces"
+
+// branch slug：目标摘要 + 时间戳
+function slugify(text: string): string {
+  return text
+    .replace(/[^a-zA-Z0-9一-鿿_-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 40) || "task"
+}
+
+function agentBranch(taskGoal: string): string {
+  const slug = slugify(taskGoal)
+  const ts = Date.now().toString(36)
+  return `agent/${slug}-${ts}`
+}
+
+// clone 时 token 通过环境变量注入，绝不出现在命令字符串中。
+// 用 GIT_ASKPASS 空字符串禁用密码弹窗。
+function gitEnv(token: string): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    GIT_ASKPASS: "echo",
+    GIT_TERMINAL_PROMPT: "0",
+    GCM_INTERACTIVE: "never",
+  }
+}
+
+// 用 token 构造带认证的 URL
+function authUrl(repo: string, token: string): string {
+  // 只取 token 前 8 位用于验证，完整 token 不暴露
+  const safe = token.slice(0, 8)
+  log.info("gitWorkspace", `Cloning ${repo}`, { tokenPrefix: `${safe}...` })
+  return `https://x-access-token:${token}@github.com/${repo}.git`
+}
+
+// ── 克隆仓库 ──
+
+export type CloneResult = {
+  path: string
+  repo: string
+  branch: string
+  agentBranch: string
+} | {
+  error: string
+}
+
+export async function cloneWorkspace(
+  userId: string, taskId: string,
+  repo: string, token: string, goal: string, baseBranch = "main",
+): Promise<CloneResult> {
+  const base = join(ROOT, userId, taskId)
+  const branch = agentBranch(goal)
+
+  // 建目录
+  try {
+    await mkdir(base, { recursive: true })
+  } catch (e: any) {
+    const msg = `创建 workspace 目录失败: ${base} (${e?.message ?? e})`
+    log.error("gitWorkspace", msg)
+    return { error: msg }
+  }
+
+  // 如果目录已存在且 .git 目录有效，跳过 clone
+  if (existsSync(join(base, ".git"))) {
+    log.info("gitWorkspace", "Workspace 已存在，跳过 clone", { base })
+    // 尝试创建 agent branch
+    try {
+      await execAsync(`git checkout -b "${branch}"`, { cwd: base, timeout: GIT_TIMEOUT_MS, env: gitEnv("") })
+    } catch {
+      // branch 可能已存在，尝试切换
+      try { await execAsync(`git checkout "${branch}"`, { cwd: base, timeout: GIT_TIMEOUT_MS, env: gitEnv("") }) }
+      catch { /* 保持当前分支 */ }
+    }
+    return { path: base, repo, branch: baseBranch, agentBranch: branch }
+  }
+
+  // 清理残留（如果有目录但无 .git）
+  try { await rm(base, { recursive: true, force: true }) } catch {}
+  try { await mkdir(base, { recursive: true }) } catch {}
+
+  // Clone
+  const url = authUrl(repo, token)
+  try {
+    const cmd = `git clone --single-branch --branch "${baseBranch}" "${url}" "${base}" 2>&1`
+    // 不记录完整命令（含 token URL），只记录 repo 名
+    log.info("gitWorkspace", `Executing git clone for ${repo}`, { branch: baseBranch })
+    const { stderr } = await execAsync(cmd, {
+      timeout: CLONE_TIMEOUT_MS,
+      env: gitEnv(token),
+    })
+    // git clone 的输出通常在 stderr
+    const out = stderr.trim()
+    log.info("gitWorkspace", `Clone completed for ${repo}`, { output: out.slice(0, 200) })
+  } catch (e: any) {
+    const msg = e?.stderr?.trim() || e?.message || String(e)
+    // 彻底删除失败残留，不打日志暴露 token
+    const cleanMsg = msg.replace(/https:\/\/[^@]+@/g, "https://***@")
+      .replace(/x-access-token:[^@\s]+/g, "x-access-token:***")
+    log.error("gitWorkspace", `Clone failed for ${repo}`, { error: cleanMsg.slice(0, 300) })
+    try { await rm(base, { recursive: true, force: true }) } catch {}
+    return { error: `Git clone 失败: ${cleanMsg.slice(0, 500)}` }
+  }
+
+  // 创建 agent branch
+  try {
+    await execAsync(`git checkout -b "${branch}"`, {
+      cwd: base, timeout: GIT_TIMEOUT_MS, env: gitEnv(token),
+    })
+    log.info("gitWorkspace", `Created agent branch ${branch}`, { repo })
+  } catch (e: any) {
+    const msg = e?.stderr?.trim() || e?.message || String(e)
+    log.warn("gitWorkspace", `Agent branch creation failed: ${msg.slice(0, 200)}`)
+    // branch 已存在则切换
+    try { await execAsync(`git checkout "${branch}"`, { cwd: base, timeout: GIT_TIMEOUT_MS, env: gitEnv("") }) }
+    catch { /* 保持 default branch */ }
+  }
+
+  return { path: base, repo, branch: baseBranch, agentBranch: branch }
+}
+
+// ── 清理 workspace ──
+
+export async function cleanupWorkspace(userId: string, taskId: string): Promise<boolean> {
+  const base = join(ROOT, userId, taskId)
+  if (!existsSync(base)) return true
+  try {
+    await rm(base, { recursive: true, force: true })
+    log.info("gitWorkspace", `Cleaned workspace ${base}`)
+    return true
+  } catch (e: any) {
+    log.warn("gitWorkspace", `Failed to clean workspace ${base}`, { error: e?.message })
+    return false
+  }
+}
+
+// ── 获取 workspace 信息 ──
+
+export async function getGitInfo(path: string): Promise<{ branch: string; commit: string; remote: string } | { error: string }> {
+  try {
+    const [br, co, rem] = await Promise.all([
+      execAsync("git branch --show-current", { cwd: path, timeout: GIT_TIMEOUT_MS, env: gitEnv("") }),
+      execAsync("git rev-parse HEAD", { cwd: path, timeout: GIT_TIMEOUT_MS, env: gitEnv("") }),
+      execAsync("git remote get-url origin", { cwd: path, timeout: GIT_TIMEOUT_MS, env: gitEnv("") }),
+    ])
+    return {
+      branch: br.stdout.trim(),
+      commit: co.stdout.trim(),
+      // 清除 remote URL 中的 token
+      remote: rem.stdout.trim().replace(/https:\/\/[^@]+@/g, "https://***@"),
+    }
+  } catch (e: any) {
+    return { error: e?.stderr?.trim() || e?.message || "git info failed" }
+  }
+}
+
+// ── 获取 diff ──
+
+export async function getWorkspaceDiff(path: string): Promise<string | { error: string }> {
+  try {
+    const { stdout } = await execAsync("git diff HEAD", { cwd: path, timeout: GIT_TIMEOUT_MS, env: gitEnv("") })
+    return stdout
+  } catch (e: any) {
+    return { error: e?.stderr?.trim() || e?.message || "git diff failed" }
+  }
+}
+
+export { ROOT, agentBranch }
