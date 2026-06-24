@@ -4,7 +4,7 @@
 
 const GH = 'https://api.github.com'
 
-function ghHeaders(token: string, json = false): Record<string, string> {
+export function ghHeaders(token: string, json = false): Record<string, string> {
   const h: Record<string, string> = {
     Authorization: `Bearer ${token}`,
     'User-Agent': 'mychat-app',

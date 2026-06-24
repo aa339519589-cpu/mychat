@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
-    scope: 'repo read:user',
+    scope: 'repo read:user workflow',
     state,
   })
 
