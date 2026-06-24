@@ -144,6 +144,13 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
   const scrollRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
 
+  // 新消息时自动滚到底部
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    }
+  }, [messages])
+
   useEffect(() => {
     fetch("/api/github/status").then(r => r.json()).then(d => {
       setConnected(!!d.connected); setLogin(d.login ?? "")
@@ -270,10 +277,26 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
   // ── 发送 ──
   async function runSend(text: string, goal: boolean) {
     if (streaming) return
-    let sid = sessionId
-    if (!sid && repo) { sid = await createCodeSession(userId, repo, text.slice(0, 40) || "未命名"); if (sid) setSessionId(sid) }
 
-    // 自动创建/复用 Agent Task（选中 repo 时必须成功，否则阻止发消息）
+    // ═══ 第一步：立即显示用户消息 + 创建 AI placeholder（在任何 async 之前） ═══
+    const userMsg: CodeMessage = { id: crypto.randomUUID(), role: "user", content: text }
+    const aiId = crypto.randomUUID()
+    const aiMsg: CodeMessage = { id: aiId, role: "assistant", content: "", steps: [], plan: [] }
+    setMessages(prev => [...prev, userMsg, aiMsg])
+    setStreaming(true)
+    setApplyError(null)
+    setWorkspaceDirty(false)
+
+    // ═══ 第二步：异步准备（session / task 创建失败不吞消息，只影响能力） ═══
+    let sid = sessionId
+    try {
+      if (!sid && repo) {
+        const newSid = await createCodeSession(userId, repo, text.slice(0, 40) || "未命名")
+        if (newSid) { sid = newSid; setSessionId(sid) }
+      }
+      if (sid) insertCodeMessage(userId, sid, userMsg)
+    } catch {}
+
     let taskId: string | null = currentTaskId
     if (!taskId && repo) {
       try {
@@ -291,22 +314,13 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       } catch (e) {
         console.error('[CodeConsole] POST /api/agent/tasks exception', e)
       }
-      // 硬性检查：选 repo 必须有 taskId
-      if (!taskId) {
-        setApplyError("Agent Task 创建失败，无法继续。请刷新页面后重试。")
-        return
-      }
     }
-    console.log('[CodeConsole] runSend', { repo, taskId, currentTaskId: currentTaskId || taskId })
+    console.log('[CodeConsole] runSend', { repo, taskId })
+    // 注意：taskId 创建失败不 return — 消息已显示，降级为无 workspace 模式
 
-    const userMsg: CodeMessage = { id: crypto.randomUUID(), role: "user", content: text }
-    const aiId = crypto.randomUUID()
-    const aiMsg: CodeMessage = { id: aiId, role: "assistant", content: "", steps: [], plan: [] }
     const history = [...messages, userMsg].map(m => ({ role: m.role, content: m.content }))
-    setMessages(prev => [...prev, userMsg, aiMsg])
-    setStreaming(true); setApplyError(null); setWorkspaceDirty(false)
-    if (sid) insertCodeMessage(userId, sid, userMsg)
 
+    // ═══ 第三步：发 chat 请求 ═══
     const steps: CodeStep[] = []
     const plan: PlanAction[] = []
     let fullText = ""
@@ -320,7 +334,10 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ repo, tier, goal, messages: history, taskId }),
       })
-      if (!res.ok) { const e = await res.json().catch(() => null); throw new Error(e?.error ?? `请求失败（${res.status}）`) }
+      if (!res.ok) {
+        const e = await res.json().catch(() => null)
+        throw new Error(e?.error ?? `请求失败（${res.status}）`)
+      }
       if (!res.body) throw new Error("无响应体")
 
       const reader = res.body.getReader()
@@ -344,38 +361,52 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
         }
       }
     } catch (e: any) {
-      if (e?.name !== "AbortError") { hadError = true; setMessages(prev => prev.map(m => m.id === aiId ? { ...m, content: e?.message ?? String(e), isError: true } : m)) }
+      if (e?.name === "AbortError") {
+        // 用户主动停止 — 保留已有内容
+        if (!fullText) fullText = "已停止。"
+      } else {
+        hadError = true
+        fullText = `请求失败：${e?.message ?? String(e)}`
+      }
+      setMessages(prev => prev.map(m => m.id === aiId ? { ...m, content: fullText, isError: hadError || undefined } : m))
     } finally {
+      // ═══ 第四步：无论如何都要恢复状态 ═══
       setStreaming(false)
-      if (sid) insertCodeMessage(userId, sid, { id: aiId, role: "assistant", content: fullText, steps: steps.length ? steps : undefined, plan: plan.length ? plan : undefined, isError: hadError || undefined })
-      if (sid) touchCodeSession(sid)
+      if (sid) {
+        insertCodeMessage(userId, sid, {
+          id: aiId, role: "assistant", content: fullText,
+          steps: steps.length ? steps : undefined,
+          plan: plan.length ? plan : undefined,
+          isError: hadError || undefined,
+        }).catch(() => {})
+        touchCodeSession(sid).catch(() => {})
+      }
       // 有计划：自动模式直接执行，否则挂起等确认（有 taskId 时禁止走旧 plan 路径）
       if (plan.length && !hadError && !taskId) {
         if (auto) applyPlan(plan, aiId)
         else setPendingPlan(plan)
       }
-      // workspace 模式：调用 git API 检测改动，不依赖模型 plan/publish
+      // workspace 模式：异步检测 git status（失败不影响 UI）
       if (taskId && !hadError) {
-        console.log('[CodeConsole] checking workspace git for taskId:', taskId)
-        try {
-          const gitRes = await fetch(`/api/agent/tasks/${taskId}/workspace/git`)
-          console.log('[CodeConsole] GET workspace/git response', { ok: gitRes.ok, status: gitRes.status })
-          if (gitRes.ok) {
-            const gitStatus = await gitRes.json()
-            console.log('[CodeConsole] workspace git status', { hasChanges: gitStatus.hasChanges, changedFiles: gitStatus.changedFiles?.length, branch: gitStatus.currentBranch, error: gitStatus.error })
-            if (gitStatus.hasChanges) {
-              console.log('[CodeConsole] ✅ workspaceDirty → true')
-              setWorkspaceDirty(true)
-            } else {
-              console.log('[CodeConsole] ⚠️ workspace has no changes')
-            }
-          } else {
-            console.error('[CodeConsole] GET workspace/git failed', gitRes.status)
-          }
-        } catch (e) {
-          console.error('[CodeConsole] workspace git check exception', e)
+        detectWorkspaceChanges(taskId)
+      }
+    }
+  }
+
+  // workspace 改动检测（独立 async，失败不影响消息显示）
+  async function detectWorkspaceChanges(taskId: string) {
+    try {
+      const gitRes = await fetch(`/api/agent/tasks/${taskId}/workspace/git`)
+      if (gitRes.ok) {
+        const gitStatus = await gitRes.json()
+        console.log('[CodeConsole] workspace git status', { hasChanges: gitStatus.hasChanges, files: gitStatus.changedFiles?.length })
+        if (gitStatus.hasChanges) {
+          console.log('[CodeConsole] ✅ workspaceDirty → true')
+          setWorkspaceDirty(true)
         }
       }
+    } catch (e) {
+      console.warn('[CodeConsole] workspace git check failed (non-blocking)', e)
     }
   }
 
