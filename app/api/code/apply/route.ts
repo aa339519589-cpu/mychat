@@ -26,71 +26,91 @@ export async function POST(req: Request) {
     repo: string | null; actions: PlanAction[]; message: string; taskId?: string
   }
 
-  if (!Array.isArray(actions) || actions.length === 0) {
-    return Response.json({ error: '没有要执行的改动' }, { status: 400 })
-  }
-
-  // ── Workspace PR 模式 ──
+  // ── Workspace PR 模式（有 taskId 时优先走 PR，不要求 actions 非空）──
   if (taskId) {
     const auth = await resolveAuth()
     const supabase = auth.supabase
     const userId = auth.userId
 
-    if (supabase && userId) {
-      const detail = await getTaskDetail(supabase, userId, taskId)
-      if ("workspace" in detail) {
-        let ws = detail.workspace
+    if (!supabase || !userId) {
+      return Response.json({ error: '未登录' }, { status: 401 })
+    }
 
-        // 如果 workspace 不存在，自动创建
-        if (!ws || ws.status === "created" || ws.status === "cloning" || ws.status === "failed" || !ws.path || !existsSync(ws.path)) {
-          // 调用 POST /api/agent/tasks/[taskId]/workspace 创建
-          try {
-            const createRes = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL ?? ""}/api/agent/tasks/${taskId}/workspace`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Cookie: req.headers.get("cookie") ?? "",
-              },
-            })
-            if (createRes.ok) {
-              const created = await createRes.json()
-              if (created.path && existsSync(created.path)) {
-                ws = { ...(ws ?? { id: "", taskId, userId, repo: sessionRepo ?? "", branch: "main", commitSha: null, path: created.path, status: "ready", createdAt: "", updatedAt: "" }), path: created.path, status: "ready" }
-              }
-            }
-          } catch { /* creation failed, fall through to direct_push */ }
-        }
+    const detail = await getTaskDetail(supabase, userId, taskId)
+    if (!("workspace" in detail)) {
+      return Response.json({ error: '任务不存在或无权访问' }, { status: 404 })
+    }
 
-        if (ws && (ws.status === "ready" || ws.status === "dirty") && ws.path && existsSync(ws.path)) {
-          // 有 ready workspace：走 PR 发布
-          const result = await publishWorkspaceToPullRequest(taskId, userId, token, supabase, {
-            message: message || undefined,
-          })
+    let ws = detail.workspace
 
-          if (!result.ok) {
-            const errorMsg = result.error || "发布失败"
-            return Response.json({
-              error: errorMsg,
-              detail: {
-                mode: "workspace_pr",
-                stage: result.stage,
-                status: result.status?.hasChanges ? "有改动" : "无改动",
-                commitSha: result.commit?.commitSha,
-              },
-            }, { status: 502 })
+    // 如果 workspace 不存在，自动创建
+    if (!ws || ws.status === "created" || ws.status === "cloning" || ws.status === "failed" || !ws.path || !existsSync(ws.path)) {
+      // 调用 POST /api/agent/tasks/[taskId]/workspace 创建
+      try {
+        const createRes = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL ?? ""}/api/agent/tasks/${taskId}/workspace`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Cookie: req.headers.get("cookie") ?? "",
+          },
+        })
+        if (createRes.ok) {
+          const created = await createRes.json()
+          if (created.path && existsSync(created.path)) {
+            ws = { ...(ws ?? { id: "", taskId, userId, repo: sessionRepo ?? "", branch: "main", commitSha: null, path: created.path, status: "ready", createdAt: "", updatedAt: "" }), path: created.path, status: "ready" }
           }
-
-          return Response.json({
-            mode: "workspace_pr",
-            pullRequestUrl: result.pr?.pullRequestUrl,
-            pullRequestNumber: result.pr?.pullRequestNumber,
-            commitSha: result.commit?.commitSha,
-            branch: result.push?.branch,
-            message: "已创建 Pull Request（非直推 main）",
-          })
         }
+      } catch {
+        // workspace 创建失败，报错，不回退 direct_push
+        return Response.json({ error: 'Workspace 创建失败，无法发布 PR' }, { status: 502 })
       }
     }
+
+    // 有 taskId 必须走 workspace PR，绝不 fallback
+    if (!ws || !ws.path || !existsSync(ws.path)) {
+      return Response.json({ error: 'Workspace 不存在，无法发布 PR' }, { status: 400 })
+    }
+
+    // 检查 workspace 是否有改动
+    const wsStatus = getWorkspaceGitStatus(taskId, userId)
+    if (!wsStatus.hasChanges) {
+      return Response.json({
+        error: 'Workspace 没有待提交的改动',
+        detail: { mode: "workspace_pr", status: "无改动" },
+      }, { status: 400 })
+    }
+
+    // 有 ready/dirty workspace：走 PR 发布
+    const result = await publishWorkspaceToPullRequest(taskId, userId, token, supabase, {
+      message: message || undefined,
+    })
+
+    if (!result.ok) {
+      const errorMsg = result.error || "发布失败"
+      return Response.json({
+        error: errorMsg,
+        detail: {
+          mode: "workspace_pr",
+          stage: result.stage,
+          status: result.status?.hasChanges ? "有改动" : "无改动",
+          commitSha: result.commit?.commitSha,
+        },
+      }, { status: 502 })
+    }
+
+    return Response.json({
+      mode: "workspace_pr",
+      pullRequestUrl: result.pr?.pullRequestUrl,
+      pullRequestNumber: result.pr?.pullRequestNumber,
+      commitSha: result.commit?.commitSha,
+      branch: result.push?.branch,
+      message: "已创建 Pull Request（非直推 main）",
+    })
+  }
+
+  // ── 无 taskId：旧行为（直推默认分支）──
+  if (!Array.isArray(actions) || actions.length === 0) {
+    return Response.json({ error: '没有要执行的改动' }, { status: 400 })
   }
 
   // ── 旧行为：直推默认分支 ──

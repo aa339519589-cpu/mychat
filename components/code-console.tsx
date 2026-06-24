@@ -137,6 +137,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
   const [hiddenRepos, setHiddenRepos] = useState<string[]>([])
 
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null)
+  const [workspaceDirty, setWorkspaceDirty] = useState(false)  // workspace 有改动，即使 plan 为空也显示 PR 按钮
   const [overlay, setOverlay] = useState<Overlay>(null)
   const [ghMenu, setGhMenu] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
@@ -176,7 +177,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
   }
 
   async function enterRepo(full: string | null) {
-    setRepo(full); setEntered(true); setSessionId(null); setMessages([]); setPendingPlan([]); setApplyError(null)
+    setRepo(full); setEntered(true); setSessionId(null); setMessages([]); setPendingPlan([]); setApplyError(null); setWorkspaceDirty(false)
     // 恢复该仓库最近一次会话的上下文（退出再进不重置）
     if (full) {
       const sessions = await fetchCodeSessions(full)
@@ -189,7 +190,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
 
   // 在当前仓库内开启全新对话（旧对话仍可用 /resume 找回）
   function startNewSession() {
-    setSessionId(null); setMessages([]); setPendingPlan([]); setApplyError(null); setOverlay(null)
+    setSessionId(null); setMessages([]); setPendingPlan([]); setApplyError(null); setWorkspaceDirty(false); setOverlay(null)
   }
 
   function toggleAuto() { setAuto(v => { const n = !v; try { localStorage.setItem("code_auto", n ? "1" : "0") } catch {} ; return n }) }
@@ -202,7 +203,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
 
   // ── 执行计划：直接推送（用户已选）──
   async function applyPlan(plan: PlanAction[], aiMsgId: string) {
-    if (!plan.length) return
+    if (!plan.length && !currentTaskId) return  // workspace 模式允许空 plan
     setApplying(true); setApplyError(null)
     try {
       const created = plan.find(a => a.kind === "create_repo") as Extract<PlanAction, { kind: "create_repo" }> | undefined
@@ -221,6 +222,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
         if (result.created && result.repo) { setRepo(result.repo); setRepos(null) }
         setMessages(prev => prev.map(m => m.id === aiMsgId ? { ...m, result } : m))
         setPendingPlan([])
+        setWorkspaceDirty(false)
         // 落库（结果）
         const sid = sessionId
         if (sid) {
@@ -254,7 +256,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
     const aiMsg: CodeMessage = { id: aiId, role: "assistant", content: "", steps: [], plan: [] }
     const history = [...messages, userMsg].map(m => ({ role: m.role, content: m.content }))
     setMessages(prev => [...prev, userMsg, aiMsg])
-    setStreaming(true); setApplyError(null)
+    setStreaming(true); setApplyError(null); setWorkspaceDirty(false)
     if (sid) insertCodeMessage(userId, sid, userMsg)
 
     const steps: CodeStep[] = []
@@ -303,6 +305,10 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       if (plan.length && !hadError) {
         if (auto) applyPlan(plan, aiId)
         else setPendingPlan(plan)
+      }
+      // workspace 模式：即使 plan 为空，也显示 PR 确认按钮
+      if (!plan.length && !hadError && taskId) {
+        setWorkspaceDirty(true)
       }
     }
   }
@@ -378,14 +384,14 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       </div>
 
       {/* 待确认计划条（确认模式）*/}
-      {pendingPlan.length > 0 && !auto && (
+      {(pendingPlan.length > 0 || workspaceDirty) && !auto && (
         <div className="border-t border-border bg-secondary/40 px-4 py-3 md:px-8">
           <div className="mx-auto max-w-3xl">
             {applyError && <p className="mb-2 text-[12px] leading-relaxed text-destructive">{applyError}</p>}
             <div className="flex items-center gap-3">
-            <span className="text-[12px] text-foreground" style={{ fontFamily: MONO }}>{planSummary(pendingPlan)}</span>
+            <span className="text-[12px] text-foreground" style={{ fontFamily: MONO }}>{workspaceDirty && !pendingPlan.length ? "Workspace 已修改，等待发布 PR" : planSummary(pendingPlan)}</span>
             <div className="ml-auto flex gap-2">
-              <button onClick={() => { setPendingPlan([]); setApplyError(null) }} disabled={applying}
+              <button onClick={() => { setPendingPlan([]); setWorkspaceDirty(false); setApplyError(null) }} disabled={applying}
                 className="flex items-center gap-1 rounded-lg border border-border px-3 py-1.5 text-[12px] text-muted-foreground transition-colors hover:bg-secondary">
                 <X className="size-3.5" />放弃
               </button>
