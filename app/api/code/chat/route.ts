@@ -29,40 +29,57 @@ const TAVILY_API_KEY = process.env.TAVILY_API_KEY ?? ''
 // 9999 仅作为防止死循环的安全兜底，实际操作中模型完成使命自然会停下。
 const SAFETY_ROUNDS = 9999
 
-function buildCodeSystem(repo: string | null, defaultBranch: string | null, login: string, memories: string[], goal: boolean): string {
-  let s = `你是「小克 · 代码」，一个能真正操作用户 GitHub 账号的编程助手，运行在网页应用的 Code 板块里。当前用户的 GitHub 用户名是 ${login}。
+function buildCodeSystem(repo: string | null, defaultBranch: string | null, login: string, memories: string[], goal: boolean, hasWorkspace: boolean): string {
+  const wsSection = hasWorkspace ? `
+【Workspace 模式】你已经在一个真实 workspace 中工作，仓库已 clone 到本地。
+- write_files / edit_file / delete_files：直接修改 workspace 里的真实文件（会先自动 snapshot 备份）
+- apply_patch：用 unified diff 批量修改代码（推荐！先用 dryRun: true 预览，确认后 dryRun: false 执行）
+- execute：在 workspace 里执行命令（如 node --check 文件.js、npm run build、npm test 等）
+- list_files / read_file：直接读取 workspace 文件
+- 你改完代码后，底部会出现「确认并创建 PR」按钮——这会自动 commit → push agent branch → 创建 Pull Request
+- 你拥有完整的 PR 发布能力，改动通过 PR 审核，不会直接推到 main
+` : `
+【Plan 模式】你目前没有 workspace，改动通过 plan 模式执行：
+- write_files / edit_file / delete_files：生成改动计划，展示给用户确认后执行
+- execute：在沙箱中运行命令
+`;
 
-你能像 Claude Code / GPT 的仓库助手那样真正动手做事，工具如下：
-- list_files / read_file：浏览、阅读仓库里的真实文件（修改前先读，了解上下文）。
-- create_repo：新建一个仓库。用户想从零做新项目（比如「做个番茄钟」）时，先建仓库。仓库名用英文小写连字符（如 pomodoro-timer）。
-- write_files：写入一个或多个文件（新建或覆盖）。从零搭项目就一次把所有文件都写出来（如 index.html / style.css / script.js）。传完整文件内容。
-- edit_file：精确修改文件中的一段内容。传入 old_string（原文中唯一的一段文字）和 new_string（替换成什么），AI 自动找到并替换。比 write_files 更精准，适合局部改动。
+  let s = `你是「小克 · 代码」，一个能真正操作用户 GitHub 账号的编程助手，运行在网页应用的 Code 板块里。当前用户的 GitHub 用户名是 ${login}。
+${wsSection}
+你能使用的工具：
+- list_files：列出仓库文件列表。
+- read_file：读取文件完整内容。修改前必须先读。
+- create_repo：新建一个 GitHub 仓库。仓库名用英文小写连字符（如 pomodoro-timer）。
+- write_files：写入一个或多个文件（新建或覆盖），传完整内容。
+- edit_file：精确修改文件中的一段内容。传 old_string（原文唯一片段）和 new_string。
 - delete_files：删除文件。
-- execute：在沙箱中运行命令进行语法校验或快速验证（如 node --check 文件.js、node -e、python3 -c、cat、grep、ls 等）。改完代码后建议先跑一次校验。需要完整构建/测试时可以用 npm run build / npm test（会尝试触发 GitHub Actions）。
-- enable_pages：对纯静态/前端项目开启 GitHub Pages，让它有一个能直接打开的网址（部署上线）。
-- code_remember：记住关于本仓库的长期事实（架构、技术栈、易错点、用户偏好）。只属于本仓库。
-- search：网络搜索（文档、API、技术资料等）。
+- apply_patch：应用 unified diff patch 批量修改代码。先传 dryRun: true 预览，确认后 dryRun: false 执行。${hasWorkspace ? "这是推荐的修改方式。" : "仅在 workspace 模式下可用。"}
+- execute：${hasWorkspace ? "在 workspace 中执行命令（node --check / npm test / npm run build 等）" : "在沙箱中运行命令进行校验（node --check / node -e / python3 -c 等）"}。
+- enable_pages：开启 GitHub Pages 上线。
+- code_remember：记住一条本仓库的长期事实。
+- search：网络搜索文档、API、技术资料。
 
 工作方式（重要）：
-1. 用户用大白话描述要做什么，往往不懂代码、说不出文件名。你要自己判断、自己动手。
-2. 改现有项目：先 list_files / read_file 定位，再用 edit_file（局部改动）或 write_files（新建/覆盖）给出改动。
-3. 做新项目：create_repo → write_files 写全部文件 →（若是纯前端）enable_pages 上线。
-4. 改完代码后用 execute 跑一次语法校验（如 node --check）确认代码正确性。
-5. 你调用 create_repo / write_files / edit_file / delete_files / enable_pages 只是把动作【加入待执行计划】，会先展示给用户；用户确认后（或在自动模式下）才真正提交并直接推送上线。所以你尽管一次把该做的都规划好。
-6. 做完用中文简明说明你做了什么、（若上线了）网址是什么。像个干练的工程师，别啰嗦，不要用 emoji。
-7. 代码完成后，你的回复【开头第一行】必须是一行 git 提交信息（20 字以内的中文，描述改动内容，如「新增 edit_file 工具，支持精确修改文件」）。这一行会自动提取为 git commit message。第二行开始再写详细说明。不要把你的对话过程（如"我先看看..."、"好的我来..."）当作提交信息。
+1. 用户用大白话描述要做什么。你自行判断、定位文件、动手修改。
+2. 做新项目：create_repo → write_files 写全部文件 →（纯前端）enable_pages 上线。
+3. 改现有项目：先 list_files / read_file 定位，再 edit_file 或 write_files 给出改动${hasWorkspace ? "，推荐用 apply_patch 批量修改" : ""}。
+4. 改完代码后执行一次语法校验（如 node --check）。
+${hasWorkspace
+  ? "5. 改完后清楚地告诉用户你改了什么，用户点击「确认并创建 PR」即可自动发布为 Pull Request。你不需要等待用户确认 plan——workspace 模式直接生效。"
+  : "5. 你的改动会生成待执行计划展示给用户，用户确认后提交并推送。"}
+6. 回复【开头第一行】必须是 git 提交信息（20 字内中文，如「新增 edit_file 工具」）。
+7. 做完用中文简明说明，像干练的工程师，不要 emoji。
 
-工具调用注意事项：
-- 始终使用标准的 OpenAPI function calling 格式来调用工具。不要在正文中用 DSML / <｜DSML｜invoke> 文本格式模拟工具调用——这些文本式调用可能无法被解析，导致你的回复直接中断。
-- 如果你不确定，先用 read_file 或 list_files 确认当前状态。
+工具调用注意：
+- 必须用标准 OpenAPI function calling 格式调用工具，不要用 DSML 文本模拟。
+- edit_file 的 old_string 必须与原文完全一致（区分大小写），且唯一出现。
+- 不确定时先用 read_file 确认当前状态。`
 
-注意：edit_file 的 old_string 必须与原文完全一致（区分大小写），且内容在文件中只能出现一次。如果不确定，先用 read_file 确认准确内容。`
+  if (repo) s += `\n\n当前仓库：${repo}。`
+  else s += `\n\n用户尚未选择仓库。做新项目用 create_repo 新建。`
 
-  if (repo) s += `\n\n用户当前选中的仓库：${repo}（默认分支 ${defaultBranch}）。`
-  else s += `\n\n用户还没有选择仓库。如果他要做新项目，用 create_repo 新建；如果他要改某个现有项目，请提示他先在上方选择仓库。`
-
-  if (memories.length) s += `\n\n关于本仓库你已经记住的事（${memories.length} 条）：\n${memories.map(m => `- ${m}`).join('\n')}`
-  if (goal) s += `\n\n【目标模式】用户设定了一个目标，请自主连续工作、尽可能一次推进到位，把需要的仓库、文件、上线都规划好，不要中途停下问无关紧要的细节。`
+  if (memories.length) s += `\n\n本仓库记忆（${memories.length} 条）：\n${memories.map(m => `- ${m}`).join('\n')}`
+  if (goal) s += `\n\n【目标模式】请自主连续工作，一次推进到位，不要在细节上反复确认。`
   return s
 }
 
@@ -122,7 +139,7 @@ export async function POST(req: NextRequest) {
     } catch { /* 表未建时静默 */ }
   }
 
-  const SYSTEM = buildCodeSystem(repo, defaultBranch, login, memContents, !!goal)
+  const SYSTEM = buildCodeSystem(repo, defaultBranch, login, memContents, !!goal, !!(taskId && repo))
   const url = chatCompletionsUrl(DEEPSEEK_BASE_URL)
   // origin 变量已移除（沙箱改为直接调用）
 
@@ -130,14 +147,15 @@ export async function POST(req: NextRequest) {
     { type: 'function', function: { name: 'list_files', description: '列出当前仓库完整文件路径列表。', parameters: { type: 'object', properties: {} } } },
     { type: 'function', function: { name: 'read_file', description: '读取当前仓库某文件的真实完整内容。修改前必须先读。', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } },
     { type: 'function', function: { name: 'create_repo', description: '新建一个 GitHub 仓库（做新项目时用）。', parameters: { type: 'object', properties: { name: { type: 'string', description: '英文小写连字符，如 pomodoro-timer' }, description: { type: 'string' }, private: { type: 'boolean', description: '是否私有，默认 false' } }, required: ['name'] } } },
-    { type: 'function', function: { name: 'write_files', description: '写入一个或多个文件（新建或覆盖），传完整内容。从零搭项目就一次写全部文件。', parameters: { type: 'object', properties: { files: { type: 'array', items: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string', description: '完整文件内容，不省略' } }, required: ['path', 'content'] } } }, required: ['files'] } } },
-    { type: 'function', function: { name: 'edit_file', description: '精确修改文件中的一段内容。用 old_string 定位原文（必须唯一），替换成 new_string。适用于局部改动。', parameters: { type: 'object', properties: { path: { type: 'string', description: '文件路径' }, old_string: { type: 'string', description: '原文中要替换的字符串（区分大小写，必须唯一）' }, new_string: { type: 'string', description: '替换成的新内容' } }, required: ['path', 'old_string', 'new_string'] } } },
-    { type: 'function', function: { name: 'delete_files', description: '删除一个或多个文件。', parameters: { type: 'object', properties: { paths: { type: 'array', items: { type: 'string' } } }, required: ['paths'] } } },
-    { type: 'function', function: { name: 'execute', description: '在沙箱中执行命令进行快速校验（node --check、node -e、python3 -c、grep、cat 等简单命令）。也可以触发 GitHub Actions 跑构建/测试。改完代码后建议先跑语法校验。', parameters: { type: 'object', properties: { command: { type: 'string', description: '要执行的命令' } }, required: ['command'] } } },
+    { type: 'function', function: { name: 'write_files', description: `写入文件（新建或覆盖）。${taskId && repo ? '直接修改 workspace 中的真实文件，会自动 snapshot 备份。' : '生成改动计划，用户确认后执行。'}传完整文件内容。`, parameters: { type: 'object', properties: { files: { type: 'array', items: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string', description: '完整文件内容' } }, required: ['path', 'content'] } } }, required: ['files'] } } },
+    { type: 'function', function: { name: 'edit_file', description: `精确修改文件中的一段内容。${taskId && repo ? '直接修改 workspace 中的真实文件，会自动 snapshot 备份。' : '生成改动计划，用户确认后执行。'}用 old_string 定位原文（必须唯一），替换成 new_string。`, parameters: { type: 'object', properties: { path: { type: 'string', description: '文件路径' }, old_string: { type: 'string', description: '原文片段（必须唯一）' }, new_string: { type: 'string', description: '替换内容' } }, required: ['path', 'old_string', 'new_string'] } } },
+    { type: 'function', function: { name: 'delete_files', description: `删除文件。${taskId && repo ? '直接从 workspace 中删除真实文件，会自动 snapshot 备份。' : '生成删除计划，用户确认后执行。'}`, parameters: { type: 'object', properties: { paths: { type: 'array', items: { type: 'string' } } }, required: ['paths'] } } },
+    { type: 'function', function: { name: 'execute', description: `${taskId && repo ? '在 workspace 中执行命令进行语法校验或快速验证（如 node --check、node -e、python3 -c、npm run build、npm test 等）。' : '在沙箱中执行命令（node --check、node -e、python3 -c 等）。'}改完代码后建议先跑校验。`, parameters: { type: 'object', properties: { command: { type: 'string', description: '要执行的命令' } }, required: ['command'] } } },
     { type: 'function', function: { name: 'enable_pages', description: '对纯静态/前端项目开启 GitHub Pages，让项目有可访问网址（上线）。', parameters: { type: 'object', properties: {} } } },
     { type: 'function', function: { name: 'code_remember', description: '记住一条关于本仓库的长期事实。', parameters: { type: 'object', properties: { content: { type: 'string' } }, required: ['content'] } } },
     { type: 'function', function: { name: 'search', description: '网络搜索（文档、API、技术资料等）。需要查阅外部资源时用。', parameters: { type: 'object', properties: { query: { type: 'string', description: '搜索关键词或短语' } }, required: ['query'] } } },
     { type: 'function', function: { name: 'apply_patch', description: '应用 unified diff patch 批量修改代码（比 write_files/edit_file 更高效）。先传 dryRun: true 预览；确认后传 dryRun: false 执行。', parameters: { type: 'object', properties: { patch: { type: 'string', description: 'unified diff 格式的 patch 内容' }, dryRun: { type: 'boolean', description: '是否仅预览（dry-run），默认 false' } }, required: ['patch'] } } },
+    ...(taskId && repo ? [{ type: 'function', function: { name: 'publish', description: '将当前 workspace 中的改动自动 commit → push agent branch → 创建 Pull Request。不会直推 main。调用前确保所有文件已修改完成。', parameters: { type: 'object', properties: { title: { type: 'string', description: 'PR 标题（可选，默认从对话提取）' } } } } }] : []),
   ]
 
   const maxRounds = SAFETY_ROUNDS
@@ -185,22 +203,6 @@ export async function POST(req: NextRequest) {
           } catch (err: any) {
             log.error("codeChat", `Workspace auto-create failed: ${err?.message}`)
           }
-        }
-      }
-
-      // ── 如果 workspace 就绪，追加 workspace 上下文到 system message ──
-      if (wsReady) {
-        msgs[0] = {
-          role: "system",
-          content: SYSTEM + `\n\n【Workspace 已就绪】你已经在一个真实 workspace 中工作。仓库已 clone 到本地，你可以：
-- list_files / read_file：直接读取 workspace 里的真实文件
-- write_files / edit_file / delete_files：直接修改 workspace 里的文件（会先自动 snapshot）
-- apply_patch：用 unified diff 批量修改代码（推荐！先用 dryRun: true 预览，确认后 dryRun: false 执行）
-- execute：在 workspace 里执行命令（node --check / npm run build / npm test 等）
-- 修改完成后，回复里明确说"可以发布"，我会自动把改动 commit → push → 创建 Pull Request（不会直推 main）
-- 你也可以调用 publish 工具直接创建 PR
-
-重要：你有完整的 PR 能力。改动会通过 PR 审核，不是直接推到 main。`,
         }
       }
 
@@ -445,6 +447,13 @@ export async function POST(req: NextRequest) {
           }
 
           return 'apply_patch 需要 workspace。当前没有就绪的 workspace。'
+        }
+        if (name === 'publish') {
+          if (!wsReady) return 'publish 需要 workspace。当前没有就绪的 workspace。'
+          emit({ step: { kind: 'deploy', label: '发布为 Pull Request' } })
+          return `✅ 已在准备发布：系统会自动将你的改动 commit → push agent branch → 创建 Pull Request。
+用户点击「确认并创建 PR」按钮即可完成发布。
+改动不会直接推送到 main 分支，而是通过 PR 审核后合并。`
         }
         if (name === 'search') {
           const query = String(input?.query ?? '').trim()
