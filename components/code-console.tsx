@@ -273,7 +273,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
     let sid = sessionId
     if (!sid && repo) { sid = await createCodeSession(userId, repo, text.slice(0, 40) || "未命名"); if (sid) setSessionId(sid) }
 
-    // 自动创建/复用 Agent Task
+    // 自动创建/复用 Agent Task（选中 repo 时必须成功，否则阻止发消息）
     let taskId: string | null = currentTaskId
     if (!taskId && repo) {
       try {
@@ -281,9 +281,23 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ goal: text, mode: "auto", repo }),
         })
-        if (tres.ok) { const t = await tres.json(); taskId = t.id; setCurrentTaskId(taskId) }
-      } catch {}
+        if (tres.ok) {
+          const t = await tres.json()
+          console.log('[CodeConsole] POST /api/agent/tasks response', { ok: tres.ok, id: t?.id, error: t?.error })
+          if (t.id) { taskId = t.id; setCurrentTaskId(taskId) }
+        } else {
+          console.error('[CodeConsole] POST /api/agent/tasks failed', tres.status)
+        }
+      } catch (e) {
+        console.error('[CodeConsole] POST /api/agent/tasks exception', e)
+      }
+      // 硬性检查：选 repo 必须有 taskId
+      if (!taskId) {
+        setApplyError("Agent Task 创建失败，无法继续。请刷新页面后重试。")
+        return
+      }
     }
+    console.log('[CodeConsole] runSend', { repo, taskId, currentTaskId: currentTaskId || taskId })
 
     const userMsg: CodeMessage = { id: crypto.randomUUID(), role: "user", content: text }
     const aiId = crypto.randomUUID()
@@ -335,24 +349,31 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       setStreaming(false)
       if (sid) insertCodeMessage(userId, sid, { id: aiId, role: "assistant", content: fullText, steps: steps.length ? steps : undefined, plan: plan.length ? plan : undefined, isError: hadError || undefined })
       if (sid) touchCodeSession(sid)
-      // 有计划：自动模式直接执行，否则挂起等确认
-      if (plan.length && !hadError) {
+      // 有计划：自动模式直接执行，否则挂起等确认（有 taskId 时禁止走旧 plan 路径）
+      if (plan.length && !hadError && !taskId) {
         if (auto) applyPlan(plan, aiId)
         else setPendingPlan(plan)
       }
       // workspace 模式：调用 git API 检测改动，不依赖模型 plan/publish
       if (taskId && !hadError) {
+        console.log('[CodeConsole] checking workspace git for taskId:', taskId)
         try {
           const gitRes = await fetch(`/api/agent/tasks/${taskId}/workspace/git`)
+          console.log('[CodeConsole] GET workspace/git response', { ok: gitRes.ok, status: gitRes.status })
           if (gitRes.ok) {
             const gitStatus = await gitRes.json()
-            console.log('[CodeConsole] workspace git check', { hasChanges: gitStatus.hasChanges, files: gitStatus.changedFiles?.length, currentTaskId })
+            console.log('[CodeConsole] workspace git status', { hasChanges: gitStatus.hasChanges, changedFiles: gitStatus.changedFiles?.length, branch: gitStatus.currentBranch, error: gitStatus.error })
             if (gitStatus.hasChanges) {
+              console.log('[CodeConsole] ✅ workspaceDirty → true')
               setWorkspaceDirty(true)
+            } else {
+              console.log('[CodeConsole] ⚠️ workspace has no changes')
             }
+          } else {
+            console.error('[CodeConsole] GET workspace/git failed', gitRes.status)
           }
         } catch (e) {
-          console.log('[CodeConsole] workspace git check failed', e)
+          console.error('[CodeConsole] workspace git check exception', e)
         }
       }
     }
@@ -428,8 +449,22 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
         </div>
       </div>
 
+      {/* 🔍 调试状态栏 — 临时，用于排查线上 PR 链路 */}
+      {currentTaskId && (
+        <div className="border-t border-border bg-yellow-50 dark:bg-yellow-950/20 px-3 py-1.5 md:px-8">
+          <div className="mx-auto flex max-w-3xl flex-wrap items-center gap-x-4 gap-y-0.5 text-[10px]" style={{ fontFamily: MONO }}>
+            <span>taskId: <b>{currentTaskId.slice(0,8)}…</b></span>
+            <span>repo: <b>{repo ?? "none"}</b></span>
+            <span>workspaceDirty: <b style={{ color: workspaceDirty ? "#3fb950" : "#f85149" }}>{String(workspaceDirty)}</b></span>
+            <span>pendingPlan: <b>{pendingPlan.length}</b></span>
+            <span>streaming: <b>{String(streaming)}</b></span>
+            <span>auto: <b>{String(auto)}</b></span>
+          </div>
+        </div>
+      )}
+
       {/* Workspace PR 按钮 — 独立于模型决策，检测到 diff 即显示 */}
-      {workspaceDirty && !auto && (
+      {currentTaskId && repo && workspaceDirty && !auto && (
         <div className="border-t border-border bg-secondary/40 px-4 py-3 md:px-8">
           <div className="mx-auto max-w-3xl">
             {applyError && <p className="mb-2 text-[12px] leading-relaxed text-destructive">{applyError}</p>}
@@ -452,8 +487,8 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
         </div>
       )}
 
-      {/* 旧 Plan 确认条 — 仅在非 workspace 模式 */}
-      {pendingPlan.length > 0 && !workspaceDirty && !auto && (
+      {/* 旧 Plan 确认条 — 禁止在有 taskId 时显示 */}
+      {pendingPlan.length > 0 && !currentTaskId && !workspaceDirty && !auto && (
         <div className="border-t border-border bg-secondary/40 px-4 py-3 md:px-8">
           <div className="mx-auto max-w-3xl">
             {applyError && <p className="mb-2 text-[12px] leading-relaxed text-destructive">{applyError}</p>}

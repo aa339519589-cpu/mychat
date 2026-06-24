@@ -102,6 +102,7 @@ export async function POST(req: NextRequest) {
   try { body = await req.json() } catch { return new Response(JSON.stringify({ error: '请求体格式错误' }), { status: 400 }) }
 
   const { repo = null, tier = '正构', goal = false, messages, taskId = null } = body
+  console.warn('[code/chat] request', { repo, taskId, hasRepo: !!repo, hasTaskId: !!taskId, goal })
   try {
     validate.array(messages, 'messages', { minLength: 1 })
     if (repo !== null && (typeof repo !== 'string' || !repo.includes('/'))) throw new Error('仓库参数无效')
@@ -153,7 +154,9 @@ export async function POST(req: NextRequest) {
     } catch { /* 表未建时静默 */ }
   }
 
-  const SYSTEM = buildCodeSystem(repo, defaultBranch, login, memContents, !!goal, !!(taskId && repo))
+  const hasWorkspace = !!(taskId && repo)
+  console.warn('[code/chat] buildCodeSystem', { repo, taskId, hasWorkspace })
+  const SYSTEM = buildCodeSystem(repo, defaultBranch, login, memContents, !!goal, hasWorkspace)
   const url = chatCompletionsUrl(DEEPSEEK_BASE_URL)
   // origin 变量已移除（沙箱改为直接调用）
 
@@ -185,8 +188,10 @@ export async function POST(req: NextRequest) {
       let wsReady = false
       let wsTaskId = ""
       let wsUserId = ""
+      console.warn('[code/chat] workspace check', { taskId, hasUserId: !!userId, hasSupabase: !!supabase, repo })
       if (taskId && userId && supabase && repo) {
         const detail = await getTaskDetail(supabase, userId, taskId).catch(() => null)
+        console.warn('[code/chat] getTaskDetail result', { found: !!detail, hasWorkspace: detail && "workspace" in detail, wsStatus: detail && "workspace" in detail ? detail.workspace?.status : 'N/A' })
         if (detail && "workspace" in detail) {
           const ws = detail.workspace
           if (ws && (ws.status === "ready" || ws.status === "dirty") && ws.path && existsSync(ws.path)) {
@@ -199,13 +204,16 @@ export async function POST(req: NextRequest) {
         // 如果没有 workspace，自动创建
         if (!wsReady) {
           emit({ step: { kind: 'planning', label: '正在创建 workspace...' } })
+          console.warn('[code/chat] auto-creating workspace for taskId:', taskId)
           try {
             const wsRes = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL ?? ""}/api/agent/tasks/${taskId}/workspace`, {
               method: "POST",
               headers: { Cookie: req.headers.get("cookie") ?? "" },
             })
+            console.warn('[code/chat] create workspace response', { ok: wsRes.ok, status: wsRes.status })
             if (wsRes.ok) {
               const wsData = await wsRes.json()
+              console.warn('[code/chat] workspace created', { path: wsData.path, exists: wsData.path ? existsSync(wsData.path) : false, branch: wsData.agentBranch })
               if (wsData.path && existsSync(wsData.path)) {
                 wsReady = true
                 wsTaskId = taskId
@@ -213,11 +221,15 @@ export async function POST(req: NextRequest) {
                 emit({ step: { kind: 'done', label: `Workspace ready · ${wsData.agentBranch ?? ""}` } })
                 log.info("codeChat", `Workspace auto-created: ${wsData.path}`)
               }
+            } else {
+              console.error('[code/chat] workspace creation failed', wsRes.status)
             }
           } catch (err: any) {
+            console.error('[code/chat] workspace auto-create exception', err?.message)
             log.error("codeChat", `Workspace auto-create failed: ${err?.message}`)
           }
         }
+        console.warn('[code/chat] wsReady final:', wsReady)
       }
 
       const executeTool: ExecuteTool = async (name, input) => {
