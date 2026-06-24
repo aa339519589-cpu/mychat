@@ -197,7 +197,11 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
     setApplying(true); setApplyError(null)
     try {
       const created = plan.find(a => a.kind === "create_repo") as Extract<PlanAction, { kind: "create_repo" }> | undefined
-      const summary = messages.find(m => m.id === aiMsgId)?.content?.split("\n")[0]?.slice(0, 72) || "Claude 代码改动"
+      // 提取 git commit message：跳过对话碎片行，取第一条有实质内容的行
+          const lines = (messages.find(m => m.id === aiMsgId)?.content || "").split("\n").map(l => l.trim()).filter(Boolean)
+          const conversationalPrefix = /^(好的|我来|让我|先|这个|那个|嗯|哦|好|可以|收到|明白|懂了|行|OK|ok|OK\.|Yes|yes|Sure|sure|Let|let|I'll|I will)/
+          const commitLine = lines.find(l => !conversationalPrefix.test(l)) || lines[0] || ""
+          const summary = commitLine.slice(0, 80) || "Claude 代码改动"
       const res = await fetch("/api/code/apply", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ repo, actions: plan, message: summary }),

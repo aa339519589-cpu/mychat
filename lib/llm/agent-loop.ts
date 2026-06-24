@@ -37,18 +37,48 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
   let retriedNoTools = false
   let lastHadToolCalls = false
   let lastTurn: TurnResult | null = null
+  let consecutiveFailures = 0
+  const MAX_CONSECUTIVE_FAILURES = 2
 
   for (let round = 0; round < maxRounds; round++) {
     let turn = await runTurn(url, apiKey, model, msgs, tools, emit, { thinking, adapter })
     totalTokens += turn.totalTokens
     onTurn?.({ phase: 'round', round, turn })
 
-    // 工具协议泄漏成正文、又没有结构化工具调用、过滤后没正文 → 该 provider 此刻工具不可靠，关工具重试一轮
-    if (leakedRetry && turn.leaked && turn.toolCalls.length === 0 && !turn.content.trim() && !retriedNoTools && !turn.failed) {
-      retriedNoTools = true
-      turn = await runTurn(url, apiKey, model, msgs, [], emit, { thinking, adapter })
+    // 网络级失败重试一次（延迟 1s，给上游恢复时间）
+    if (turn.failed && consecutiveFailures < MAX_CONSECUTIVE_FAILURES) {
+      consecutiveFailures++
+      await new Promise(r => setTimeout(r, 1000))
+      turn = await runTurn(url, apiKey, model, msgs, tools, emit, { thinking, adapter })
       totalTokens += turn.totalTokens
-      onTurn?.({ phase: 'leaked-retry', round, turn })
+      onTurn?.({ phase: 'round', round, turn })
+    }
+    if (turn.failed) consecutiveFailures++
+    else consecutiveFailures = 0
+
+    // 工具协议泄漏：DSML 工具调用写进了 content 但未被解析为标准 tool_calls。
+    // 分为两种情况处理：
+    // 1) 过滤后正文为空 → 全部是工具协议，关工具重试一轮
+    // 2) 正文非空但末尾有未闭合工具调用 → 流被截断，交给 autoContinue 续写
+    if (leakedRetry && turn.leaked && !turn.failed) {
+      if (turn.toolCalls.length === 0) {
+        if (!turn.content.trim() && !retriedNoTools) {
+          // 情况1：正文全被剥掉——都是工具协议泄漏，关工具重试
+          retriedNoTools = true
+          turn = await runTurn(url, apiKey, model, msgs, [], emit, { thinking, adapter })
+          totalTokens += turn.totalTokens
+          onTurn?.({ phase: 'leaked-retry', round, turn })
+        } else if (!retriedNoTools && turn.hasIncompleteToolCall) {
+          // 情况2：有正文但末尾 DSML 未闭合——可能是 length 截断，重试带正文继续
+          // 把已过滤的正文当作 assistant 回复，再补一条系统指令让模型继续
+          retriedNoTools = true
+          msgs.push({ role: 'assistant', content: turn.content })
+          msgs.push({ role: 'user', content: '继续。不要在正文中使用 DSML 工具调用，用标准 function calling 或直接用文字说明。' })
+          turn = await runTurn(url, apiKey, model, msgs, [], emit, { thinking, adapter })
+          totalTokens += turn.totalTokens
+          onTurn?.({ phase: 'leaked-retry', round, turn })
+        }
+      }
     }
 
     lastTurn = turn
@@ -70,21 +100,23 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
     onTurn?.({ phase: 'final-text', turn: lastTurn })
   }
 
-  // 长度截断自动续写 / 异常中断提示
+  // 长度截断自动续写 / 异常中断 / 不完整工具调用续写
   if (autoContinue && lastTurn && !lastTurn.failed) {
     let cur = lastTurn
     let cont = 0
-    while (cur.finishReason === 'length' && cont < autoContinue.maxContinuations && !cur.failed) {
+    while (cont < autoContinue.maxContinuations && !cur.failed) {
+      const needContinue = cur.finishReason === 'length' || cur.truncated || cur.hasIncompleteToolCall
+      if (!needContinue) break
       cont++
       msgs.push({ role: 'assistant', content: cur.content })
-      msgs.push({ role: 'user', content: '紧接上文继续输出剩余内容，不要重复已经写过的部分，也不要加任何开场白。' })
+      msgs.push({ role: 'user', content: '紧接上文继续输出剩余内容，不要重复已经写过的部分，也不要加任何开场白。如果之前在正文中使用了 DSML 工具调用格式，请改用标准的 function calling 或直接用文字说明。' })
       cur = await runTurn(url, apiKey, model, msgs, [], emit, { thinking, adapter })
       totalTokens += cur.totalTokens
       onTurn?.({ phase: 'continue', round: cont, turn: cur })
     }
-    if (!cur.failed && cur.finishReason === 'length') {
-      emit({ text: '\n\n（内容较长，已输出至上限，可回复“继续”获取后续。）' })
-    } else if (!cur.failed && cur.truncated) {
+    if (!cur.failed && cur.finishReason === 'length' && cont >= autoContinue.maxContinuations) {
+      emit({ text: '\n\n（内容较长，已输出至上限，可回复”继续”获取后续。）' })
+    } else if (!cur.failed && (cur.truncated || cur.hasIncompleteToolCall)) {
       emit({ text: '\n\n（回复异常中断，请点击重新生成。）' })
     }
   }

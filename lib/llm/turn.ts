@@ -2,7 +2,7 @@
 // 关键解耦：不认识 SSE controller，只通过注入的 emit 往外推事件 —— 因此可被任意调用方
 // （流式 route、单测、非流式场景）复用，也能用 spy 验证。
 import { upstreamError } from './stream'
-import { makeContentFilter, parseDsmlToolCalls } from './sanitize'
+import { makeContentFilter, parseDsmlToolCalls, hasIncompleteDsmlToolCall } from './sanitize'
 import type { Emit } from './events'
 import { buildProviderRequest, type ProviderAdapterId } from './provider-adapters'
 
@@ -17,6 +17,7 @@ export type TurnResult = {
   finishReason: string | null
   truncated: boolean
   leaked: boolean
+  hasIncompleteToolCall: boolean
 }
 
 // 单轮请求：兼容流式 SSE 与一次性 JSON 两种返回；累积文本、思考链与工具调用。
@@ -41,7 +42,7 @@ export async function runTurn(
   })
   if (!res.ok || !res.body) {
     emit({ error: upstreamError(res.status, await res.text()) })
-    return { assistantMessage: null, toolCalls: [], failed: true, totalTokens: 0, content: '', finishReason: null, truncated: false, leaked: false }
+    return { assistantMessage: null, toolCalls: [], failed: true, totalTokens: 0, content: '', finishReason: null, truncated: false, leaked: false, hasIncompleteToolCall: false }
   }
 
   let content = ''        // 过滤后、真正发给前端的可见正文
@@ -121,5 +122,7 @@ export async function runTurn(
   const leaked = content.length < rawContent.length
   // truncated：收到了正文、但既无 finish_reason 也无 [DONE] = 上游异常掐断
   const truncated = !finishReason && !sawDone && rawContent.length > 0
-  return { assistantMessage, toolCalls, failed: false, totalTokens, content, finishReason, truncated, leaked }
+  // incomplete：末尾有未闭合的 DSML 工具调用（流被截断，需要 auto-continue）
+  const hasIncompleteToolCall = toolCalls.length === 0 && hasIncompleteDsmlToolCall(rawContent)
+  return { assistantMessage, toolCalls, failed: false, totalTokens, content, finishReason, truncated, leaked, hasIncompleteToolCall }
 }

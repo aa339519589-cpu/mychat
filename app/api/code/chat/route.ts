@@ -10,6 +10,7 @@ import { log } from '@/lib/logger'
 import { validate } from '@/lib/validation'
 import { addQuotaUsage } from '@/lib/quota'
 import { resolveAuth, enforceLimits } from '@/lib/api/guard'
+import { runInSandbox } from '@/lib/sandbox'
 
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY ?? ''
 const DEEPSEEK_BASE_URL = 'https://api.deepseek.com'
@@ -40,6 +41,11 @@ function buildCodeSystem(repo: string | null, defaultBranch: string | null, logi
 4. 改完代码后用 execute 跑一次语法校验（如 node --check）确认代码正确性。
 5. 你调用 create_repo / write_files / edit_file / delete_files / enable_pages 只是把动作【加入待执行计划】，会先展示给用户；用户确认后（或在自动模式下）才真正提交并直接推送上线。所以你尽管一次把该做的都规划好。
 6. 做完用中文简明说明你做了什么、（若上线了）网址是什么。像个干练的工程师，别啰嗦，不要用 emoji。
+7. 代码完成后，你的回复【开头第一行】必须是一行 git 提交信息（20 字以内的中文，描述改动内容，如「新增 edit_file 工具，支持精确修改文件」）。这一行会自动提取为 git commit message。第二行开始再写详细说明。不要把你的对话过程（如"我先看看..."、"好的我来..."）当作提交信息。
+
+工具调用注意事项：
+- 始终使用标准的 OpenAPI function calling 格式来调用工具。不要在正文中用 DSML / <｜DSML｜invoke> 文本格式模拟工具调用——这些文本式调用可能无法被解析，导致你的回复直接中断。
+- 如果你不确定，先用 read_file 或 list_files 确认当前状态。
 
 注意：edit_file 的 old_string 必须与原文完全一致（区分大小写），且内容在文件中只能出现一次。如果不确定，先用 read_file 确认准确内容。`
 
@@ -312,11 +318,13 @@ export async function POST(req: NextRequest) {
 
       try {
         const { totalTokens } = await runAgentLoop({
-          url, apiKey: DEEPSEEK_API_KEY, model, thinking,
+          url, apiKey: DEEPSEEK_API_KEY, model, adapter: 'deepseek-openai', thinking,
           messages: msgs, tools, emit, executeTool,
           maxRounds,
+          leakedRetry: true,
+          autoContinue: { maxContinuations: 4 },
           onTurn: ({ phase, round, turn }) => {
-            if (phase === 'round') log.info('codeChat', 'Turn finished', { round, finishReason: turn.finishReason, toolCalls: turn.toolCalls.length, contentLen: turn.content.length })
+            log.info('codeChat', `Turn ${phase}`, { round, finishReason: turn.finishReason, leaked: turn.leaked, toolCalls: turn.toolCalls.length, contentLen: turn.content.length, truncated: turn.truncated })
           },
         })
         totalTokensUsed += totalTokens

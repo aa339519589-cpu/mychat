@@ -49,14 +49,13 @@ export function runInSandbox(command: string, files?: Record<string, string>): S
     }
 
     const startTime = Date.now()
-    const stdout = execSync(cmdTrimmed, {
+    const buf = execSync(cmdTrimmed, {
       cwd: tmpDir ?? undefined,
       timeout: TIMEOUT_MS,
-      encoding: 'utf-8',
       maxBuffer: MAX_OUTPUT_LENGTH,
       stdio: ['pipe', 'pipe', 'pipe'],
-      shell: true,
     })
+    const stdout = buf.toString('utf-8')
     const elapsed = Date.now() - startTime
 
     return {

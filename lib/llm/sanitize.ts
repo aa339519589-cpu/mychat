@@ -127,16 +127,54 @@ export function makeContentFilter() {
 export function parseDsmlToolCalls(raw: string): { id: string; name: string; args: string }[] {
   if (!raw || !/DSML/i.test(raw)) return []
   const calls: { id: string; name: string; args: string }[] = []
-  const invokeRe = /<[｜|]+\s*DSML\s*[｜|]*\s*invoke\s+name="([^"]+)"[^>]*>([\s\S]*?)<\/[｜|]+\s*DSML\s*[｜|]*\s*invoke\s*>/gi
-  let m: RegExpExecArray | null
-  while ((m = invokeRe.exec(raw)) !== null) {
-    const name = m[1].trim()
-    const inner = m[2]
-    const args: Record<string, string> = {}
-    const paramRe = /<[｜|]+\s*DSML\s*[｜|]*\s*parameter\s+name="([^"]+)"[^>]*>([\s\S]*?)<\/[｜|]+\s*DSML\s*[｜|]*\s*parameter\s*>/gi
-    let pm: RegExpExecArray | null
-    while ((pm = paramRe.exec(inner)) !== null) args[pm[1].trim()] = pm[2].trim()
-    if (name) calls.push({ id: `dsml_${calls.length}_${Math.random().toString(36).slice(2, 8)}`, name, args: JSON.stringify(args) })
+
+  // 多模式匹配，覆盖不同全/半角竖线组合、空格变化
+  const invokeRes = [
+    // 标准全角 DSML：<｜DSML｜invoke name="...">...</｜DSML｜invoke>
+    /<[｜|]+\s*DSML\s*[｜|]*\s*invoke\s+name\s*=\s*"([^"]+)"[^>]*>([\s\S]*?)<\/[｜|]+\s*DSML\s*[｜|]*\s*invoke\s*>/gi,
+    // 半角竖线：<||DSML||invoke name="...">...</||DSML||invoke>
+    /<\|\|?\s*DSML\s*\|?\|\s*invoke\s+name\s*=\s*"([^"]+)"[^>]*>([\s\S]*?)<\/\|?\|\s*DSML\s*\|?\|\s*invoke\s*>/gi,
+    // 宽松兜底：< 任意 DSML invoke
+    /<[^>]*DSML[^>]*invoke\s+name\s*=\s*"([^"]+)"[^>]*>([\s\S]*?)<\/[^>]*DSML[^>]*invoke\s*>/gi,
+  ]
+
+  for (const invokeRe of invokeRes) {
+    let m: RegExpExecArray | null
+    while ((m = invokeRe.exec(raw)) !== null) {
+      const name = m[1].trim()
+      const inner = m[2]
+      // 去重（同一 name + args 组合只取一次）
+      const args: Record<string, string> = {}
+      const paramRes = [
+        /<[｜|]+\s*DSML\s*[｜|]*\s*parameter\s+name\s*=\s*"([^"]+)"[^>]*>([\s\S]*?)<\/[｜|]+\s*DSML\s*[｜|]*\s*parameter\s*>/gi,
+        /<\|\|?\s*DSML\s*\|?\|\s*parameter\s+name\s*=\s*"([^"]+)"[^>]*>([\s\S]*?)<\/\|?\|\s*DSML\s*\|?\|\s*parameter\s*>/gi,
+        /<[^>]*DSML[^>]*parameter\s+name\s*=\s*"([^"]+)"[^>]*>([\s\S]*?)<\/[^>]*DSML[^>]*parameter\s*>/gi,
+      ]
+      for (const paramRe of paramRes) {
+        let pm: RegExpExecArray | null
+        while ((pm = paramRe.exec(inner)) !== null) args[pm[1].trim()] = pm[2].trim()
+      }
+      const key = `${name}:${JSON.stringify(args)}`
+      if (name && !calls.some(c => `${c.name}:${c.args}` === key)) {
+        calls.push({ id: `dsml_${calls.length}_${Math.random().toString(36).slice(2, 8)}`, name, args: JSON.stringify(args) })
+      }
+    }
   }
   return calls
+}
+
+// 检测 rawContent 末尾是否存在未闭合的 DSML 工具调用（流被截断导致）。
+// 用于 agent-loop 判断是否需要 auto-continue 来获取完整的工具调用闭合标签。
+export function hasIncompleteDsmlToolCall(raw: string): boolean {
+  if (!raw || !/DSML/i.test(raw)) return false
+  // 找到最后一个 DSML invoke 的开标记
+  const openRe = /<[｜|]+\s*DSML\s*[｜|]*\s*invoke\s+name\s*=\s*"[^"]+"[^>]*>/gi
+  let lastOpen = -1
+  let m: RegExpExecArray | null
+  while ((m = openRe.exec(raw)) !== null) lastOpen = m.index
+  if (lastOpen === -1) return false
+  // 查这个开标记后面有没有对应的闭合
+  const after = raw.slice(lastOpen)
+  const closeRe = /<\/[｜|]+\s*DSML\s*[｜|]*\s*invoke\s*>/gi
+  return !closeRe.test(after)
 }
