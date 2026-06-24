@@ -5,7 +5,6 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { workspacePath } from "./workspace"
 import { redactSensitive } from "./path-security"
 
-const TITLE = "workspace-checkpoint"
 const MAX_DIFF_BYTES = 2 * 1024 * 1024
 const MAX_COMPRESSED_BYTES = 1024 * 1024
 
@@ -59,25 +58,27 @@ export async function saveWorkspaceCheckpoint(
   const compressed = gzipSync(Buffer.from(diff, "utf8"))
   if (compressed.byteLength > MAX_COMPRESSED_BYTES) return { ok: false, error: "压缩后的检查点超过 1MB" }
 
-  const id = crypto.randomUUID()
-  const { error } = await supabase.from("agent_artifacts").insert({
-    id,
-    task_id: taskId,
-    user_id: userId,
-    kind: "summary",
-    title: TITLE,
-    content: compressed.toString("base64"),
-    meta: { encoding: "gzip-base64", sha256: digest(diff), bytes: Buffer.byteLength(diff) },
-  })
-  if (error) return { ok: false, error: error.message }
-
-  await supabase
-    .from("agent_artifacts")
-    .delete()
-    .eq("task_id", taskId)
+  const { data } = await supabase
+    .from("agent_tasks")
+    .select("meta")
+    .eq("id", taskId)
     .eq("user_id", userId)
-    .eq("title", TITLE)
-    .neq("id", id)
+    .single()
+  const meta = (data?.meta ?? {}) as Record<string, unknown>
+  const { error } = await supabase.from("agent_tasks").update({
+    meta: {
+      ...meta,
+      workspaceCheckpoint: {
+        encoding: "gzip-base64",
+        content: compressed.toString("base64"),
+        sha256: digest(diff),
+        bytes: Buffer.byteLength(diff),
+        updatedAt: new Date().toISOString(),
+      },
+    },
+    updated_at: new Date().toISOString(),
+  }).eq("id", taskId).eq("user_id", userId)
+  if (error) return { ok: false, error: error.message }
   return { ok: true }
 }
 
@@ -87,19 +88,18 @@ export async function restoreLatestWorkspaceCheckpoint(
   taskId: string,
 ): Promise<CheckpointResult> {
   const { data, error } = await supabase
-    .from("agent_artifacts")
-    .select("content, meta")
-    .eq("task_id", taskId)
+    .from("agent_tasks")
+    .select("meta")
+    .eq("id", taskId)
     .eq("user_id", userId)
-    .eq("title", TITLE)
-    .order("created_at", { ascending: false })
-    .limit(1)
+    .single()
   if (error) return { ok: false, error: error.message }
-  if (!data?.length) return { ok: true, empty: true }
+  const checkpoint = data?.meta?.workspaceCheckpoint
+  if (!checkpoint?.content) return { ok: true, empty: true }
 
   try {
-    const diff = gunzipSync(Buffer.from(data[0].content ?? "", "base64")).toString("utf8")
-    const expected = data[0].meta?.sha256
+    const diff = gunzipSync(Buffer.from(checkpoint.content, "base64")).toString("utf8")
+    const expected = checkpoint.sha256
     if (expected && digest(diff) !== expected) return { ok: false, error: "后台检查点校验失败" }
     execSync("git apply --binary --whitespace=nowarn", {
       cwd: workspacePath(userId, taskId),

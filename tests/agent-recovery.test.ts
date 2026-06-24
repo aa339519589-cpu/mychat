@@ -20,7 +20,9 @@ test("recovery tokens are encrypted, authenticated, and expire", { concurrency: 
     cookie: "secret-cookie",
     expiresAt: openRecoveryToken(token!)?.expiresAt,
   })
-  assert.equal(openRecoveryToken(`${token!.slice(0, -1)}x`), null)
+  const parts = token!.split(".")
+  parts[3] = `${parts[3][0] === "a" ? "b" : "a"}${parts[3].slice(1)}`
+  assert.equal(openRecoveryToken(parts.join(".")), null)
 
   const expired = sealRecoveryToken({ taskId: "task-1", cookie: "secret-cookie", expiresAt: Date.now() - 1 })
   assert.equal(openRecoveryToken(expired!), null)
@@ -41,27 +43,25 @@ test("workspace checkpoint restores tracked and new files after local loss", asy
   const taskId = `checkpoint-${Date.now()}`
   const userId = "test-user"
   const root = workspaceRoot(taskId, userId)
-  const artifacts: any[] = []
+  let taskMeta: Record<string, any> = {}
   t.after(() => rmSync(root, { recursive: true, force: true }))
 
   class Query {
-    constructor(private operation: "select" | "delete") {}
+    constructor(private operation: "select" | "update") {}
     select() { return this }
+    update(value: any) { taskMeta = value.meta; return new Query("update") }
     eq() { return this }
-    neq() { return this }
-    order() { return this }
-    limit() { return this }
+    single() { return this }
     then(resolve: (value: any) => unknown, reject?: (reason: unknown) => unknown) {
-      const value = this.operation === "select" ? { data: artifacts, error: null } : { data: null, error: null }
+      const value = this.operation === "select" ? { data: { meta: taskMeta }, error: null } : { data: null, error: null }
       return Promise.resolve(value).then(resolve, reject)
     }
   }
   const supabase = {
     from() {
       return {
-        insert(row: any) { artifacts.unshift({ ...row, created_at: new Date().toISOString() }); return Promise.resolve({ error: null }) },
         select() { return new Query("select") },
-        delete() { return new Query("delete") },
+        update(value: any) { taskMeta = value.meta; return new Query("update") },
       }
     },
   } as any
