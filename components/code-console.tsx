@@ -19,9 +19,10 @@ import remarkMath from "remark-math"
 import remarkGfm from "remark-gfm"
 import rehypeKatex from "rehype-katex"
 import { stripToolMarkup } from "@/lib/llm/sanitize"
+import { shouldShowWorkspacePublish } from "@/lib/code-agent-ui"
 
 const MONO = "ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Courier New',monospace"
-const ACCENT = "var(--code-accent)"  // 亮暗模式统一使用同一枚橙；在 globals.css 定义
+const ACCENT = "var(--code-accent)"  // 亮色橙、暗色蓝；在 globals.css 定义
 
 type RepoItem = { name: string; full_name: string; private: boolean; description: string }
 type Overlay = null | "model" | "memory" | "resume" | "context" | "tasks"
@@ -138,6 +139,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
 
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null)
   const [workspaceDirty, setWorkspaceDirty] = useState(false)  // workspace 有改动，即使 plan 为空也显示 PR 按钮
+  const [publishPending, setPublishPending] = useState(false)
   const [overlay, setOverlay] = useState<Overlay>(null)
   const [ghMenu, setGhMenu] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
@@ -184,7 +186,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
   }
 
   async function enterRepo(full: string | null) {
-    setRepo(full); setEntered(true); setSessionId(null); setMessages([]); setPendingPlan([]); setApplyError(null); setCurrentTaskId(null); setWorkspaceDirty(false)
+    setRepo(full); setEntered(true); setSessionId(null); setMessages([]); setPendingPlan([]); setApplyError(null); setCurrentTaskId(null); setWorkspaceDirty(false); setPublishPending(false)
     // 恢复该仓库最近一次会话的上下文（退出再进不重置）
     if (full) {
       const sessions = await fetchCodeSessions(full)
@@ -207,14 +209,14 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       const task = tasks.find(t => t.id === saved && active.has(t.status)) ?? tasks.find(t => active.has(t.status))
       if (task) {
         setCurrentTaskId(task.id)
-        await detectWorkspaceChanges(task.id)
+        await syncWorkspaceState(task.id, msgs)
       }
     } catch {}
   }
 
   // 在当前仓库内开启全新对话（旧对话仍可用 /resume 找回）
   function startNewSession() {
-    setSessionId(null); setMessages([]); setPendingPlan([]); setApplyError(null); setCurrentTaskId(null); setWorkspaceDirty(false); setOverlay(null)
+    setSessionId(null); setMessages([]); setPendingPlan([]); setApplyError(null); setCurrentTaskId(null); setWorkspaceDirty(false); setPublishPending(false); setOverlay(null)
   }
 
   function toggleAuto() { setAuto(v => { const n = !v; try { localStorage.setItem("code_auto", n ? "1" : "0") } catch {} ; return n }) }
@@ -250,6 +252,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
         const result = data as ApplyResult
         const next = await appendReceipt(result, currentTaskId)
         setWorkspaceDirty(false)
+        setPublishPending(false)
         setApplying(false)
         void runSend("平台已经完成本次确认操作。根据执行回执继续完成原始任务，主动检查发布和网页状态；只有整个目标真正完成并验证后才能结束。", {
           internal: true, baseMessages: next, repo,
@@ -385,9 +388,17 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
               setCurrentTaskId(d.taskId)
               taskId = d.taskId  // 更新本地变量，后续 workspace 检测用
             }
-            else if (d.step) { steps.push(d.step); setMessages(prev => prev.map(m => m.id === aiId ? { ...m, steps: [...steps] } : m)) }
+            else if (d.step) {
+              steps.push(d.step)
+              if (d.step.kind === "deploy" && d.step.label === "准备发布") setPublishPending(true)
+              setMessages(prev => prev.map(m => m.id === aiId ? { ...m, steps: [...steps] } : m))
+            }
             else if (d.plan) { plan.push(d.plan); setMessages(prev => prev.map(m => m.id === aiId ? { ...m, plan: [...plan] } : m)) }
-            else if (d.text) { fullText += d.text; setMessages(prev => prev.map(m => m.id === aiId ? { ...m, content: fullText } : m)) }
+            else if (d.text) {
+              fullText += d.text
+              if (fullText.includes("确认发布")) setPublishPending(true)
+              setMessages(prev => prev.map(m => m.id === aiId ? { ...m, content: fullText } : m))
+            }
             else if (d.error) { hadError = true; fullText = d.error; setMessages(prev => prev.map(m => m.id === aiId ? { ...m, content: d.error, isError: true } : m)) }
           } catch {}
         }
@@ -428,23 +439,37 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       }
       // workspace 模式：异步检测 git status（失败不影响 UI）
       if (taskId && !hadError) {
-        detectWorkspaceChanges(taskId)
+        const completedAi: CodeMessage = {
+          id: aiId, role: "assistant", content: fullText,
+          steps: steps.length ? steps : undefined,
+          plan: plan.length ? plan : undefined,
+          taskId: taskId ?? undefined,
+          isError: hadError || undefined,
+        }
+        const completed = options?.internal ? [...baseMessages, completedAi] : [...baseMessages, userMsg, completedAi]
+        syncWorkspaceState(taskId, completed)
       }
     }
   }
 
-  // workspace 改动检测（独立 async，失败不影响消息显示）
-  async function detectWorkspaceChanges(taskId: string) {
+  // 同步 workspace 改动和发布等待态（失败不影响消息显示）
+  async function syncWorkspaceState(taskId: string, knownMessages = messages) {
     try {
-      const gitRes = await fetch(`/api/agent/tasks/${taskId}/workspace/git`)
-      if (gitRes.ok) {
-        const gitStatus = await gitRes.json()
-        if (gitStatus.hasChanges) {
-          setWorkspaceDirty(true)
-        }
-      }
+      const [gitRes, detailRes] = await Promise.all([
+        fetch(`/api/agent/tasks/${taskId}/workspace/git`),
+        fetch(`/api/agent/tasks/${taskId}`),
+      ])
+      const hasChanges = gitRes.ok ? !!(await gitRes.json()).hasChanges : false
+      setWorkspaceDirty(hasChanges)
+
+      const task = detailRes.ok ? await detailRes.json() as {
+        status?: string | null
+        pullRequestUrl?: string | null
+        steps?: { kind?: string | null; label?: string | null }[]
+      } : null
+      setPublishPending(shouldShowWorkspacePublish(task, knownMessages, hasChanges))
     } catch (e) {
-      console.warn('[CodeConsole] workspace git check failed (non-blocking)', e)
+      console.warn('[CodeConsole] workspace state sync failed (non-blocking)', e)
     }
   }
 
@@ -524,7 +549,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       </div>
 
       {/* Workspace PR 按钮 — 独立于模型决策，检测到 diff 即显示 */}
-      {currentTaskId && repo && workspaceDirty && (
+      {currentTaskId && repo && (workspaceDirty || publishPending) && (
         <div className="border-t border-border bg-secondary/40 px-4 py-3 md:px-8">
           <div className="mx-auto max-w-3xl">
             {applyError && <p className="mb-2 text-[12px] leading-relaxed text-destructive">{applyError}</p>}

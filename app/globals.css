@@ -58,7 +58,7 @@
   color-scheme: light;
   /* 与小克背景一致 rgb(252,241,222) */
   --background: #FDF2E2;
-  /* Code 终端/提示灯强调色：亮暗两套统一用同一枚橙 */
+  /* Code 终端/提示灯强调色：亮色橙，暗色蓝 */
   --code-accent: oklch(0.62 0.15 38);
   --foreground: oklch(0.305 0.022 52);
   /* 信笺卡片，略浅于背景 */
@@ -100,7 +100,7 @@
 .dark {
   color-scheme: dark;
   --background: #1F1F1F;
-  --code-accent: oklch(0.62 0.15 38);
+  --code-accent: oklch(0.52 0.12 256);
   --foreground: #FFFFFF;
   --card: oklch(0.205 0 0);
   --card-foreground: oklch(0.985 0 0);
@@ -137,7 +137,7 @@
   :root:not(.light) {
     color-scheme: dark;
     --background: #1F1F1F;
-    --code-accent: oklch(0.62 0.15 38);
+    --code-accent: oklch(0.52 0.12 256);
     --foreground: oklch(1 0 0);
     --card: oklch(0.205 0 0);
     --card-foreground: oklch(0.985 0 0);

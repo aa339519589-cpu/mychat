@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { modelContent, type CodeMessage } from '../lib/code-data'
 import { codeContinuationPrompt } from '../lib/agent/continuation'
+import { inferPublishPendingFromMessages, shouldShowWorkspacePublish } from '../lib/code-agent-ui'
 import { enablePages, mergePullRequest } from '../lib/github'
 
 test('execution receipts are returned to the next model turn', () => {
@@ -104,5 +105,48 @@ test('website publishing merges the exact PR head through GitHub', { concurrency
   assert.deepEqual(
     await mergePullRequest('token', 'owner/project', 7, 'head-sha'),
     { merged: true, commitSha: 'merge-sha' },
+  )
+})
+
+test('publish button stays visible after agent asks for confirmation', () => {
+  const messages: CodeMessage[] = [
+    { id: '1', role: 'user', content: '继续做完' },
+    { id: '2', role: 'assistant', content: '改动已就绪，等待用户确认发布。\n\n请点击底部「确认发布」按钮。' },
+  ]
+
+  assert.equal(inferPublishPendingFromMessages(messages), true)
+  assert.equal(
+    shouldShowWorkspacePublish(
+      { status: 'waiting_for_user', pullRequestUrl: null, steps: [{ kind: 'deploy', label: '准备发布' }] },
+      messages,
+      false,
+    ),
+    true,
+  )
+})
+
+test('publish button hides after publish receipt arrives', () => {
+  const messages: CodeMessage[] = [
+    { id: '1', role: 'assistant', content: '改动已就绪，等待用户确认发布。' },
+    {
+      id: '2',
+      role: 'assistant',
+      content: '',
+      result: {
+        mode: 'workspace_pr',
+        commitSha: 'abc123',
+        pullRequestUrl: 'https://github.com/owner/repo/pull/1',
+      },
+    },
+  ]
+
+  assert.equal(inferPublishPendingFromMessages(messages), false)
+  assert.equal(
+    shouldShowWorkspacePublish(
+      { status: 'creating_pr', pullRequestUrl: 'https://github.com/owner/repo/pull/1', steps: [{ kind: 'deploy', label: '准备发布' }] },
+      messages,
+      false,
+    ),
+    false,
   )
 })
