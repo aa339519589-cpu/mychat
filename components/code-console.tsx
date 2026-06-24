@@ -12,6 +12,7 @@ import {
   fetchCodeMemories, insertCodeMemory, deleteCodeMemory,
 } from "@/lib/code-data"
 import { WorkingDots } from "@/components/working-dots"
+import { AgentTasksPanel } from "@/components/agent-tasks-panel"
 import ReactMarkdown from "react-markdown"
 import remarkMath from "remark-math"
 import remarkGfm from "remark-gfm"
@@ -22,7 +23,7 @@ const MONO = "ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Courier New',mo
 const ACCENT = "var(--code-accent)"  // 亮色=Claude橙 oklch(0.62 0.15 38)；暗色=蓝 oklch(0.52 0.12 256)；在 globals.css 定义
 
 type RepoItem = { name: string; full_name: string; private: boolean; description: string }
-type Overlay = null | "model" | "memory" | "resume" | "context"
+type Overlay = null | "model" | "memory" | "resume" | "context" | "tasks"
 
 const COMMANDS = [
   { cmd: "/new", desc: "在当前项目内开启新对话" },
@@ -31,6 +32,7 @@ const COMMANDS = [
   { cmd: "/context", desc: "查看当前上下文用量" },
   { cmd: "/resume", desc: "恢复本仓库的历史排查" },
   { cmd: "/goal", desc: "设定目标，让它自主多轮完成" },
+  { cmd: "/tasks", desc: "查看 Agent 任务列表与状态" },
 ]
 
 // ── 行级 diff（LCS）──
@@ -303,6 +305,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       if (cmd === "/context") { setInput(""); setOverlay("context"); return }
       if (cmd === "/resume") { setInput(""); setOverlay("resume"); return }
       if (cmd === "/goal") { setInput(""); if (arg) { runSend(arg, true); return } setGoalArmed(true); return }
+      if (cmd === "/tasks") { setInput(""); setOverlay("tasks"); return }
       if (cmd === "/new") { setInput(""); startNewSession(); return }
     }
     setInput("")
@@ -444,6 +447,14 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       {overlay === "context" && <ContextOverlay messages={messages} onClose={() => setOverlay(null)} />}
       {overlay === "resume" && repo && <ResumeOverlay repo={repo} onPick={loadSession} onClose={() => setOverlay(null)} />}
       {overlay === "resume" && !repo && <SimpleOverlay title="历史排查" text="新项目模式暂无历史。建好仓库后会自动记录。" onClose={() => setOverlay(null)} />}
+      {overlay === "tasks" && (
+        <div className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center" onClick={() => setOverlay(null)}>
+          <div className="absolute inset-0 bg-black/50" />
+          <div onClick={e => e.stopPropagation()} className="relative w-full max-w-md h-[70vh] max-h-[600px] rounded-t-2xl border border-border bg-card sm:rounded-2xl overflow-hidden">
+            <AgentTasksPanel onClose={() => setOverlay(null)} />
+          </div>
+        </div>
+      )}
     </Shell>
   )
 }
