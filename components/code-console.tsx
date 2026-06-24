@@ -201,6 +201,37 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
     setConnected(false); setLogin(""); setEntered(false); setRepo(null); setRepos(null); setGhMenu(false)
   }
 
+  // ── Workspace PR 发布（不依赖模型决策，不依赖 plan/actions）──
+  async function publishWorkspacePR() {
+    if (!currentTaskId || !repo) return
+    setApplying(true); setApplyError(null)
+    console.log('[CodeConsole] publishWorkspacePR → /api/code/apply', { taskId: currentTaskId, repo, mode: "workspace_pr" })
+    try {
+      const res = await fetch("/api/code/apply", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ repo, taskId: currentTaskId, actions: [], mode: "workspace_pr" }),
+      })
+      const data = await res.json()
+      console.log('[CodeConsole] publishWorkspacePR response', { ok: res.ok, status: res.status, mode: data?.mode, prUrl: data?.pullRequestUrl, error: data?.error })
+      if (res.ok) {
+        const result = data as ApplyResult
+        const lastAi = [...messages].reverse().find(m => m.role === "assistant")
+        if (lastAi) {
+          setMessages(prev => prev.map(m => m.id === lastAi.id ? { ...m, result } : m))
+          const sid = sessionId
+          if (sid) insertCodeMessage(userId, sid, { ...lastAi, result })
+        }
+        setWorkspaceDirty(false)
+      } else {
+        setApplyError(data.error ?? "PR 创建失败")
+      }
+    } catch {
+      setApplyError("网络错误")
+    } finally {
+      setApplying(false)
+    }
+  }
+
   // ── 执行计划：直接推送（用户已选）──
   async function applyPlan(plan: PlanAction[], aiMsgId: string) {
     if (!plan.length && !currentTaskId && !workspaceDirty) return  // workspace 模式允许空 plan
@@ -215,7 +246,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
           const summary = commitLine.slice(0, 80) || "Claude 代码改动"
       const res = await fetch("/api/code/apply", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ repo, actions: plan, message: summary, taskId: currentTaskId }),
+        body: JSON.stringify({ repo, actions: plan, message: summary, taskId: workspaceDirty ? currentTaskId : null }),
       })
       const data = await res.json()
       console.log('[CodeConsole] applyPlan response', { ok: res.ok, status: res.status, mode: data?.mode, error: data?.error })
@@ -309,10 +340,20 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
         if (auto) applyPlan(plan, aiId)
         else setPendingPlan(plan)
       }
-      // workspace 模式：即使 plan 为空，也显示 PR 确认按钮
-      if (!plan.length && !hadError && taskId) {
-        console.log('[CodeConsole] workspaceDirty → true', { taskId, currentTaskId, planLen: plan.length })
-        setWorkspaceDirty(true)
+      // workspace 模式：调用 git API 检测改动，不依赖模型 plan/publish
+      if (taskId && !hadError) {
+        try {
+          const gitRes = await fetch(`/api/agent/tasks/${taskId}/workspace/git`)
+          if (gitRes.ok) {
+            const gitStatus = await gitRes.json()
+            console.log('[CodeConsole] workspace git check', { hasChanges: gitStatus.hasChanges, files: gitStatus.changedFiles?.length, currentTaskId })
+            if (gitStatus.hasChanges) {
+              setWorkspaceDirty(true)
+            }
+          }
+        } catch (e) {
+          console.log('[CodeConsole] workspace git check failed', e)
+        }
       }
     }
   }
@@ -387,15 +428,39 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
         </div>
       </div>
 
-      {/* 待确认计划条（确认模式）*/}
-      {(pendingPlan.length > 0 || workspaceDirty) && !auto && (
+      {/* Workspace PR 按钮 — 独立于模型决策，检测到 diff 即显示 */}
+      {workspaceDirty && !auto && (
         <div className="border-t border-border bg-secondary/40 px-4 py-3 md:px-8">
           <div className="mx-auto max-w-3xl">
             {applyError && <p className="mb-2 text-[12px] leading-relaxed text-destructive">{applyError}</p>}
             <div className="flex items-center gap-3">
-            <span className="text-[12px] text-foreground" style={{ fontFamily: MONO }}>{workspaceDirty && !pendingPlan.length ? "Workspace 已修改，等待发布 PR" : planSummary(pendingPlan)}</span>
+            <span className="text-[12px] text-foreground" style={{ fontFamily: MONO }}>Workspace 已修改，可发布为 Pull Request</span>
             <div className="ml-auto flex gap-2">
-              <button onClick={() => { setPendingPlan([]); setWorkspaceDirty(false); setApplyError(null) }} disabled={applying}
+              <button onClick={() => { setWorkspaceDirty(false); setApplyError(null) }} disabled={applying}
+                className="flex items-center gap-1 rounded-lg border border-border px-3 py-1.5 text-[12px] text-muted-foreground transition-colors hover:bg-secondary">
+                <X className="size-3.5" />放弃
+              </button>
+              <button onClick={publishWorkspacePR} disabled={applying}
+                className="flex items-center gap-1 rounded-lg px-3.5 py-1.5 text-[12px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+                style={{ background: ACCENT }}>
+                {applying ? <Loader2 className="size-3.5 animate-spin" /> : <GitBranch className="size-3.5" />}
+                {applying ? <>创建 PR… <ThinkingTimer /></> : "创建 PR"}
+              </button>
+            </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 旧 Plan 确认条 — 仅在非 workspace 模式 */}
+      {pendingPlan.length > 0 && !workspaceDirty && !auto && (
+        <div className="border-t border-border bg-secondary/40 px-4 py-3 md:px-8">
+          <div className="mx-auto max-w-3xl">
+            {applyError && <p className="mb-2 text-[12px] leading-relaxed text-destructive">{applyError}</p>}
+            <div className="flex items-center gap-3">
+            <span className="text-[12px] text-foreground" style={{ fontFamily: MONO }}>{planSummary(pendingPlan)}</span>
+            <div className="ml-auto flex gap-2">
+              <button onClick={() => { setPendingPlan([]); setApplyError(null) }} disabled={applying}
                 className="flex items-center gap-1 rounded-lg border border-border px-3 py-1.5 text-[12px] text-muted-foreground transition-colors hover:bg-secondary">
                 <X className="size-3.5" />放弃
               </button>
@@ -403,7 +468,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
                 className="flex items-center gap-1 rounded-lg px-3.5 py-1.5 text-[12px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
                 style={{ background: ACCENT }}>
                 {applying ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
-                {applying ? <>执行中… <ThinkingTimer /></> : (currentTaskId || workspaceDirty) ? "确认并创建 PR" : "确认并执行"}
+                {applying ? <>执行中… <ThinkingTimer /></> : "确认并执行"}
               </button>
             </div>
             </div>
@@ -659,19 +724,32 @@ function MessageView({ m, login, streaming }: { m: CodeMessage; login: string; s
 
 function ResultCard({ r }: { r: ApplyResult }) {
   const isPR = r.mode === "workspace_pr"
-  console.log('[CodeConsole] ResultCard', { mode: r.mode, isPR, prUrl: r.pullRequestUrl })
+  console.log('[CodeConsole] ResultCard', { mode: r.mode, isPR, prUrl: r.pullRequestUrl, branch: r.branch, sha: r.commitSha })
+  if (isPR) {
+    return (
+      <div className="mt-1 space-y-1.5 rounded-lg border px-3 py-2.5 text-[12px]" style={{ borderColor: "#3fb950", background: "color-mix(in oklab, #3fb950 8%, transparent)" }}>
+        <div className="flex items-center gap-2 font-medium text-foreground">
+          <Check className="size-3.5" style={{ color: "#3fb950" }} />
+          已创建 Pull Request
+        </div>
+        {r.pullRequestUrl && (
+          <a href={r.pullRequestUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 font-medium underline-offset-2 hover:underline" style={{ color: "#3fb950" }}>
+            <ExternalLink className="size-3" />查看 Pull Request #{r.pullRequestNumber ?? "?"}
+          </a>
+        )}
+        {r.branch && <p className="text-muted-foreground/70">分支：{r.branch}</p>}
+        {r.commitSha && <p className="text-muted-foreground/70" style={{ fontFamily: MONO }}>commit：{r.commitSha.slice(0, 7)}</p>}
+        {r.message && <p className="text-muted-foreground/60 italic">{r.message}</p>}
+      </div>
+    )
+  }
   return (
     <div className="mt-1 space-y-1 rounded-lg border px-3 py-2.5 text-[12px]" style={{ borderColor: ACCENT, background: "color-mix(in oklab, " + ACCENT + " 8%, transparent)" }}>
       <div className="flex items-center gap-2 font-medium text-foreground">
         <Check className="size-3.5" style={{ color: ACCENT }} />
-        {isPR ? "已创建 Pull Request" : `已提交并推送（mode: ${r.mode || "direct_push"}）`}{r.created ? "（新仓库已创建）" : ""}
+        已提交并推送（mode: {r.mode || "direct_push"}）{r.created ? "（新仓库已创建）" : ""}
       </div>
-      {isPR && r.pullRequestUrl && (
-        <a href={r.pullRequestUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-muted-foreground underline-offset-2 hover:underline">
-          <ExternalLink className="size-3" />查看 Pull Request #{r.pullRequestNumber ?? "?"}
-        </a>
-      )}
-      {r.repoUrl && !isPR && <a href={r.repoUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-muted-foreground underline-offset-2 hover:underline"><ExternalLink className="size-3" />在 GitHub 查看仓库</a>}
+      {r.repoUrl && <a href={r.repoUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-muted-foreground underline-offset-2 hover:underline"><ExternalLink className="size-3" />在 GitHub 查看仓库</a>}
       {r.pagesUrl && <a href={r.pagesUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 underline-offset-2 hover:underline" style={{ color: ACCENT }}><Rocket className="size-3" />已上线：{r.pagesUrl}</a>}
       {r.message && <p className="text-muted-foreground/60 italic">{r.message}</p>}
     </div>

@@ -22,12 +22,16 @@ export async function POST(req: Request) {
 
   const body = await req.json().catch(() => null)
   if (!body) return Response.json({ error: '请求体格式错误' }, { status: 400 })
-  const { repo: sessionRepo, actions, message, taskId } = body as {
-    repo: string | null; actions: PlanAction[]; message: string; taskId?: string
+  const { repo: sessionRepo, actions, message, taskId, mode } = body as {
+    repo: string | null; actions: PlanAction[]; message: string; taskId?: string; mode?: string
   }
 
-  // ── Workspace PR 模式（有 taskId 时优先走 PR，不要求 actions 非空）──
-  if (taskId) {
+  // ── Workspace PR 模式（body.mode === "workspace_pr" 或 taskId 存在 → 强制 PR，绝不 fallback）──
+  if (mode === "workspace_pr" || taskId) {
+    if (!taskId) {
+      return Response.json({ error: 'mode=workspace_pr 但缺少 taskId' }, { status: 400 })
+    }
+
     const auth = await resolveAuth()
     const supabase = auth.supabase
     const userId = auth.userId
@@ -104,6 +108,7 @@ export async function POST(req: Request) {
       pullRequestNumber: result.pr?.pullRequestNumber,
       commitSha: result.commit?.commitSha,
       branch: result.push?.branch,
+      changedFiles: result.status?.changedFiles,
       message: "已创建 Pull Request（非直推 main）",
     })
   }
