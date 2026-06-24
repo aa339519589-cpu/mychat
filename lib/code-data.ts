@@ -93,7 +93,7 @@ export async function insertCodeMessage(
   userId: string, sessionId: string, msg: CodeMessage,
 ): Promise<void> {
   const supabase = createClient()
-  const meta: any = {}
+  const meta: Record<string, unknown> = {}
   if (msg.steps?.length) meta.steps = msg.steps
   if (msg.plan?.length) meta.plan = msg.plan
   if (msg.result) meta.result = msg.result
