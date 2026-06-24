@@ -11,6 +11,7 @@ import {
   fetchCodeMessages, insertCodeMessage,
   fetchCodeMemories, insertCodeMemory, deleteCodeMemory,
 } from "@/lib/code-data"
+import { WorkingDots } from "@/components/working-dots"
 
 const MONO = "ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Courier New',monospace"
 const ACCENT = "var(--code-accent)"  // 亮色=Claude橙 oklch(0.62 0.15 38)；暗色=蓝 oklch(0.52 0.12 256)；在 globals.css 定义
@@ -414,6 +415,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
           />
           {streaming ? (
             <div className="flex items-center gap-2">
+              <WorkingDots className="shrink-0" style={{ color: ACCENT }} />
               <ThinkingTimer />
               <button onClick={() => abortRef.current?.abort()} aria-label="停止"
                 className="flex h-7 items-center justify-center rounded-lg border border-border bg-secondary px-2.5 text-foreground transition-colors hover:bg-secondary/70">
@@ -526,16 +528,49 @@ function MessageView({ m, login, streaming }: { m: CodeMessage; login: string; s
         <span className="whitespace-pre-wrap break-words text-[13.5px] leading-5 text-foreground">{m.content}</span>
       </div>
     )
+
+  // 步骤折叠：read* / list* 只计数，其余展示
+  const steps = m.steps ?? []
+  const readCount = steps.filter(s => s.kind === "read" || s.kind === "list").length
+  const notableSteps = steps.filter(s => s.kind !== "read" && s.kind !== "list")
+  const [stepsOpen, setStepsOpen] = useState(false)
+
   return (
     <div className="space-y-1.5">
-      {m.steps?.map((s, i) => (
-        <div key={i} className="flex items-center gap-2 text-[12px] text-muted-foreground">
-          <span style={{ color: ACCENT }}>⏺</span>{s.label}
+      {/* 流式进行中 + 还没正文：点阵 + 计时合并 */}
+      {streaming && !m.content && (
+        <div className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
+          <WorkingDots className="shrink-0" style={{ color: ACCENT }} />
+          <ThinkingTimer />
         </div>
-      ))}
-      {/* 进行中计时器：流式中、还没出正文时显示「(N秒 thinking)」 */}
-      {streaming && !m.content && <div className="flex items-center gap-2 py-1"><ThinkingTimer /></div>}
+      )}
       {m.content && <p className={cn("whitespace-pre-wrap break-words text-[13.5px] leading-[1.7]", m.isError ? "text-destructive" : "text-foreground/90")}>{m.content}</p>}
+      {/* 操作摘要（步骤折叠） */}
+      {steps.length > 0 && (
+        <div className="mt-1">
+          <button
+            onClick={() => setStepsOpen(v => !v)}
+            className="flex items-center gap-1.5 text-[11px] text-muted-foreground/70 transition-colors hover:text-muted-foreground"
+            style={{ fontFamily: MONO }}
+          >
+            <ChevronDown className={cn("size-3 transition-transform", stepsOpen && "rotate-180")} />
+            {readCount > 0 && <span>已读 {readCount} 文件{notableSteps.length > 0 && " · "}</span>}
+            {notableSteps.map((s, i) => (
+              <span key={i}>{s.label}{i < notableSteps.length - 1 && " · "}</span>
+            ))}
+          </button>
+          {stepsOpen && (
+            <div className="mt-1 space-y-0.5 pl-5">
+              {steps.map((s, i) => (
+                <div key={i} className="flex items-center gap-1.5 text-[11px] text-muted-foreground/60">
+                  <span className="shrink-0" style={{ color: s.kind === "edit" || s.kind === "repo" || s.kind === "deploy" ? ACCENT : "var(--muted-foreground)", opacity: 0.5 }}>·</span>
+                  {s.label}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       {m.plan?.map((a, i) => <PlanActionView key={i} a={a} login={login} />)}
       {m.result && <ResultCard r={m.result} />}
     </div>
