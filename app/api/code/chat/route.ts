@@ -258,18 +258,9 @@ export async function POST(req: NextRequest) {
             // 没有 workflow 或 dispatch 失败，走沙箱
           }
 
-          // 走沙箱
+          // 走沙箱（直接调用，不走 HTTP）
           try {
-            const sandboxRes = await fetch(`${origin}/api/code/sandbox`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ command }),
-            }).catch(() => null)
-            if (!sandboxRes?.ok) {
-              const err = await sandboxRes?.json().catch(() => ({ error: '沙箱执行失败' }))
-              return `执行失败：${(err as any)?.error ?? '沙箱不可用'}`
-            }
-            const result = await sandboxRes.json()
+            const result = runInSandbox(command)
             let out = ''
             if (result.stdout) out += `标准输出：\n${result.stdout}\n`
             if (result.stderr) out += `标准错误：\n${result.stderr}\n`
@@ -277,8 +268,8 @@ export async function POST(req: NextRequest) {
             if (result.exitCode && result.exitCode !== 0) out += `退出码：${result.exitCode}`
             if (!out) out = '执行完成（无输出）'
             return out
-          } catch {
-            return '沙箱执行异常。'
+          } catch (err: any) {
+            return `沙箱执行异常：${err?.message ?? '未知错误'}`
           }
         }
         if (name === 'code_remember') {
