@@ -149,7 +149,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
-  }, [messages])
+  }, [messages, streaming, applying])
 
   useEffect(() => {
     fetch("/api/github/status").then(r => r.json()).then(d => {
@@ -512,8 +512,14 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
             </p>
           )}
           {messages.map(m => (
-            <MessageView key={m.id} m={m} login={login} streaming={streaming && m.id === messages[messages.length - 1]?.id} />
+            <MessageView key={m.id} m={m} login={login} />
           ))}
+          {(streaming || applying) && (
+            <div className="flex items-center gap-1.5 text-[12px] text-muted-foreground" aria-live="polite">
+              <WorkingDots className="shrink-0" style={{ color: ACCENT }} />
+              <ThinkingTimer />
+            </div>
+          )}
         </div>
       </div>
 
@@ -528,8 +534,8 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
               <button onClick={publishWorkspacePR} disabled={applying}
                 className="flex items-center gap-1 rounded-lg px-3.5 py-1.5 text-[12px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
                 style={{ background: ACCENT }}>
-                {applying ? <Loader2 className="size-3.5 animate-spin" /> : <GitBranch className="size-3.5" />}
-                {applying ? <>发布中… <ThinkingTimer /></> : "确认发布"}
+                <GitBranch className="size-3.5" />
+                {applying ? "发布中…" : "确认发布"}
               </button>
             </div>
             </div>
@@ -552,20 +558,14 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
               <button onClick={() => applyPlan(pendingPlan, [...messages].reverse().find(m => m.role === "assistant")?.id ?? "")} disabled={applying}
                 className="flex items-center gap-1 rounded-lg px-3.5 py-1.5 text-[12px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
                 style={{ background: ACCENT }}>
-                {applying ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
-                {applying ? <>执行中… <ThinkingTimer /></> : "确认并执行"}
+                <Check className="size-3.5" />
+                {applying ? "执行中…" : "确认并执行"}
               </button>
             </div>
             </div>
           </div>
         </div>
       )}
-      {applying && auto && (
-        <div className="border-t border-border bg-secondary/40 px-4 py-2.5 md:px-8">
-          <div className="mx-auto flex max-w-3xl items-center gap-2 text-[12px] text-muted-foreground"><Loader2 className="size-3.5 animate-spin" />自动执行中… <ThinkingTimer /></div>
-        </div>
-      )}
-
       {/* 命令提示 */}
       {showCmdHint && matchedCmds.length > 0 && (
         <div className="border-t border-border px-4 md:px-8">
@@ -594,14 +594,10 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
             style={{ fontFamily: MONO }}
           />
           {streaming ? (
-            <div className="flex items-center gap-2">
-              <WorkingDots className="shrink-0" style={{ color: ACCENT }} />
-              <ThinkingTimer />
-              <button onClick={() => abortRef.current?.abort()} aria-label="停止"
-                className="flex h-7 items-center justify-center rounded-lg border border-border bg-secondary px-2.5 text-foreground transition-colors hover:bg-secondary/70">
-                <Square className="size-3.5 fill-current" />
-              </button>
-            </div>
+            <button onClick={() => abortRef.current?.abort()} aria-label="停止"
+              className="flex h-7 items-center justify-center rounded-lg border border-border bg-secondary px-2.5 text-foreground transition-colors hover:bg-secondary/70">
+              <Square className="size-3.5 fill-current" />
+            </button>
           ) : (
             <button onClick={onSubmit} disabled={!canSend} aria-label="发送"
               title="Enter 发送"
@@ -709,7 +705,7 @@ function Shell({ children, onExit, repo, login, onSwitchRepo, onGhMenu, ghMenu, 
 }
 
 // ── 单条消息 ──
-function MessageView({ m, login, streaming }: { m: CodeMessage; login: string; streaming: boolean }) {
+function MessageView({ m, login }: { m: CodeMessage; login: string }) {
   const [stepsOpen, setStepsOpen] = useState(false)
   if (m.role === "user")
     return (
@@ -724,13 +720,6 @@ function MessageView({ m, login, streaming }: { m: CodeMessage; login: string; s
   const notableSteps = steps.filter(s => s.kind !== "read" && s.kind !== "list")
   return (
     <div className="space-y-1.5">
-      {/* 流式进行中 + 还没正文：点阵 + 计时合并 */}
-      {streaming && !m.content && (
-        <div className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
-          <WorkingDots className="shrink-0" style={{ color: ACCENT }} />
-          <ThinkingTimer />
-        </div>
-      )}
       {m.content && !m.isError && (
         <div className="text-[13.5px] leading-[1.7] text-foreground/90 min-w-0 [overflow-wrap:anywhere]" style={{ fontFamily: MONO }}>
           <ReactMarkdown
