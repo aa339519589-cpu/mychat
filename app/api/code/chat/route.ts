@@ -99,7 +99,7 @@ export async function POST(req: NextRequest) {
 
   const SYSTEM = buildCodeSystem(repo, defaultBranch, login, memContents, !!goal)
   const url = chatCompletionsUrl(DEEPSEEK_BASE_URL)
-  const origin = req.nextUrl.origin  // 给 execute 工具调沙箱用
+  // origin 变量已移除（沙箱改为直接调用）
 
   const tools = [
     { type: 'function', function: { name: 'list_files', description: '列出当前仓库完整文件路径列表。', parameters: { type: 'object', properties: {} } } },
