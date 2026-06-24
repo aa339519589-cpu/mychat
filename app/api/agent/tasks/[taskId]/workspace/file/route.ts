@@ -1,28 +1,190 @@
-// GET /api/agent/tasks/[taskId]/workspace/file?path=... — 读取 workspace 文件
+// POST   /api/agent/tasks/[taskId]/workspace/file — 写文件
+// PATCH  /api/agent/tasks/[taskId]/workspace/file — 编辑文件（old_string 替换）
+// DELETE /api/agent/tasks/[taskId]/workspace/file — 删除文件
+
 import { NextRequest } from "next/server"
+import type { SupabaseClient } from "@supabase/supabase-js"
 import { resolveAuth } from "@/lib/api/guard"
-import { readWorkspaceFile } from "@/lib/agent/workspace"
+import { getTaskDetail, addStep, addArtifact } from "@/lib/agent/data"
+import {
+  writeWorkspaceFile,
+  editWorkspaceFile,
+  deleteWorkspaceFile,
+  getChangedFiles,
+} from "@/lib/agent/workspace"
+import { classifyFileRisk, classifyDeleteRisk, classifyAgentRisk } from "@/lib/agent/risk"
+import { createConfirmationRequest, getPendingConfirmation, clearConfirmation } from "@/lib/agent/permissions"
 
 function json(obj: unknown, status = 200): Response {
   return new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } })
 }
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
+async function getContext(taskId: string) {
   const auth = await resolveAuth()
-  if (!auth.supabase || !auth.userId) return json({ error: "未登录" }, 401)
+  const supabase = auth.supabase
+  const userId = auth.userId
+  if (!supabase || !userId) return { error: json({ error: "未登录" }, 401) }
 
+  const detail = await getTaskDetail(supabase, userId, taskId)
+  if (!("workspace" in detail)) return { error: json(detail, 404) }
+
+  const ws = detail.workspace
+  if (!ws || (ws.status !== "ready" && ws.status !== "dirty")) return { error: json({ error: "Workspace 未就绪" }, 400) }
+  if (!ws.path) return { error: json({ error: "Workspace 路径为空" }, 500) }
+
+  return { supabase, userId, detail, ws }
+}
+
+// 风险门禁：如果操作需要确认，创建 confirmation 并返回 waiting_for_user
+async function riskGate(
+  supabase: SupabaseClient, userId: string, taskId: string,
+  operation: "write_file" | "edit_file" | "delete_files",
+  files: string[], fileCount?: number,
+): Promise<Response | null> {
+  const risk = classifyAgentRisk(operation, { files, fileCount })
+  if (risk.blocked) {
+    return json({ error: risk.reason, blocked: true }, 403)
+  }
+  if (risk.needsConfirmation) {
+    // 检查是否已有已确认的请求（针对同一操作）
+    const existing = await getPendingConfirmation(supabase, userId, taskId)
+    if (existing) {
+      if (existing.status === "confirmed" && existing.operation === operation) {
+        await clearConfirmation(supabase, userId, taskId)
+        return null // 已确认，放行
+      }
+      return json({ needsConfirmation: true, confirmationId: existing.id, risk }, 409)
+    }
+    const req = await createConfirmationRequest(supabase, userId, taskId, risk, "editing")
+    return json({ needsConfirmation: true, confirmationId: req.id, risk }, 409)
+  }
+  return null
+}
+
+// ─── POST：写文件 ───
+export async function POST(req: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
   const { taskId } = await params
+  const ctx = await getContext(taskId)
+  if ("error" in ctx) return ctx.error
+
+  let body: any = {}
+  try { body = await req.json() } catch { return json({ error: "请求体格式错误" }, 400) }
+
+  const { path, content } = body
+  if (!path || typeof path !== "string") return json({ error: "缺少 path" }, 400)
+  if (typeof content !== "string") return json({ error: "缺少 content" }, 400)
+
+  const gate = await riskGate(ctx.supabase, ctx.userId, taskId, "write_file", [path])
+  if (gate) return gate
+
+  const result = await writeWorkspaceFile(taskId, ctx.userId, path, content, ctx.supabase)
+
+  await addStep(ctx.supabase, ctx.userId, taskId, {
+    kind: "tool_call",
+    label: result.ok ? `写入 ${path}` : `写入失败`,
+    detail: result.ok ? `${content.length} 字符` : result.error,
+  })
+
+  if (result.ok) {
+    const changed = getChangedFiles(taskId, ctx.userId)
+    await addArtifact(ctx.supabase, ctx.userId, {
+      taskId,
+      kind: "diff",
+      title: `写入 ${path}`,
+      content: result.data.diff.slice(0, 10000),
+      meta: {
+        path, size: content.length,
+        changedFiles: changed.ok ? changed.data.files : [],
+        snapshotId: result.data.snapshotId,
+        operation: "write",
+      },
+    })
+    return json(result.data)
+  }
+
+  return json(result, 400)
+}
+
+// ─── PATCH：编辑文件 ───
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
+  const { taskId } = await params
+  const ctx = await getContext(taskId)
+  if ("error" in ctx) return ctx.error
+
+  let body: any = {}
+  try { body = await req.json() } catch { return json({ error: "请求体格式错误" }, 400) }
+
+  const { path, old_string, new_string } = body
+  if (!path || typeof path !== "string") return json({ error: "缺少 path" }, 400)
+  if (typeof old_string !== "string" || !old_string) return json({ error: "缺少 old_string" }, 400)
+  if (typeof new_string !== "string") return json({ error: "缺少 new_string" }, 400)
+
+  const editGate = await riskGate(ctx.supabase, ctx.userId, taskId, "edit_file", [path])
+  if (editGate) return editGate
+
+  const result = await editWorkspaceFile(taskId, ctx.userId, path, old_string, new_string, ctx.supabase)
+
+  await addStep(ctx.supabase, ctx.userId, taskId, {
+    kind: "tool_call",
+    label: result.ok ? `编辑 ${path}` : `编辑失败`,
+    detail: result.ok ? "替换 1 处" : result.error,
+  })
+
+  if (result.ok) {
+    const changed = getChangedFiles(taskId, ctx.userId)
+    await addArtifact(ctx.supabase, ctx.userId, {
+      taskId,
+      kind: "diff",
+      title: `编辑 ${path}`,
+      content: result.data.diff.slice(0, 10000),
+      meta: {
+        path, changedFiles: changed.ok ? changed.data.files : [],
+        snapshotId: result.data.snapshotId,
+        operation: "edit",
+      },
+    })
+    return json(result.data)
+  }
+
+  return json(result, 400)
+}
+
+// ─── DELETE：删除文件 ───
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
+  const { taskId } = await params
+  const ctx = await getContext(taskId)
+  if ("error" in ctx) return ctx.error
+
   const url = new URL(req.url)
   const path = url.searchParams.get("path")
   if (!path) return json({ error: "缺少 path 参数" }, 400)
 
-  // 校验归属
-  const { data: task } = await auth.supabase
-    .from("agent_tasks").select("id").eq("id", taskId).eq("user_id", auth.userId).single()
-  if (!task) return json({ error: "任务不存在" }, 404)
+  const delGate = await riskGate(ctx.supabase, ctx.userId, taskId, "delete_files", [path])
+  if (delGate) return delGate
 
-  const result = await readWorkspaceFile(auth.userId, taskId, path)
-  if ("error" in result) return json({ error: result.error }, 400)
+  const result = await deleteWorkspaceFile(taskId, ctx.userId, path, ctx.supabase)
 
-  return json(result)
+  await addStep(ctx.supabase, ctx.userId, taskId, {
+    kind: "tool_call",
+    label: result.ok ? `删除 ${path}` : `删除失败`,
+    detail: result.ok ? "已删除" : result.error,
+  })
+
+  if (result.ok) {
+    const changed = getChangedFiles(taskId, ctx.userId)
+    await addArtifact(ctx.supabase, ctx.userId, {
+      taskId,
+      kind: "diff",
+      title: `删除 ${path}`,
+      content: result.data.diff.slice(0, 10000),
+      meta: {
+        path, changedFiles: changed.ok ? changed.data.files : [],
+        snapshotId: result.data.snapshotId,
+        operation: "delete",
+      },
+    })
+    return json(result.data)
+  }
+
+  return json(result, 400)
 }

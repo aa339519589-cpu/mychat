@@ -1,4 +1,4 @@
-// POST /api/agent/tasks/[taskId]/resume — 恢复 failed/cancelled/paused 任务
+// POST /api/agent/tasks/[taskId]/resume — 恢复 failed/cancelled/waiting_for_user 任务
 import { NextRequest } from "next/server"
 import { resolveAuth } from "@/lib/api/guard"
 import { resumeTask } from "@/lib/agent/data"

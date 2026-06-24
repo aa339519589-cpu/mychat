@@ -13,6 +13,13 @@ import { resolveAuth, enforceLimits } from '@/lib/api/guard'
 import { runInSandbox } from '@/lib/sandbox'
 import { runInWorkspace } from '@/lib/agent/shell'
 import { createRecorder, type RecordCtx } from '@/lib/agent/recorder'
+import {
+  writeWorkspaceFile, editWorkspaceFile, deleteWorkspaceFile,
+  getWorkspaceDiff, getChangedFiles, readWorkspaceFile, workspaceRoot,
+} from '@/lib/agent/workspace'
+import { applyWorkspacePatch, dryRunWorkspacePatch } from '@/lib/agent/patch'
+import { getTaskDetail } from '@/lib/agent/data'
+import { existsSync } from 'fs'
 
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY ?? ''
 const DEEPSEEK_BASE_URL = 'https://api.deepseek.com'
@@ -63,7 +70,7 @@ export async function POST(req: NextRequest) {
   let body: any = {}
   try { body = await req.json() } catch { return new Response(JSON.stringify({ error: '请求体格式错误' }), { status: 400 }) }
 
-  const { repo = null, tier = '正构', goal = false, messages, taskId: frontTaskId } = body
+  const { repo = null, tier = '正构', goal = false, messages, taskId = null } = body
   try {
     validate.array(messages, 'messages', { minLength: 1 })
     if (repo !== null && (typeof repo !== 'string' || !repo.includes('/'))) throw new Error('仓库参数无效')
@@ -89,12 +96,12 @@ export async function POST(req: NextRequest) {
   if (gate.response) return gate.response
   const usingBalance = gate.usingBalance
 
-  // Agent Task：校验或自动创建
-  let effectiveTaskId = (frontTaskId ?? null) as string | null
+  // Agent Task：校验 taskId
+  let effectiveTaskId = taskId as string | null
   if (effectiveTaskId && supabase && userId) {
-    const { data: task } = await supabase.from("agent_tasks")
+    const { data: taskRow } = await supabase.from("agent_tasks")
       .select("id").eq("id", effectiveTaskId).eq("user_id", userId).single()
-    if (!task) effectiveTaskId = null // 不属于用户则忽略
+    if (!taskRow) effectiveTaskId = null
   }
   const recorder = createRecorder({ supabase, userId, taskId: effectiveTaskId })
   if (effectiveTaskId) await recorder.setTaskStatus("running")
@@ -130,6 +137,7 @@ export async function POST(req: NextRequest) {
     { type: 'function', function: { name: 'enable_pages', description: '对纯静态/前端项目开启 GitHub Pages，让项目有可访问网址（上线）。', parameters: { type: 'object', properties: {} } } },
     { type: 'function', function: { name: 'code_remember', description: '记住一条关于本仓库的长期事实。', parameters: { type: 'object', properties: { content: { type: 'string' } }, required: ['content'] } } },
     { type: 'function', function: { name: 'search', description: '网络搜索（文档、API、技术资料等）。需要查阅外部资源时用。', parameters: { type: 'object', properties: { query: { type: 'string', description: '搜索关键词或短语' } }, required: ['query'] } } },
+    { type: 'function', function: { name: 'apply_patch', description: '应用 unified diff patch 批量修改代码（比 write_files/edit_file 更高效）。先传 dryRun: true 预览；确认后传 dryRun: false 执行。', parameters: { type: 'object', properties: { patch: { type: 'string', description: 'unified diff 格式的 patch 内容' }, dryRun: { type: 'boolean', description: '是否仅预览（dry-run），默认 false' } }, required: ['patch'] } } },
   ]
 
   const maxRounds = SAFETY_ROUNDS
@@ -141,23 +149,31 @@ export async function POST(req: NextRequest) {
       const shaCache = new Map<string, string>()  // path → 读过的旧内容（给前端做 diff）
       const msgs: any[] = [{ role: 'system', content: SYSTEM }, ...toOpenAI(messages)]
 
+      // ── Workspace 上下文：如果有 taskId，检查 workspace 是否就绪 ──
+      let wsReady = false
+      let wsTaskId = ""
+      let wsUserId = ""
+      if (taskId && userId && supabase) {
+        const detail = await getTaskDetail(supabase, userId, taskId).catch(() => null)
+        if (detail && "workspace" in detail && detail.workspace?.status === "ready" && detail.workspace?.path && existsSync(detail.workspace.path)) {
+          wsReady = true
+          wsTaskId = taskId
+          wsUserId = userId
+          log.info("codeChat", `Workspace ready: ${detail.workspace.path}`)
+        }
+      }
+
       const executeTool: ExecuteTool = async (name, input) => {
-        // 包装工具执行：自动记录 tool_call + step
-        const stepLabel = name === 'list_files' ? '浏览仓库' :
-          name === 'read_file' ? `读取 ${String(input?.path ?? '').slice(0, 40)}` :
-          name === 'write_files' ? '写入文件' :
-          name === 'edit_file' ? `编辑 ${String(input?.path ?? '').slice(0, 40)}` :
-          name === 'create_repo' ? '新建仓库' :
-          name === 'delete_files' ? '删除文件' :
-          name === 'execute' ? '执行命令' :
-          name === 'enable_pages' ? '上线' :
-          name === 'code_remember' ? '记忆' :
-          name === 'search' ? '搜索' : name
-
-        await recorder.step("tool_call", stepLabel)
-
-        return recorder.recordToolCall(name, input, async () => {
         if (name === 'list_files') {
+          // 如果有 workspace，列 workspace 文件；否则走 GitHub
+          if (wsReady) {
+            emit({ step: { kind: 'list', label: '浏览 workspace 文件' } })
+            const { listWorkspaceFiles } = await import('@/lib/agent/workspace')
+            const res = listWorkspaceFiles(wsTaskId, wsUserId)
+            if (res.ok) return `Workspace 共 ${res.data.total} 个文件${res.data.truncated ? '（已截断）' : ''}：\n${res.data.files.join('\n')}`
+            return `列出文件失败：${res.error}`
+          }
+          if (!repo) return '尚未选择仓库。'
           if (!repo) return '尚未选择仓库。'
           emit({ step: { kind: 'list', label: '浏览仓库文件结构' } })
           const { paths, truncated } = await listTree(token!, repo, defaultBranch!)
@@ -165,10 +181,19 @@ export async function POST(req: NextRequest) {
           return `仓库共 ${paths.length} 个文件${truncated ? '（已截断）' : ''}：\n${paths.join('\n')}`
         }
         if (name === 'read_file') {
-          if (!repo) return '尚未选择仓库。'
           const path = String(input?.path ?? '').trim()
           if (!path) return '缺少 path。'
           emit({ step: { kind: 'read', label: `读取 ${path}` } })
+
+          // Workspace 优先
+          if (wsReady) {
+            const res = readWorkspaceFile(wsTaskId, wsUserId, path)
+            if (!res.ok) return `读取失败：${res.error}`
+            shaCache.set(path, res.data.content)
+            return `文件 ${path} 内容：\n\`\`\`\n${res.data.content}\n\`\`\``
+          }
+
+          if (!repo) return '尚未选择仓库。'
           const r = await readFile(token!, repo, path)
           if ('error' in r) return `读取失败：${r.error}`
           shaCache.set(path, r.content)
@@ -184,6 +209,29 @@ export async function POST(req: NextRequest) {
         if (name === 'write_files') {
           const files = Array.isArray(input?.files) ? input.files : []
           if (!files.length) return '没有要写的文件。'
+
+          // Workspace 优先：直接写文件
+          if (wsReady) {
+            const results: string[] = []
+            for (const f of files) {
+              const path = String(f?.path ?? '').trim()
+              const content = String(f?.content ?? '')
+              if (!path) continue
+              emit({ step: { kind: 'edit', label: `写入 ${path}` } })
+              const res = await writeWorkspaceFile(wsTaskId, wsUserId, path, content, supabase ?? undefined)
+              if (res.ok) {
+                shaCache.set(path, content)
+                results.push(`✅ ${path}（${res.data.created ? '新建' : '覆盖'}）\n${res.data.diff.slice(0, 500)}`)
+              } else {
+                results.push(`❌ ${path}：${res.error}`)
+              }
+            }
+            const changed = getChangedFiles(wsTaskId, wsUserId)
+            const changedList = changed.ok ? changed.data.files.map(f => `  ${f.status} ${f.path}`).join('\n') : ''
+            return `已在 workspace 写入 ${files.length} 个文件：\n${results.join('\n')}\n\n变更文件：\n${changedList || '（无变更）'}`
+          }
+
+          // 旧行为：生成 plan
           for (const f of files) {
             const path = String(f?.path ?? '').trim()
             const content = String(f?.content ?? '')
@@ -200,12 +248,20 @@ export async function POST(req: NextRequest) {
           return `已加入计划：写入 ${files.length} 个文件（等待用户确认/自动执行）。`
         }
         if (name === 'edit_file') {
-          if (!repo) return '尚未选择仓库。'
           const path = String(input?.path ?? '').trim()
           const oldString = String(input?.old_string ?? '')
           const newString = String(input?.new_string ?? '')
           if (!path || !oldString) return '缺少 path 或 old_string。'
           emit({ step: { kind: 'edit', label: `编辑 ${path}` } })
+
+          // Workspace 优先
+          if (wsReady) {
+            const res = await editWorkspaceFile(wsTaskId, wsUserId, path, oldString, newString, supabase ?? undefined)
+            if (!res.ok) return `编辑失败：${res.error}`
+            return `✅ 已在 workspace 编辑 ${path}（替换 1 处）\n${res.data.diff.slice(0, 500)}`
+          }
+
+          if (!repo) return '尚未选择仓库。'
           const r = await readFile(token!, repo, path)
           if ('error' in r) return `读取失败：${r.error}`
           const content = r.content
@@ -219,6 +275,21 @@ export async function POST(req: NextRequest) {
         }
         if (name === 'delete_files') {
           const paths = Array.isArray(input?.paths) ? input.paths : []
+
+          // Workspace 优先
+          if (wsReady) {
+            const results: string[] = []
+            for (const p of paths) {
+              const path = String(p ?? '').trim()
+              if (!path) continue
+              emit({ step: { kind: 'edit', label: `删除 ${path}` } })
+              const res = await deleteWorkspaceFile(wsTaskId, wsUserId, path, supabase ?? undefined)
+              results.push(res.ok ? `✅ 删除 ${path}` : `❌ ${path}：${res.error}`)
+            }
+            return `已在 workspace 删除文件：\n${results.join('\n')}`
+          }
+
+          // 旧行为：生成 plan
           for (const p of paths) {
             const path = String(p ?? '').trim()
             if (!path) continue
@@ -236,22 +307,6 @@ export async function POST(req: NextRequest) {
           const command = String(input?.command ?? '').trim()
           if (!command) return '缺少 command。'
           emit({ step: { kind: 'read', label: `执行：${command.slice(0, 60)}` } })
-
-          // 优先走真实 workspace（如果有 taskId）
-          if (effectiveTaskId && supabase && userId) {
-            const wsResult = await runInWorkspace(supabase, userId, effectiveTaskId, command, {
-              timeoutMs: 120_000,
-            })
-            if (wsResult.blocked) return `命令被安全策略拦截：${wsResult.blockedReason}`
-            if (wsResult.exitCode !== null || wsResult.stdout || wsResult.stderr) {
-              let out = ''
-              if (wsResult.stdout) out += wsResult.stdout
-              if (wsResult.stderr) out += (out ? '\n' : '') + wsResult.stderr
-              if (wsResult.timedOut) out += '\n(命令超时)'
-              if (wsResult.exitCode !== null && wsResult.exitCode !== 0) out += `\n退出码: ${wsResult.exitCode}`
-              return out || '(无输出)'
-            }
-          }
 
           // 判断是否可能是重任务（构建/测试类）
           const heavyPatterns = ['npm run build', 'npm test', 'npx tsc', 'npm run typecheck', 'npm run ci', 'make', 'npm install']
@@ -328,6 +383,28 @@ export async function POST(req: NextRequest) {
           emit({ step: { kind: 'memory', label: `记住：${content.slice(0, 40)}` } })
           return ok ? '已记住。' : '记忆保存失败（可能未建表）。'
         }
+        if (name === 'apply_patch') {
+          const patch = String(input?.patch ?? '').trim()
+          if (!patch) return '缺少 patch 内容。'
+          const dryRun = input?.dryRun === true
+
+          // Workspace 专用
+          if (wsReady) {
+            emit({ step: { kind: 'edit', label: dryRun ? 'apply_patch (dry-run)' : 'apply_patch' } })
+            if (dryRun) {
+              const res = dryRunWorkspacePatch(wsTaskId, wsUserId, patch)
+              if (!res.ok) return `❌ Dry-run 失败：${res.error}`
+              return `✅ Dry-run 通过：${res.changedFiles.length} 个文件将被修改\n${res.diffSummary.slice(0, 2000)}`
+            }
+            const applyRes = await applyWorkspacePatch(wsTaskId, wsUserId, patch, { supabase: supabase ?? undefined })
+            if (!applyRes.ok) return `❌ Apply patch 失败：${applyRes.error}`
+            const changed = getChangedFiles(wsTaskId, wsUserId)
+            const files = changed.ok ? changed.data.files.map(f => `  ${f.status} ${f.path}`).join('\n') : ''
+            return `✅ Patch 已应用：${applyRes.changedFiles.length} 个文件\n${files}\n\n${applyRes.diffSummary.slice(0, 2000)}`
+          }
+
+          return 'apply_patch 需要 workspace。当前没有就绪的 workspace。'
+        }
         if (name === 'search') {
           const query = String(input?.query ?? '').trim()
           if (!query) return '查询为空。'
@@ -354,10 +431,7 @@ export async function POST(req: NextRequest) {
           } catch { return '搜索异常。' }
         }
         return '未知工具。'
-        }) // recordToolCall wrapper closes here
       }
-
-      await recorder.step("planning", "理解任务目标")
 
       try {
         const { totalTokens } = await runAgentLoop({
@@ -368,17 +442,10 @@ export async function POST(req: NextRequest) {
           autoContinue: { maxContinuations: 4 },
           onTurn: ({ phase, round, turn }) => {
             log.info('codeChat', `Turn ${phase}`, { round, finishReason: turn.finishReason, leaked: turn.leaked, toolCalls: turn.toolCalls.length, contentLen: turn.content.length, truncated: turn.truncated })
-            if (phase === 'round' && turn.toolCalls.length > 0) {
-              recorder.step("tool_call", `准备调用 ${turn.toolCalls.length} 个工具`).catch(() => {})
-            }
           },
         })
         totalTokensUsed += totalTokens
-        await recorder.setTaskStatus("completed")
-        await recorder.step("completed", "任务完成")
       } catch (error) {
-        await recorder.setTaskStatus("failed", networkError(error))
-        await recorder.step("failed", "任务失败", networkError(error))
         emit({ error: networkError(error) })
       } finally {
         if (userId && supabase) await addQuotaUsage(supabase, userId, totalTokensUsed, model, thinking, usingBalance)

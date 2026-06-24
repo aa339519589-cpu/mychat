@@ -1,7 +1,9 @@
-// POST /api/agent/tasks/[taskId]/confirm — 用户确认/拒绝操作
+// POST /api/agent/tasks/[taskId]/confirm — 确认或拒绝 pendingConfirmation
+// body: { action: "confirm" | "reject", confirmationId?: string, reason?: string }
+
 import { NextRequest } from "next/server"
 import { resolveAuth } from "@/lib/api/guard"
-import { addConfirmRecord } from "@/lib/agent/data"
+import { confirmAgentOperation, rejectAgentOperation, getPendingConfirmation } from "@/lib/agent/permissions"
 
 function json(obj: unknown, status = 200): Response {
   return new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } })
@@ -9,15 +11,34 @@ function json(obj: unknown, status = 200): Response {
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
   const auth = await resolveAuth()
-  if (!auth.supabase || !auth.userId) return json({ error: "未登录" }, 401)
+  const supabase = auth.supabase
+  const userId = auth.userId
+  if (!supabase || !userId) return json({ error: "未登录" }, 401)
 
   const { taskId } = await params
-  const body = await req.json().catch(() => null)
-  const confirmed = body?.confirmed === true
+  const body = await req.json().catch(() => ({}))
+  const action = body?.action === "reject" ? "reject" : "confirm"
   const reason = typeof body?.reason === "string" ? body.reason : undefined
 
-  const result = await addConfirmRecord(auth.supabase, auth.userId, taskId, confirmed, reason)
-  if ("error" in result) return json(result, 500)
+  if (action === "reject") {
+    const result = await rejectAgentOperation(supabase, userId, taskId, body?.confirmationId ?? "", reason)
+    if (!result.ok) return json(result, 400)
+    return json(result.request)
+  }
 
-  return json(result, 201)
+  const result = await confirmAgentOperation(supabase, userId, taskId, body?.confirmationId ?? "")
+  if (!result.ok) return json(result, 400)
+  return json(result.request)
+}
+
+// GET: 查询当前 pending confirmation
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
+  const auth = await resolveAuth()
+  const supabase = auth.supabase
+  const userId = auth.userId
+  if (!supabase || !userId) return json({ error: "未登录" }, 401)
+
+  const { taskId } = await params
+  const pending = await getPendingConfirmation(supabase, userId, taskId)
+  return json(pending)
 }

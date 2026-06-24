@@ -6,13 +6,21 @@
 export type AgentTaskMode = "auto" | "confirm" | "plan"
 
 export type AgentTaskStatus =
-  | "pending"
+  | "queued"
+  | "planning"
+  | "indexing"
+  | "reading"
+  | "editing"
   | "running"
-  | "waiting_confirm"
-  | "cancelled"
-  | "failed"
+  | "testing"
+  | "fixing"
+  | "reviewing"
+  | "waiting_for_user"
+  | "creating_pr"
+  | "deploying"
   | "completed"
-  | "paused"
+  | "failed"
+  | "cancelled"
 
 export type AgentTask = {
   id: string
@@ -28,6 +36,10 @@ export type AgentTask = {
   updatedAt: string
   startedAt: string | null
   finishedAt: string | null
+  agentBranch: string | null
+  pullRequestUrl: string | null
+  pullRequestNumber: number | null
+  commitSha: string | null
 }
 
 export type AgentTaskSummary = Pick<
@@ -73,7 +85,7 @@ export type AgentToolCall = {
 
 // ───────────── Workspace ─────────────
 
-export type WorkspaceStatus = "created" | "cloning" | "ready" | "error" | "cleaned"
+export type WorkspaceStatus = "created" | "cloning" | "ready" | "dirty" | "failed" | "cleaned"
 
 export type AgentWorkspace = {
   id: string
@@ -90,7 +102,7 @@ export type AgentWorkspace = {
 
 // ───────────── 产物 ─────────────
 
-export type ArtifactKind = "diff" | "log" | "screenshot" | "pr" | "deploy" | "file" | "other"
+export type ArtifactKind = "diff" | "log" | "screenshot" | "build_report" | "test_report" | "deploy_link" | "pr_link" | "pr" | "deploy" | "file" | "summary" | "other"
 
 export type AgentArtifact = {
   id: string
@@ -102,6 +114,33 @@ export type AgentArtifact = {
   url: string | null
   meta: Record<string, unknown> | null
   createdAt: string
+}
+
+// ───────────── Snapshot 持久化记录 ─────────────
+
+export type SnapshotRecord = {
+  snapshotId: string
+  taskId: string
+  userId: string
+  reason: string
+  changedFiles: string[]
+  createdFiles: string[]
+  modifiedFiles: string[]
+  deletedFiles: string[]
+  createdAt: string
+  diffSize: number
+  storage: "local" | "artifact" | "both"
+  restorable: boolean
+  workspaceId: string | null
+}
+
+export type RestoreResult = {
+  ok: boolean
+  snapshotId?: string
+  restoredFiles: number
+  failedFiles: number
+  usedSource: "local_patch" | "artifact_patch" | "git_fallback" | "none"
+  error?: string
 }
 
 // ───────────── 聚合类型（含详情）─────────────

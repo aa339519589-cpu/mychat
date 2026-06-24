@@ -18,8 +18,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tas
     .from("agent_tasks").select("id").eq("id", taskId).eq("user_id", auth.userId).single()
   if (!task) return json({ error: "任务不存在" }, 404)
 
-  const result = await listWorkspaceFiles(auth.userId, taskId)
-  if ("error" in result) return json({ error: result.error }, 404)
+  const result = listWorkspaceFiles(taskId, auth.userId)
+  if (!result.ok) return json({ error: result.error }, 404)
 
-  return json({ files: result, count: result.length })
+  return json({ files: result.data.files, count: result.data.total, truncated: result.data.truncated })
 }

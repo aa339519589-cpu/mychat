@@ -1,10 +1,14 @@
 import { cookies } from 'next/headers'
 import { repoMeta, createRepo, commitFiles, enablePages, type FileWrite } from '@/lib/github'
 import { resolveAuth } from '@/lib/api/guard'
-import { createRecorder } from '@/lib/agent/recorder'
+import { getTaskDetail } from '@/lib/agent/data'
+import { publishWorkspaceToPullRequest, getWorkspaceGitStatus } from '@/lib/agent/git-publish'
+import { existsSync } from 'fs'
+import { workspaceRoot } from '@/lib/agent/workspace'
 
-// 用户在 Code 里点「确认」(或自动模式)后调用：把 AI 的改动计划【直接执行】到 GitHub。
-// 直接推送默认分支（用户已选），不走 PR。安全闸：≤20 文件、总量 ≤1MB、写操作前校验写权限。
+// 用户在 Code 里点「确认」(或自动模式)后调用：
+//   - 有 taskId + ready workspace → 发布为 Pull Request
+//   - 无 taskId / 无 workspace → 旧行为（直推默认分支）
 export type PlanAction =
   | { kind: 'create_repo'; name: string; description?: string; private?: boolean }
   | { kind: 'write_file'; path: string; newContent: string }
@@ -18,13 +22,57 @@ export async function POST(req: Request) {
 
   const body = await req.json().catch(() => null)
   if (!body) return Response.json({ error: '请求体格式错误' }, { status: 400 })
-  const { repo: sessionRepo, actions, message, taskId } = body as { repo: string | null; actions: PlanAction[]; message: string; taskId?: string }
-  if (!Array.isArray(actions) || actions.length === 0) return Response.json({ error: '没有要执行的改动' }, { status: 400 })
+  const { repo: sessionRepo, actions, message, taskId } = body as {
+    repo: string | null; actions: PlanAction[]; message: string; taskId?: string
+  }
 
-  // Agent Task recorder
-  const auth = await resolveAuth()
-  const recorder = createRecorder({ supabase: auth.supabase, userId: auth.userId, taskId: taskId ?? null })
+  if (!Array.isArray(actions) || actions.length === 0) {
+    return Response.json({ error: '没有要执行的改动' }, { status: 400 })
+  }
 
+  // ── Workspace PR 模式 ──
+  if (taskId) {
+    const auth = await resolveAuth()
+    const supabase = auth.supabase
+    const userId = auth.userId
+
+    if (supabase && userId) {
+      const detail = await getTaskDetail(supabase, userId, taskId)
+      if ("workspace" in detail) {
+        const ws = detail.workspace
+        if (ws && (ws.status === "ready" || ws.status === "dirty") && ws.path && existsSync(ws.path)) {
+          // 有 ready workspace：走 PR 发布
+          const result = await publishWorkspaceToPullRequest(taskId, userId, token, supabase, {
+            message: message || undefined,
+          })
+
+          if (!result.ok) {
+            const errorMsg = result.error || "发布失败"
+            return Response.json({
+              error: errorMsg,
+              detail: {
+                mode: "workspace_pr",
+                stage: result.stage,
+                status: result.status?.hasChanges ? "有改动" : "无改动",
+                commitSha: result.commit?.commitSha,
+              },
+            }, { status: 502 })
+          }
+
+          return Response.json({
+            mode: "workspace_pr",
+            pullRequestUrl: result.pr?.pullRequestUrl,
+            pullRequestNumber: result.pr?.pullRequestNumber,
+            commitSha: result.commit?.commitSha,
+            branch: result.push?.branch,
+            message: "已创建 Pull Request（非直推 main）",
+          })
+        }
+      }
+    }
+  }
+
+  // ── 旧行为：直推默认分支 ──
   const writes = actions.filter(a => a.kind === 'write_file') as Extract<PlanAction, { kind: 'write_file' }>[]
   const deletes = actions.filter(a => a.kind === 'delete_file') as Extract<PlanAction, { kind: 'delete_file' }>[]
   if (writes.length + deletes.length > 20) return Response.json({ error: '单次最多改动 20 个文件' }, { status: 400 })
@@ -40,11 +88,7 @@ export async function POST(req: Request) {
   const createAction = actions.find(a => a.kind === 'create_repo') as Extract<PlanAction, { kind: 'create_repo' }> | undefined
   if (createAction) {
     const r = await createRepo(token, createAction.name, createAction.description ?? '', !!createAction.private)
-    if ('error' in r) {
-      await recorder.setTaskStatus("failed", r.error)
-      await recorder.step("failed", "创建仓库失败", r.error)
-      return Response.json({ error: r.error }, { status: 502 })
-    }
+    if ('error' in r) return Response.json({ error: r.error }, { status: 502 })
     targetRepo = r.fullName
     targetBranch = r.defaultBranch
     result.repoUrl = r.htmlUrl
@@ -54,7 +98,7 @@ export async function POST(req: Request) {
 
   if (!targetRepo) return Response.json({ error: '没有目标仓库（请先选仓库，或让 AI 新建一个）' }, { status: 400 })
 
-  // 解析默认分支 + 校验写权限（新建的仓库已知分支，跳过远程校验）
+  // 解析默认分支 + 校验写权限
   if (!targetBranch) {
     const meta = await repoMeta(token, targetRepo)
     if (!meta) return Response.json({ error: '仓库访问失败' }, { status: 502 })
@@ -80,27 +124,5 @@ export async function POST(req: Request) {
     if (!('error' in p)) result.pagesUrl = p.url
   }
 
-  // Agent Task 记录：改动已应用
-  await recorder.step("done", `应用完成 · ${result.commitSha ? `commit ${result.commitSha.slice(0, 7)}` : ''}${result.pagesUrl ? ` · 已上线` : ''}`)
-  if (result.repoUrl || targetRepo) {
-    await recorder.artifact("deploy", {
-      title: "仓库",
-      url: result.repoUrl ?? `https://github.com/${targetRepo}`,
-      content: result.created ? `新建仓库: ${targetRepo}` : `提交: ${result.commitSha ?? '无'}`,
-    })
-  }
-  if (result.pagesUrl) {
-    await recorder.artifact("deploy", { title: "上线地址", url: result.pagesUrl })
-  }
-  if (result.commitSha) {
-    await recorder.artifact("diff", {
-      title: `commit ${result.commitSha.slice(0, 7)}`,
-      content: `提交信息: ${message}\n文件数: ${writes.length + deletes.length}`,
-      meta: { commitSha: result.commitSha, repo: targetRepo, branch: targetBranch ?? "main" },
-    })
-  }
-  await recorder.setTaskStatus("completed")
-  await recorder.step("completed", "任务完成")
-
-  return Response.json(result)
+  return Response.json({ ...result, mode: "direct_push" })
 }
