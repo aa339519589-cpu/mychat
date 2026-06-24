@@ -1,4 +1,7 @@
-const LIMIT = 30 // requests per minute
+// 速率限制：进程内内存存储。
+// 注意：Serverless/多实例部署（Vercel、Render 多容器）下各实例有独立 Map，
+// 限流效果减弱。生产环境建议替换为 Supabase 或 Redis 分布式计数器。
+const RATE_LIMIT_MAX = 30  // 每分钟最大请求数
 const WINDOW_MS = 60 * 1000
 
 interface RateLimitEntry {
@@ -16,15 +19,15 @@ export function checkRateLimit(userId: string): { allowed: boolean; remaining: n
   if (!entry || now >= entry.resetAt) {
     // New window
     store.set(key, { count: 1, resetAt: now + WINDOW_MS })
-    return { allowed: true, remaining: LIMIT - 1 }
+    return { allowed: true, remaining: RATE_LIMIT_MAX - 1 }
   }
 
-  if (entry.count >= LIMIT) {
+  if (entry.count >= RATE_LIMIT_MAX) {
     return { allowed: false, remaining: 0 }
   }
 
   entry.count += 1
-  return { allowed: true, remaining: LIMIT - entry.count }
+  return { allowed: true, remaining: RATE_LIMIT_MAX - entry.count }
 }
 
 // Cleanup old entries every 5 minutes

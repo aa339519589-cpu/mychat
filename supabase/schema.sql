@@ -87,7 +87,15 @@ create index if not exists idx_endpoints_user on public.endpoints(user_id);
 create table if not exists public.profiles (
   user_id uuid primary key references auth.users(id) on delete cascade,
   memory_enabled boolean not null default true,
-  -- 额度池（按真实 token 计；懒重置，无后台任务）。第2批启用。
+  custom_system_prompt text default '',
+  -- 额度池（按真实 token 计；懒重置，无后台任务）
+  tokens_5h bigint not null default 0,
+  window_5h_start timestamptz,
+  tokens_7d bigint not null default 0,
+  window_7d_start timestamptz,
+  quota_version bigint not null default 0,
+  balance bigint not null default 0,
+  -- 旧额度列名（兼容过渡期；新代码读写 tokens_5h/tokens_7d）
   pool_5h_used bigint not null default 0,
   pool_5h_reset_at timestamptz,
   pool_week_used bigint not null default 0,
@@ -135,6 +143,81 @@ create index if not exists idx_project_files_project on public.project_files(pro
 
 -- 对话归属项目（第4批）：为空＝不属于任何项目
 alter table public.conversations add column if not exists project_id uuid references public.projects(id) on delete set null;
+
+-- 对话收藏/置顶（持久化，跨设备）
+alter table public.conversations add column if not exists starred boolean not null default false;
+alter table public.conversations add column if not exists pinned boolean not null default false;
+
+-- 邀请码表
+create table if not exists public.invitation_codes (
+  id uuid primary key default gen_random_uuid(),
+  code text not null unique,
+  tokens bigint not null default 20_000_000,
+  created_by uuid references auth.users(id) on delete set null,
+  used_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  used_at timestamptz
+);
+alter table public.invitation_codes enable row level security;
+create policy "codes_read" on public.invitation_codes for select
+  using (used_by is not null or created_by = auth.uid());
+create policy "codes_redeem" on public.invitation_codes for update
+  using (used_by is null and auth.uid() is not null) with check (used_by = auth.uid());
+
+-- Code 板块记忆表
+create table if not exists public.code_memories (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  repo text not null,
+  content text not null,
+  created_at timestamptz not null default now()
+);
+alter table public.code_memories enable row level security;
+create policy "code_memories_select" on public.code_memories for select using (auth.uid() = user_id);
+create policy "code_memories_insert" on public.code_memories for insert with check (auth.uid() = user_id);
+create policy "code_memories_delete" on public.code_memories for delete using (auth.uid() = user_id);
+
+-- Code 板块会话表
+create table if not exists public.code_sessions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  repo text not null,
+  title text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.code_sessions enable row level security;
+create policy "code_sessions_select" on public.code_sessions for select using (auth.uid() = user_id);
+create policy "code_sessions_insert" on public.code_sessions for insert with check (auth.uid() = user_id);
+create policy "code_sessions_update" on public.code_sessions for update using (auth.uid() = user_id);
+create policy "code_sessions_delete" on public.code_sessions for delete using (auth.uid() = user_id);
+
+-- Code 板块消息表
+create table if not exists public.code_messages (
+  id uuid primary key default gen_random_uuid(),
+  session_id uuid not null references public.code_sessions(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  role text not null,
+  content text not null default '',
+  plan jsonb,
+  created_at timestamptz not null default now()
+);
+alter table public.code_messages enable row level security;
+create policy "code_messages_select" on public.code_messages for select using (auth.uid() = user_id);
+create policy "code_messages_insert" on public.code_messages for insert with check (auth.uid() = user_id);
+
+-- 项目记忆表
+create table if not exists public.project_memories (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  project_id uuid not null references public.projects(id) on delete cascade,
+  content text not null,
+  created_at timestamptz not null default now()
+);
+alter table public.project_memories enable row level security;
+create policy "project_memories_select" on public.project_memories for select using (auth.uid() = user_id);
+create policy "project_memories_insert" on public.project_memories for insert with check (auth.uid() = user_id);
+create policy "project_memories_delete" on public.project_memories for delete using (auth.uid() = user_id);
 
 -- 作品库（第3批）：只收方式三 <artifact> 整面板内容
 create table if not exists public.artifacts (

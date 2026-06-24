@@ -1,5 +1,5 @@
 import { execSync } from 'child_process'
-import { writeFileSync, mkdtempSync, rmSync } from 'fs'
+import { writeFileSync, mkdtempSync, rmSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 
@@ -42,7 +42,7 @@ export function runInSandbox(command: string, files?: Record<string, string>): S
         const fullPath = join(tmpDir, path)
         const dir = fullPath.substring(0, fullPath.lastIndexOf('/'))
         if (dir !== fullPath) {
-          try { mkdtempSync(dir) } catch { /* 目录已存在 */ }
+          try { mkdirSync(dir, { recursive: true }) } catch { /* 目录已存在则忽略 */ }
         }
         writeFileSync(fullPath, content, 'utf-8')
       }

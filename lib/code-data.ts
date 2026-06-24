@@ -45,6 +45,7 @@ export async function fetchCodeSessions(repo: string): Promise<CodeSession[]> {
     .select("id, repo, title, updated_at")
     .eq("repo", repo)
     .order("updated_at", { ascending: false })
+    .limit(50)
   return (data ?? []).map((r: any) => ({ id: r.id, repo: r.repo, title: r.title, date: fmtDate(r.updated_at) }))
 }
 

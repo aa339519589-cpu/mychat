@@ -97,6 +97,7 @@ export async function fetchMemories(): Promise<Memory[]> {
     .from("memories")
     .select("id, content, created_at, updated_at")
     .order("created_at", { ascending: true })
+    .limit(200)
   if (error || !data) return []
   return data.map(r => ({
     id: r.id as string,
@@ -138,6 +139,7 @@ export async function fetchConversations(): Promise<Conversation[]> {
     .select("id, title, updated_at, project_id, starred, pinned, messages(count)")
     .order("pinned", { ascending: false })
     .order("updated_at", { ascending: false })
+    .limit(100)
 
   // 主查询失败（如 starred/pinned 列未建、messages 子查询报错）时降级为最简查询，绝不让对话列表返回空
   if (error || !data) {

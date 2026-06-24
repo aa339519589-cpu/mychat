@@ -9,10 +9,12 @@ services:
         value: 20
       - key: PORT
         value: 3000
+      - key: DEEPSEEK_API_KEY
+        sync: false
       - key: MIMO_API_KEY
         sync: false
       - key: TAVILY_API_KEY
-        value: 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
+        sync: false
       - key: NEXT_PUBLIC_SUPABASE_URL
         value: https://usibkqqksgwgvdiqwpyo.supabase.co
       - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
