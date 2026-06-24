@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils"
 import { ChevronDown, X, Loader2, Plus, ImageIcon, FileText, Globe, ArrowUp, Square, CornerUpLeft, Camera, Check, Microscope } from "lucide-react"
 import { TIERS, TIER_MAP, type Tier } from "@/lib/chat-data"
 import { prepareFile, type AttachedFile } from "@/lib/file-extract"
+import { modelSupportsImageInput } from "@/lib/llm/models"
 
 export function ChatInput({
   onSend, activeTier, onTierChange, mobile,
@@ -118,6 +119,7 @@ export function ChatInput({
 
   const hasActiveTools = webSearch || deepResearch
   const canSend = !isLoading && (!!value.trim() || images.length > 0 || files.length > 0)
+  const currentModelSupportsImages = modelSupportsImageInput(TIER_MAP[activeTier]?.model ?? '')
 
   return (
     <div className={cn(
@@ -181,6 +183,11 @@ export function ChatInput({
           )}
         </div>
       )}
+      {images.length > 0 && !currentModelSupportsImages && (
+        <p aria-live="polite" className="mb-2 px-2 text-xs text-muted-foreground">
+          当前模型不直接看图，将先由视觉模型理解图片后再继续。
+        </p>
+      )}
       {fileError && <p className="mb-2 px-2 text-xs text-destructive">{fileError}</p>}
 
       <div className="flex min-w-0 items-end gap-2 rounded-3xl bg-secondary/50 py-2 pl-2 pr-2">
@@ -236,16 +243,16 @@ export function ChatInput({
           )}
         />
 
-        {/* 模型选择（可展开，从上到下：深度＞均衡＞快速） */}
+        {/* 模型选择（可展开，从上到下：视觉＞深度＞均衡＞快速） */}
         <div ref={tierMenuRef} className="relative mb-0.5 shrink-0">
           {tierMenuOpen && (
-            <div className="absolute bottom-full right-0 mb-2 min-w-[6.5rem] overflow-hidden rounded-2xl border border-border/60 bg-card shadow-lg">
+            <div className="absolute bottom-full right-0 mb-2 min-w-[6.25rem] space-y-0.5 overflow-hidden rounded-2xl border border-border/60 bg-card p-1 shadow-lg">
               {[...TIERS].reverse().map(t => (
                 <button
                   key={t.id}
                   onClick={() => { onTierChange(t.id); setTierMenuOpen(false) }}
                   className={cn(
-                    "flex w-full items-center justify-center px-4 py-2.5 text-sm transition-colors",
+                    "flex h-7 w-full items-center justify-center rounded-xl px-3 text-[13px] transition-colors",
                     activeTier === t.id
                       ? "bg-secondary/70 text-foreground"
                       : "text-muted-foreground hover:bg-secondary/50",

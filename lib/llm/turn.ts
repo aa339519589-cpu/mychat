@@ -4,6 +4,7 @@
 import { upstreamError } from './stream'
 import { makeContentFilter, parseDsmlToolCalls } from './sanitize'
 import type { Emit } from './events'
+import { buildProviderRequest, type ProviderAdapterId } from './provider-adapters'
 
 export type ToolCall = { id: string; name: string; args: string }
 
@@ -23,18 +24,20 @@ export type TurnResult = {
 export async function runTurn(
   url: string, apiKey: string, model: string,
   messages: any[], tools: any[], emit: Emit,
-  opts?: { thinking?: boolean },
+  opts?: { thinking?: boolean; adapter?: ProviderAdapterId },
 ): Promise<TurnResult> {
-  const body: any = { model, messages, stream: true }
-  body.thinking = { type: opts?.thinking ? 'enabled' : 'disabled' }
-  body.max_tokens = 65536
-  body.stream_options = { include_usage: true }
-  if (tools.length) { body.tools = tools; body.tool_choice = 'auto' }
+  const request = buildProviderRequest(opts?.adapter ?? 'deepseek-openai', {
+    model,
+    messages,
+    tools,
+    thinking: !!opts?.thinking,
+    apiKey,
+  })
 
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify(body),
+    headers: request.headers,
+    body: JSON.stringify(request.body),
   })
   if (!res.ok || !res.body) {
     emit({ error: upstreamError(res.status, await res.text()) })

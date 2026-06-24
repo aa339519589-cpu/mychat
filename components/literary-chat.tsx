@@ -29,7 +29,7 @@ import { PanelLeft, Folder, ChevronDown, Star, Pin, Pencil, Trash2, X, Check, Ch
 import { parseArtifact, artifactTitle } from "@/lib/artifact"
 import { ArtifactPanel } from "@/components/artifact-panel"
 
-type HistoryMsg = { role: string; content: string; images?: string[] }
+type HistoryMsg = { id?: string; role: string; content: string; images?: string[]; imageSummary?: string; ts?: string }
 
 export function LiteraryChat() {
   const [user, setUser] = useState<User | null>(null)
@@ -291,6 +291,14 @@ export function LiteraryChat() {
               }))
               continue
             }
+            if (data.imageSummary) {
+              const { messageId, summary } = data.imageSummary
+              setConversations(prev => prev.map(c => c.id !== convId ? c : {
+                ...c,
+                messages: c.messages.map(m => m.id === messageId ? { ...m, imageSummary: summary } : m),
+              }))
+              continue
+            }
             if (data.error) {
               hadError = true
               setConversations(prev => prev.map(c => c.id !== convId ? c : {
@@ -377,15 +385,17 @@ export function LiteraryChat() {
         draftIdRef.current = null
         setConversations(prev => prev.map(c => c.id === draftId ? { ...c, id: realId } : c))
         setActiveId(realId)
-        insertMessage(user.id, realId, userMsg)
+        await insertMessage(user.id, realId, userMsg)
       } else {
-        insertMessage(user.id, convId, userMsg)
+        await insertMessage(user.id, convId, userMsg)
       }
 
       const history = [...baseHistory, userMsg].map(m => ({
+        id: m.id,
         role: m.role,
         content: m.content,
         ...(m.images?.length ? { images: m.images } : {}),
+        ...(m.imageSummary ? { imageSummary: m.imageSummary } : {}),
         ...(m.ts ? { ts: m.ts } : {}),
       }))
 
@@ -416,8 +426,9 @@ export function LiteraryChat() {
 
     // 历史 = 最后一条 AI 消息之前的所有消息
     const historyBeforeAi = msgs.slice(0, lastAiIdx).map(m => ({
-      role: m.role, content: m.content,
+      id: m.id, role: m.role, content: m.content,
       ...(m.images?.length ? { images: m.images } : {}),
+      ...(m.imageSummary ? { imageSummary: m.imageSummary } : {}),
       ...(m.ts ? { ts: m.ts } : {}),
     }))
 

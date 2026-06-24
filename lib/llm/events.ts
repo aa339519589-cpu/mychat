@@ -17,6 +17,8 @@ export type SearchEvent = {
 // Code 板块：一步操作的进度提示（浏览/读取/写入/部署/记忆…）
 export type StepEvent = { kind: string; label: string }
 
+export type ImageSummaryEvent = { messageId: string; summary: string }
+
 // Code 板块：加入「待执行计划」的动作，前端展示供用户确认
 export type CodePlan =
   | { kind: 'create_repo'; name: string; description: string; private: boolean }
@@ -31,6 +33,7 @@ export type ChatEvent =
   | { error: string }
   | { memory: MemoryEvent }
   | { search: SearchEvent }
+  | { imageSummary: ImageSummaryEvent }
   | { step: StepEvent }
   | { plan: CodePlan }
 

@@ -5,6 +5,7 @@
 // 无工具调用则结束 → 若结束时仍带工具调用，补一轮纯文本 → （可选）length 截断自动续写。
 import { runTurn, type TurnResult } from './turn'
 import type { Emit } from './events'
+import type { ProviderAdapterId } from './provider-adapters'
 
 // 执行单个工具，返回回灌给模型的文字；工具自身需要的前端事件由实现内部 emit。
 export type ExecuteTool = (name: string, input: any) => Promise<string>
@@ -15,6 +16,7 @@ export type AgentLoopOpts = {
   url: string
   apiKey: string
   model: string
+  adapter?: ProviderAdapterId
   thinking: boolean
   messages: any[]            // 原地追加 assistant / tool 消息
   tools: any[]               // provider 格式的工具数组（空数组 = 不带工具）
@@ -30,21 +32,21 @@ export type AgentLoopOpts = {
 }
 
 export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: number }> {
-  const { url, apiKey, model, thinking, messages: msgs, tools, emit, executeTool, maxRounds, leakedRetry, autoContinue, onTurn } = opts
+  const { url, apiKey, model, adapter, thinking, messages: msgs, tools, emit, executeTool, maxRounds, leakedRetry, autoContinue, onTurn } = opts
   let totalTokens = 0
   let retriedNoTools = false
   let lastHadToolCalls = false
   let lastTurn: TurnResult | null = null
 
   for (let round = 0; round < maxRounds; round++) {
-    let turn = await runTurn(url, apiKey, model, msgs, tools, emit, { thinking })
+    let turn = await runTurn(url, apiKey, model, msgs, tools, emit, { thinking, adapter })
     totalTokens += turn.totalTokens
     onTurn?.({ phase: 'round', round, turn })
 
     // 工具协议泄漏成正文、又没有结构化工具调用、过滤后没正文 → 该 provider 此刻工具不可靠，关工具重试一轮
     if (leakedRetry && turn.leaked && turn.toolCalls.length === 0 && !turn.content.trim() && !retriedNoTools && !turn.failed) {
       retriedNoTools = true
-      turn = await runTurn(url, apiKey, model, msgs, [], emit, { thinking })
+      turn = await runTurn(url, apiKey, model, msgs, [], emit, { thinking, adapter })
       totalTokens += turn.totalTokens
       onTurn?.({ phase: 'leaked-retry', round, turn })
     }
@@ -63,7 +65,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
 
   // 轮次用完但最后一轮还有工具调用 → 补一轮纯文本请求，确保有完整回复
   if (lastHadToolCalls) {
-    lastTurn = await runTurn(url, apiKey, model, msgs, [], emit, { thinking })
+    lastTurn = await runTurn(url, apiKey, model, msgs, [], emit, { thinking, adapter })
     totalTokens += lastTurn.totalTokens
     onTurn?.({ phase: 'final-text', turn: lastTurn })
   }
@@ -76,7 +78,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
       cont++
       msgs.push({ role: 'assistant', content: cur.content })
       msgs.push({ role: 'user', content: '紧接上文继续输出剩余内容，不要重复已经写过的部分，也不要加任何开场白。' })
-      cur = await runTurn(url, apiKey, model, msgs, [], emit, { thinking })
+      cur = await runTurn(url, apiKey, model, msgs, [], emit, { thinking, adapter })
       totalTokens += cur.totalTokens
       onTurn?.({ phase: 'continue', round: cont, turn: cur })
     }

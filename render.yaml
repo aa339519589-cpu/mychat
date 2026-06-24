@@ -9,6 +9,8 @@ services:
         value: 20
       - key: PORT
         value: 3000
+      - key: MIMO_API_KEY
+        sync: false
       - key: TAVILY_API_KEY
         value: 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
       - key: NEXT_PUBLIC_SUPABASE_URL
