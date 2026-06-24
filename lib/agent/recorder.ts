@@ -81,7 +81,6 @@ export function createRecorder(ctx: RecordCtx) {
     if ("id" in pending) tcId = pending.id
 
     // 执行工具
-    const start = Date.now()
     let output: string
     let status: string = "success"
     let error: string | undefined
@@ -93,8 +92,6 @@ export function createRecorder(ctx: RecordCtx) {
       status = "error"
       error = e?.message ?? String(e)
     }
-
-    const durationMs = Date.now() - start
 
     // 完成记录
     if (tcId) {

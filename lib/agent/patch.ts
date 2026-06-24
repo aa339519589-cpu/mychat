@@ -1,17 +1,16 @@
 // apply_patch：统一 diff 的 dry-run 和 apply，基于 git apply
 // 所有 patch 操作在 workspace 内执行，经过安全校验
 
-import { existsSync, readFileSync } from "fs"
-import { join } from "path"
+import { existsSync } from "fs"
 import { execSync } from "child_process"
 import type { SupabaseClient } from "@supabase/supabase-js"
-import { workspaceRoot, getWorkspaceDiff, getChangedFiles } from "./workspace"
+import { workspaceRoot, getWorkspaceDiff } from "./workspace"
 import { createWorkspaceSnapshot } from "./snapshot"
 import { validatePath, redactSensitive } from "./path-security"
 
 // ───────────── 类型 ─────────────
 
-export type PatchFile = {
+type PatchFile = {
   path: string
   oldPath?: string  // rename/copy from
   mode: "add" | "modify" | "delete" | "rename" | "unknown"
@@ -30,7 +29,7 @@ export type PatchResult = {
 
 // ───────────── 解析 patch 中的文件列表 ─────────────
 
-export function parsePatchFiles(patch: string): PatchFile[] {
+function parsePatchFiles(patch: string): PatchFile[] {
   const files: PatchFile[] = []
   const lines = patch.split("\n")
 
@@ -96,7 +95,7 @@ export function parsePatchFiles(patch: string): PatchFile[] {
 
 // ───────────── 安全校验 patch ─────────────
 
-export function validatePatchSafety(
+function validatePatchSafety(
   taskId: string,
   userId: string,
   patch: string,
@@ -223,45 +222,5 @@ export async function applyWorkspacePatch(
     changedFiles: dry.changedFiles,
     dryRun: false,
     diffSummary: redactSensitive(diff).slice(0, 10000) || "Patch 已应用（无 diff 输出）",
-  }
-}
-
-// ───────────── 生成当前 workspace 的 diff（以 patch 格式）─────────────
-
-export function getWorkspacePatch(taskId: string, userId: string): string {
-  const root = workspaceRoot(taskId, userId)
-  if (!existsSync(root)) return ""
-
-  try {
-    let patch = ""
-    // 已跟踪文件的 diff
-    try {
-      patch = execSync("git diff --no-color HEAD", {
-        cwd: root, timeout: 30_000, maxBuffer: 4 * 1024 * 1024, encoding: "utf-8",
-      })
-    } catch {}
-
-    // 追加未跟踪文件
-    try {
-      const untrackedOut = execSync("git ls-files --others --exclude-standard", {
-        cwd: root, timeout: 10_000, maxBuffer: 256 * 1024, encoding: "utf-8",
-      }).trim()
-
-      if (untrackedOut) {
-        const files = untrackedOut.split("\n").filter(Boolean)
-        for (const f of files) {
-          try {
-            const abs = join(root, f)
-            const content = readFileSync(abs, "utf-8")
-            const lines = content.split("\n")
-            patch += `\ndiff --git a/${f} b/${f}\nnew file mode 100644\nindex 0000000..0000000\n--- /dev/null\n+++ b/${f}\n@@ -0,0 +1,${lines.length} @@\n${lines.map(l => `+${l}`).join("\n")}\n`
-          } catch { /* skip binary */ }
-        }
-      }
-    } catch {}
-
-    return redactSensitive(patch)
-  } catch {
-    return ""
   }
 }

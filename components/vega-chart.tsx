@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useEffectEvent, useRef, useState } from "react"
 import vegaEmbed from "vega-embed"
 import { Maximize2, X } from "lucide-react"
 
@@ -10,7 +10,7 @@ export function VegaChart({ spec, done }: { spec: string; done: boolean }) {
   const [zoom, setZoom] = useState(false)
   const [error, setError] = useState(false)
 
-  const renderChart = (container: HTMLDivElement | null) => {
+  const renderChart = useEffectEvent((container: HTMLDivElement | null) => {
     if (!container || !spec.trim()) return
 
     try {
@@ -49,7 +49,7 @@ export function VegaChart({ spec, done }: { spec: string; done: boolean }) {
       console.error("JSON parse error:", err)
       setError(true)
     }
-  }
+  })
 
   useEffect(() => {
     renderChart(containerRef.current)

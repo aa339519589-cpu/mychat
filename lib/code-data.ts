@@ -2,7 +2,7 @@
 // 受 RLS 隔离（用户只能读写自己的）。主聊天侧栏永远不碰这些表。
 import { createClient } from "@/lib/supabase/client"
 
-export type CodeRole = "user" | "assistant"
+type CodeRole = "user" | "assistant"
 
 // AI 规划的一个动作（建仓库 / 写文件 / 删文件 / 上线），等用户确认或自动执行
 export type PlanAction =
@@ -61,19 +61,9 @@ export async function createCodeSession(userId: string, repo: string, title: str
   return error ? null : id
 }
 
-export async function updateCodeSessionTitle(id: string, title: string) {
-  const supabase = createClient()
-  await supabase.from("code_sessions").update({ title, updated_at: new Date().toISOString() }).eq("id", id)
-}
-
 export async function touchCodeSession(id: string) {
   const supabase = createClient()
   await supabase.from("code_sessions").update({ updated_at: new Date().toISOString() }).eq("id", id)
-}
-
-export async function deleteCodeSession(id: string) {
-  const supabase = createClient()
-  await supabase.from("code_sessions").delete().eq("id", id)
 }
 
 // ───────────── 消息 ─────────────

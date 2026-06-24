@@ -1,7 +1,6 @@
 "use client"
 
 import { useMemo, useRef, useState, useEffect } from "react"
-import { createPortal } from "react-dom"
 import { type Conversation, type Message, type Tier, TIERS, TIER_MAP } from "@/lib/chat-data"
 import { type Memory } from "@/lib/memory-data"
 import {
@@ -14,7 +13,7 @@ import {
   fetchProjects, insertProject, updateProject, deleteProjectRow,
   fetchProjectFiles, insertProjectFile, deleteProjectFileRow, fetchProjectContext,
   fetchProjectMemories, insertProjectMemory, updateProjectMemory, deleteProjectMemoryRow,
-} from "@/lib/db"
+} from "@/lib/data"
 import { type AttachedFile, prepareFile } from "@/lib/file-extract"
 import type { Project, ProjectFile, ProjectContext } from "@/lib/project-data"
 import { AppSidebar } from "@/components/app-sidebar"
@@ -25,9 +24,10 @@ import { LoginScreen } from "@/components/login-screen"
 import { createClient } from "@/lib/supabase/client"
 import type { User } from "@supabase/supabase-js"
 import { cn } from "@/lib/utils"
-import { PanelLeft, Folder, ChevronDown, Star, Pin, Pencil, Trash2, X, Check, ChevronLeft } from "lucide-react"
+import { PanelLeft, Folder, ChevronDown } from "lucide-react"
 import { parseArtifact, artifactTitle } from "@/lib/artifact"
 import { ArtifactPanel } from "@/components/artifact-panel"
+import { ConversationMenu, ConversationRename } from "@/components/conversation-menu"
 
 type HistoryMsg = { id?: string; role: string; content: string; images?: string[]; imageSummary?: string; ts?: string }
 
@@ -45,7 +45,6 @@ export function LiteraryChat() {
   const [webSearch, setWebSearch] = useState(false)
   const [deepResearch, setDeepResearch] = useState(false)
   const [activeTier, setActiveTier] = useState<Tier>("绝句")
-  const [replyTo, setReplyTo] = useState<string | null>(null)
   const [openArtifactId, setOpenArtifactId] = useState<string | null>(null)
   // 顶部对话菜单（Claude 式「项目名 / 标题 ⌄」）：触发按钮锚点 + 顶部就地改名
   const [headerMenuAnchor, setHeaderMenuAnchor] = useState<{ bottom: number; left: number } | null>(null)
@@ -405,7 +404,6 @@ export function LiteraryChat() {
       const fullReply = await runAiStream(history, msgId, convId, controller, files?.length ? files : undefined, projectCtx)
 
       if (isFirstExchange && fullReply) generateTitle(convId, text, fullReply)
-      setReplyTo(null)
     } catch (e) {
       console.error("handleSend failed", e)
       setIsLoading(false)
@@ -452,11 +450,6 @@ export function LiteraryChat() {
       console.error("handleRegenerate failed", e)
       setIsLoading(false)
     }
-  }
-
-  // ── 引用回复 ──
-  function handleReply(text: string) {
-    setReplyTo(text.slice(0, 400))
   }
 
   async function handleDelete(id: string) {
@@ -682,10 +675,11 @@ export function LiteraryChat() {
           </button>
 
           {headerRenaming && active ? (
-            <HeaderRename
-              title={active.title}
+            <ConversationRename
+              value={active.title}
               onCommit={t => { if (t.trim()) handleRenameConversation(active.id, t.trim()); setHeaderRenaming(false) }}
               onCancel={() => setHeaderRenaming(false)}
+              className="min-w-0 flex-1 rounded-lg bg-secondary/60 px-3 py-1.5 text-sm outline-none focus:bg-secondary/80"
             />
           ) : active ? (
             <button
@@ -723,7 +717,6 @@ export function LiteraryChat() {
             <MessageList
               conversation={active}
               onRegenerate={handleRegenerate}
-              onReply={handleReply}
               isLoading={isLoading}
               onOpenArtifact={setOpenArtifactId}
               openArtifactId={openArtifactId}
@@ -749,8 +742,6 @@ export function LiteraryChat() {
           onDeepResearchChange={setDeepResearch}
           isLoading={isLoading}
           onStop={handleStop}
-          replyTo={replyTo}
-          onClearReply={() => setReplyTo(null)}
         />
       </main>
     )
@@ -813,115 +804,19 @@ export function LiteraryChat() {
       </div>
 
       {active && !active.draft && headerMenuAnchor && (
-        <HeaderConvMenu
-          conv={active}
+        <ConversationMenu
+          conversation={active}
           anchor={headerMenuAnchor}
           projects={projects}
           onClose={() => setHeaderMenuAnchor(null)}
           onToggleStar={() => { handleToggleStar(active.id); setHeaderMenuAnchor(null) }}
           onTogglePin={() => { handleTogglePin(active.id); setHeaderMenuAnchor(null) }}
-          onStartRename={() => { setHeaderMenuAnchor(null); setHeaderRenaming(true) }}
-          onAddToProject={pid => { handleAddToProject(active.id, pid); setHeaderMenuAnchor(null) }}
+          onRename={() => { setHeaderMenuAnchor(null); setHeaderRenaming(true) }}
+          onMove={pid => { handleAddToProject(active.id, pid); setHeaderMenuAnchor(null) }}
           onDelete={() => { handleDelete(active.id); setHeaderMenuAnchor(null) }}
         />
       )}
     </>
-  )
-}
-
-// 顶部就地改名：标题区变输入框，回车提交、失焦提交、Esc 取消
-function HeaderRename({ title, onCommit, onCancel }: {
-  title: string
-  onCommit: (t: string) => void
-  onCancel: () => void
-}) {
-  const [val, setVal] = useState(title)
-  const doneRef = useRef(false)
-  useEffect(() => { setVal(title) }, [title])
-  return (
-    <input
-      autoFocus
-      value={val}
-      onChange={e => setVal(e.target.value)}
-      onKeyDown={e => {
-        if (e.key === "Enter") { e.preventDefault(); doneRef.current = true; onCommit(val) }
-        if (e.key === "Escape") { doneRef.current = true; onCancel() }
-      }}
-      onBlur={() => { if (!doneRef.current) onCommit(val) }}
-      className="min-w-0 flex-1 rounded-lg bg-secondary/60 px-3 py-1.5 text-sm outline-none focus:bg-secondary/80"
-    />
-  )
-}
-
-// 顶部对话菜单（锚定 ⌄ 的弹层，portal 到 body）：收藏 / 改名 / 加入项目 / 置顶 / 删除
-function HeaderConvMenu({ conv, anchor, projects, onClose, onToggleStar, onTogglePin, onStartRename, onAddToProject, onDelete }: {
-  conv: Conversation
-  anchor: { bottom: number; left: number }
-  projects: Project[]
-  onClose: () => void
-  onToggleStar: () => void
-  onTogglePin: () => void
-  onStartRename: () => void
-  onAddToProject: (projectId: string | null) => void
-  onDelete: () => void
-}) {
-  const [picker, setPicker] = useState(false)
-  const [shown, setShown] = useState(false)
-  useEffect(() => { const r = requestAnimationFrame(() => setShown(true)); return () => cancelAnimationFrame(r) }, [])
-  if (typeof document === "undefined") return null
-
-  const left = Math.min(anchor.left, window.innerWidth - 248)
-  const pos: React.CSSProperties = { position: "fixed", left: Math.max(8, left), top: anchor.bottom + 6 }
-
-  return createPortal(
-    <div className="fixed inset-0 z-[80]" onClick={onClose}>
-      <div
-        onClick={e => e.stopPropagation()}
-        style={pos}
-        className={cn(
-          "w-max min-w-[148px] max-w-[192px] overflow-hidden rounded-2xl bg-popover p-0.5 shadow-xl ring-1 ring-black/5 transition-all duration-150 ease-out",
-          shown ? "scale-100 opacity-100" : "scale-95 opacity-0",
-        )}
-      >
-        {!picker ? (
-          <>
-            <HeaderMenuRow icon={<Star className={cn("size-4", conv.starred && "fill-current text-primary")} />} label={conv.starred ? "取消收藏" : "收藏"} onClick={onToggleStar} />
-            <HeaderMenuRow icon={<Pencil className="size-4" />} label="重命名" onClick={onStartRename} />
-            <HeaderMenuRow icon={<Folder className="size-4" />} label="加入项目" onClick={() => setPicker(true)} />
-            <HeaderMenuRow icon={<Pin className="size-4" />} label={conv.pinned ? "取消置顶" : "置顶"} onClick={onTogglePin} />
-            <div className="my-1 border-t border-border/50" />
-            <HeaderMenuRow icon={<Trash2 className="size-4" />} label="删除" danger onClick={onDelete} />
-          </>
-        ) : (
-          <>
-            <button onClick={() => setPicker(false)} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-[13px] text-muted-foreground transition-colors hover:bg-secondary/60">
-              <ChevronLeft className="size-4" />加入项目
-            </button>
-            <div className="max-h-[44vh] overflow-y-auto">
-              {conv.projectId && (
-                <HeaderMenuRow icon={<X className="size-4" />} label="移出当前项目" onClick={() => onAddToProject(null)} />
-              )}
-              {projects.filter(p => p.id !== conv.projectId).map(p => (
-                <HeaderMenuRow key={p.id} icon={<Folder className="size-4" />} label={p.name} onClick={() => onAddToProject(p.id)} />
-              ))}
-              {projects.filter(p => p.id !== conv.projectId).length === 0 && !conv.projectId && (
-                <p className="px-3 py-4 text-center text-[12px] italic text-muted-foreground/70">还没有项目</p>
-              )}
-            </div>
-          </>
-        )}
-      </div>
-    </div>,
-    document.body,
-  )
-}
-
-function HeaderMenuRow({ icon, label, onClick, danger }: { icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean }) {
-  return (
-    <button onClick={onClick} className={cn("flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors active:scale-[0.98]", danger ? "text-destructive hover:bg-destructive/10" : "text-foreground hover:bg-secondary/60")}>
-      <span className={cn("shrink-0", danger ? "text-destructive" : "text-muted-foreground")}>{icon}</span>
-      <span className="truncate">{label}</span>
-    </button>
   )
 }
 

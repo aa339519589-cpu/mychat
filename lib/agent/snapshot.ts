@@ -383,14 +383,6 @@ export async function restoreWorkspaceSnapshot(
   if (!patch) {
     // 尝试读取本地 metadata 获取文件列表
     let fileList: string[] = []
-    const localMetaPath = join(snapDir, `${snapshotId}.json`)
-    if (existsSync(localMetaPath)) {
-      try {
-        const meta = JSON.parse(readFileSync(localMetaPath, "utf-8"))
-        // 如果 meta 里有之前 git diff 的信息可以提取文件列表
-      } catch {}
-    }
-
     // 尝试从 artifact meta 获取文件列表
     if (supabase && !fileList.length) {
       const fetched = await fetchSnapshotFromArtifact(supabase, userId, taskId, snapshotId)

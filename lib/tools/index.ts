@@ -18,11 +18,6 @@ export function activeTools(flags: ToolFlags): ToolDef[] {
   return ALL_TOOLS.filter(t => t.enabled(flags))
 }
 
-// 转成 Anthropic 的工具格式
-export function toAnthropicTools(tools: ToolDef[]) {
-  return tools.map(t => ({ name: t.name, description: t.description, input_schema: t.schema }))
-}
-
 // 转成 OpenAI / 兼容协议的工具格式
 export function toOpenAITools(tools: ToolDef[]) {
   return tools.map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.schema } }))

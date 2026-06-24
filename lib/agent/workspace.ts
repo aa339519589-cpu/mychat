@@ -2,7 +2,7 @@
 // 所有操作经过 path-security 校验，修改前自动 snapshot
 
 import {
-  readFileSync, writeFileSync, unlinkSync, existsSync, statSync,
+  readFileSync, writeFileSync, unlinkSync, existsSync,
   readdirSync, mkdirSync,
 } from "fs"
 import { join, dirname, relative } from "path"
@@ -206,60 +206,6 @@ export async function deleteWorkspaceFile(
   }
 }
 
-// ───────────── 批量删除（带安全阈值）─────────────
-
-import { checkDeleteThreshold, validateMultiplePaths } from "./path-security"
-
-export async function deleteWorkspaceFiles(
-  taskId: string,
-  userId: string,
-  rawPaths: string[],
-  supabase?: SupabaseClient,
-): Promise<WorkspaceResult<{ deleted: string[]; errors: string[]; diff: string }>> {
-  if (!rawPaths.length) return { ok: false, error: "没有要删除的文件" }
-
-  const root = workspaceRoot(taskId, userId)
-
-  // 安全检查
-  const threshold = checkDeleteThreshold(rawPaths.length, rawPaths)
-  if (!threshold.ok) {
-    return { ok: false, error: threshold.reason ?? "删除文件过多" }
-  }
-
-  const multi = validateMultiplePaths(root, rawPaths)
-  if (!multi.ok) return { ok: false, error: multi.error! }
-
-  // 自动 snapshot
-  const snap = await createWorkspaceSnapshot(taskId, userId, `auto: before delete ${rawPaths.length} files`, supabase)
-  if (!snap.ok) return { ok: false, error: `Snapshot 失败，拒绝删除：${snap.error}` }
-
-  const deleted: string[] = []
-  const errors: string[] = []
-
-  for (const chk of multi.checks) {
-    try {
-      if (existsSync(chk.absolute!)) {
-        unlinkSync(chk.absolute!)
-        deleted.push(chk.normalized!)
-      } else {
-        errors.push(`${chk.normalized}: 文件不存在`)
-      }
-    } catch (err: any) {
-      errors.push(`${chk.normalized}: ${err?.message}`)
-    }
-  }
-
-  const diff = getWorkspaceDiff(taskId, userId)
-  return {
-    ok: true,
-    data: {
-      deleted,
-      errors,
-      diff: typeof diff === "string" ? redactSensitive(diff) : "",
-    },
-  }
-}
-
 // ───────────── 列出 workspace 文件 ─────────────
 
 export function listWorkspaceFiles(
@@ -330,7 +276,7 @@ export function getWorkspaceDiff(taskId: string, userId: string): string {
 
 // ───────────── 获取单个文件 diff ─────────────
 
-export function getFileDiff(workspacePath: string, relPath: string): string {
+function getFileDiff(workspacePath: string, relPath: string): string {
   const abs = join(workspacePath, relPath)
   try {
     // 判断是否被 git 跟踪
@@ -416,38 +362,6 @@ export function getChangedFiles(taskId: string, userId: string): WorkspaceResult
   }
 }
 
-// ───────────── 恢复单个文件到 git HEAD ─────────────
-
-export function revertWorkspaceFile(
-  taskId: string,
-  userId: string,
-  rawPath: string,
-): WorkspaceResult<{ path: string }> {
-  const root = workspaceRoot(taskId, userId)
-  const chk = validatePath(root, rawPath)
-  if (!chk.ok) return { ok: false, error: chk.error! }
-
-  const abs = chk.absolute!
-  if (!existsSync(abs)) return { ok: false, error: `文件不存在：${chk.normalized}` }
-
-  try {
-    execSync(`git checkout -- "${chk.normalized}"`, {
-      cwd: root,
-      timeout: 10_000,
-      encoding: "utf-8",
-    })
-  } catch (err: any) {
-    // 如果文件未被 git 跟踪，直接删除
-    if (err?.stderr?.includes("did not match any file")) {
-      try { unlinkSync(abs) } catch { /* ignore */ }
-    } else {
-      return { ok: false, error: `恢复失败：${err?.stderr || err?.message}` }
-    }
-  }
-
-  return { ok: true, data: { path: chk.normalized! } }
-}
-
 // ───────────── 检查 workspace 是否存在且 ready ─────────────
 
 export { workspaceRoot }
@@ -504,8 +418,5 @@ export async function createWorkspaceForTask(
 
   return wsInfo
 }
-
-// compat: re-export for remote consumers
-export { getGitInfo } from "./git-workspace"
 
 const MAX_FILE_SIZE = 2 * 1024 * 1024 // 2MB

@@ -15,7 +15,7 @@ function toBeijingTime(iso: string): string {
   return `${Y}-${M}-${D} ${h}:${m} 北京时间`
 }
 
-export function textFromRawContent(content: unknown): string {
+function textFromRawContent(content: unknown): string {
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) return ''
   return content

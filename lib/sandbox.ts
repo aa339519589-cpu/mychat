@@ -13,6 +13,19 @@ const ALLOWED_COMMANDS = [
 const TIMEOUT_MS = 15_000
 const MAX_OUTPUT_LENGTH = 50_000
 
+function sandboxEnv(): NodeJS.ProcessEnv {
+  return {
+    PATH: process.env.PATH,
+    HOME: process.env.HOME,
+    TMPDIR: process.env.TMPDIR,
+    LANG: process.env.LANG,
+    LC_ALL: process.env.LC_ALL,
+    USER: process.env.USER,
+    SHELL: process.env.SHELL,
+    NODE_ENV: process.env.NODE_ENV,
+  }
+}
+
 export interface SandboxResult {
   stdout: string
   stderr: string
@@ -33,11 +46,9 @@ export function runInSandbox(command: string, files?: Record<string, string>): S
     }
   }
 
-  let tmpDir: string | null = null
+  const tmpDir = mkdtempSync(join(tmpdir(), 'sandbox-'))
   try {
-    // 如果有文件要写入，建临时目录
     if (files && Object.keys(files).length > 0) {
-      tmpDir = mkdtempSync(join(tmpdir(), 'sandbox-'))
       for (const [path, content] of Object.entries(files)) {
         const fullPath = join(tmpDir, path)
         const dir = fullPath.substring(0, fullPath.lastIndexOf('/'))
@@ -48,16 +59,14 @@ export function runInSandbox(command: string, files?: Record<string, string>): S
       }
     }
 
-    const startTime = Date.now()
     const buf = execSync(cmdTrimmed, {
-      cwd: tmpDir ?? undefined,
+      cwd: tmpDir,
+      env: sandboxEnv(),
       timeout: TIMEOUT_MS,
       maxBuffer: MAX_OUTPUT_LENGTH,
       stdio: ['pipe', 'pipe', 'pipe'],
     })
     const stdout = buf.toString('utf-8')
-    const elapsed = Date.now() - startTime
-
     return {
       stdout: stdout.slice(0, MAX_OUTPUT_LENGTH),
       stderr: '',
@@ -83,8 +92,6 @@ export function runInSandbox(command: string, files?: Record<string, string>): S
       timedOut,
     }
   } finally {
-    if (tmpDir) {
-      try { rmSync(tmpDir, { recursive: true, force: true }) } catch { /* 清理失败静默 */ }
-    }
+    try { rmSync(tmpDir, { recursive: true, force: true }) } catch { /* 清理失败静默 */ }
   }
 }

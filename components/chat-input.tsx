@@ -2,7 +2,7 @@
 
 import { useRef, useState, useEffect } from "react"
 import { cn } from "@/lib/utils"
-import { ChevronDown, X, Loader2, Plus, ImageIcon, FileText, Globe, ArrowUp, Square, CornerUpLeft, Camera, Check, Microscope } from "lucide-react"
+import { ChevronDown, X, Loader2, Plus, ImageIcon, FileText, Globe, ArrowUp, Square, Camera, Check, Microscope } from "lucide-react"
 import { TIERS, TIER_MAP, type Tier } from "@/lib/chat-data"
 import { prepareFile, type AttachedFile } from "@/lib/file-extract"
 import { modelSupportsImageInput } from "@/lib/llm/models"
@@ -12,7 +12,6 @@ export function ChatInput({
   webSearch, onWebSearchChange,
   deepResearch, onDeepResearchChange,
   isLoading, onStop,
-  replyTo, onClearReply,
 }: {
   onSend: (text: string, images?: string[], files?: AttachedFile[]) => void
   activeTier: Tier
@@ -24,8 +23,6 @@ export function ChatInput({
   onDeepResearchChange: (on: boolean) => void
   isLoading: boolean
   onStop: () => void
-  replyTo: string | null
-  onClearReply: () => void
 }) {
   const [value, setValue] = useState("")
   const ref = useRef<HTMLTextAreaElement>(null)
@@ -76,8 +73,7 @@ export function ChatInput({
   function submit() {
     const text = value.trim()
     if (!text && images.length === 0 && files.length === 0) return
-    const finalText = replyTo ? `> ${replyTo.replace(/\n/g, '\n> ').slice(0, 300)}\n\n${text}` : text
-    onSend(finalText, images.length > 0 ? images : undefined, files.length > 0 ? files : undefined)
+    onSend(text, images.length > 0 ? images : undefined, files.length > 0 ? files : undefined)
     setValue("")
     setImages([])
     setFiles([])
@@ -136,22 +132,10 @@ export function ChatInput({
       <input ref={fileInputRef} type="file" accept=".pdf,.txt,.md,.csv,.json,.log,.xml,.html,.yaml,.yml,text/*,application/pdf" multiple className="hidden"
         onChange={e => { handleFiles(e.target.files); e.currentTarget.value = "" }} />
 
-      {/* 引用回复条 */}
-      {replyTo && (
-        <div className="mb-2 flex items-start gap-2 rounded-xl border-l-2 border-primary/40 bg-muted/30 pl-3 pr-2 py-2">
-          <CornerUpLeft className="size-3.5 mt-0.5 shrink-0 text-primary/50" />
-          <span className="flex-1 text-xs text-muted-foreground line-clamp-2 leading-relaxed">{replyTo}</span>
-          <button onClick={onClearReply} className="rounded p-0.5 hover:bg-muted transition-colors">
-            <X className="size-3 text-muted-foreground" />
-          </button>
-        </div>
-      )}
-
       {images.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-2 px-1">
           {images.map((img, i) => (
             <div key={i} className="relative">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={img} alt="" className="size-16 rounded-xl object-cover border border-border/50" />
               <button
                 onClick={() => setImages(prev => prev.filter((_, j) => j !== i))}

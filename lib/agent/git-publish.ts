@@ -1,12 +1,13 @@
 // Git Publish 模块：workspace 改动 → agent branch → commit → push → PR
 // 安全原则：禁止推 main，禁止 force push，禁止 token 泄露
 
-import { existsSync, readFileSync } from "fs"
+import { existsSync } from "fs"
 import { execSync } from "child_process"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { workspaceRoot, getChangedFiles, getWorkspaceDiff } from "./workspace"
-import { getTaskDetail, getWorkspaceByTaskId, updateTaskStatus, addStep, addArtifact } from "./data"
+import { getTaskDetail, updateTaskStatus, addStep, addArtifact } from "./data"
 import { redactSensitive } from "./path-security"
+import { classifyFileRisk, isProtectedBranch } from "./risk"
 
 // ───────────── 类型 ─────────────
 
@@ -59,57 +60,15 @@ export type PublishResult = {
 
 // ───────────── 内部工具 ─────────────
 
-function sanitizeBranchName(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9\-_]/g, "-")
-    .replace(/-{2,}/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 60)
-}
-
-const FORBIDDEN_BRANCHES = ["main", "master", "production", "prod", "release"]
-
-function isForbiddenBranch(branch: string): boolean {
-  return FORBIDDEN_BRANCHES.includes(branch.toLowerCase().trim())
-}
-
-const HIGH_RISK_PATTERNS = [
-  /\.env(\..*)?$/,
-  /\.pem$/,
-  /\.key$/,
-  /\.pfx$/,
-  /\.p12$/,
-  /\.jks$/,
-  /\.keystore$/,
-  /credentials/i,
-  /private.?key/i,
-]
-
-const MEDIUM_RISK_PATTERNS = [
-  /^\.github\/workflows\//,
-  /^supabase\/migrations\//,
-  /package-lock\.json$/,
-  /pnpm-lock\.yaml$/,
-  /yarn\.lock$/,
-  /auth\//i,
-  /payment/i,
-]
-
 const AGENT_GIT_NAME = "mychat-agent"
 const AGENT_GIT_EMAIL = "mychat-agent@users.noreply.github.com"
 
 function checkRiskFiles(files: string[]): { blocked: string[]; warnings: string[] } {
-  const blocked: string[] = []
-  const warnings: string[] = []
-  for (const f of files) {
-    if (HIGH_RISK_PATTERNS.some(p => p.test(f))) {
-      blocked.push(f)
-    } else if (MEDIUM_RISK_PATTERNS.some(p => p.test(f))) {
-      warnings.push(f)
-    }
+  const risk = classifyFileRisk(files)
+  return {
+    blocked: risk.blocked ? risk.files : [],
+    warnings: risk.needsConfirmation ? risk.files : [],
   }
-  return { blocked, warnings }
 }
 
 function gitCommitEnv(): NodeJS.ProcessEnv {
@@ -215,7 +174,7 @@ export async function commitWorkspaceChanges(
     return { ok: false, error: "无法获取当前分支" }
   }
 
-  if (isForbiddenBranch(currentBranch)) {
+  if (isProtectedBranch(currentBranch)) {
     return { ok: false, error: `禁止在 ${currentBranch} 分支上 commit，请先切换到 agent branch` }
   }
 
@@ -350,7 +309,7 @@ export async function pushAgentBranch(
     return { ok: false, error: "无法获取当前分支" }
   }
 
-  if (isForbiddenBranch(currentBranch)) {
+  if (isProtectedBranch(currentBranch)) {
     return { ok: false, error: `禁止推送 ${currentBranch} 分支` }
   }
 
@@ -361,7 +320,6 @@ export async function pushAgentBranch(
   if (!repo) return { ok: false, error: "任务未关联仓库" }
 
   // 检查 remote
-  let remoteName = "origin"
   try {
     const remotes = execSync("git remote", { cwd: root, timeout: 5000, encoding: "utf-8" }).trim()
     if (!remotes) {
@@ -435,7 +393,7 @@ export async function createWorkspacePullRequest(
     }
   }
 
-  if (isForbiddenBranch(headBranch)) {
+  if (isProtectedBranch(headBranch)) {
     return { ok: false, error: `禁止从 ${headBranch} 创建 PR` }
   }
 

@@ -3,21 +3,15 @@
 
 // ───────────── 任务 ─────────────
 
-export type AgentTaskMode = "auto" | "confirm" | "plan"
+type AgentTaskMode = "auto" | "confirm" | "plan"
 
-export type AgentTaskStatus =
+type AgentTaskStatus =
   | "queued"
   | "planning"
-  | "indexing"
-  | "reading"
   | "editing"
   | "running"
-  | "testing"
-  | "fixing"
-  | "reviewing"
   | "waiting_for_user"
   | "creating_pr"
-  | "deploying"
   | "completed"
   | "failed"
   | "cancelled"
@@ -42,14 +36,9 @@ export type AgentTask = {
   commitSha: string | null
 }
 
-export type AgentTaskSummary = Pick<
-  AgentTask,
-  "id" | "goal" | "mode" | "repo" | "status" | "error" | "createdAt" | "startedAt" | "finishedAt"
->
-
 // ───────────── 步骤 ─────────────
 
-export type StepKind = "info" | "thinking" | "plan" | "tool_call" | "confirm" | "error" | "done"
+type StepKind = "info" | "thinking" | "plan" | "tool_call" | "confirm" | "error" | "done"
 
 export type AgentTaskStep = {
   id: string
@@ -64,7 +53,7 @@ export type AgentTaskStep = {
 
 // ───────────── 工具调用 ─────────────
 
-export type ToolCallStatus = "pending" | "running" | "success" | "error" | "cancelled"
+type ToolCallStatus = "pending" | "running" | "success" | "error" | "cancelled"
 
 export type AgentToolCall = {
   id: string
@@ -85,7 +74,7 @@ export type AgentToolCall = {
 
 // ───────────── Workspace ─────────────
 
-export type WorkspaceStatus = "created" | "cloning" | "ready" | "dirty" | "failed" | "cleaned"
+type WorkspaceStatus = "created" | "cloning" | "ready" | "dirty" | "failed" | "cleaned"
 
 export type AgentWorkspace = {
   id: string
@@ -102,7 +91,7 @@ export type AgentWorkspace = {
 
 // ───────────── 产物 ─────────────
 
-export type ArtifactKind = "diff" | "log" | "screenshot" | "build_report" | "test_report" | "deploy_link" | "pr_link" | "pr" | "deploy" | "file" | "summary" | "other"
+type ArtifactKind = "diff" | "log" | "screenshot" | "build_report" | "test_report" | "deploy_link" | "pr_link" | "pr" | "deploy" | "file" | "summary" | "other"
 
 export type AgentArtifact = {
   id: string

@@ -20,11 +20,6 @@ export type ConfirmationRequest = {
   taskStatusAfterConfirm?: string   // 确认后恢复到什么状态
 }
 
-export type ConfirmationResult = {
-  confirmed: boolean
-  rejectionReason?: string
-}
-
 // ─── 创建确认请求 ───
 
 export async function createConfirmationRequest(
@@ -116,19 +111,20 @@ export async function getPendingConfirmation(
   return null
 }
 
-// ─── 确认操作 ───
+type ResolutionResult = { ok: boolean; error?: string; request?: ConfirmationRequest }
 
-export async function confirmAgentOperation(
+async function resolveConfirmation(
   supabase: SupabaseClient,
   userId: string,
   taskId: string,
   confirmationId: string,
-): Promise<{ ok: boolean; error?: string; request?: ConfirmationRequest }> {
+  status: "confirmed" | "rejected",
+  reason?: string,
+): Promise<ResolutionResult> {
   const pending = await getPendingConfirmation(supabase, userId, taskId)
   if (!pending) return { ok: false, error: "没有待确认的操作" }
   if (pending.id !== confirmationId) return { ok: false, error: "确认 ID 不匹配" }
 
-  // 更新 meta
   const { data } = await supabase
     .from("agent_tasks")
     .select("meta")
@@ -137,7 +133,8 @@ export async function confirmAgentOperation(
     .single()
 
   const meta = (data?.meta ?? {}) as Record<string, unknown>
-  meta.pendingConfirmation = { ...pending, status: "confirmed" }
+  const request: ConfirmationRequest = { ...pending, status }
+  meta.pendingConfirmation = request
 
   await supabase
     .from("agent_tasks")
@@ -145,78 +142,36 @@ export async function confirmAgentOperation(
     .eq("id", taskId)
     .eq("user_id", userId)
 
-  // 恢复 task status
-  const restoreStatus = pending.taskStatusAfterConfirm ?? "running"
-  await updateTaskStatus(supabase, userId, taskId, restoreStatus)
+  const confirmed = status === "confirmed"
+  await Promise.all([
+    updateTaskStatus(supabase, userId, taskId, confirmed ? (pending.taskStatusAfterConfirm ?? "running") : "waiting_for_user"),
+    addStep(supabase, userId, taskId, {
+      kind: "confirm",
+      label: confirmed ? "用户确认" : "用户拒绝",
+      detail: `${confirmed ? "已确认" : "已拒绝"}：${pending.title}${reason ? `（${reason}）` : ""}`,
+    }),
+    addArtifact(supabase, userId, {
+      taskId,
+      kind: "summary",
+      title: confirmed ? "Confirmed" : "Rejected",
+      content: `用户${confirmed ? "确认" : "拒绝"}了操作：${pending.title}${reason ? ` — ${reason}` : ""}`,
+      meta: { confirmationId, operation: pending.operation },
+    }),
+  ])
 
-  // 写 step
-  await addStep(supabase, userId, taskId, {
-    kind: "confirm",
-    label: "用户确认",
-    detail: `已确认：${pending.title}`,
-  })
-
-  // 写 artifact
-  await addArtifact(supabase, userId, {
-    taskId,
-    kind: "summary",
-    title: "Confirmed",
-    content: `用户确认了操作：${pending.title}`,
-    meta: { confirmationId, operation: pending.operation },
-  })
-
-  return { ok: true, request: { ...pending, status: "confirmed" } }
+  return { ok: true, request }
 }
 
-// ─── 拒绝操作 ───
+export function confirmAgentOperation(
+  supabase: SupabaseClient, userId: string, taskId: string, confirmationId: string,
+): Promise<ResolutionResult> {
+  return resolveConfirmation(supabase, userId, taskId, confirmationId, "confirmed")
+}
 
-export async function rejectAgentOperation(
-  supabase: SupabaseClient,
-  userId: string,
-  taskId: string,
-  confirmationId: string,
-  reason?: string,
-): Promise<{ ok: boolean; error?: string; request?: ConfirmationRequest }> {
-  const pending = await getPendingConfirmation(supabase, userId, taskId)
-  if (!pending) return { ok: false, error: "没有待确认的操作" }
-  if (pending.id !== confirmationId) return { ok: false, error: "确认 ID 不匹配" }
-
-  // 更新 meta
-  const { data } = await supabase
-    .from("agent_tasks")
-    .select("meta")
-    .eq("id", taskId)
-    .eq("user_id", userId)
-    .single()
-
-  const meta = (data?.meta ?? {}) as Record<string, unknown>
-  meta.pendingConfirmation = { ...pending, status: "rejected" }
-
-  await supabase
-    .from("agent_tasks")
-    .update({ meta, updated_at: new Date().toISOString() })
-    .eq("id", taskId)
-    .eq("user_id", userId)
-
-  // 保持 waiting_for_user（用户可以重新发起）
-  await updateTaskStatus(supabase, userId, taskId, "waiting_for_user")
-
-  // 写 step
-  await addStep(supabase, userId, taskId, {
-    kind: "confirm",
-    label: "用户拒绝",
-    detail: `已拒绝：${pending.title}${reason ? `（${reason}）` : ""}`,
-  })
-
-  await addArtifact(supabase, userId, {
-    taskId,
-    kind: "summary",
-    title: "Rejected",
-    content: `用户拒绝了操作：${pending.title}${reason ? ` — ${reason}` : ""}`,
-    meta: { confirmationId, operation: pending.operation },
-  })
-
-  return { ok: true, request: { ...pending, status: "rejected" } }
+export function rejectAgentOperation(
+  supabase: SupabaseClient, userId: string, taskId: string, confirmationId: string, reason?: string,
+): Promise<ResolutionResult> {
+  return resolveConfirmation(supabase, userId, taskId, confirmationId, "rejected", reason)
 }
 
 // ─── 清理已完成的 confirmation ───

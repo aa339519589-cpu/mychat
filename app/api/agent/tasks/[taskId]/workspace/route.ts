@@ -3,17 +3,14 @@
 import { NextRequest } from "next/server"
 import { cookies } from "next/headers"
 import { resolveAuth } from "@/lib/api/guard"
+import { json } from "@/lib/api/response"
 import { createWorkspaceForTask, workspacePath } from "@/lib/agent/workspace"
 import { getGitInfo } from "@/lib/agent/git-workspace"
 import { repoMeta } from "@/lib/github"
 import { existsSync } from "fs"
 import { createRecorder } from "@/lib/agent/recorder"
 
-function json(obj: unknown, status = 200): Response {
-  return new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } })
-}
-
-export async function POST(req: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
+export async function POST(_req: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
   const auth = await resolveAuth()
   if (!auth.supabase || !auth.userId) return json({ error: "未登录" }, 401)
 

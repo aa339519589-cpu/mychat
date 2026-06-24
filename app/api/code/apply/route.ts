@@ -4,17 +4,12 @@ import { resolveAuth } from '@/lib/api/guard'
 import { getTaskDetail } from '@/lib/agent/data'
 import { publishWorkspaceToPullRequest, getWorkspaceGitStatus } from '@/lib/agent/git-publish'
 import { existsSync } from 'fs'
-import { workspaceRoot, createWorkspaceForTask } from '@/lib/agent/workspace'
+import { createWorkspaceForTask } from '@/lib/agent/workspace'
+import type { PlanAction } from '@/lib/code-data'
 
 // 用户在 Code 里点「确认」(或自动模式)后调用：
 //   - 有 taskId + ready workspace → 发布为 Pull Request
-//   - 无 taskId / 无 workspace → 旧行为（直推默认分支）
-export type PlanAction =
-  | { kind: 'create_repo'; name: string; description?: string; private?: boolean }
-  | { kind: 'write_file'; path: string; newContent: string }
-  | { kind: 'delete_file'; path: string }
-  | { kind: 'enable_pages' }
-
+//   - 无 taskId → 仅允许创建新仓库并完成首次提交
 export async function POST(req: Request) {
   const store = await cookies()
   const token = store.get('gh_access_token')?.value
@@ -112,12 +107,15 @@ export async function POST(req: Request) {
     })
   }
 
-  // ── 无 taskId：旧行为（直推默认分支）──
+  // 无 taskId 只允许新建仓库；已有仓库必须走 workspace PR。
   if (!Array.isArray(actions) || actions.length === 0) {
     return Response.json({ error: '没有要执行的改动' }, { status: 400 })
   }
+  const createAction = actions.find(a => a.kind === 'create_repo') as Extract<PlanAction, { kind: 'create_repo' }> | undefined
+  if (!createAction) {
+    return Response.json({ error: '已有仓库必须通过 workspace 创建 Pull Request' }, { status: 400 })
+  }
 
-  // ── 旧行为：直推默认分支 ──
   const writes = actions.filter(a => a.kind === 'write_file') as Extract<PlanAction, { kind: 'write_file' }>[]
   const deletes = actions.filter(a => a.kind === 'delete_file') as Extract<PlanAction, { kind: 'delete_file' }>[]
   if (writes.length + deletes.length > 20) return Response.json({ error: '单次最多改动 20 个文件' }, { status: 400 })
@@ -126,31 +124,11 @@ export async function POST(req: Request) {
 
   const result: { repoUrl?: string; pagesUrl?: string; commitSha?: string; repo?: string; created?: boolean } = {}
 
-  let targetRepo = sessionRepo
-  let targetBranch: string | null = null
-
-  // 1) 新建仓库（若有）
-  const createAction = actions.find(a => a.kind === 'create_repo') as Extract<PlanAction, { kind: 'create_repo' }> | undefined
-  if (createAction) {
-    const r = await createRepo(token, createAction.name, createAction.description ?? '', !!createAction.private)
-    if ('error' in r) return Response.json({ error: r.error }, { status: 502 })
-    targetRepo = r.fullName
-    targetBranch = r.defaultBranch
-    result.repoUrl = r.htmlUrl
-    result.repo = r.fullName
-    result.created = true
-  }
-
-  if (!targetRepo) return Response.json({ error: '没有目标仓库（请先选仓库，或让 AI 新建一个）' }, { status: 400 })
-
-  // 解析默认分支 + 校验写权限
-  if (!targetBranch) {
-    const meta = await repoMeta(token, targetRepo)
-    if (!meta) return Response.json({ error: '仓库访问失败' }, { status: 502 })
-    if (!meta.canPush) return Response.json({ error: '你对该仓库没有写入权限' }, { status: 403 })
-    targetBranch = meta.defaultBranch
-  }
-  result.repo = targetRepo
+  const created = await createRepo(token, createAction.name, createAction.description ?? '', !!createAction.private)
+  if ('error' in created) return Response.json({ error: created.error }, { status: 502 })
+  const targetRepo = created.fullName
+  const targetBranch = created.defaultBranch
+  Object.assign(result, { repoUrl: created.htmlUrl, repo: targetRepo, created: true })
 
   // 2) 文件改动打成一个原子提交
   if (writes.length || deletes.length) {

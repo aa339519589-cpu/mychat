@@ -75,7 +75,7 @@ export function ArtifactFrame({
   const [height, setHeight] = useState(40)
   const [ready, setReady] = useState(false)
   const finalizedRef = useRef(false)
-  const colors = useMemo(readTheme, [])
+  const colors = useMemo(() => readTheme(), [])
   const srcDoc = useMemo(() => bootstrap(colors, inline), [colors, inline])
 
   useEffect(() => {

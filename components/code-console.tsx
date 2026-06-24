@@ -185,7 +185,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
   }
 
   async function enterRepo(full: string | null) {
-    setRepo(full); setEntered(true); setSessionId(null); setMessages([]); setPendingPlan([]); setApplyError(null); setWorkspaceDirty(false)
+    setRepo(full); setEntered(true); setSessionId(null); setMessages([]); setPendingPlan([]); setApplyError(null); setCurrentTaskId(null); setWorkspaceDirty(false)
     // 恢复该仓库最近一次会话的上下文（退出再进不重置）
     if (full) {
       const sessions = await fetchCodeSessions(full)
@@ -198,7 +198,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
 
   // 在当前仓库内开启全新对话（旧对话仍可用 /resume 找回）
   function startNewSession() {
-    setSessionId(null); setMessages([]); setPendingPlan([]); setApplyError(null); setWorkspaceDirty(false); setOverlay(null)
+    setSessionId(null); setMessages([]); setPendingPlan([]); setApplyError(null); setCurrentTaskId(null); setWorkspaceDirty(false); setOverlay(null)
   }
 
   function toggleAuto() { setAuto(v => { const n = !v; try { localStorage.setItem("code_auto", n ? "1" : "0") } catch {} ; return n }) }
@@ -213,14 +213,12 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
   async function publishWorkspacePR() {
     if (!currentTaskId || !repo) return
     setApplying(true); setApplyError(null)
-    console.log('[CodeConsole] publishWorkspacePR → /api/code/apply', { taskId: currentTaskId, repo, mode: "workspace_pr" })
     try {
       const res = await fetch("/api/code/apply", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ repo, taskId: currentTaskId, actions: [], mode: "workspace_pr" }),
       })
       const data = await res.json()
-      console.log('[CodeConsole] publishWorkspacePR response', { ok: res.ok, status: res.status, mode: data?.mode, prUrl: data?.pullRequestUrl, error: data?.error })
       if (res.ok) {
         const result = data as ApplyResult
         const lastAi = [...messages].reverse().find(m => m.role === "assistant")
@@ -242,11 +240,9 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
 
   // ── 执行计划：直接推送（用户已选）──
   async function applyPlan(plan: PlanAction[], aiMsgId: string) {
-    if (!plan.length && !currentTaskId && !workspaceDirty) return  // workspace 模式允许空 plan
+    if (!plan.length) return
     setApplying(true); setApplyError(null)
-    console.log('[CodeConsole] applyPlan called', { planLen: plan.length, currentTaskId, workspaceDirty, repo })
     try {
-      const created = plan.find(a => a.kind === "create_repo") as Extract<PlanAction, { kind: "create_repo" }> | undefined
       // 提取 git commit message：跳过对话碎片行，取第一条有实质内容的行
           const lines = (messages.find(m => m.id === aiMsgId)?.content || "").split("\n").map(l => l.trim()).filter(Boolean)
           const conversationalPrefix = /^(好的|我来|让我|先|这个|那个|嗯|哦|好|可以|收到|明白|懂了|行|OK|ok|OK\.|Yes|yes|Sure|sure|Let|let|I'll|I will)/
@@ -254,13 +250,11 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
           const summary = commitLine.slice(0, 80) || "Claude 代码改动"
       const res = await fetch("/api/code/apply", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ repo, actions: plan, message: summary, taskId: workspaceDirty ? currentTaskId : null }),
+        body: JSON.stringify({ repo, actions: plan, message: summary }),
       })
       const data = await res.json()
-      console.log('[CodeConsole] applyPlan response', { ok: res.ok, status: res.status, mode: data?.mode, error: data?.error })
       if (res.ok) {
         const result = data as ApplyResult
-        console.log('[CodeConsole] applyPlan OK', { mode: result.mode, prUrl: result.pullRequestUrl, branch: result.branch })
         if (result.created && result.repo) { setRepo(result.repo); setRepos(null) }
         setMessages(prev => prev.map(m => m.id === aiMsgId ? { ...m, result } : m))
         setPendingPlan([])
@@ -307,7 +301,6 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
         })
         if (tres.ok) {
           const t = await tres.json()
-          console.log('[CodeConsole] POST /api/agent/tasks response', { ok: tres.ok, id: t?.id, error: t?.error })
           if (t.id) { taskId = t.id; setCurrentTaskId(taskId) }
         } else {
           console.error('[CodeConsole] POST /api/agent/tasks failed', tres.status)
@@ -316,7 +309,6 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
         console.error('[CodeConsole] POST /api/agent/tasks exception', e)
       }
     }
-    console.log('[CodeConsole] runSend', { repo, taskId })
     // 注意：taskId 创建失败不 return — 消息已显示，降级为无 workspace 模式
 
     const history = [...messages, userMsg].map(m => ({ role: m.role, content: m.content }))
@@ -356,7 +348,6 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
             const d = JSON.parse(line.slice(6))
             if (d.taskId) {
               // 后端兜底创建的 taskId → 前端同步
-              console.log('[CodeConsole] received taskId from backend', d.taskId)
               setCurrentTaskId(d.taskId)
               taskId = d.taskId  // 更新本地变量，后续 workspace 检测用
             }
@@ -406,9 +397,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       const gitRes = await fetch(`/api/agent/tasks/${taskId}/workspace/git`)
       if (gitRes.ok) {
         const gitStatus = await gitRes.json()
-        console.log('[CodeConsole] workspace git status', { hasChanges: gitStatus.hasChanges, files: gitStatus.changedFiles?.length })
         if (gitStatus.hasChanges) {
-          console.log('[CodeConsole] ✅ workspaceDirty → true')
           setWorkspaceDirty(true)
         }
       }
@@ -473,7 +462,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
   return (
     <Shell onExit={() => { setEntered(false); setGhMenu(false) }} login={login} repo={repo} onSwitchRepo={() => { setEntered(false); setGhMenu(false) }}
       onGhMenu={() => setGhMenu(true)} ghMenu={ghMenu} onCloseGh={() => setGhMenu(false)} onDisconnect={disconnect}
-      auto={auto} onToggleAuto={toggleAuto}>
+      auto={repo ? undefined : auto} onToggleAuto={repo ? undefined : toggleAuto}>
       <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-5 md:px-8" style={{ fontFamily: MONO }}>
         <div className="mx-auto max-w-3xl min-w-0 space-y-4">
           {messages.length === 0 && (
@@ -488,17 +477,13 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       </div>
 
       {/* Workspace PR 按钮 — 独立于模型决策，检测到 diff 即显示 */}
-      {currentTaskId && repo && workspaceDirty && !auto && (
+      {currentTaskId && repo && workspaceDirty && (
         <div className="border-t border-border bg-secondary/40 px-4 py-3 md:px-8">
           <div className="mx-auto max-w-3xl">
             {applyError && <p className="mb-2 text-[12px] leading-relaxed text-destructive">{applyError}</p>}
             <div className="flex items-center gap-3">
             <span className="text-[12px] text-foreground" style={{ fontFamily: MONO }}>Workspace 已修改，可发布为 Pull Request</span>
             <div className="ml-auto flex gap-2">
-              <button onClick={() => { setWorkspaceDirty(false); setApplyError(null) }} disabled={applying}
-                className="flex items-center gap-1 rounded-lg border border-border px-3 py-1.5 text-[12px] text-muted-foreground transition-colors hover:bg-secondary">
-                <X className="size-3.5" />放弃
-              </button>
               <button onClick={publishWorkspacePR} disabled={applying}
                 className="flex items-center gap-1 rounded-lg px-3.5 py-1.5 text-[12px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
                 style={{ background: ACCENT }}>
@@ -685,6 +670,7 @@ function Shell({ children, onExit, repo, login, onSwitchRepo, onGhMenu, ghMenu, 
 
 // ── 单条消息 ──
 function MessageView({ m, login, streaming }: { m: CodeMessage; login: string; streaming: boolean }) {
+  const [stepsOpen, setStepsOpen] = useState(false)
   if (m.role === "user")
     return (
       <div className="border-t border-b py-1" style={{ borderColor: ACCENT }}>
@@ -696,8 +682,6 @@ function MessageView({ m, login, streaming }: { m: CodeMessage; login: string; s
   const steps = m.steps ?? []
   const readCount = steps.filter(s => s.kind === "read" || s.kind === "list").length
   const notableSteps = steps.filter(s => s.kind !== "read" && s.kind !== "list")
-  const [stepsOpen, setStepsOpen] = useState(false)
-
   return (
     <div className="space-y-1.5">
       {/* 流式进行中 + 还没正文：点阵 + 计时合并 */}
@@ -783,7 +767,6 @@ function MessageView({ m, login, streaming }: { m: CodeMessage; login: string; s
 
 function ResultCard({ r }: { r: ApplyResult }) {
   const isPR = r.mode === "workspace_pr"
-  console.log('[CodeConsole] ResultCard', { mode: r.mode, isPR, prUrl: r.pullRequestUrl, branch: r.branch, sha: r.commitSha })
   if (isPR) {
     return (
       <div className="mt-1 space-y-1.5 rounded-lg border px-3 py-2.5 text-[12px] min-w-0" style={{ borderColor: "#3fb950", background: "color-mix(in oklab, #3fb950 8%, transparent)" }}>

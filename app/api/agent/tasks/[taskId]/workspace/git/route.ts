@@ -3,8 +3,8 @@
 
 import { NextRequest } from "next/server"
 import { cookies } from "next/headers"
-import { resolveAuth } from "@/lib/api/guard"
-import { getTaskDetail, addStep, addArtifact, updateTaskStatus } from "@/lib/agent/data"
+import { json } from "@/lib/api/response"
+import { requireWorkspace } from "@/lib/agent/workspace-route"
 import {
   getWorkspaceGitStatus,
   commitWorkspaceChanges,
@@ -15,29 +15,15 @@ import {
 import { classifyPublishRisk } from "@/lib/agent/risk"
 import { createConfirmationRequest, getPendingConfirmation, clearConfirmation } from "@/lib/agent/permissions"
 
-function json(obj: unknown, status = 200): Response {
-  return new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } })
-}
-
 async function getContext(taskId: string) {
-  const auth = await resolveAuth()
-  const supabase = auth.supabase
-  const userId = auth.userId
-  if (!supabase || !userId) return { error: json({ error: "未登录" }, 401) }
-
-  const detail = await getTaskDetail(supabase, userId, taskId)
-  if (!("workspace" in detail)) return { error: json(detail, 404) }
-
-  const ws = detail.workspace
-  if (!ws || (ws.status !== "ready" && ws.status !== "dirty")) {
-    return { error: json({ error: "Workspace 未就绪" }, 400) }
-  }
+  const ctx = await requireWorkspace(taskId)
+  if ("error" in ctx) return ctx
 
   const tokenStore = await cookies()
   const ghToken = tokenStore.get("gh_access_token")?.value
   if (!ghToken) return { error: json({ error: "未连接 GitHub" }, 401) }
 
-  return { supabase, userId, detail, ws, ghToken }
+  return { ...ctx, ghToken }
 }
 
 // ─── GET：git status ───

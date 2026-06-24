@@ -5,17 +5,17 @@ import { send, done, networkError } from '@/lib/llm/stream'
 import { toOpenAI, chatCompletionsUrl } from '@/lib/llm/openai'
 import { runAgentLoop, type ExecuteTool } from '@/lib/llm/agent-loop'
 import type { Emit } from '@/lib/llm/events'
-import { listTree, readFile, repoMeta, ghHeaders } from '@/lib/github'
+import { listTree, readFile, repoMeta } from '@/lib/github'
 import { log } from '@/lib/logger'
 import { validate } from '@/lib/validation'
 import { addQuotaUsage } from '@/lib/quota'
 import { resolveAuth, enforceLimits } from '@/lib/api/guard'
 import { runInSandbox } from '@/lib/sandbox'
 import { runInWorkspace } from '@/lib/agent/shell'
-import { createRecorder, type RecordCtx } from '@/lib/agent/recorder'
+import { createRecorder } from '@/lib/agent/recorder'
 import {
   writeWorkspaceFile, editWorkspaceFile, deleteWorkspaceFile,
-  getWorkspaceDiff, getChangedFiles, readWorkspaceFile,
+  getChangedFiles, readWorkspaceFile,
   createWorkspaceForTask,
 } from '@/lib/agent/workspace'
 import { applyWorkspacePatch, dryRunWorkspacePatch } from '@/lib/agent/patch'
@@ -26,11 +26,9 @@ const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY ?? ''
 const DEEPSEEK_BASE_URL = 'https://api.deepseek.com'
 const TAVILY_API_KEY = process.env.TAVILY_API_KEY ?? ''
 
-// Agent 不设轮次上限——让它跑到任务完成自然停。
-// 9999 仅作为防止死循环的安全兜底，实际操作中模型完成使命自然会停下。
-const SAFETY_ROUNDS = 9999
+const SAFETY_ROUNDS = 32
 
-function buildCodeSystem(repo: string | null, defaultBranch: string | null, login: string, memories: string[], goal: boolean, hasWorkspace: boolean): string {
+function buildCodeSystem(repo: string | null, login: string, memories: string[], goal: boolean, hasWorkspace: boolean): string {
   const wsSection = hasWorkspace ? `
 🚫 你已进入 Workspace 模式。你没有直接推 main 的能力，也没有 GitHub 认证信息。
 你唯一能做的发布方式：完成文件修改 → 展示 diff → 让用户点击底部「确认并创建 PR」按钮。
@@ -98,12 +96,31 @@ ${hasWorkspace
   return s
 }
 
+function commandOutput(result: {
+  stdout?: string
+  stderr?: string
+  error?: string | null
+  exitCode?: number | null
+  timedOut?: boolean
+  blocked?: boolean
+  blockedReason?: string
+}): string {
+  if (result.blocked) return `命令被拦截：${result.blockedReason}`
+  const output = [
+    result.stdout && `标准输出：\n${result.stdout}`,
+    result.stderr && `标准错误：\n${result.stderr}`,
+    result.error && `错误：${result.error}`,
+    result.timedOut && '命令执行超时',
+    result.exitCode && `退出码：${result.exitCode}`,
+  ].filter(Boolean)
+  return output.join('\n') || '执行完成（无输出）'
+}
+
 export async function POST(req: NextRequest) {
   let body: any = {}
   try { body = await req.json() } catch { return new Response(JSON.stringify({ error: '请求体格式错误' }), { status: 400 }) }
 
   const { repo = null, tier = '正构', goal = false, messages, taskId = null } = body
-  console.warn('[code/chat] request', { repo, taskId, hasRepo: !!repo, hasTaskId: !!taskId, goal })
   try {
     validate.array(messages, 'messages', { minLength: 1 })
     if (repo !== null && (typeof repo !== 'string' || !repo.includes('/'))) throw new Error('仓库参数无效')
@@ -141,7 +158,6 @@ export async function POST(req: NextRequest) {
       const { data: taskRow } = await supabase.from("agent_tasks")
         .select("id").eq("id", effectiveTaskId).eq("user_id", userId).single()
       if (!taskRow) {
-        console.warn('[code/chat] frontend taskId invalid, will create new one', { taskId: effectiveTaskId })
         effectiveTaskId = null
       }
     }
@@ -162,7 +178,6 @@ export async function POST(req: NextRequest) {
         return new Response(JSON.stringify({ error: `Agent Task 创建失败：${detail}` }), { status: 500 })
       }
       effectiveTaskId = newTask.id
-      console.warn('[code/chat] backend auto-created task', { taskId: effectiveTaskId, repo })
     }
   }
   const recorder = createRecorder({ supabase, userId, taskId: effectiveTaskId })
@@ -186,7 +201,6 @@ export async function POST(req: NextRequest) {
 
   // 3. 有 repo = 强制 workspace 模式。没有 repo = 新建项目 Plan 模式。
   const hasWorkspace = !!(repo && effectiveTaskId)
-  console.warn('[code/chat] mode decision', { repo, taskId: effectiveTaskId, hasWorkspace, fromFrontend: !!taskId })
 
   // 4. 强制确保 workspace 存在（在 stream 之前，不在 stream 内部）
   //    有 repo + task → 必须走 workspace。失败则硬停，绝不回退旧 Plan 模式。
@@ -200,7 +214,6 @@ export async function POST(req: NextRequest) {
       }
     }
     if (!wsPreReady) {
-      console.warn('[code/chat] pre-creating workspace for task', effectiveTaskId)
       try {
         const lastMsg = (messages as any[])[messages.length - 1]?.content?.slice(0, 200) || "代码改动"
         const result = await createWorkspaceForTask(
@@ -208,7 +221,6 @@ export async function POST(req: NextRequest) {
         )
         if (result && !("error" in result) && result.path && existsSync(result.path)) {
           wsPreReady = true
-          console.warn('[code/chat] workspace pre-created', { path: result.path, branch: result.agentBranch })
         } else if (result && "error" in result) {
           console.error('[code/chat] workspace pre-create failed', result.error)
         }
@@ -223,12 +235,12 @@ export async function POST(req: NextRequest) {
   }
 
   // 5. 构建系统提示词和工具（repo 存在 = 永远是 workspace 模式）
-  const SYSTEM = buildCodeSystem(repo, defaultBranch, login, memContents, !!goal, hasWorkspace)
+  const SYSTEM = buildCodeSystem(repo, login, memContents, !!goal, hasWorkspace)
   const url = chatCompletionsUrl(DEEPSEEK_BASE_URL)
 
   // 工具描述：有 repo 一律 workspace 话术
   const isWs = !!repo
-  const tools = [
+  const allTools = [
     { type: 'function', function: { name: 'list_files', description: isWs ? '列出 workspace 中的文件列表。' : '列出当前仓库完整文件路径列表。', parameters: { type: 'object', properties: {} } } },
     { type: 'function', function: { name: 'read_file', description: isWs ? '读取 workspace 中文件的完整内容。修改前必须先读。' : '读取当前仓库某文件的真实完整内容。修改前必须先读。', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } },
     { type: 'function', function: { name: 'create_repo', description: '新建一个 GitHub 仓库（做新项目时用）。', parameters: { type: 'object', properties: { name: { type: 'string', description: '英文小写连字符，如 pomodoro-timer' }, description: { type: 'string' }, private: { type: 'boolean', description: '是否私有，默认 false' } }, required: ['name'] } } },
@@ -242,6 +254,8 @@ export async function POST(req: NextRequest) {
     { type: 'function', function: { name: 'apply_patch', description: isWs ? '直接在 workspace 中应用 unified diff patch 批量修改代码（推荐！）。先传 dryRun: true 预览；确认后传 dryRun: false 执行。' : '应用 unified diff patch 批量修改代码。仅在 workspace 模式下可用。', parameters: { type: 'object', properties: { patch: { type: 'string', description: 'unified diff 格式的 patch 内容' }, dryRun: { type: 'boolean', description: '是否仅预览（dry-run），默认 false' } }, required: ['patch'] } } },
     ...(isWs ? [{ type: 'function', function: { name: 'publish', description: '声明所有文件改动已完成，通知用户点击「确认并创建 PR」按钮。平台后端会自动完成 git commit → push agent branch → 创建 Pull Request。不会直推 main。', parameters: { type: 'object', properties: {} } } }] : []),
   ]
+  const unavailable = new Set(isWs ? ['create_repo', 'enable_pages'] : ['apply_patch', 'publish'])
+  const tools = allTools.filter(tool => !unavailable.has(tool.function.name))
 
   const maxRounds = SAFETY_ROUNDS
 
@@ -261,7 +275,6 @@ export async function POST(req: NextRequest) {
       const wsReady = hasWorkspace && wsPreReady
       const wsTaskId = effectiveTaskId ?? ""
       const wsUserId = userId ?? ""
-      console.warn('[code/chat] stream start', { wsReady, wsTaskId, hasWorkspace, wsPreReady })
 
       const executeTool: ExecuteTool = async (name, input) => {
         if (name === 'list_files') {
@@ -273,7 +286,6 @@ export async function POST(req: NextRequest) {
             if (res.ok) return `Workspace 共 ${res.data.total} 个文件${res.data.truncated ? '（已截断）' : ''}：\n${res.data.files.join('\n')}`
             return `列出文件失败：${res.error}`
           }
-          if (!repo) return '尚未选择仓库。'
           if (!repo) return '尚未选择仓库。'
           emit({ step: { kind: 'list', label: '浏览仓库文件结构' } })
           const { paths, truncated } = await listTree(token!, repo, defaultBranch!)
@@ -408,67 +420,13 @@ export async function POST(req: NextRequest) {
           if (!command) return '缺少 command。'
           emit({ step: { kind: 'read', label: `执行：${command.slice(0, 60)}` } })
 
-          // 判断是否可能是重任务（构建/测试类）
-          const heavyPatterns = ['npm run build', 'npm test', 'npx tsc', 'npm run typecheck', 'npm run ci', 'make', 'npm install']
-          const isHeavy = heavyPatterns.some(p => command.startsWith(p))
-
-          if (isHeavy && repo && defaultBranch) {
-            // 试试 GitHub Actions dispatch
-            const treeRes = await fetch(`https://api.github.com/repos/${repo}/git/trees/${defaultBranch}?recursive=1`, {
-              headers: ghHeaders(token!)
-            }).catch(() => null)
-            if (treeRes?.ok) {
-              const tree = await treeRes.json()
-              const workflows = (tree.tree as any[])?.filter((item: any) =>
-                item.path?.startsWith('.github/workflows/') && item.type === 'blob'
-              ) ?? []
-              if (workflows.length > 0) {
-                const workflowPath = workflows[0].path
-                const dispatchRes = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/${encodeURIComponent(workflowPath)}/dispatches`, {
-                  method: 'POST',
-                  headers: ghHeaders(token!, true),
-                  body: JSON.stringify({ ref: defaultBranch, inputs: { command } }),
-                }).catch(() => null)
-                if (dispatchRes?.ok || dispatchRes?.status === 204) {
-                  // 轮询等结果（最多 60 秒）
-                  for (let i = 0; i < 30; i++) {
-                    await new Promise(r => setTimeout(r, 2000))
-                    const runsRes = await fetch(`https://api.github.com/repos/${repo}/actions/runs?branch=${defaultBranch}&per_page=1&event=workflow_dispatch`, {
-                      headers: ghHeaders(token!)
-                    }).catch(() => null)
-                    if (!runsRes?.ok) continue
-                    const runs = await runsRes.json()
-                    const run = (runs.workflow_runs as any[])?.[0]
-                    if (!run || run.status === 'queued' || run.status === 'in_progress') continue
-                    const conclusion = run.conclusion ?? 'unknown'
-                    const htmlUrl = run.html_url ?? ''
-                    const logsRes = await fetch(`https://api.github.com/repos/${repo}/actions/runs/${run.id}/logs`, {
-                      headers: ghHeaders(token!)
-                    }).catch(() => null)
-                    let logs = ''
-                    if (logsRes?.ok) {
-                      const text = await logsRes.text()
-                      logs = text.slice(0, 5000)
-                    }
-                    return `GitHub Actions 运行完成：${conclusion}\n查看详情：${htmlUrl}\n\n${logs}`
-                  }
-                  return `已触发 GitHub Actions，但未在 60 秒内完成。请手动查看结果：https://github.com/${repo}/actions`
-                }
-              }
-            }
-            // 没有 workflow 或 dispatch 失败，走沙箱
+          if (wsReady && supabase) {
+            const result = await runInWorkspace(supabase, wsUserId, wsTaskId, command)
+            return commandOutput(result)
           }
 
-          // 走沙箱（直接调用，不走 HTTP）
           try {
-            const result = runInSandbox(command)
-            let out = ''
-            if (result.stdout) out += `标准输出：\n${result.stdout}\n`
-            if (result.stderr) out += `标准错误：\n${result.stderr}\n`
-            if (result.error) out += `错误：${result.error}\n`
-            if (result.exitCode && result.exitCode !== 0) out += `退出码：${result.exitCode}`
-            if (!out) out = '执行完成（无输出）'
-            return out
+            return commandOutput(runInSandbox(command))
           } catch (err: any) {
             return `沙箱执行异常：${err?.message ?? '未知错误'}`
           }

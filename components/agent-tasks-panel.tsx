@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { X, ChevronLeft, Loader2, RefreshCw, Square, FileDiff, RotateCcw, GitBranch, ExternalLink, Send, CheckCircle, XCircle, Wrench, AlertTriangle, Shield } from "lucide-react"
+import { X, ChevronLeft, Loader2, RefreshCw, FileDiff, RotateCcw, GitBranch, ExternalLink, Send, CheckCircle, XCircle, Wrench, AlertTriangle, Shield } from "lucide-react"
 import type { AgentTask, AgentTaskDetail } from "@/lib/agent/types"
 import { cn } from "@/lib/utils"
 
@@ -91,17 +91,13 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
   const [publishing, setPublishing] = useState(false)
   const [publishResult, setPublishResult] = useState<{ ok: boolean; pr?: { pullRequestUrl?: string }; error?: string; stage?: string } | null>(null)
 
-  // Verification & fix-loop
+  // Verification
   type DetectedCmds = { packageManager: string; framework: string; confidence: number; installCommand: string | null; lintCommand: string | null; typecheckCommand: string | null; testCommand: string | null; buildCommand: string | null; notes: string[] }
   type VerifyStep = { name: string; command: string | null; skipped: boolean; skipReason?: string; passed: boolean; durationMs: number; parsedErrors: { totalErrors: number; totalWarnings: number; summary: string; errors: { file: string | null; line: number | null; message: string; severity: string }[] } }
   type VerifyData = { ok: boolean; steps: VerifyStep[]; failedStep: string | null; totalDurationMs: number; summary: string }
-  type FixLoopData = { ok: boolean; rounds: { round: number; beforeErrors: number; afterErrors: number; fixDescription: string }[]; totalRounds: number; rolledBack: boolean; rollbackReason?: string; summary: string }
-
   const [detectedCmds, setDetectedCmds] = useState<DetectedCmds | null>(null)
   const [verifyResult, setVerifyResult] = useState<VerifyData | null>(null)
   const [verifyLoading, setVerifyLoading] = useState(false)
-  const [fixLoopResult, setFixLoopResult] = useState<FixLoopData | null>(null)
-  const [fixLoopLoading, setFixLoopLoading] = useState(false)
   const [showVerify, setShowVerify] = useState(false)
 
   // Confirmation
@@ -167,7 +163,6 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
   const handleVerify = async (taskId: string) => {
     setVerifyLoading(true)
     setVerifyResult(null)
-    setFixLoopResult(null)
     try {
       const res = await fetch(`/api/agent/tasks/${taskId}/workspace/verify`, {
         method: "POST",
@@ -180,24 +175,6 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
       setVerifyResult({ ok: false, steps: [], failedStep: null, totalDurationMs: 0, summary: "请求失败" })
     } finally {
       setVerifyLoading(false)
-    }
-  }
-
-  const handleFixLoop = async (taskId: string) => {
-    setFixLoopLoading(true)
-    setFixLoopResult(null)
-    try {
-      const res = await fetch(`/api/agent/tasks/${taskId}/workspace/fix-loop`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ maxRounds: 2, autoFix: false }),
-      })
-      const data = await res.json()
-      setFixLoopResult(data)
-    } catch {
-      setFixLoopResult({ ok: false, rounds: [], totalRounds: 0, rolledBack: false, summary: "请求失败" })
-    } finally {
-      setFixLoopLoading(false)
     }
   }
 
@@ -509,14 +486,6 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
                       {verifyLoading ? <Loader2 className="size-3 animate-spin" /> : <CheckCircle className="size-3" />}
                       {verifyLoading ? "验证中" : "运行验证"}
                     </button>
-                    <button
-                      onClick={() => handleFixLoop(selected!)}
-                      disabled={fixLoopLoading}
-                      className="flex items-center gap-1 text-[11px] rounded px-2 py-1 bg-secondary/50 hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
-                    >
-                      {fixLoopLoading ? <Loader2 className="size-3 animate-spin" /> : <RotateCcw className="size-3" />}
-                      {fixLoopLoading ? "修复中" : "Fix Loop"}
-                    </button>
                   </div>
 
                   {/* Detected commands */}
@@ -548,20 +517,6 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
                     </div>
                   )}
 
-                  {/* Fix-loop result */}
-                  {fixLoopResult && (
-                    <div className={cn("text-[10px] rounded px-2 py-1", fixLoopResult.ok ? "bg-green-400/10" : fixLoopResult.rolledBack ? "bg-orange-400/10" : "bg-red-400/10")}>
-                      <div className="flex items-center gap-1 text-muted-foreground">
-                        {fixLoopResult.ok ? (
-                          <span className="text-green-400">修复完成：{fixLoopResult.totalRounds} 轮</span>
-                        ) : fixLoopResult.rolledBack ? (
-                          <span className="text-orange-400">已回滚：{fixLoopResult.rollbackReason?.slice(0, 60)}</span>
-                        ) : (
-                          <span className="text-red-400">{fixLoopResult.summary.slice(0, 80)}</span>
-                        )}
-                      </div>
-                    </div>
-                  )}
                 </div>
               )}
 

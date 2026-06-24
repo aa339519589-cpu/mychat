@@ -4,36 +4,17 @@
 
 import { NextRequest } from "next/server"
 import type { SupabaseClient } from "@supabase/supabase-js"
-import { resolveAuth } from "@/lib/api/guard"
-import { getTaskDetail, addStep, addArtifact } from "@/lib/agent/data"
+import { json } from "@/lib/api/response"
+import { addStep, addArtifact } from "@/lib/agent/data"
+import { requireWorkspace } from "@/lib/agent/workspace-route"
 import {
   writeWorkspaceFile,
   editWorkspaceFile,
   deleteWorkspaceFile,
   getChangedFiles,
 } from "@/lib/agent/workspace"
-import { classifyFileRisk, classifyDeleteRisk, classifyAgentRisk } from "@/lib/agent/risk"
+import { classifyAgentRisk } from "@/lib/agent/risk"
 import { createConfirmationRequest, getPendingConfirmation, clearConfirmation } from "@/lib/agent/permissions"
-
-function json(obj: unknown, status = 200): Response {
-  return new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } })
-}
-
-async function getContext(taskId: string) {
-  const auth = await resolveAuth()
-  const supabase = auth.supabase
-  const userId = auth.userId
-  if (!supabase || !userId) return { error: json({ error: "未登录" }, 401) }
-
-  const detail = await getTaskDetail(supabase, userId, taskId)
-  if (!("workspace" in detail)) return { error: json(detail, 404) }
-
-  const ws = detail.workspace
-  if (!ws || (ws.status !== "ready" && ws.status !== "dirty")) return { error: json({ error: "Workspace 未就绪" }, 400) }
-  if (!ws.path) return { error: json({ error: "Workspace 路径为空" }, 500) }
-
-  return { supabase, userId, detail, ws }
-}
 
 // 风险门禁：如果操作需要确认，创建 confirmation 并返回 waiting_for_user
 async function riskGate(
@@ -64,7 +45,7 @@ async function riskGate(
 // ─── POST：写文件 ───
 export async function POST(req: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
   const { taskId } = await params
-  const ctx = await getContext(taskId)
+  const ctx = await requireWorkspace(taskId, { path: true })
   if ("error" in ctx) return ctx.error
 
   let body: any = {}
@@ -108,7 +89,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tas
 // ─── PATCH：编辑文件 ───
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
   const { taskId } = await params
-  const ctx = await getContext(taskId)
+  const ctx = await requireWorkspace(taskId, { path: true })
   if ("error" in ctx) return ctx.error
 
   let body: any = {}
@@ -152,7 +133,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ ta
 // ─── DELETE：删除文件 ───
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
   const { taskId } = await params
-  const ctx = await getContext(taskId)
+  const ctx = await requireWorkspace(taskId, { path: true })
   if ("error" in ctx) return ctx.error
 
   const url = new URL(req.url)

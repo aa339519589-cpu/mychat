@@ -10,7 +10,7 @@ import type { ProviderAdapterId } from './provider-adapters'
 // 执行单个工具，返回回灌给模型的文字；工具自身需要的前端事件由实现内部 emit。
 export type ExecuteTool = (name: string, input: any) => Promise<string>
 
-export type TurnPhase = 'round' | 'leaked-retry' | 'final-text' | 'continue'
+type TurnPhase = 'round' | 'leaked-retry' | 'final-text' | 'continue'
 
 export type AgentLoopOpts = {
   url: string

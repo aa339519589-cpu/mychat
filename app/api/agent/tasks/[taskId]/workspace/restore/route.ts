@@ -1,32 +1,20 @@
 // POST /api/agent/tasks/[taskId]/workspace/restore — 恢复指定 snapshot
 
 import { NextRequest } from "next/server"
-import { resolveAuth } from "@/lib/api/guard"
-import { getTaskDetail, addStep, addArtifact } from "@/lib/agent/data"
+import { json } from "@/lib/api/response"
+import { addStep, addArtifact } from "@/lib/agent/data"
+import { requireWorkspace } from "@/lib/agent/workspace-route"
 import type { RestoreResult } from "@/lib/agent/types"
 import {
   restoreWorkspaceSnapshot,
   revertLastWorkspaceChange,
-  listWorkspaceSnapshots,
 } from "@/lib/agent/snapshot"
 import { getWorkspaceDiff, getChangedFiles } from "@/lib/agent/workspace"
 
-function json(obj: unknown, status = 200): Response {
-  return new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } })
-}
-
 export async function POST(req: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
   const { taskId } = await params
-  const auth = await resolveAuth()
-  const supabase = auth.supabase
-  const userId = auth.userId
-  if (!supabase || !userId) return json({ error: "未登录" }, 401)
-
-  const detail = await getTaskDetail(supabase, userId, taskId)
-  if (!("workspace" in detail)) return json(detail, 404)
-
-  const ws = detail.workspace
-  if (!ws || (ws.status !== "ready" && ws.status !== "dirty")) return json({ error: "Workspace 未就绪" }, 400)
+  const ctx = await requireWorkspace(taskId)
+  if ("error" in ctx) return ctx.error
 
   let body: any = {}
   try { body = await req.json() } catch { /* optional */ }
@@ -37,12 +25,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tas
   let result: RestoreResult
 
   if (useLast) {
-    result = await revertLastWorkspaceChange(taskId, userId, supabase)
+    result = await revertLastWorkspaceChange(taskId, ctx.userId, ctx.supabase)
   } else {
-    result = await restoreWorkspaceSnapshot(taskId, userId, snapshotId!, supabase)
+    result = await restoreWorkspaceSnapshot(taskId, ctx.userId, snapshotId!, ctx.supabase)
   }
 
-  await addStep(supabase, userId, taskId, {
+  await addStep(ctx.supabase, ctx.userId, taskId, {
     kind: "tool_call",
     label: result.ok ? "恢复 snapshot" : "恢复失败",
     detail: result.ok
@@ -51,10 +39,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tas
   })
 
   if (result.ok) {
-    const diff = getWorkspaceDiff(taskId, userId)
-    const changed = getChangedFiles(taskId, userId)
+    const diff = getWorkspaceDiff(taskId, ctx.userId)
+    const changed = getChangedFiles(taskId, ctx.userId)
 
-    await addArtifact(supabase, userId, {
+    await addArtifact(ctx.supabase, ctx.userId, {
       taskId,
       kind: "diff",
       title: `Restore: ${result.usedSource}`,

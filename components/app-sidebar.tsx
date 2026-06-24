@@ -13,7 +13,8 @@ import {
   MoreHorizontal, Star, Pin, Lock,
   Code2,
 } from "lucide-react"
-import { fetchQuota, type QuotaSnapshot } from "@/lib/db"
+import { fetchQuota, type QuotaSnapshot } from "@/lib/data"
+import { ConversationMenu, ConversationRename } from "@/components/conversation-menu"
 
 // 二级页面：除根视图（侧栏主体）外的可滑入全屏页面。设置＝真正的二级滑入页（带返回头）。
 type Screen = "settings" | "projects" | "artifacts" | "project-detail"
@@ -74,7 +75,6 @@ export function AppSidebar({
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
   const [actionConvId, setActionConvId] = useState<string | null>(null)   // 打开"更多菜单"的会话
   const [actionAnchor, setActionAnchor] = useState<Anchor | null>(null)   // ⋯ 按钮的位置
-  const [actionProjectPicker, setActionProjectPicker] = useState(false)   // 菜单内"添加进项目"二级
   const [renamingId, setRenamingId] = useState<string | null>(null)       // 正在改名的会话
   const [projectMenuAnchor, setProjectMenuAnchor] = useState<Anchor | null>(null) // 项目详情 ⋯ 菜单位置
   const [projectRenaming, setProjectRenaming] = useState(false)           // 项目详情顶部就地改名
@@ -86,8 +86,8 @@ export function AppSidebar({
   const pop = () => setStack(prev => prev.slice(0, -1))
   const openProject = (id: string) => { setSelectedProjectId(id); push("project-detail") }
   const selectedProject = props.projects.find(p => p.id === selectedProjectId) ?? null
-  const openConvMenu = (id: string, anchor: Anchor) => { setActionProjectPicker(false); setActionAnchor(anchor); setActionConvId(id) }
-  const closeConvMenu = () => { setActionConvId(null); setActionProjectPicker(false) }
+  const openConvMenu = (id: string, anchor: Anchor) => { setActionAnchor(anchor); setActionConvId(id) }
+  const closeConvMenu = () => setActionConvId(null)
   const actionConv = conversations.find(c => c.id === actionConvId) ?? null
   // 根列表显示所有非草稿对谈（包括项目对话）；置顶在前
   const rootConversations = sortConvs(conversations.filter(c => !c.draft))
@@ -262,17 +262,15 @@ export function AppSidebar({
 
   // 会话「更多菜单」：锚定在 ⋯ 旁的弹层（portal 到 body，避免被滚动容器/抽屉变换裁切）
   const convMenu = actionConv && actionAnchor && (
-    <ConvMenu
-      conv={actionConv}
+    <ConversationMenu
+      conversation={actionConv}
       anchor={actionAnchor}
       projects={props.projects}
-      picker={actionProjectPicker}
-      onPicker={setActionProjectPicker}
       onClose={closeConvMenu}
       onToggleStar={() => { props.onToggleStar(actionConv.id); closeConvMenu() }}
       onTogglePin={() => { props.onTogglePin(actionConv.id); closeConvMenu() }}
-      onStartRename={() => { setRenamingId(actionConv.id); closeConvMenu() }}
-      onAddToProject={(pid) => { props.onAddToProject(actionConv.id, pid); closeConvMenu() }}
+      onRename={() => { setRenamingId(actionConv.id); closeConvMenu() }}
+      onMove={(pid) => { props.onAddToProject(actionConv.id, pid); closeConvMenu() }}
       onDelete={() => { onDelete(actionConv.id); closeConvMenu() }}
     />
   )
@@ -666,10 +664,19 @@ function ProjectTitleEditor({ name, onSave, onCancel }: { name: string; onSave: 
       value={v}
       onChange={e => setV(e.target.value)}
       onKeyDown={e => {
-        if (e.key === "Enter") { e.preventDefault(); const n = v.trim(); n ? onSave(n) : onCancel() }
+        if (e.key === "Enter") {
+          e.preventDefault()
+          const n = v.trim()
+          if (n) onSave(n)
+          else onCancel()
+        }
         if (e.key === "Escape") onCancel()
       }}
-      onBlur={() => { const n = v.trim(); n && n !== name ? onSave(n) : onCancel() }}
+      onBlur={() => {
+        const n = v.trim()
+        if (n && n !== name) onSave(n)
+        else onCancel()
+      }}
       className="w-full rounded-lg border border-sidebar-border bg-background/50 px-2.5 py-1 text-[16px] font-semibold outline-none focus:border-sidebar-primary/50"
     />
   )
@@ -920,17 +927,13 @@ function ConversationRow({ c, isActive, renaming, onSelect, onOpenMenu, onCommit
   onCommitRename: (id: string, title: string) => void
   onCancelRename: () => void
 }) {
-  const [val, setVal] = useState(c.title)
-  useEffect(() => { setVal(c.title) }, [c.title])
-
   if (renaming) {
-    const commit = () => { const t = val.trim(); if (t) onCommitRename(c.id, t); else onCancelRename() }
     return (
       <div className="px-2 py-1">
-        <input
-          autoFocus value={val} onChange={e => setVal(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); commit() } if (e.key === "Escape") { setVal(c.title); onCancelRename() } }}
-          onBlur={commit}
+        <ConversationRename
+          value={c.title}
+          onCommit={title => onCommitRename(c.id, title)}
+          onCancel={onCancelRename}
           className="w-full rounded-xl border border-sidebar-border bg-background/50 px-3 py-2 text-sm outline-none focus:border-sidebar-primary/50"
         />
       </div>
@@ -1009,53 +1012,6 @@ function PopoverShell({ anchor, estH, onClose, children }: {
       </div>
     </div>,
     document.body,
-  )
-}
-
-// 会话"更多菜单"：收藏 / 编辑标题 / 加入项目 / 置顶 / 删除
-function ConvMenu({ conv, anchor, projects, picker, onPicker, onClose, onToggleStar, onTogglePin, onStartRename, onAddToProject, onDelete }: {
-  conv: Conversation
-  anchor: Anchor
-  projects: Project[]
-  picker: boolean
-  onPicker: (v: boolean) => void
-  onClose: () => void
-  onToggleStar: () => void
-  onTogglePin: () => void
-  onStartRename: () => void
-  onAddToProject: (projectId: string | null) => void
-  onDelete: () => void
-}) {
-  return (
-    <PopoverShell anchor={anchor} estH={picker ? 320 : 256} onClose={onClose}>
-      {!picker ? (
-        <>
-          <ActionRow icon={<Star className={cn("size-4", conv.starred && "fill-current text-sidebar-primary")} />} label={conv.starred ? "取消收藏" : "收藏"} onClick={onToggleStar} />
-          <ActionRow icon={<Pencil className="size-4" />} label="编辑标题" onClick={onStartRename} />
-          <ActionRow icon={<FolderPlus className="size-4" />} label="加入项目" onClick={() => onPicker(true)} />
-          <ActionRow icon={<Pin className="size-4" />} label={conv.pinned ? "取消置顶" : "置顶"} onClick={onTogglePin} />
-          <div className="my-1 border-t border-sidebar-border/60" />
-          <ActionRow icon={<Trash2 className="size-4" />} label="删除" danger onClick={onDelete} />
-        </>
-      ) : (
-        <>
-          <button onClick={() => onPicker(false)} className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/60">
-            <ChevronLeft className="size-4" />加入项目
-          </button>
-          <div className="max-h-[44vh] overflow-y-auto">
-            {conv.projectId && (
-              <ActionRow icon={<X className="size-4" />} label="移出当前项目" onClick={() => onAddToProject(null)} />
-            )}
-            {projects.filter(p => p.id !== conv.projectId).map(p => (
-              <ActionRow key={p.id} icon={<Folder className="size-4" />} label={p.name} onClick={() => onAddToProject(p.id)} />
-            ))}
-            {projects.filter(p => p.id !== conv.projectId).length === 0 && !conv.projectId && (
-              <p className="px-3 py-4 text-center text-[12px] italic text-muted-foreground/70">还没有项目</p>
-            )}
-          </div>
-        </>
-      )}
-    </PopoverShell>
   )
 }
 

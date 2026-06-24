@@ -41,13 +41,3 @@ export type Conversation = {
   draft?: boolean   // 本地草稿：尚未发送首条消息、未写入数据库；不进列表、不可删
   msgCount?: number // 仅加载时带回的消息条数；用于隐藏历史遗留的空会话
 }
-
-export const CONVERSATIONS: Conversation[] = [
-  {
-    id: "c-default",
-    title: "未命名的篇章",
-    excerpt: "一页尚待书写的空白……",
-    date: "今日",
-    messages: [],
-  },
-]

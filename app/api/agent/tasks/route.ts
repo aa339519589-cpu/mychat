@@ -2,12 +2,9 @@
 // GET   /api/agent/tasks     — 查询任务列表
 import { NextRequest } from "next/server"
 import { resolveAuth } from "@/lib/api/guard"
+import { json } from "@/lib/api/response"
 import { createTask, listTasks } from "@/lib/agent/data"
 import type { CreateTaskInput } from "@/lib/agent/types"
-
-function json(obj: unknown, status = 200): Response {
-  return new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } })
-}
 
 export async function POST(req: NextRequest) {
   const auth = await resolveAuth()

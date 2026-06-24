@@ -1,4 +1,4 @@
-export class ValidationError extends Error {
+class ValidationError extends Error {
   constructor(field: string, reason: string) {
     super(`${field}: ${reason}`)
     this.name = 'ValidationError'

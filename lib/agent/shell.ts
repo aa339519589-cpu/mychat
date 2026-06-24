@@ -9,7 +9,6 @@ import { workspacePath } from "./workspace"
 import { checkCommand, sanitizeCommandOutput } from "./command-security"
 import { safeResolve } from "./path-security"
 import { createRecorder } from "./recorder"
-import { log } from "@/lib/logger"
 
 const DEFAULT_TIMEOUT = 60_000       // 默认 60 秒
 const MAX_TIMEOUT = 300_000          // 最多 5 分钟

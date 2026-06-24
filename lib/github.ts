@@ -4,7 +4,7 @@
 
 const GH = 'https://api.github.com'
 
-export function ghHeaders(token: string, json = false): Record<string, string> {
+function ghHeaders(token: string, json = false): Record<string, string> {
   const h: Record<string, string> = {
     Authorization: `Bearer ${token}`,
     'User-Agent': 'mychat-app',
@@ -112,7 +112,7 @@ export async function createRepo(token: string, name: string, description: strin
 }
 
 // 取某分支 HEAD 的 commit sha；可重试（新建仓库 auto_init 后引用可能稍有延迟）
-export async function getHeadSha(token: string, repo: string, branch: string, retries = 0): Promise<string | null> {
+async function getHeadSha(token: string, repo: string, branch: string, retries = 0): Promise<string | null> {
   for (let i = 0; i <= retries; i++) {
     const res = await fetch(`${GH}/repos/${repo}/git/ref/heads/${branch}`, { headers: ghHeaders(token) }).catch(() => null)
     if (res?.ok) { const sha = ((await res.json()).object as any)?.sha; if (sha) return sha }

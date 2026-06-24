@@ -142,14 +142,12 @@ function AiActions({
 export function MessageList({
   conversation,
   onRegenerate,
-  onReply,
   isLoading,
   onOpenArtifact,
   openArtifactId,
 }: {
   conversation: Conversation
   onRegenerate?: () => void
-  onReply?: (text: string) => void
   isLoading?: boolean
   onOpenArtifact?: (msgId: string) => void
   openArtifactId?: string | null
@@ -166,7 +164,6 @@ export function MessageList({
               {m.images && m.images.length > 0 && (
                 <div className="mb-2 flex flex-wrap justify-end gap-2">
                   {m.images.map((img, i) => (
-                    // eslint-disable-next-line @next/next/no-img-element
                     <img key={i} src={img} alt="" className="max-h-48 max-w-[240px] rounded-2xl object-cover border border-border/30" />
                   ))}
                 </div>

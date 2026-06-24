@@ -4,6 +4,8 @@ import { existsSync, readFileSync } from "fs"
 import { join } from "path"
 import { workspaceRoot } from "./workspace"
 
+const workspaceFile = (root: string, name: string) => join(/* turbopackIgnore: true */ root, name)
+
 export type DetectedProject = {
   packageManager: "npm" | "pnpm" | "yarn" | "bun" | "unknown"
   framework: "next" | "vite" | "react" | "node" | "unknown"
@@ -19,7 +21,7 @@ export type DetectedProject = {
 }
 
 function readJson(root: string, path: string): Record<string, unknown> | null {
-  const abs = join(root, path)
+  const abs = workspaceFile(root, path)
   if (!existsSync(abs)) return null
   try { return JSON.parse(readFileSync(abs, "utf-8")) } catch { return null }
 }
@@ -31,11 +33,11 @@ export function detectProjectCommands(taskId: string, userId: string): DetectedP
 
   // ── Package manager ──
   let packageManager: DetectedProject["packageManager"] = "unknown"
-  if (existsSync(join(root, "pnpm-lock.yaml"))) { packageManager = "pnpm"; confidence += 10 }
-  else if (existsSync(join(root, "yarn.lock"))) { packageManager = "yarn"; confidence += 10 }
-  else if (existsSync(join(root, "bun.lockb"))) { packageManager = "bun"; confidence += 10 }
-  else if (existsSync(join(root, "package-lock.json"))) { packageManager = "npm"; confidence += 10 }
-  else if (existsSync(join(root, "package.json"))) { packageManager = "npm"; confidence += 5 }
+  if (existsSync(workspaceFile(root, "pnpm-lock.yaml"))) { packageManager = "pnpm"; confidence += 10 }
+  else if (existsSync(workspaceFile(root, "yarn.lock"))) { packageManager = "yarn"; confidence += 10 }
+  else if (existsSync(workspaceFile(root, "bun.lockb"))) { packageManager = "bun"; confidence += 10 }
+  else if (existsSync(workspaceFile(root, "package-lock.json"))) { packageManager = "npm"; confidence += 10 }
+  else if (existsSync(workspaceFile(root, "package.json"))) { packageManager = "npm"; confidence += 5 }
 
   // ── Read package.json ──
   const pkg = readJson(root, "package.json")
@@ -56,9 +58,9 @@ export function detectProjectCommands(taskId: string, userId: string): DetectedP
     }
   }
 
-  if (existsSync(join(root, "next.config.js")) || existsSync(join(root, "next.config.mjs")) || existsSync(join(root, "next.config.ts")) || deps.has("next")) {
+  if (existsSync(workspaceFile(root, "next.config.js")) || existsSync(workspaceFile(root, "next.config.mjs")) || existsSync(workspaceFile(root, "next.config.ts")) || deps.has("next")) {
     framework = "next"; confidence += 15
-  } else if (existsSync(join(root, "vite.config.js")) || existsSync(join(root, "vite.config.mjs")) || existsSync(join(root, "vite.config.ts")) || deps.has("vite")) {
+  } else if (existsSync(workspaceFile(root, "vite.config.js")) || existsSync(workspaceFile(root, "vite.config.mjs")) || existsSync(workspaceFile(root, "vite.config.ts")) || deps.has("vite")) {
     framework = "vite"; confidence += 10
   } else if (deps.has("react") || deps.has("react-dom")) {
     framework = "react"; confidence += 5
@@ -67,11 +69,10 @@ export function detectProjectCommands(taskId: string, userId: string): DetectedP
   }
 
   // ── TypeScript ──
-  const hasTypeScript = existsSync(join(root, "tsconfig.json")) || deps.has("typescript")
+  const hasTypeScript = existsSync(workspaceFile(root, "tsconfig.json")) || deps.has("typescript")
   if (hasTypeScript) confidence += 10
 
   // ── Commands from scripts ──
-  const pm = packageManager === "unknown" ? "npm" : packageManager
   const runPrefix = packageManager === "yarn" ? "yarn" : packageManager === "pnpm" ? "pnpm" : packageManager === "bun" ? "bun run" : "npm run"
 
   // install
@@ -81,9 +82,9 @@ export function detectProjectCommands(taskId: string, userId: string): DetectedP
   let lintCommand: string | null = null
   if (scripts.lint) { lintCommand = `${runPrefix} lint`; confidence += 5 }
   else if (scripts["lint:check"] || scripts["lint:ci"]) { lintCommand = `${runPrefix} ${scripts["lint:check"] ? "lint:check" : "lint:ci"}`; confidence += 3 }
-  else if (existsSync(join(root, "eslint.config.js")) || existsSync(join(root, "eslint.config.mjs")) || existsSync(join(root, ".eslintrc.js")) || existsSync(join(root, ".eslintrc.json"))) {
+  else if (existsSync(workspaceFile(root, "eslint.config.js")) || existsSync(workspaceFile(root, "eslint.config.mjs")) || existsSync(workspaceFile(root, ".eslintrc.js")) || existsSync(workspaceFile(root, ".eslintrc.json"))) {
     lintCommand = `npx eslint .`; confidence += 2; notes.push("lint: 未找到 lint script，使用 npx eslint .")
-  } else if (existsSync(join(root, "biome.json"))) {
+  } else if (existsSync(workspaceFile(root, "biome.json"))) {
     lintCommand = `npx @biomejs/biome check .`; confidence += 2; notes.push("lint: 使用 biome")
   }
 
@@ -100,7 +101,7 @@ export function detectProjectCommands(taskId: string, userId: string): DetectedP
   let testCommand: string | null = null
   if (scripts.test) { testCommand = `${runPrefix} test`; confidence += 5 }
   else if (scripts["test:ci"] || scripts["test:run"]) { testCommand = `${runPrefix} ${scripts["test:ci"] ? "test:ci" : "test:run"}`; confidence += 3 }
-  else if (existsSync(join(root, "vitest.config.js")) || existsSync(join(root, "vitest.config.ts")) || existsSync(join(root, "jest.config.js")) || existsSync(join(root, "jest.config.ts"))) {
+  else if (existsSync(workspaceFile(root, "vitest.config.js")) || existsSync(workspaceFile(root, "vitest.config.ts")) || existsSync(workspaceFile(root, "jest.config.js")) || existsSync(workspaceFile(root, "jest.config.ts"))) {
     testCommand = `npx vitest run`; confidence += 2; notes.push("test: 未找到 test script，使用 npx vitest run")
   }
 
@@ -112,7 +113,7 @@ export function detectProjectCommands(taskId: string, userId: string): DetectedP
   return {
     packageManager,
     framework,
-    installCommand: existsSync(join(root, "node_modules")) ? null : installCommand, // 已安装就跳过
+    installCommand: existsSync(workspaceFile(root, "node_modules")) ? null : installCommand, // 已安装就跳过
     lintCommand,
     typecheckCommand,
     testCommand,

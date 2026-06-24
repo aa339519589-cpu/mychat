@@ -3,11 +3,8 @@
 
 import { NextRequest } from "next/server"
 import { resolveAuth } from "@/lib/api/guard"
+import { json } from "@/lib/api/response"
 import { confirmAgentOperation, rejectAgentOperation, getPendingConfirmation } from "@/lib/agent/permissions"
-
-function json(obj: unknown, status = 200): Response {
-  return new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } })
-}
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
   const auth = await resolveAuth()

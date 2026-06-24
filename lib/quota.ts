@@ -3,13 +3,13 @@
 import { log } from '@/lib/logger'
 
 // 加权额度上限（与 QuotaScreen 展示的 max 一致）
-export const QUOTA_LIMIT_5H = 500_000
-export const QUOTA_LIMIT_7D = 10_000_000
+const QUOTA_LIMIT_5H = 500_000
+const QUOTA_LIMIT_7D = 10_000_000
 const MS_5H = 5 * 3600 * 1000
 const MS_7D = 7 * 86400 * 1000
 
 // 倍率：鸿篇/深度研究(v4-pro) 3x，正构(思考) 1x，绝句 0.8x
-export function tokenMultiplier(model: string, isThinking: boolean) {
+function tokenMultiplier(model: string, isThinking: boolean) {
   return model.includes('v4-pro') ? 3 : isThinking ? 1 : 0.8
 }
 

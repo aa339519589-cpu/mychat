@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server'
 
 // 第一步：把用户带去 GitHub 授权页
-export async function GET(req: NextRequest) {
+export async function GET(_req: NextRequest) {
   const clientId = process.env.GITHUB_CLIENT_ID
   if (!clientId) return new Response('GitHub OAuth 未配置', { status: 500 })
 

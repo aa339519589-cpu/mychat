@@ -3,16 +3,14 @@
 
 import { execSync } from "child_process"
 import { existsSync } from "fs"
-import { join } from "path"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { workspaceRoot } from "./workspace"
-import { detectProjectCommands, type DetectedProject } from "./project-detect"
+import { detectProjectCommands } from "./project-detect"
 import { parseAllErrors, type VerificationErrors } from "./error-parser"
 import { redactSensitive } from "./path-security"
 import { addStep, addArtifact } from "./data"
-import { createWorkspaceSnapshot } from "./snapshot"
 
-export type VerifyStep = {
+type VerifyStep = {
   name: string
   command: string | null
   skipped: boolean
@@ -38,7 +36,6 @@ export type VerifyResult = {
 
 function runCommand(root: string, command: string, timeoutMs = 120_000): { stdout: string; stderr: string; exitCode: number | null; timedOut: boolean } {
   try {
-    const start = Date.now()
     const buf = execSync(command, {
       cwd: root,
       timeout: timeoutMs,
@@ -218,44 +215,4 @@ export async function runVerification(
       : "全部验证通过",
     taskStatus: anyFailed ? "failed" : "completed",
   }
-}
-
-// ───────────── 生成修复 prompt ─────────────
-
-export function generateFixPrompt(
-  failedSteps: VerifyStep[],
-  detected: DetectedProject,
-): string {
-  const parts: string[] = ["## Build/Test 修复任务\n"]
-
-  for (const step of failedSteps) {
-    parts.push(`### ${step.name} 失败`)
-    parts.push(`Command: \`${step.command}\``)
-    parts.push(`Exit code: ${step.exitCode}`)
-    parts.push("")
-    parts.push("#### 错误摘要")
-    parts.push(step.parsedErrors.summary || step.stderr.slice(0, 2000))
-    parts.push("")
-
-    const files = [...new Set(step.parsedErrors.errors.map(e => e.file).filter(Boolean))]
-    if (files.length) {
-      parts.push("#### 需要检查的文件")
-      for (const f of files) parts.push(`- ${f}`)
-      parts.push("")
-    }
-  }
-
-  parts.push(`### 上下文`)
-  parts.push(`- Framework: ${detected.framework}`)
-  parts.push(`- Package manager: ${detected.packageManager}`)
-  parts.push(`- TypeScript: ${detected.hasTypeScript ? "yes" : "no"}`)
-  parts.push("")
-  parts.push("### 要求")
-  parts.push("- 用 apply_patch 修复错误")
-  parts.push("- 不要删除功能代码")
-  parts.push("- 不要绕过类型检查")
-  parts.push("- 不要改动 .env / workflows / auth / payment")
-  parts.push("- 修复完成后用 verify 再跑一次")
-
-  return parts.join("\n")
 }

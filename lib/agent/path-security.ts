@@ -1,7 +1,7 @@
 // 路径安全校验：所有 workspace 文件操作必须经过此模块
 // 禁止越权、禁止敏感文件、禁止生成目录、禁止大文件/二进制改写
 
-import { resolve, normalize, relative, join, sep } from "path"
+import { resolve, normalize, relative, sep } from "path"
 import { statSync, readFileSync } from "fs"
 
 // ───────────── 禁止的路径模式 ─────────────
@@ -102,14 +102,6 @@ export function fileTooBig(absPath: string, maxBytes = MAX_FILE_SIZE): boolean {
   }
 }
 
-export function fileSize(absPath: string): number {
-  try {
-    return statSync(absPath).size
-  } catch {
-    return 0
-  }
-}
-
 // ───────────── 敏感内容打码 ─────────────
 
 export function redactSensitive(text: string): string {
@@ -192,40 +184,8 @@ export function validatePath(
   return { ok: true, normalized, absolute }
 }
 
-// ───────────── 批量路径校验（用于 delete / patch 多文件）─────────────
-
-export function validateMultiplePaths(
-  workspacePath: string,
-  rawPaths: string[],
-): { ok: true; checks: PathCheck[] } | { ok: false; error: string } {
-  const checks: PathCheck[] = []
-  for (const p of rawPaths) {
-    const chk = validatePath(workspacePath, p)
-    if (!chk.ok) return { ok: false, error: chk.error! }
-    checks.push(chk)
-  }
-  return { ok: true, checks }
-}
-
-// ───────────── 高危删除阈值 ─────────────
-
-const DELETE_MAX_FILES = 10
-
 // compat alias for shell.ts: safeResolve returns absolute path string on success, "" on failure
 export function safeResolve(workspacePath: string, rawPath: string): string {
   const chk = validatePath(workspacePath, rawPath)
   return chk.ok ? chk.absolute! : ""
-}
-
-export function checkDeleteThreshold(
-  fileCount: number,
-  paths: string[],
-): { ok: boolean; reason?: string } {
-  if (fileCount > DELETE_MAX_FILES) {
-    return {
-      ok: false,
-      reason: `一次最多删除 ${DELETE_MAX_FILES} 个文件，你的请求包含 ${fileCount} 个文件：${paths.slice(0, 5).join("、")}${paths.length > 5 ? ` 等` : ""}`,
-    }
-  }
-  return { ok: true }
 }

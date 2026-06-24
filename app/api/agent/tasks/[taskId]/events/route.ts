@@ -2,10 +2,7 @@
 // 返回任务状态 + 最新 steps + 最新 tool_calls，前端可据此更新 UI
 import { NextRequest } from "next/server"
 import { resolveAuth } from "@/lib/api/guard"
-
-function json(obj: unknown, status = 200): Response {
-  return new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } })
-}
+import { json } from "@/lib/api/response"
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
   const auth = await resolveAuth()

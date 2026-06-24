@@ -19,7 +19,7 @@ export async function createClient() {
               cookieStore.set(name, value, options),
             )
           } catch {
-            // 在服务器组件中调用 setAll 会失败，可忽略（会话刷新由 middleware 处理）
+            // 在服务器组件中调用 setAll 会失败，可忽略（会话刷新由 proxy 处理）
           }
         },
       },

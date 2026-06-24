@@ -1,6 +1,6 @@
 // 错误解析器：从 stderr/stdout 提取结构化错误信息
 
-export type ParsedError = {
+type ParsedError = {
   errorType: string
   file: string | null
   line: number | null
@@ -21,11 +21,6 @@ export type VerificationErrors = {
 
 // ───────────── 通用提取 ─────────────
 
-function firstMatch(text: string, pattern: RegExp): RegExpExecArray | null {
-  pattern.lastIndex = 0
-  return pattern.exec(text)
-}
-
 function allMatches(text: string, pattern: RegExp): RegExpExecArray[] {
   const results: RegExpExecArray[] = []
   let m: RegExpExecArray | null
@@ -40,9 +35,8 @@ function allMatches(text: string, pattern: RegExp): RegExpExecArray[] {
 // ───────────── TypeScript ─────────────
 
 const TS_ERROR = /^(.+?)\((\d+),(\d+)\):\s+error\s+(TS\d+):\s+(.+)$/gm
-const TS_WARN = /^(.+?)\((\d+),(\d+)\):\s+warning\s+(TS\d+):\s+(.+)$/gm
 
-export function parseTypeScriptErrors(text: string): ParsedError[] {
+function parseTypeScriptErrors(text: string): ParsedError[] {
   const results: ParsedError[] = []
   for (const m of allMatches(text, TS_ERROR)) {
     const file = m[1].trim()
@@ -80,9 +74,8 @@ function tsCauseHint(code: string): string | null {
 // ───────────── ESLint ─────────────
 
 const ESLINT_ERROR = /^\s*(.+?):(\d+):(\d+)\s+(error|warning)\s+(.+?)\s{2,}(.+)$/gm
-const ESLINT_COLON = /^(.+?):(\d+):(\d+)\s+(.+)$/gm
 
-export function parseESLintErrors(text: string): ParsedError[] {
+function parseESLintErrors(text: string): ParsedError[] {
   const results: ParsedError[] = []
   for (const m of allMatches(text, ESLINT_ERROR)) {
     results.push({
@@ -104,9 +97,8 @@ export function parseESLintErrors(text: string): ParsedError[] {
 
 const NEXT_ERROR = /^(.+?):(\d+):(\d+)\s+([✗╳✘❌])?\s*(.+)$/gm
 const NEXT_MODULE = /Module not found:\s+(.+)/g
-const NEXT_BUILD_FAIL = /Failed to compile/i
 
-export function parseNextBuildErrors(text: string): ParsedError[] {
+function parseNextBuildErrors(text: string): ParsedError[] {
   const results: ParsedError[] = []
 
   // Module not found
@@ -149,9 +141,8 @@ export function parseNextBuildErrors(text: string): ParsedError[] {
 // ───────────── Runtime Stack Trace ─────────────
 
 const STACK_LINE = /at\s+(.+?)\s+\((.+?):(\d+):(\d+)\)/g
-const STACK_FILE = /\((.+?):(\d+):(\d+)\)/g
 
-export function parseRuntimeStack(text: string): ParsedError[] {
+function parseRuntimeStack(text: string): ParsedError[] {
   const results: ParsedError[] = []
   const seen = new Set<string>()
 
@@ -180,7 +171,7 @@ export function parseRuntimeStack(text: string): ParsedError[] {
 const PACKAGE_ERR = /npm ERR!\s+(.+)/g
 const PACKAGE_DEP = /ERESOLVE|unable to resolve dependency/i
 
-export function parsePackageErrors(text: string): ParsedError[] {
+function parsePackageErrors(text: string): ParsedError[] {
   const msgs: string[] = []
   for (const m of allMatches(text, PACKAGE_ERR)) {
     msgs.push(m[1].trim())
@@ -205,7 +196,7 @@ export function parsePackageErrors(text: string): ParsedError[] {
 const GENERIC_FILE_LINE = /^(.+?):(\d+):(\d+):\s*(.+)$/gm
 const GENERIC_FILE_LINE2 = /^(.+?):(\d+):\s*(.+)$/gm
 
-export function parseGenericErrors(text: string): ParsedError[] {
+function parseGenericErrors(text: string): ParsedError[] {
   const results: ParsedError[] = []
   for (const m of allMatches(text, GENERIC_FILE_LINE)) {
     const file = m[1].trim()

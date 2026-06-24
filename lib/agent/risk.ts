@@ -1,7 +1,7 @@
 // 风险统一判断：classifyAgentRisk, classifyFileRisk, classifyPublishRisk, requiresUserConfirmation
 // 默认安全原则：高危必须停，关键直接阻断
 
-export type RiskLevel = "low" | "medium" | "high" | "critical"
+type RiskLevel = "low" | "high" | "critical"
 
 export type RiskAssessment = {
   level: RiskLevel
@@ -96,7 +96,7 @@ export function classifyFileRisk(files: string[]): RiskAssessment {
 
 // ─── 删除操作风险 ───
 
-export function classifyDeleteRisk(paths: string[], isDirectory = false): RiskAssessment {
+function classifyDeleteRisk(paths: string[], isDirectory = false): RiskAssessment {
   // 先检查文件内容风险
   const fileRisk = classifyFileRisk(paths)
   if (fileRisk.blocked || fileRisk.needsConfirmation) return fileRisk
@@ -139,9 +139,13 @@ export function classifyDeleteRisk(paths: string[], isDirectory = false): RiskAs
 
 // ─── Publish / PR 风险 ───
 
+export function isProtectedBranch(branch: string): boolean {
+  return ["main", "master", "production", "prod", "release"].includes(branch.toLowerCase().trim())
+}
+
 export function classifyPublishRisk(changedFiles: string[], branch: string): RiskAssessment {
   // 检查分支
-  if (["main", "master"].includes(branch.toLowerCase())) {
+  if (isProtectedBranch(branch)) {
     return {
       level: "critical",
       blocked: true,
@@ -176,78 +180,20 @@ export function classifyPublishRisk(changedFiles: string[], branch: string): Ris
   }
 }
 
-// ─── Shell / execute 风险 ───
-
-const DANGEROUS_COMMANDS = [
-  /rm\s+-rf\s+\//,
-  /sudo\s/,
-  /chmod\s+777/,
-  />\s*\/dev\/[a-z]+/,
-  /mkfs\./,
-  /dd\s+if=/,
-  /:\(\)\s*\{\s*:\|:&\s*\};:/,  // fork bomb
-]
-
-export function classifyCommandRisk(command: string): RiskAssessment {
-  for (const pattern of DANGEROUS_COMMANDS) {
-    if (pattern.test(command)) {
-      return {
-        level: "critical",
-        blocked: true,
-        needsConfirmation: false,
-        reason: `危险命令被阻断：${command.slice(0, 80)}`,
-        files: [],
-        operation: "execute",
-        title: "危险命令被阻断",
-      }
-    }
-  }
-  return { level: "low", blocked: false, needsConfirmation: false, reason: "", files: [], operation: "execute", title: "" }
-}
-
 // ─── 统一入口 ───
 
 export type RiskOperationType =
-  | "write_file" | "edit_file" | "delete_files" | "delete_directory"
-  | "apply_patch" | "publish" | "commit" | "push" | "execute"
-  | "read_env" | "path_traversal" | "force_push" | "push_main" | "merge_pr"
+  | "write_file" | "edit_file" | "delete_files"
 
 export function classifyAgentRisk(
   operation: RiskOperationType,
-  context: { files?: string[]; branch?: string; command?: string; fileCount?: number },
+  context: { files?: string[]; fileCount?: number },
 ): RiskAssessment {
   switch (operation) {
-    case "read_env":
-      return { level: "critical", blocked: true, needsConfirmation: false, reason: "禁止读取 .env 文件", files: context.files ?? [], operation, title: "禁止读取 .env" }
-    case "path_traversal":
-      return { level: "critical", blocked: true, needsConfirmation: false, reason: "禁止路径穿越操作", files: context.files ?? [], operation, title: "禁止路径穿越" }
-    case "force_push":
-      return { level: "critical", blocked: true, needsConfirmation: false, reason: "禁止 force push", files: [], operation, title: "禁止 force push" }
-    case "push_main":
-      return { level: "critical", blocked: true, needsConfirmation: false, reason: "禁止直接推送 main/master 分支", files: [], operation, title: "禁止 push main" }
-    case "merge_pr":
-      return { level: "critical", blocked: true, needsConfirmation: false, reason: "Agent 不允许合并 PR", files: [], operation, title: "禁止合并 PR" }
-
     case "write_file":
-      return classifyFileRisk(context.files ?? [])
     case "edit_file":
       return classifyFileRisk(context.files ?? [])
     case "delete_files":
       return classifyDeleteRisk(context.files ?? [])
-    case "delete_directory":
-      return classifyDeleteRisk(context.files ?? [], true)
-    case "apply_patch":
-      return classifyFileRisk(context.files ?? [])
-    case "publish":
-      return classifyPublishRisk(context.files ?? [], context.branch ?? "")
-    case "commit":
-      return classifyFileRisk(context.files ?? [])
-    case "push":
-      return classifyPublishRisk([], context.branch ?? "")
-    case "execute":
-      return classifyCommandRisk(context.command ?? "")
-
-    default:
-      return { level: "low", blocked: false, needsConfirmation: false, reason: "", files: [], operation, title: "" }
   }
 }

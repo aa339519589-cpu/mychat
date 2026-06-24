@@ -6,7 +6,7 @@ import { makeContentFilter, parseDsmlToolCalls, hasIncompleteDsmlToolCall } from
 import type { Emit } from './events'
 import { buildProviderRequest, type ProviderAdapterId } from './provider-adapters'
 
-export type ToolCall = { id: string; name: string; args: string }
+type ToolCall = { id: string; name: string; args: string }
 
 export type TurnResult = {
   assistantMessage: any

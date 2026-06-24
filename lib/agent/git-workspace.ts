@@ -41,7 +41,7 @@ function agentBranch(taskGoal: string, fallback?: string): string {
 
 // clone 时 token 通过环境变量注入，绝不出现在命令字符串中。
 // 用 GIT_ASKPASS 空字符串禁用密码弹窗。
-function gitEnv(token: string): NodeJS.ProcessEnv {
+function gitEnv(): NodeJS.ProcessEnv {
   return {
     ...process.env,
     GIT_ASKPASS: "echo",
@@ -90,10 +90,10 @@ export async function cloneWorkspace(
     log.info("gitWorkspace", "Workspace 已存在，跳过 clone", { base })
     // 尝试创建 agent branch
     try {
-      await execAsync(`git checkout -b "${branch}"`, { cwd: base, timeout: GIT_TIMEOUT_MS, env: gitEnv("") })
+      await execAsync(`git checkout -b "${branch}"`, { cwd: base, timeout: GIT_TIMEOUT_MS, env: gitEnv() })
     } catch {
       // branch 可能已存在，尝试切换
-      try { await execAsync(`git checkout "${branch}"`, { cwd: base, timeout: GIT_TIMEOUT_MS, env: gitEnv("") }) }
+      try { await execAsync(`git checkout "${branch}"`, { cwd: base, timeout: GIT_TIMEOUT_MS, env: gitEnv() }) }
       catch { /* 保持当前分支 */ }
     }
     return { path: base, repo, branch: baseBranch, agentBranch: branch }
@@ -111,7 +111,7 @@ export async function cloneWorkspace(
     log.info("gitWorkspace", `Executing git clone for ${repo}`, { branch: baseBranch })
     const { stderr } = await execAsync(cmd, {
       timeout: CLONE_TIMEOUT_MS,
-      env: gitEnv(token),
+      env: gitEnv(),
     })
     // git clone 的输出通常在 stderr
     const out = stderr.trim()
@@ -129,33 +129,18 @@ export async function cloneWorkspace(
   // 创建 agent branch
   try {
     await execAsync(`git checkout -b "${branch}"`, {
-      cwd: base, timeout: GIT_TIMEOUT_MS, env: gitEnv(token),
+      cwd: base, timeout: GIT_TIMEOUT_MS, env: gitEnv(),
     })
     log.info("gitWorkspace", `Created agent branch ${branch}`, { repo })
   } catch (e: any) {
     const msg = e?.stderr?.trim() || e?.message || String(e)
     log.warn("gitWorkspace", `Agent branch creation failed: ${msg.slice(0, 200)}`)
     // branch 已存在则切换
-    try { await execAsync(`git checkout "${branch}"`, { cwd: base, timeout: GIT_TIMEOUT_MS, env: gitEnv("") }) }
+    try { await execAsync(`git checkout "${branch}"`, { cwd: base, timeout: GIT_TIMEOUT_MS, env: gitEnv() }) }
     catch { /* 保持 default branch */ }
   }
 
   return { path: base, repo, branch: baseBranch, agentBranch: branch }
-}
-
-// ── 清理 workspace ──
-
-export async function cleanupWorkspace(userId: string, taskId: string): Promise<boolean> {
-  const base = join(ROOT, userId, taskId)
-  if (!existsSync(base)) return true
-  try {
-    await rm(base, { recursive: true, force: true })
-    log.info("gitWorkspace", `Cleaned workspace ${base}`)
-    return true
-  } catch (e: any) {
-    log.warn("gitWorkspace", `Failed to clean workspace ${base}`, { error: e?.message })
-    return false
-  }
 }
 
 // ── 获取 workspace 信息 ──
@@ -163,9 +148,9 @@ export async function cleanupWorkspace(userId: string, taskId: string): Promise<
 export async function getGitInfo(path: string): Promise<{ branch: string; commit: string; remote: string } | { error: string }> {
   try {
     const [br, co, rem] = await Promise.all([
-      execAsync("git branch --show-current", { cwd: path, timeout: GIT_TIMEOUT_MS, env: gitEnv("") }),
-      execAsync("git rev-parse HEAD", { cwd: path, timeout: GIT_TIMEOUT_MS, env: gitEnv("") }),
-      execAsync("git remote get-url origin", { cwd: path, timeout: GIT_TIMEOUT_MS, env: gitEnv("") }),
+      execAsync("git branch --show-current", { cwd: path, timeout: GIT_TIMEOUT_MS, env: gitEnv() }),
+      execAsync("git rev-parse HEAD", { cwd: path, timeout: GIT_TIMEOUT_MS, env: gitEnv() }),
+      execAsync("git remote get-url origin", { cwd: path, timeout: GIT_TIMEOUT_MS, env: gitEnv() }),
     ])
     return {
       branch: br.stdout.trim(),
@@ -177,16 +162,3 @@ export async function getGitInfo(path: string): Promise<{ branch: string; commit
     return { error: e?.stderr?.trim() || e?.message || "git info failed" }
   }
 }
-
-// ── 获取 diff ──
-
-export async function getWorkspaceDiff(path: string): Promise<string | { error: string }> {
-  try {
-    const { stdout } = await execAsync("git diff HEAD", { cwd: path, timeout: GIT_TIMEOUT_MS, env: gitEnv("") })
-    return stdout
-  } catch (e: any) {
-    return { error: e?.stderr?.trim() || e?.message || "git diff failed" }
-  }
-}
-
-export { ROOT, agentBranch }

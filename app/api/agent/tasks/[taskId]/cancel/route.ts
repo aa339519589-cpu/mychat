@@ -1,11 +1,8 @@
 // POST /api/agent/tasks/[taskId]/cancel — 取消任务
 import { NextRequest } from "next/server"
 import { resolveAuth } from "@/lib/api/guard"
+import { json } from "@/lib/api/response"
 import { cancelTask } from "@/lib/agent/data"
-
-function json(obj: unknown, status = 200): Response {
-  return new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } })
-}
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
   const auth = await resolveAuth()
