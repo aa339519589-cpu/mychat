@@ -465,9 +465,10 @@ export async function createWorkspaceForTask(
   token: string,
   repo: string,
   _goal?: string,
+  baseBranch = "main",
 ): Promise<any> {
   const { cloneWorkspace: cloneWs } = await import("./git-workspace")
-  const result = await cloneWs(userId, taskId, repo, token, _goal ?? "task")
+  const result = await cloneWs(userId, taskId, repo, token, _goal ?? "task", baseBranch)
   if (typeof result === "object" && result !== null && "error" in result) {
     return { error: (result as any).error }
   }

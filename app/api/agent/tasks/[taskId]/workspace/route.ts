@@ -5,6 +5,7 @@ import { cookies } from "next/headers"
 import { resolveAuth } from "@/lib/api/guard"
 import { createWorkspaceForTask, workspacePath } from "@/lib/agent/workspace"
 import { getGitInfo } from "@/lib/agent/git-workspace"
+import { repoMeta } from "@/lib/github"
 import { existsSync } from "fs"
 import { createRecorder } from "@/lib/agent/recorder"
 
@@ -41,9 +42,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tas
   await recorder.step("planning", "开始创建 workspace")
   await recorder.step("tool_call", "正在 clone 仓库")
 
+  // 获取仓库默认分支（避免 clone 非 main 分支仓库失败）
+  let defaultBranch = "main"
+  try {
+    const meta = await repoMeta(token, task.repo)
+    if (meta?.defaultBranch) defaultBranch = meta.defaultBranch
+  } catch { /* fallback to "main" */ }
+
   const result = await createWorkspaceForTask(
     auth.supabase, auth.userId, taskId,
-    token, task.repo, task.goal ?? "task",
+    token, task.repo, task.goal ?? "task", defaultBranch,
   )
 
   if ("error" in result) {

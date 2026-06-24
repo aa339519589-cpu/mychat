@@ -50,8 +50,15 @@ export async function POST(req: Request) {
     // 如果 workspace 不存在，自动创建
     if (!ws || ws.status === "created" || ws.status === "cloning" || ws.status === "failed" || !ws.path || !existsSync(ws.path)) {
       try {
+        const targetRepo = sessionRepo ?? detail.repo ?? ""
+        let defaultBranch = "main"
+        try {
+          const meta = await repoMeta(token, targetRepo)
+          if (meta?.defaultBranch) defaultBranch = meta.defaultBranch
+        } catch { /* fallback to "main" */ }
+
         const result = await createWorkspaceForTask(
-          supabase, userId, taskId, token, sessionRepo ?? "", detail.goal ?? "代码改动",
+          supabase, userId, taskId, token, targetRepo, detail.goal ?? "代码改动", defaultBranch,
         )
         if (result && !("error" in result) && result.path && existsSync(result.path)) {
           ws = { ...(ws ?? { id: "", taskId, userId, repo: sessionRepo ?? "", branch: "main", commitSha: null, path: result.path, status: "ready", createdAt: "", updatedAt: "" }), path: result.path, status: "ready" }

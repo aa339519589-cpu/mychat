@@ -189,6 +189,7 @@ export async function POST(req: NextRequest) {
   console.warn('[code/chat] mode decision', { repo, taskId: effectiveTaskId, hasWorkspace, fromFrontend: !!taskId })
 
   // 4. 强制确保 workspace 存在（在 stream 之前，不在 stream 内部）
+  //    有 repo + task → 必须走 workspace。失败则硬停，绝不回退旧 Plan 模式。
   let wsPreReady = false
   if (hasWorkspace && supabase && userId) {
     const detail = await getTaskDetail(supabase, userId, effectiveTaskId!).catch(() => null)
@@ -203,7 +204,7 @@ export async function POST(req: NextRequest) {
       try {
         const lastMsg = (messages as any[])[messages.length - 1]?.content?.slice(0, 200) || "代码改动"
         const result = await createWorkspaceForTask(
-          supabase, userId, effectiveTaskId!, token, repo, lastMsg,
+          supabase, userId, effectiveTaskId!, token, repo, lastMsg, defaultBranch ?? "main",
         )
         if (result && !("error" in result) && result.path && existsSync(result.path)) {
           wsPreReady = true
@@ -215,9 +216,10 @@ export async function POST(req: NextRequest) {
         console.error('[code/chat] workspace pre-create exception', err?.message)
       }
     }
-    if (!wsPreReady) {
-      return new Response(JSON.stringify({ error: 'Workspace 创建失败，无法在当前仓库工作。请刷新页面重试。' }), { status: 500 })
-    }
+  }
+  // 硬停：有 repo 就必须有 workspace，否则立即报错，不回退到旧 Plan 模式
+  if (hasWorkspace && !wsPreReady) {
+    return new Response(JSON.stringify({ error: 'Workspace 创建失败，无法在当前仓库工作。请刷新页面重试。' }), { status: 500 })
   }
 
   // 5. 构建系统提示词和工具（repo 存在 = 永远是 workspace 模式）
