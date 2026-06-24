@@ -38,7 +38,6 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
   let lastTurn: TurnResult | null = null
   let consecutiveFailures = 0
   const MAX_CONSECUTIVE_FAILURES = 2
-  let leakedRetriesThisRound = 0
   const MAX_LEAKED_RETRIES_PER_ROUND = 2
 
   for (let round = 0; round < maxRounds; round++) {
@@ -54,34 +53,41 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
       totalTokens += turn.totalTokens
       onTurn?.({ phase: 'round', round, turn })
     }
-    if (turn.failed) consecutiveFailures++
-    else consecutiveFailures = 0
+    if (turn.failed) { consecutiveFailures++; lastTurn = turn; continue }
+    consecutiveFailures = 0
 
     // 工具协议泄漏：content 里有 DSML 等标记被剥掉了，但标准 tool_calls 为空。
-    // 说明模型试图在正文里写工具调用（而非用标准 function calling）。
-    // 无论正文是否为空、DSML 是否闭合，一律关工具让模型重述——宁可多一轮也比中断好。
-    leakedRetriesThisRound = 0
-    while (
-      leakedRetry &&
-      turn.leaked &&
-      turn.toolCalls.length === 0 &&
-      !turn.failed &&
-      leakedRetriesThisRound < MAX_LEAKED_RETRIES_PER_ROUND
-    ) {
-      leakedRetriesThisRound++
-      // 把已过滤的正文当作 assistant 消息接入，然后补一条用户指令
-      if (turn.content.trim()) {
-        msgs.push({ role: 'assistant', content: turn.content })
+    // 关工具让模型重述一轮。关键：重试后不 break，继续下一轮（重开工具），agent 可以持续工作。
+    if (leakedRetry && turn.leaked && turn.toolCalls.length === 0 && !turn.failed) {
+      let leakedRetries = 0
+      while (leakedRetries < MAX_LEAKED_RETRIES_PER_ROUND && turn.leaked && turn.toolCalls.length === 0 && !turn.failed) {
+        leakedRetries++
+        if (turn.content.trim()) {
+          msgs.push({ role: 'assistant', content: turn.content })
+        }
+        msgs.push({ role: 'user', content: '继续完成你的回复。禁止在正文中使用 DSML 或任何 <｜ ｜> 标记来调用工具——你必须使用标准的 function calling。如果你的上一条回复被截断了，请重新完整输出。' })
+        turn = await runTurn(url, apiKey, model, msgs, [], emit, { thinking, adapter })
+        totalTokens += turn.totalTokens
+        onTurn?.({ phase: 'leaked-retry', round, turn })
       }
-      msgs.push({ role: 'user', content: '继续完成你的回复。禁止在正文中使用 DSML 或任何 <｜ ｜> 标记来调用工具——你必须使用标准的 function calling。如果你的上一条回复被截断了，请重新完整输出。' })
-      turn = await runTurn(url, apiKey, model, msgs, [], emit, { thinking, adapter })
-      totalTokens += turn.totalTokens
-      onTurn?.({ phase: 'leaked-retry', round, turn })
+      lastTurn = turn
+      // 重试后仍无工具调用 ≠ 任务完成，只是模型在这一轮被强制走纯文本。
+      // 继续下一轮（工具会重新打开），让 agent 接着干活。
+      if (!turn.failed && turn.content.trim()) {
+        msgs.push({ role: 'assistant', content: turn.content })
+        continue
+      }
+      if (turn.failed) continue
+      // 重试后 content 也空 → 真没东西了
+      lastHadToolCalls = false
+      break
     }
 
     lastTurn = turn
     lastHadToolCalls = turn.toolCalls.length > 0
-    if (turn.failed || !lastHadToolCalls) break
+    // 非泄漏场景下无工具调用 = 模型认为任务完成，结束
+    if (!lastHadToolCalls) break
+
     msgs.push(turn.assistantMessage)
     for (const tc of turn.toolCalls) {
       let input: any = {}
