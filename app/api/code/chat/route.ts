@@ -128,17 +128,40 @@ export async function POST(req: NextRequest) {
   if (gate.response) return gate.response
   const usingBalance = gate.usingBalance
 
-  // Agent Task：校验 taskId
+  // ═══════════════════════════════════════════
+  // 核心规则：有 repo → 强制 task + workspace。绝不回退 Plan 模式。
+  // ═══════════════════════════════════════════
+
+  // 1. 校验 / 兜底创建 Agent Task
   let effectiveTaskId = taskId as string | null
-  if (effectiveTaskId && supabase && userId) {
-    const { data: taskRow } = await supabase.from("agent_tasks")
-      .select("id").eq("id", effectiveTaskId).eq("user_id", userId).single()
-    if (!taskRow) effectiveTaskId = null
+  if (repo && supabase && userId) {
+    if (effectiveTaskId) {
+      // 校验前端传来的 taskId
+      const { data: taskRow } = await supabase.from("agent_tasks")
+        .select("id").eq("id", effectiveTaskId).eq("user_id", userId).single()
+      if (!taskRow) {
+        console.warn('[code/chat] frontend taskId invalid, will create new one', { taskId: effectiveTaskId })
+        effectiveTaskId = null
+      }
+    }
+    if (!effectiveTaskId) {
+      // 后端兜底创建 task
+      const lastMsg = (messages as any[])?.at(-1)?.content?.slice(0, 200) || "代码改动"
+      const { data: newTask, error: createErr } = await supabase.from("agent_tasks")
+        .insert({ user_id: userId, goal: lastMsg, repo, status: "planning", mode: "pr" })
+        .select("id").single()
+      if (createErr || !newTask) {
+        console.error('[code/chat] backend task creation failed', createErr)
+        return new Response(JSON.stringify({ error: 'Agent Task 创建失败，请刷新页面重试' }), { status: 500 })
+      }
+      effectiveTaskId = newTask.id
+      console.warn('[code/chat] backend auto-created task', { taskId: effectiveTaskId, repo })
+    }
   }
   const recorder = createRecorder({ supabase, userId, taskId: effectiveTaskId })
   if (effectiveTaskId) await recorder.setTaskStatus("running")
 
-  // 选了仓库才校验 + 取默认分支；没选（新建项目模式）则跳过
+  // 2. 仓库元数据
   let defaultBranch: string | null = null
   if (repo) {
     const meta = await repoMeta(token, repo)
@@ -154,25 +177,62 @@ export async function POST(req: NextRequest) {
     } catch { /* 表未建时静默 */ }
   }
 
-  const hasWorkspace = !!(taskId && repo)
-  console.warn('[code/chat] buildCodeSystem', { repo, taskId, hasWorkspace })
+  // 3. 有 repo = 强制 workspace 模式。没有 repo = 新建项目 Plan 模式。
+  const hasWorkspace = !!(repo && effectiveTaskId)
+  console.warn('[code/chat] mode decision', { repo, taskId: effectiveTaskId, hasWorkspace, fromFrontend: !!taskId })
+
+  // 4. 强制确保 workspace 存在（在 stream 之前，不在 stream 内部）
+  let wsPreReady = false
+  if (hasWorkspace && supabase && userId) {
+    const detail = await getTaskDetail(supabase, userId, effectiveTaskId!).catch(() => null)
+    if (detail && "workspace" in detail) {
+      const ws = detail.workspace
+      if (ws && (ws.status === "ready" || ws.status === "dirty") && ws.path && existsSync(ws.path)) {
+        wsPreReady = true
+      }
+    }
+    if (!wsPreReady) {
+      console.warn('[code/chat] pre-creating workspace for task', effectiveTaskId)
+      try {
+        const wsRes = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL ?? ""}/api/agent/tasks/${effectiveTaskId}/workspace`, {
+          method: "POST",
+          headers: { Cookie: req.headers.get("cookie") ?? "" },
+        })
+        if (wsRes.ok) {
+          const wsData = await wsRes.json()
+          if (wsData.path && existsSync(wsData.path)) {
+            wsPreReady = true
+            console.warn('[code/chat] workspace pre-created', { path: wsData.path, branch: wsData.agentBranch })
+          }
+        }
+      } catch (err: any) {
+        console.error('[code/chat] workspace pre-create failed', err?.message)
+      }
+    }
+    if (!wsPreReady) {
+      return new Response(JSON.stringify({ error: 'Workspace 创建失败，无法在当前仓库工作。请刷新页面重试。' }), { status: 500 })
+    }
+  }
+
+  // 5. 构建系统提示词和工具（repo 存在 = 永远是 workspace 模式）
   const SYSTEM = buildCodeSystem(repo, defaultBranch, login, memContents, !!goal, hasWorkspace)
   const url = chatCompletionsUrl(DEEPSEEK_BASE_URL)
-  // origin 变量已移除（沙箱改为直接调用）
 
+  // 工具描述：有 repo 一律 workspace 话术
+  const isWs = !!repo
   const tools = [
-    { type: 'function', function: { name: 'list_files', description: '列出当前仓库完整文件路径列表。', parameters: { type: 'object', properties: {} } } },
-    { type: 'function', function: { name: 'read_file', description: '读取当前仓库某文件的真实完整内容。修改前必须先读。', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } },
+    { type: 'function', function: { name: 'list_files', description: isWs ? '列出 workspace 中的文件列表。' : '列出当前仓库完整文件路径列表。', parameters: { type: 'object', properties: {} } } },
+    { type: 'function', function: { name: 'read_file', description: isWs ? '读取 workspace 中文件的完整内容。修改前必须先读。' : '读取当前仓库某文件的真实完整内容。修改前必须先读。', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } },
     { type: 'function', function: { name: 'create_repo', description: '新建一个 GitHub 仓库（做新项目时用）。', parameters: { type: 'object', properties: { name: { type: 'string', description: '英文小写连字符，如 pomodoro-timer' }, description: { type: 'string' }, private: { type: 'boolean', description: '是否私有，默认 false' } }, required: ['name'] } } },
-    { type: 'function', function: { name: 'write_files', description: `写入文件（新建或覆盖）。${taskId && repo ? '直接修改 workspace 中的真实文件，会自动 snapshot 备份。' : '生成改动计划，用户确认后执行。'}传完整文件内容。`, parameters: { type: 'object', properties: { files: { type: 'array', items: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string', description: '完整文件内容' } }, required: ['path', 'content'] } } }, required: ['files'] } } },
-    { type: 'function', function: { name: 'edit_file', description: `精确修改文件中的一段内容。${taskId && repo ? '直接修改 workspace 中的真实文件，会自动 snapshot 备份。' : '生成改动计划，用户确认后执行。'}用 old_string 定位原文（必须唯一），替换成 new_string。`, parameters: { type: 'object', properties: { path: { type: 'string', description: '文件路径' }, old_string: { type: 'string', description: '原文片段（必须唯一）' }, new_string: { type: 'string', description: '替换内容' } }, required: ['path', 'old_string', 'new_string'] } } },
-    { type: 'function', function: { name: 'delete_files', description: `删除文件。${taskId && repo ? '直接从 workspace 中删除真实文件，会自动 snapshot 备份。' : '生成删除计划，用户确认后执行。'}`, parameters: { type: 'object', properties: { paths: { type: 'array', items: { type: 'string' } } }, required: ['paths'] } } },
-    { type: 'function', function: { name: 'execute', description: `${taskId && repo ? '在 workspace 中执行命令进行语法校验或快速验证（如 node --check、node -e、python3 -c、npm run build、npm test 等）。' : '在沙箱中执行命令（node --check、node -e、python3 -c 等）。'}改完代码后建议先跑校验。`, parameters: { type: 'object', properties: { command: { type: 'string', description: '要执行的命令' } }, required: ['command'] } } },
+    { type: 'function', function: { name: 'write_files', description: isWs ? '直接在 workspace 中写入真实文件（会自动 snapshot 备份）。传完整文件内容。' : '生成改动计划，用户确认后执行。传完整文件内容。', parameters: { type: 'object', properties: { files: { type: 'array', items: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string', description: '完整文件内容' } }, required: ['path', 'content'] } } }, required: ['files'] } } },
+    { type: 'function', function: { name: 'edit_file', description: isWs ? '直接在 workspace 中精确修改文件（会自动 snapshot 备份）。传 old_string 和 new_string。' : '生成改动计划，用户确认后执行。用 old_string 定位原文，替换成 new_string。', parameters: { type: 'object', properties: { path: { type: 'string', description: '文件路径' }, old_string: { type: 'string', description: '原文片段（必须唯一）' }, new_string: { type: 'string', description: '替换内容' } }, required: ['path', 'old_string', 'new_string'] } } },
+    { type: 'function', function: { name: 'delete_files', description: isWs ? '直接从 workspace 中删除真实文件（会自动 snapshot 备份）。' : '生成删除计划，用户确认后执行。', parameters: { type: 'object', properties: { paths: { type: 'array', items: { type: 'string' } } }, required: ['paths'] } } },
+    { type: 'function', function: { name: 'execute', description: isWs ? '在 workspace 中执行命令（node --check、npm run build、npm test 等）。改完代码后建议先跑校验。' : '在沙箱中执行命令（node --check、node -e、python3 -c 等）。', parameters: { type: 'object', properties: { command: { type: 'string', description: '要执行的命令' } }, required: ['command'] } } },
     { type: 'function', function: { name: 'enable_pages', description: '对纯静态/前端项目开启 GitHub Pages，让项目有可访问网址（上线）。', parameters: { type: 'object', properties: {} } } },
     { type: 'function', function: { name: 'code_remember', description: '记住一条关于本仓库的长期事实。', parameters: { type: 'object', properties: { content: { type: 'string' } }, required: ['content'] } } },
     { type: 'function', function: { name: 'search', description: '网络搜索（文档、API、技术资料等）。需要查阅外部资源时用。', parameters: { type: 'object', properties: { query: { type: 'string', description: '搜索关键词或短语' } }, required: ['query'] } } },
-    { type: 'function', function: { name: 'apply_patch', description: '应用 unified diff patch 批量修改代码（比 write_files/edit_file 更高效）。先传 dryRun: true 预览；确认后传 dryRun: false 执行。', parameters: { type: 'object', properties: { patch: { type: 'string', description: 'unified diff 格式的 patch 内容' }, dryRun: { type: 'boolean', description: '是否仅预览（dry-run），默认 false' } }, required: ['patch'] } } },
-    ...(taskId && repo ? [{ type: 'function', function: { name: 'publish', description: '声明所有文件改动已完成，通知用户点击「确认并创建 PR」按钮。平台后端会自动完成 git commit → push agent branch → 创建 Pull Request。不会直推 main。调用此工具前确保所有文件已修改完毕并显示过 diff。', parameters: { type: 'object', properties: {} } } }] : []),
+    { type: 'function', function: { name: 'apply_patch', description: isWs ? '直接在 workspace 中应用 unified diff patch 批量修改代码（推荐！）。先传 dryRun: true 预览；确认后传 dryRun: false 执行。' : '应用 unified diff patch 批量修改代码。仅在 workspace 模式下可用。', parameters: { type: 'object', properties: { patch: { type: 'string', description: 'unified diff 格式的 patch 内容' }, dryRun: { type: 'boolean', description: '是否仅预览（dry-run），默认 false' } }, required: ['patch'] } } },
+    ...(isWs ? [{ type: 'function', function: { name: 'publish', description: '声明所有文件改动已完成，通知用户点击「确认并创建 PR」按钮。平台后端会自动完成 git commit → push agent branch → 创建 Pull Request。不会直推 main。', parameters: { type: 'object', properties: {} } } }] : []),
   ]
 
   const maxRounds = SAFETY_ROUNDS
@@ -184,53 +244,16 @@ export async function POST(req: NextRequest) {
       const shaCache = new Map<string, string>()  // path → 读过的旧内容（给前端做 diff）
       const msgs: any[] = [{ role: 'system', content: SYSTEM }, ...toOpenAI(messages)]
 
-      // ── Workspace 上下文：如果有 taskId + repo，自动创建 workspace ──
-      let wsReady = false
-      let wsTaskId = ""
-      let wsUserId = ""
-      console.warn('[code/chat] workspace check', { taskId, hasUserId: !!userId, hasSupabase: !!supabase, repo })
-      if (taskId && userId && supabase && repo) {
-        const detail = await getTaskDetail(supabase, userId, taskId).catch(() => null)
-        console.warn('[code/chat] getTaskDetail result', { found: !!detail, hasWorkspace: detail && "workspace" in detail, wsStatus: detail && "workspace" in detail ? detail.workspace?.status : 'N/A' })
-        if (detail && "workspace" in detail) {
-          const ws = detail.workspace
-          if (ws && (ws.status === "ready" || ws.status === "dirty") && ws.path && existsSync(ws.path)) {
-            wsReady = true
-            wsTaskId = taskId
-            wsUserId = userId
-            log.info("codeChat", `Workspace ready: ${ws.path}`)
-          }
-        }
-        // 如果没有 workspace，自动创建
-        if (!wsReady) {
-          emit({ step: { kind: 'planning', label: '正在创建 workspace...' } })
-          console.warn('[code/chat] auto-creating workspace for taskId:', taskId)
-          try {
-            const wsRes = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL ?? ""}/api/agent/tasks/${taskId}/workspace`, {
-              method: "POST",
-              headers: { Cookie: req.headers.get("cookie") ?? "" },
-            })
-            console.warn('[code/chat] create workspace response', { ok: wsRes.ok, status: wsRes.status })
-            if (wsRes.ok) {
-              const wsData = await wsRes.json()
-              console.warn('[code/chat] workspace created', { path: wsData.path, exists: wsData.path ? existsSync(wsData.path) : false, branch: wsData.agentBranch })
-              if (wsData.path && existsSync(wsData.path)) {
-                wsReady = true
-                wsTaskId = taskId
-                wsUserId = userId
-                emit({ step: { kind: 'done', label: `Workspace ready · ${wsData.agentBranch ?? ""}` } })
-                log.info("codeChat", `Workspace auto-created: ${wsData.path}`)
-              }
-            } else {
-              console.error('[code/chat] workspace creation failed', wsRes.status)
-            }
-          } catch (err: any) {
-            console.error('[code/chat] workspace auto-create exception', err?.message)
-            log.error("codeChat", `Workspace auto-create failed: ${err?.message}`)
-          }
-        }
-        console.warn('[code/chat] wsReady final:', wsReady)
+      // ── Workspace：已在上方 pre-create，这里直接用 ──
+      // 送回 taskId 给前端（后端可能兜底创建了新的）
+      if (effectiveTaskId) {
+        send(controller, { taskId: effectiveTaskId })
       }
+
+      const wsReady = hasWorkspace && wsPreReady
+      const wsTaskId = effectiveTaskId ?? ""
+      const wsUserId = userId ?? ""
+      console.warn('[code/chat] stream start', { wsReady, wsTaskId, hasWorkspace, wsPreReady })
 
       const executeTool: ExecuteTool = async (name, input) => {
         if (name === 'list_files') {

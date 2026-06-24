@@ -353,7 +353,13 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
           if (!line.startsWith("data: ") || line === "data: [DONE]") continue
           try {
             const d = JSON.parse(line.slice(6))
-            if (d.step) { steps.push(d.step); setMessages(prev => prev.map(m => m.id === aiId ? { ...m, steps: [...steps] } : m)) }
+            if (d.taskId) {
+              // 后端兜底创建的 taskId → 前端同步
+              console.log('[CodeConsole] received taskId from backend', d.taskId)
+              setCurrentTaskId(d.taskId)
+              taskId = d.taskId  // 更新本地变量，后续 workspace 检测用
+            }
+            else if (d.step) { steps.push(d.step); setMessages(prev => prev.map(m => m.id === aiId ? { ...m, steps: [...steps] } : m)) }
             else if (d.plan) { plan.push(d.plan); setMessages(prev => prev.map(m => m.id === aiId ? { ...m, plan: [...plan] } : m)) }
             else if (d.text) { fullText += d.text; setMessages(prev => prev.map(m => m.id === aiId ? { ...m, content: fullText } : m)) }
             else if (d.error) { hadError = true; fullText = d.error; setMessages(prev => prev.map(m => m.id === aiId ? { ...m, content: d.error, isError: true } : m)) }
