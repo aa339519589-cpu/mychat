@@ -14,8 +14,6 @@ import { InlineArtifact } from "@/components/inline-artifact"
 import { VegaChart } from "@/components/vega-chart"
 import { MermaidChart } from "@/components/mermaid-chart"
 import { FunctionPlotChart } from "@/components/function-plot-chart"
-import { WorkingDots } from "@/components/working-dots"
-
 function MdContent({ text }: { text: string }) {
   return (
     <ReactMarkdown
@@ -191,9 +189,6 @@ export function MessageList({
             </div>
           ) : (
             <div key={m.id} className="group flex min-w-0 items-start gap-2">
-              {isLoading && idx === lastAiIdx && (
-                <WorkingDots className="mt-1.5 shrink-0 text-muted-foreground/60" />
-              )}
               <div className="avatar-box flex-shrink-0 self-start mt-0.5">
                 <Image src="/companion.png" alt="" width={40} height={40} priority className="avatar-light size-8 select-none md:size-10" />
                 <Image src="/companion-dark.png" alt="" width={40} height={40} priority className="avatar-dark size-8 select-none md:size-10" />
