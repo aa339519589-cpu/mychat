@@ -149,17 +149,58 @@ export async function POST(req: NextRequest) {
       const shaCache = new Map<string, string>()  // path → 读过的旧内容（给前端做 diff）
       const msgs: any[] = [{ role: 'system', content: SYSTEM }, ...toOpenAI(messages)]
 
-      // ── Workspace 上下文：如果有 taskId，检查 workspace 是否就绪 ──
+      // ── Workspace 上下文：如果有 taskId + repo，自动创建 workspace ──
       let wsReady = false
       let wsTaskId = ""
       let wsUserId = ""
-      if (taskId && userId && supabase) {
+      if (taskId && userId && supabase && repo) {
         const detail = await getTaskDetail(supabase, userId, taskId).catch(() => null)
-        if (detail && "workspace" in detail && detail.workspace?.status === "ready" && detail.workspace?.path && existsSync(detail.workspace.path)) {
-          wsReady = true
-          wsTaskId = taskId
-          wsUserId = userId
-          log.info("codeChat", `Workspace ready: ${detail.workspace.path}`)
+        if (detail && "workspace" in detail) {
+          const ws = detail.workspace
+          if (ws && (ws.status === "ready" || ws.status === "dirty") && ws.path && existsSync(ws.path)) {
+            wsReady = true
+            wsTaskId = taskId
+            wsUserId = userId
+            log.info("codeChat", `Workspace ready: ${ws.path}`)
+          }
+        }
+        // 如果没有 workspace，自动创建
+        if (!wsReady) {
+          emit({ step: { kind: 'planning', label: '正在创建 workspace...' } })
+          try {
+            const wsRes = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL ?? ""}/api/agent/tasks/${taskId}/workspace`, {
+              method: "POST",
+              headers: { Cookie: req.headers.get("cookie") ?? "" },
+            })
+            if (wsRes.ok) {
+              const wsData = await wsRes.json()
+              if (wsData.path && existsSync(wsData.path)) {
+                wsReady = true
+                wsTaskId = taskId
+                wsUserId = userId
+                emit({ step: { kind: 'done', label: `Workspace ready · ${wsData.agentBranch ?? ""}` } })
+                log.info("codeChat", `Workspace auto-created: ${wsData.path}`)
+              }
+            }
+          } catch (err: any) {
+            log.error("codeChat", `Workspace auto-create failed: ${err?.message}`)
+          }
+        }
+      }
+
+      // ── 如果 workspace 就绪，追加 workspace 上下文到 system message ──
+      if (wsReady) {
+        msgs[0] = {
+          role: "system",
+          content: SYSTEM + `\n\n【Workspace 已就绪】你已经在一个真实 workspace 中工作。仓库已 clone 到本地，你可以：
+- list_files / read_file：直接读取 workspace 里的真实文件
+- write_files / edit_file / delete_files：直接修改 workspace 里的文件（会先自动 snapshot）
+- apply_patch：用 unified diff 批量修改代码（推荐！先用 dryRun: true 预览，确认后 dryRun: false 执行）
+- execute：在 workspace 里执行命令（node --check / npm run build / npm test 等）
+- 修改完成后，回复里明确说"可以发布"，我会自动把改动 commit → push → 创建 Pull Request（不会直推 main）
+- 你也可以调用 publish 工具直接创建 PR
+
+重要：你有完整的 PR 能力。改动会通过 PR 审核，不是直接推到 main。`,
         }
       }
 

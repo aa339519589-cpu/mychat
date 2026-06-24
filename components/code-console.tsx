@@ -393,7 +393,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
                 className="flex items-center gap-1 rounded-lg px-3.5 py-1.5 text-[12px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
                 style={{ background: ACCENT }}>
                 {applying ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
-                {applying ? <>执行中… <ThinkingTimer /></> : "确认并执行"}
+                {applying ? <>执行中… <ThinkingTimer /></> : currentTaskId ? "确认并创建 PR" : "确认并执行"}
               </button>
             </div>
             </div>
@@ -648,11 +648,21 @@ function MessageView({ m, login, streaming }: { m: CodeMessage; login: string; s
 }
 
 function ResultCard({ r }: { r: ApplyResult }) {
+  const isPR = r.mode === "workspace_pr"
   return (
     <div className="mt-1 space-y-1 rounded-lg border px-3 py-2.5 text-[12px]" style={{ borderColor: ACCENT, background: "color-mix(in oklab, " + ACCENT + " 8%, transparent)" }}>
-      <div className="flex items-center gap-2 font-medium text-foreground"><Check className="size-3.5" style={{ color: ACCENT }} />已提交并推送{r.created ? "（新仓库已创建）" : ""}</div>
-      {r.repoUrl && <a href={r.repoUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-muted-foreground underline-offset-2 hover:underline"><ExternalLink className="size-3" />在 GitHub 查看仓库</a>}
+      <div className="flex items-center gap-2 font-medium text-foreground">
+        <Check className="size-3.5" style={{ color: ACCENT }} />
+        {isPR ? "已创建 Pull Request" : "已提交并推送"}{r.created ? "（新仓库已创建）" : ""}
+      </div>
+      {isPR && r.pullRequestUrl && (
+        <a href={r.pullRequestUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-muted-foreground underline-offset-2 hover:underline">
+          <ExternalLink className="size-3" />查看 Pull Request #{r.pullRequestNumber ?? "?"}
+        </a>
+      )}
+      {r.repoUrl && !isPR && <a href={r.repoUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-muted-foreground underline-offset-2 hover:underline"><ExternalLink className="size-3" />在 GitHub 查看仓库</a>}
       {r.pagesUrl && <a href={r.pagesUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 underline-offset-2 hover:underline" style={{ color: ACCENT }}><Rocket className="size-3" />已上线：{r.pagesUrl}</a>}
+      {r.message && <p className="text-muted-foreground/60 italic">{r.message}</p>}
     </div>
   )
 }

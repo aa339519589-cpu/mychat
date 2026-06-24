@@ -39,7 +39,28 @@ export async function POST(req: Request) {
     if (supabase && userId) {
       const detail = await getTaskDetail(supabase, userId, taskId)
       if ("workspace" in detail) {
-        const ws = detail.workspace
+        let ws = detail.workspace
+
+        // 如果 workspace 不存在，自动创建
+        if (!ws || ws.status === "created" || ws.status === "cloning" || ws.status === "failed" || !ws.path || !existsSync(ws.path)) {
+          // 调用 POST /api/agent/tasks/[taskId]/workspace 创建
+          try {
+            const createRes = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL ?? ""}/api/agent/tasks/${taskId}/workspace`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Cookie: req.headers.get("cookie") ?? "",
+              },
+            })
+            if (createRes.ok) {
+              const created = await createRes.json()
+              if (created.path && existsSync(created.path)) {
+                ws = { ...(ws ?? { id: "", taskId, userId, repo: sessionRepo ?? "", branch: "main", commitSha: null, path: created.path, status: "ready", createdAt: "", updatedAt: "" }), path: created.path, status: "ready" }
+              }
+            }
+          } catch { /* creation failed, fall through to direct_push */ }
+        }
+
         if (ws && (ws.status === "ready" || ws.status === "dirty") && ws.path && existsSync(ws.path)) {
           // 有 ready workspace：走 PR 发布
           const result = await publishWorkspaceToPullRequest(taskId, userId, token, supabase, {

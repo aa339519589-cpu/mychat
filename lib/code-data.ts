@@ -11,8 +11,13 @@ export type PlanAction =
   | { kind: "delete_file"; path: string }
   | { kind: "enable_pages" }
 
-// 执行结果（直接推送后的回执）
-export type ApplyResult = { repo?: string; repoUrl?: string; pagesUrl?: string; commitSha?: string; created?: boolean }
+// 执行结果（直接推送后的回执 / workspace PR 后的回执）
+export type ApplyResult = {
+  repo?: string; repoUrl?: string; pagesUrl?: string; commitSha?: string; created?: boolean
+  mode?: "workspace_pr" | "direct_push"
+  pullRequestUrl?: string; pullRequestNumber?: number; branch?: string
+  message?: string
+}
 
 // 终端里的一个步骤（工具调用进度）
 export type CodeStep = { kind: "list" | "read" | "edit" | "memory" | "repo" | "deploy"; label: string }
