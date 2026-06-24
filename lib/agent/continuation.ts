@@ -9,6 +9,15 @@ export type CodeContinuationState = {
   plannedFiles: number
 }
 
+const SELF_SERVICE_WORK = /(继续|安装(依赖)?|构建|编译|测试|验证|检查|排查|修复|重试|发布|上线|部署)/i
+const REAL_USER_BLOCKER = /(登录|重新授权|授权失效|没有权限|缺少权限|api\s*key|密钥|密码|验证码|账号|付费|购买|请选择|需要你决定|需求冲突|缺少必要信息)/i
+
+export function isCodeUserBlocker(question: string, reason: string): boolean {
+  const text = `${question}\n${reason}`.trim()
+  if (!text || SELF_SERVICE_WORK.test(text)) return false
+  return REAL_USER_BLOCKER.test(text)
+}
+
 export function codeContinuationPrompt(state: CodeContinuationState): string | null {
   if (state.completed || state.waitingForUser) return null
   if (state.workspace) {

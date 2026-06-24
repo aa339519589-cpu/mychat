@@ -1,8 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { modelContent, type CodeMessage } from '../lib/code-data'
-import { codeContinuationPrompt } from '../lib/agent/continuation'
-import { inferPublishPendingFromMessages, shouldShowWorkspacePublish } from '../lib/code-agent-ui'
+import { codeContinuationPrompt, isCodeUserBlocker } from '../lib/agent/continuation'
+import { inferPublishPendingFromMessages, isFalseCodePause, isStaleRunningCodeTask, shouldShowWorkspacePublish } from '../lib/code-agent-ui'
 import { enablePages, mergePullRequest } from '../lib/github'
 import { getWorkspaceDiff, searchWorkspaceFiles, workspaceRoot } from '../lib/agent/workspace'
 import { execFileSync } from 'node:child_process'
@@ -59,6 +59,13 @@ test('new projects cannot stop before repo and files are planned', () => {
   }
   assert.match(codeContinuationPrompt(base) ?? '', /完整计划/)
   assert.equal(codeContinuationPrompt({ ...base, plannedFiles: 3 }), null)
+})
+
+test('Code Agent cannot pause for work it can do itself', () => {
+  assert.equal(isCodeUserBlocker('要继续吗？', '还需要安装依赖、构建验证和修复'), false)
+  assert.equal(isCodeUserBlocker('请让我继续', '下一步需要发布上线'), false)
+  assert.equal(isCodeUserBlocker('请重新授权 GitHub', '当前授权失效，无法读取私有仓库'), true)
+  assert.equal(isCodeUserBlocker('请选择保留旧版还是采用新版', '两个产品方案互斥，需要你决定'), true)
 })
 
 test('Pages is ready only after GitHub reports built and the URL responds', { concurrency: false }, async t => {
@@ -152,6 +159,16 @@ test('publish button hides after publish receipt arrives', () => {
     ),
     false,
   )
+})
+
+test('unfinished pauses and stale running tasks are resumed', () => {
+  const unfinished: CodeMessage[] = [
+    { id: '1', role: 'assistant', content: '还需要安装依赖、构建验证和修复问题，请让我继续。' },
+  ]
+  assert.equal(isFalseCodePause('waiting_for_user', unfinished), true)
+  assert.equal(isFalseCodePause('completed', unfinished), false)
+  assert.equal(isStaleRunningCodeTask('running', '2026-06-24T00:00:00.000Z', Date.parse('2026-06-24T00:01:00.000Z')), true)
+  assert.equal(isStaleRunningCodeTask('running', '2026-06-24T00:00:30.000Z', Date.parse('2026-06-24T00:01:00.000Z')), false)
 })
 
 test('workspace search returns line locations and diff includes new files', t => {

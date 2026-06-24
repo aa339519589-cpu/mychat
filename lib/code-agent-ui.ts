@@ -46,3 +46,17 @@ export function shouldShowWorkspacePublish(
 
   return messageCue || (waitingForUser && preparedToPublish)
 }
+
+export function isFalseCodePause(status: string | null | undefined, messages: CodeMessage[]): boolean {
+  if (status !== "waiting_for_user" || inferPublishPendingFromMessages(messages)) return false
+  const lastText = [...messages].reverse().find(message => message.role === "assistant")?.content ?? ""
+  return /(还需要|尚未完成|下一步需要|让我继续|请.{0,8}继续)/.test(lastText)
+}
+
+export function isStaleRunningCodeTask(
+  status: string | null | undefined,
+  updatedAt: string | null | undefined,
+  now = Date.now(),
+): boolean {
+  return status === "running" && (!updatedAt || now - new Date(updatedAt).getTime() > 45_000)
+}

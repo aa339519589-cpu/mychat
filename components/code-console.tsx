@@ -19,7 +19,7 @@ import remarkMath from "remark-math"
 import remarkGfm from "remark-gfm"
 import rehypeKatex from "rehype-katex"
 import { stripToolMarkup } from "@/lib/llm/sanitize"
-import { shouldShowWorkspacePublish } from "@/lib/code-agent-ui"
+import { isFalseCodePause, isStaleRunningCodeTask, shouldShowWorkspacePublish } from "@/lib/code-agent-ui"
 
 const MONO = "ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Courier New',monospace"
 const ACCENT = "var(--code-accent)"  // 亮色橙、暗色蓝；在 globals.css 定义
@@ -143,6 +143,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
   const [overlay, setOverlay] = useState<Overlay>(null)
   const [ghMenu, setGhMenu] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
+  const recoveryTimersRef = useRef(new Map<string, number>())
   const scrollRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement>(null)
 
@@ -161,6 +162,11 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       const t = localStorage.getItem("code_tier") as Tier | null; if (t && CODE_TIERS.some(x => x.id === t)) setTier(t)
       setAuto(localStorage.getItem("code_auto") === "1")
     } catch {}
+  }, [])
+
+  useEffect(() => () => {
+    for (const timer of recoveryTimersRef.current.values()) window.clearTimeout(timer)
+    recoveryTimersRef.current.clear()
   }, [])
 
   // 从 localStorage 恢复「已隐藏的仓库」列表
@@ -195,23 +201,65 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
         msgs = await fetchCodeMessages(sessions[0].id)
         setSessionId(sessions[0].id); setMessages(msgs)
       }
-      await restoreTask(full, msgs)
+      await restoreTask(full, msgs, sessions[0]?.id ?? null)
     }
   }
 
-  async function restoreTask(full: string, msgs: CodeMessage[]) {
+  async function restoreTask(full: string, msgs: CodeMessage[], sid: string | null) {
     const saved = [...msgs].reverse().find(m => m.taskId)?.taskId
     try {
       const res = await fetch(`/api/agent/tasks?repo=${encodeURIComponent(full)}`)
       if (!res.ok) return
-      const tasks = await res.json() as { id: string; status: string }[]
+      const tasks = await res.json() as { id: string; status: string; updatedAt?: string }[]
       const active = new Set(["queued", "planning", "editing", "running", "waiting_for_user", "creating_pr"])
       const task = tasks.find(t => t.id === saved && active.has(t.status)) ?? tasks.find(t => active.has(t.status))
       if (task) {
         setCurrentTaskId(task.id)
         await syncWorkspaceState(task.id, msgs)
+        const falsePause = isFalseCodePause(task.status, msgs)
+        if (task.status === "running" || falsePause) {
+          scheduleTaskRecovery(task.id, full, msgs, sid, falsePause)
+        }
       }
     } catch {}
+  }
+
+  function scheduleTaskRecovery(
+    taskId: string,
+    activeRepo: string,
+    baseMessages: CodeMessage[],
+    sid: string | null,
+    resumeWaiting = false,
+    attempt = 0,
+  ) {
+    if (recoveryTimersRef.current.has(taskId)) return
+    const delay = Math.min(1_500 * 2 ** attempt, 30_000)
+    const timer = window.setTimeout(async () => {
+      recoveryTimersRef.current.delete(taskId)
+      try {
+        const res = await fetch(`/api/agent/tasks/${taskId}`)
+        if (!res.ok) throw new Error("task unavailable")
+        const task = await res.json() as { status?: string; updatedAt?: string }
+        if (resumeWaiting && task.status === "waiting_for_user") {
+          await fetch(`/api/agent/tasks/${taskId}/resume`, { method: "POST" })
+          void runSend("刚才错误地暂停了。继续完成原始任务；安装、构建、验证、修复和重试全部自主执行，除确认发布外不要再等待用户。", {
+            internal: true, baseMessages, repo: activeRepo, taskId, sessionId: sid,
+          })
+          return
+        }
+        if (task.status !== "running") return
+        if (!isStaleRunningCodeTask(task.status, task.updatedAt)) {
+          scheduleTaskRecovery(taskId, activeRepo, baseMessages, sid, false, attempt + 1)
+          return
+        }
+        void runSend("后台执行连接刚才中断了。根据已有工具结果和原始目标从断点继续，先检查 workspace 当前状态，不要从头重做，直到 publish 或 complete。", {
+          internal: true, baseMessages, repo: activeRepo, taskId, sessionId: sid,
+        })
+      } catch {
+        scheduleTaskRecovery(taskId, activeRepo, baseMessages, sid, resumeWaiting, attempt + 1)
+      }
+    }, delay)
+    recoveryTimersRef.current.set(taskId, timer)
   }
 
   // 在当前仓库内开启全新对话（旧对话仍可用 /resume 找回）
@@ -299,7 +347,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
   }
 
   // ── 发送 ──
-  async function runSend(text: string, options?: { internal?: boolean; baseMessages?: CodeMessage[]; repo?: string | null }) {
+  async function runSend(text: string, options?: { internal?: boolean; baseMessages?: CodeMessage[]; repo?: string | null; taskId?: string; sessionId?: string | null }) {
     if (streaming && !options?.internal) return
     const activeRepo = options?.repo !== undefined ? options.repo : repo
     const baseMessages = options?.baseMessages ?? messages
@@ -314,7 +362,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
     if (!currentTaskId) setWorkspaceDirty(false)
 
     // ═══ 第二步：异步准备（session / task 创建失败不吞消息，只影响能力） ═══
-    let sid = sessionId
+    let sid = options?.sessionId !== undefined ? options.sessionId : sessionId
     try {
       if (!sid && activeRepo) {
         const firstUser = baseMessages.find(m => m.role === "user")?.content ?? text
@@ -328,7 +376,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       if (sid && !options?.internal) insertCodeMessage(userId, sid, userMsg)
     } catch {}
 
-    let taskId: string | null = currentTaskId
+    let taskId: string | null = options?.taskId ?? currentTaskId
     if (!taskId && activeRepo) {
       try {
         const taskGoal = baseMessages.find(m => m.role === "user")?.content ?? text
@@ -355,6 +403,8 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
     const plan: PlanAction[] = []
     let fullText = ""
     let hadError = false
+    let interrupted = false
+    let streamDone = false
 
     const controller = new AbortController()
     abortRef.current = controller
@@ -380,7 +430,8 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
         const parts = buf.split("\n\n"); buf = parts.pop() ?? ""
         for (const part of parts) {
           const line = part.trim()
-          if (!line.startsWith("data: ") || line === "data: [DONE]") continue
+          if (line === "data: [DONE]") { streamDone = true; continue }
+          if (!line.startsWith("data: ")) continue
           try {
             const d = JSON.parse(line.slice(6))
             if (d.taskId) {
@@ -403,13 +454,15 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
           } catch {}
         }
       }
+      if (!streamDone) throw new Error("后台连接意外中断")
     } catch (e: any) {
       if (e?.name === "AbortError") {
         // 用户主动停止 — 保留已有内容
         if (!fullText) fullText = "已停止。"
       } else {
         hadError = true
-        fullText = `请求失败：${e?.message ?? String(e)}`
+        interrupted = e?.name === "TypeError" || /连接|network|fetch|load failed|请求失败（5\d\d）/i.test(String(e?.message ?? e))
+        fullText = `${fullText ? `${fullText}\n\n` : ""}请求失败：${e?.message ?? String(e)}`
       }
       setMessages(prev => prev.map(m => m.id === aiId ? { ...m, content: fullText, isError: hadError || undefined } : m))
     } finally {
@@ -448,6 +501,18 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
         }
         const completed = options?.internal ? [...baseMessages, completedAi] : [...baseMessages, userMsg, completedAi]
         syncWorkspaceState(taskId, completed)
+      }
+      if (taskId && activeRepo && interrupted) {
+        const interruptedAi: CodeMessage = {
+          id: aiId, role: "assistant", content: fullText,
+          steps: steps.length ? steps : undefined,
+          taskId,
+          isError: true,
+        }
+        const recoveryMessages = options?.internal
+          ? [...baseMessages, interruptedAi]
+          : [...baseMessages, userMsg, interruptedAi]
+        scheduleTaskRecovery(taskId, activeRepo, recoveryMessages, sid)
       }
     }
   }
@@ -493,7 +558,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
     setOverlay(null); setSessionId(s.id); setPendingPlan([])
     const msgs = await fetchCodeMessages(s.id)
     setMessages(msgs)
-    await restoreTask(s.repo, msgs)
+    await restoreTask(s.repo, msgs, s.id)
   }
 
   const showCmdHint = input.startsWith("/") && !input.includes(" ")

@@ -14,7 +14,7 @@ import { runInSandbox } from '@/lib/sandbox'
 import { runInWorkspace } from '@/lib/agent/shell'
 import { isolatedShellConfigured } from '@/lib/agent/isolated-shell'
 import { createRecorder } from '@/lib/agent/recorder'
-import { codeContinuationPrompt } from '@/lib/agent/continuation'
+import { codeContinuationPrompt, isCodeUserBlocker } from '@/lib/agent/continuation'
 import {
   writeWorkspaceFile, editWorkspaceFile, deleteWorkspaceFile,
   getChangedFiles, getWorkspaceDiff, readWorkspaceFile, searchWorkspaceFiles,
@@ -109,6 +109,12 @@ ${hasWorkspace
 
   if (memories.length) s += `\n\n本仓库记忆（${memories.length} 条）：\n${memories.map(m => `- ${m}`).join('\n')}`
   s += `\n\n【Agent 模式】这是持续执行任务，不是一问一答。请自主连续使用工具推进，读取结果后决定下一步。除等待用户确认发布、遇到明确权限问题、或调用 complete 确认全部完成外，不得停止。不要让用户反复说“继续”。`
+  s += `\n\n【执行纪律】
+- 只要你准备说“还需要、接下来、尚未、下一步、让我继续”，就说明任务没有完成；禁止把这句话交给用户，必须在同一轮立刻继续调用工具。
+- 安装依赖、构建、测试、验证、修复报错、重试命令、检查 diff 都是你自己的工作，不得调用 ask_user，不得暂停。
+- 工具失败后先读取错误并自主修复；同一方案失败就换方案，不能只解释错误。
+- ask_user 只允许用于确实缺少登录/授权/密钥，或存在互斥的产品选择。请求用户说“继续”不是有效问题。
+- 只有三种情况可以停：publish 等待用户确认；ask_user 报告真实外部阻塞；complete 表示整个目标已验证完成。`
   return s
 }
 
@@ -614,6 +620,9 @@ ${fileList || '（请先修改文件）'}
           const question = String(input?.question ?? '').trim()
           const reason = String(input?.reason ?? '').trim()
           if (!question || !reason) return '必须说明具体问题和无法自行继续的原因。'
+          if (!isCodeUserBlocker(question, reason)) {
+            return '这不是必须由用户处理的阻塞。安装、构建、测试、验证、修复、重试和继续执行都由你自主完成；立即继续调用工具。'
+          }
           waitingForUser = true
           return `需要用户处理：${question}\n原因：${reason}`
         }
@@ -652,6 +661,7 @@ ${fileList || '（请先修改文件）'}
       }
 
       let loopFailed = false
+      const heartbeat = setInterval(() => { void recorder.setTaskStatus("running") }, 15_000)
       try {
         const { totalTokens } = await runAgentLoop({
           url, apiKey: DEEPSEEK_API_KEY, model, adapter: 'deepseek-openai', thinking,
@@ -659,19 +669,24 @@ ${fileList || '（请先修改文件）'}
           leakedRetry: true,
           autoContinue: {},
           idleContinuation: {
-            prompt: () => codeContinuationPrompt({
-              workspace: wsReady,
-              usedTools,
-              hasChanges: workspaceHasChanges(),
-              published: publishCalled,
-              completed,
-              waitingForUser,
-              plannedRepo,
-              plannedFiles,
-            }),
+            prompt: ({ idleCount }) => {
+              const state = {
+                workspace: wsReady,
+                usedTools,
+                hasChanges: workspaceHasChanges(),
+                published: publishCalled,
+                completed,
+                waitingForUser,
+                plannedRepo,
+                plannedFiles,
+              }
+              const prompt = codeContinuationPrompt(state)
+              log.info('codeChat', 'Idle decision', { idleCount, ...state, continuing: Boolean(prompt) })
+              return prompt
+            },
           },
           onTurn: ({ phase, round, turn }) => {
-            log.info('codeChat', `Turn ${phase}`, { round, finishReason: turn.finishReason, leaked: turn.leaked, toolCalls: turn.toolCalls.length, contentLen: turn.content.length, truncated: turn.truncated })
+            log.info('codeChat', `Turn ${phase}`, { round, finishReason: turn.finishReason, leaked: turn.leaked, tools: turn.toolCalls.map(call => call.name), contentLen: turn.content.length, truncated: turn.truncated })
           },
         })
         totalTokensUsed += totalTokens
@@ -679,10 +694,12 @@ ${fileList || '（请先修改文件）'}
         loopFailed = true
         emit({ error: networkError(error) })
       } finally {
+        clearInterval(heartbeat)
         if (effectiveTaskId) {
           const status = loopFailed
             ? "failed"
-            : waitingForUser || publishCalled || workspaceHasChanges() ? "waiting_for_user" : "completed"
+            : completed ? "completed"
+            : waitingForUser || publishCalled ? "waiting_for_user" : "running"
           await recorder.setTaskStatus(status)
         }
         if (userId && supabase) await addQuotaUsage(supabase, userId, totalTokensUsed, model, thinking, usingBalance)
