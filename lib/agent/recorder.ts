@@ -57,7 +57,16 @@ export function createRecorder(ctx: RecordCtx) {
   // ── 生命周期 step ──
   async function step(kind: string, label: string, detail?: string) {
     if (!enabled) return
-    await addStep(supabase!, userId!, taskId!, { kind, label, detail }).catch(() => {})
+    const normalized = kind === "thinking" || kind === "plan" || kind === "confirm"
+      ? kind
+      : kind === "error" || kind === "failed" || kind === "blocked"
+        ? "error"
+        : kind === "done" || kind === "completed"
+          ? "done"
+          : kind === "tool_call"
+            ? "tool_call"
+            : "info"
+    await addStep(supabase!, userId!, taskId!, { kind: normalized, label, detail }).catch(() => {})
   }
 
   // ── 工具调用包装 ──

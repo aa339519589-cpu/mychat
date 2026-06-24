@@ -1,4 +1,5 @@
 import { Sandbox } from "e2b"
+import { createHash } from "crypto"
 import {
   chmodSync, existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync,
 } from "fs"
@@ -79,6 +80,38 @@ async function getSandbox(supabase: SupabaseClient, userId: string, taskId: stri
     .eq("user_id", userId)
 
   return sandbox
+}
+
+export async function startAgentRecoveryWatchdog(
+  supabase: SupabaseClient,
+  userId: string,
+  taskId: string,
+  recoveryUrl: string,
+  recoveryToken: string,
+): Promise<void> {
+  if (!isolatedShellConfigured() || !recoveryUrl || !recoveryToken) return
+  const tokenHash = createHash("sha256").update(recoveryToken).digest("hex")
+  const meta = await taskMeta(supabase, userId, taskId)
+  if (meta.agentWatchdogTokenHash === tokenHash) return
+
+  const sandbox = await getSandbox(supabase, userId, taskId)
+  const script = [
+    "const wait=ms=>new Promise(r=>setTimeout(r,ms));",
+    "async function run(){for(;;){await wait(30000);try{",
+    "const r=await fetch(process.env.AGENT_RECOVERY_URL,{method:'POST',headers:{'x-agent-resume':process.env.AGENT_RECOVERY_TOKEN}});",
+    "if(r.status===410||r.status===401){process.exit(0)}",
+    "}catch{}}}run();",
+  ].join("")
+  await sandbox.commands.run(`node -e ${JSON.stringify(script)}`, {
+    background: true,
+    envs: { AGENT_RECOVERY_URL: recoveryUrl, AGENT_RECOVERY_TOKEN: recoveryToken },
+  })
+
+  const latest = await taskMeta(supabase, userId, taskId)
+  await supabase.from("agent_tasks").update({
+    meta: { ...latest, agentWatchdogTokenHash: tokenHash },
+    updated_at: new Date().toISOString(),
+  }).eq("id", taskId).eq("user_id", userId)
 }
 
 function localFiles(userId: string, taskId: string) {

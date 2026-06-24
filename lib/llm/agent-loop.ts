@@ -33,10 +33,12 @@ export type AgentLoopOpts = {
   }
   // 诊断日志钩子（循环本身不做日志，交给调用方）
   onTurn?: (info: { phase: TurnPhase; round?: number; turn: TurnResult }) => void
+  // Code Agent 用它把最新模型轨迹持久化，进程重启后可从工具结果之后继续。
+  onCheckpoint?: (messages: any[]) => void | Promise<void>
 }
 
 export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: number }> {
-  const { url, apiKey, model, adapter, thinking, messages: msgs, tools, emit, executeTool, maxRounds, leakedRetry, autoContinue, idleContinuation, onTurn } = opts
+  const { url, apiKey, model, adapter, thinking, messages: msgs, tools, emit, executeTool, maxRounds, leakedRetry, autoContinue, idleContinuation, onTurn, onCheckpoint } = opts
   let totalTokens = 0
   let lastHadToolCalls = false
   let lastTurn: TurnResult | null = null
@@ -76,6 +78,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
           msgs.push({ role: 'assistant', content: turn.content })
         }
         msgs.push({ role: 'user', content: '继续完成你的回复。禁止在正文中使用 DSML 或任何 <｜ ｜> 标记来调用工具——你必须使用标准的 function calling。如果你的上一条回复被截断了，请重新完整输出。' })
+        await onCheckpoint?.(msgs)
         turn = await runTurn(url, apiKey, model, msgs, [], emit, { thinking, adapter })
         totalTokens += turn.totalTokens
         onTurn?.({ phase: 'leaked-retry', round, turn })
@@ -85,6 +88,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
       // 继续下一轮（工具会重新打开），让 agent 接着干活。
       if (!turn.failed && turn.content.trim()) {
         msgs.push({ role: 'assistant', content: turn.content })
+        await onCheckpoint?.(msgs)
         continue
       }
       if (turn.failed) continue
@@ -101,6 +105,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
         if (prompt) {
           if (turn.content.trim()) msgs.push({ role: 'assistant', content: turn.content })
           msgs.push({ role: 'user', content: prompt })
+          await onCheckpoint?.(msgs)
           idleCount++
           continue
         }
@@ -116,6 +121,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
       const result = await executeTool(tc.name, input)
       msgs.push({ role: 'tool', tool_call_id: tc.id, content: result })
     }
+    await onCheckpoint?.(msgs)
   }
 
   // 轮次用完但最后一轮还有工具调用 → 补一轮纯文本请求，确保有完整回复
@@ -135,6 +141,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
       cont++
       msgs.push({ role: 'assistant', content: cur.content })
       msgs.push({ role: 'user', content: '紧接上文继续输出剩余内容，不要重复已经写过的部分，也不要加任何开场白。如果之前在正文中使用了 DSML 工具调用格式，请改用标准的 function calling 或直接用文字说明。' })
+      await onCheckpoint?.(msgs)
       cur = await runTurn(url, apiKey, model, msgs, [], emit, { thinking, adapter })
       totalTokens += cur.totalTokens
       onTurn?.({ phase: 'continue', round: cont, turn: cur })

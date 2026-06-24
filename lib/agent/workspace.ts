@@ -455,14 +455,31 @@ export async function createWorkspaceForTask(
 
   // 持久化到 agent_workspaces 表，确保后续 getTaskDetail 能查到
   try {
-    const { addWorkspace } = await import("./data")
-    await addWorkspace(supabase, userId, {
-      taskId,
-      repo,
-      branch: wsInfo.baseBranch,
-      commitSha: wsInfo.commit,
-      path: wsPath,
-    })
+    const { data: existing } = await supabase
+      .from("agent_workspaces")
+      .select("id")
+      .eq("task_id", taskId)
+      .eq("user_id", userId)
+      .limit(1)
+    if (existing?.length) {
+      await supabase.from("agent_workspaces").update({
+        repo,
+        branch: wsInfo.baseBranch,
+        commit_sha: wsInfo.commit,
+        path: wsPath,
+        status: "ready",
+        updated_at: new Date().toISOString(),
+      }).eq("id", existing[0].id).eq("user_id", userId)
+    } else {
+      const { addWorkspace } = await import("./data")
+      await addWorkspace(supabase, userId, {
+        taskId,
+        repo,
+        branch: wsInfo.baseBranch,
+        commitSha: wsInfo.commit,
+        path: wsPath,
+      })
+    }
     // 更新状态为 ready
     const { updateWorkspaceStatus } = await import("./data")
     await updateWorkspaceStatus(supabase, userId, taskId, "ready", {
@@ -471,6 +488,17 @@ export async function createWorkspaceForTask(
     })
   } catch (err: any) {
     console.error('[workspace] DB persist failed (non-fatal)', err?.message)
+  }
+
+  const currentChanges = getChangedFiles(taskId, userId)
+  if (!currentChanges.ok || currentChanges.data.files.length === 0) {
+    const { restoreLatestWorkspaceCheckpoint } = await import("./checkpoint")
+    const restored = await restoreLatestWorkspaceCheckpoint(supabase, userId, taskId)
+    if (!restored.ok) return { error: `Workspace 检查点恢复失败：${restored.error}` }
+    if (restored.restored) {
+      const { updateWorkspaceStatus } = await import("./data")
+      await updateWorkspaceStatus(supabase, userId, taskId, "dirty", { path: wsPath })
+    }
   }
 
   return wsInfo

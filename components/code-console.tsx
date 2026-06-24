@@ -218,7 +218,8 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
         await syncWorkspaceState(task.id, msgs)
         const falsePause = isFalseCodePause(task.status, msgs)
         if (task.status === "running" || falsePause) {
-          scheduleTaskRecovery(task.id, full, msgs, sid, falsePause)
+          const responseId = [...msgs].reverse().find(message => message.taskId === task.id && message.role === "assistant")?.id
+          scheduleTaskRecovery(task.id, full, msgs, sid, falsePause, 0, responseId)
         }
       }
     } catch {}
@@ -231,6 +232,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
     sid: string | null,
     resumeWaiting = false,
     attempt = 0,
+    responseId?: string,
   ) {
     if (recoveryTimersRef.current.has(taskId)) return
     const delay = Math.min(1_500 * 2 ** attempt, 30_000)
@@ -247,16 +249,24 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
           })
           return
         }
-        if (task.status !== "running") return
+        if (task.status !== "running") {
+          if (sid) {
+            const refreshed = await fetchCodeMessages(sid)
+            if (refreshed.length) setMessages(refreshed)
+          }
+          setStreaming(false)
+          await syncWorkspaceState(taskId, baseMessages)
+          return
+        }
         if (!isStaleRunningCodeTask(task.status, task.updatedAt)) {
-          scheduleTaskRecovery(taskId, activeRepo, baseMessages, sid, false, attempt + 1)
+          scheduleTaskRecovery(taskId, activeRepo, baseMessages, sid, false, attempt + 1, responseId)
           return
         }
         void runSend("后台执行连接刚才中断了。根据已有工具结果和原始目标从断点继续，先检查 workspace 当前状态，不要从头重做，直到 publish 或 complete。", {
           internal: true, baseMessages, repo: activeRepo, taskId, sessionId: sid,
         })
       } catch {
-        scheduleTaskRecovery(taskId, activeRepo, baseMessages, sid, resumeWaiting, attempt + 1)
+        scheduleTaskRecovery(taskId, activeRepo, baseMessages, sid, resumeWaiting, attempt + 1, responseId)
       }
     }, delay)
     recoveryTimersRef.current.set(taskId, timer)
@@ -412,7 +422,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       const res = await fetch("/api/code/chat", {
         method: "POST", signal: controller.signal,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ repo: activeRepo, tier, messages: history, taskId }),
+        body: JSON.stringify({ repo: activeRepo, tier, messages: history, taskId, responseId: aiId, sessionId: sid }),
       })
       if (!res.ok) {
         const e = await res.json().catch(() => null)
@@ -512,9 +522,15 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
         const recoveryMessages = options?.internal
           ? [...baseMessages, interruptedAi]
           : [...baseMessages, userMsg, interruptedAi]
-        scheduleTaskRecovery(taskId, activeRepo, recoveryMessages, sid)
+        scheduleTaskRecovery(taskId, activeRepo, recoveryMessages, sid, false, 0, aiId)
       }
     }
+  }
+
+  async function stopAgent() {
+    const taskId = currentTaskId
+    if (taskId) await fetch(`/api/agent/tasks/${taskId}/cancel`, { method: "POST" }).catch(() => {})
+    abortRef.current?.abort()
   }
 
   // 同步 workspace 改动和发布等待态（失败不影响消息显示）
@@ -684,7 +700,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
             style={{ fontFamily: MONO }}
           />
           {streaming ? (
-            <button onClick={() => abortRef.current?.abort()} aria-label="停止"
+            <button onClick={() => void stopAgent()} aria-label="停止"
               className="flex h-7 items-center justify-center rounded-lg border border-border bg-secondary px-2.5 text-foreground transition-colors hover:bg-secondary/70">
               <Square className="size-3.5 fill-current" />
             </button>

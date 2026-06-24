@@ -17,6 +17,10 @@ services:
         sync: false
       - key: E2B_API_KEY
         sync: false
+      - key: AGENT_CREDENTIAL_KEY
+        sync: false
+      - key: AGENT_PUBLIC_URL
+        value: https://mychat-nm6x.onrender.com
       - key: NEXT_PUBLIC_SUPABASE_URL
         value: https://usibkqqksgwgvdiqwpyo.supabase.co
       - key: NEXT_PUBLIC_SUPABASE_ANON_KEY

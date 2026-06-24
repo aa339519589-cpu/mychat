@@ -12,9 +12,12 @@ import { addQuotaUsage } from '@/lib/quota'
 import { resolveAuth, enforceLimits } from '@/lib/api/guard'
 import { runInSandbox } from '@/lib/sandbox'
 import { runInWorkspace } from '@/lib/agent/shell'
-import { isolatedShellConfigured } from '@/lib/agent/isolated-shell'
+import { isolatedShellConfigured, startAgentRecoveryWatchdog } from '@/lib/agent/isolated-shell'
 import { createRecorder } from '@/lib/agent/recorder'
 import { codeContinuationPrompt, isCodeUserBlocker } from '@/lib/agent/continuation'
+import { saveWorkspaceCheckpoint } from '@/lib/agent/checkpoint'
+import { saveAgentRunState } from '@/lib/agent/run-state'
+import { isInternalRecoveryToken, sealRecoveryToken } from '@/lib/agent/recovery-token'
 import {
   writeWorkspaceFile, editWorkspaceFile, deleteWorkspaceFile,
   getChangedFiles, getWorkspaceDiff, readWorkspaceFile, searchWorkspaceFiles,
@@ -142,7 +145,7 @@ export async function POST(req: NextRequest) {
   let body: any = {}
   try { body = await req.json() } catch { return new Response(JSON.stringify({ error: '请求体格式错误' }), { status: 400 }) }
 
-  const { repo = null, tier = '正构', messages, taskId = null } = body
+  const { repo = null, tier = '正构', messages, taskId = null, responseId = null, sessionId = null } = body
   try {
     validate.array(messages, 'messages', { minLength: 1 })
     if (repo !== null && (typeof repo !== 'string' || !repo.includes('/'))) throw new Error('仓库参数无效')
@@ -204,6 +207,29 @@ export async function POST(req: NextRequest) {
   }
   const recorder = createRecorder({ supabase, userId, taskId: effectiveTaskId })
   if (effectiveTaskId) await recorder.setTaskStatus("running")
+
+  if (effectiveTaskId && supabase && userId && repo) {
+    await saveAgentRunState(supabase, userId, effectiveTaskId, {
+      repo,
+      tier,
+      messages,
+      responseId: typeof responseId === 'string' ? responseId : undefined,
+      sessionId: typeof sessionId === 'string' ? sessionId : undefined,
+      updatedAt: new Date().toISOString(),
+    })
+    const cookie = req.headers.get('cookie') ?? ''
+    const recoveryToken = sealRecoveryToken({ taskId: effectiveTaskId, cookie, expiresAt: Date.now() + 2 * 60 * 60_000 })
+    if (recoveryToken && !isInternalRecoveryToken(req.headers.get('x-agent-recovery'))) {
+      const origin = process.env.AGENT_PUBLIC_URL?.trim() || req.nextUrl.origin
+      await startAgentRecoveryWatchdog(
+        supabase,
+        userId,
+        effectiveTaskId,
+        `${origin}/api/agent/tasks/${effectiveTaskId}/recover`,
+        recoveryToken,
+      ).catch(error => log.warn('codeChat', 'Recovery watchdog unavailable', { error: String(error) }))
+    }
+  }
 
   // 2. 仓库元数据
   let defaultBranch: string | null = null
@@ -288,17 +314,30 @@ export async function POST(req: NextRequest) {
   const unavailable = new Set(isWs ? ['create_repo', 'enable_pages'] : ['apply_patch', 'publish'])
   const tools = allTools.filter(tool => !unavailable.has(tool.function.name))
 
+  let clientConnected = true
   const stream = new ReadableStream({
     async start(controller) {
-      const emit: Emit = (e) => send(controller, e)
+      let finalText = ''
+      const safeSend = (data: object) => {
+        if (!clientConnected) return
+        try { send(controller, data) } catch { clientConnected = false }
+      }
+      const emit: Emit = (event) => {
+        if ('text' in event) finalText += event.text
+        if ('error' in event) finalText = `${finalText}${finalText ? '\n\n' : ''}${event.error}`
+        if ('step' in event) void recorder.step(event.step.kind, event.step.label)
+        safeSend(event)
+      }
       let totalTokensUsed = 0
       const shaCache = new Map<string, string>()  // path → 读过的旧内容（给前端做 diff）
-      const msgs: any[] = [{ role: 'system', content: SYSTEM }, ...toOpenAI(messages)]
+      const canResume = isInternalRecoveryToken(req.headers.get('x-agent-recovery'))
+      const resumed = canResume && Array.isArray(body.resumeMessages) ? body.resumeMessages : null
+      const msgs: any[] = [{ role: 'system', content: SYSTEM }, ...(resumed ?? toOpenAI(messages))]
 
       // ── Workspace：已在上方 pre-create，这里直接用 ──
       // 送回 taskId 给前端（后端可能兜底创建了新的）
       if (effectiveTaskId) {
-        send(controller, { taskId: effectiveTaskId })
+        safeSend({ taskId: effectiveTaskId })
       }
 
       const wsReady = hasWorkspace && wsPreReady
@@ -308,6 +347,7 @@ export async function POST(req: NextRequest) {
       let publishCalled = false
       let completed = false
       let waitingForUser = false
+      let cancelled = false
       let plannedRepo = false
       let plannedFiles = 0
       let verifiedDiff: string | null = null
@@ -318,7 +358,7 @@ export async function POST(req: NextRequest) {
         return changed.ok && changed.data.files.length > 0
       }
 
-      const executeTool: ExecuteTool = async (name, input) => {
+      const executeToolImpl: ExecuteTool = async (name, input) => {
         if (name !== 'complete') usedTools = true
         if (name === 'list_files') {
           // 如果有 workspace，列 workspace 文件；否则走 GitHub
@@ -660,8 +700,27 @@ ${fileList || '（请先修改文件）'}
         return '未知工具。'
       }
 
+      const checkpointTools = new Set(['write_files', 'edit_file', 'delete_files', 'apply_patch', 'execute', 'verify'])
+      const executeTool: ExecuteTool = async (name, input) => {
+        if (cancelled) throw new Error('任务已取消')
+        const run = () => executeToolImpl(name, input)
+        const result = name === 'execute' ? await run() : await recorder.recordToolCall(name, input, run)
+        const shouldCheckpoint = wsReady && checkpointTools.has(name) && !(name === 'apply_patch' && input?.dryRun === true)
+        if (shouldCheckpoint && supabase) {
+          const checkpoint = await saveWorkspaceCheckpoint(supabase, wsUserId, wsTaskId)
+          if (!checkpoint.ok) await recorder.step('error', '后台检查点保存失败', checkpoint.error)
+        }
+        return result
+      }
+
       let loopFailed = false
-      const heartbeat = setInterval(() => { void recorder.setTaskStatus("running") }, 15_000)
+      const heartbeat = setInterval(() => {
+        if (!effectiveTaskId || !supabase || !userId) return
+        void supabase.from('agent_tasks').update({ status: 'running', updated_at: new Date().toISOString() })
+          .eq('id', effectiveTaskId).eq('user_id', userId).neq('status', 'cancelled')
+          .select('status')
+          .then(({ data }) => { if (Array.isArray(data) && data.length === 0) cancelled = true })
+      }, 15_000)
       try {
         const { totalTokens } = await runAgentLoop({
           url, apiKey: DEEPSEEK_API_KEY, model, adapter: 'deepseek-openai', thinking,
@@ -688,24 +747,56 @@ ${fileList || '（请先修改文件）'}
           onTurn: ({ phase, round, turn }) => {
             log.info('codeChat', `Turn ${phase}`, { round, finishReason: turn.finishReason, leaked: turn.leaked, tools: turn.toolCalls.map(call => call.name), contentLen: turn.content.length, truncated: turn.truncated })
           },
+          onCheckpoint: async latestMessages => {
+            if (effectiveTaskId && supabase && userId) {
+              await saveAgentRunState(supabase, userId, effectiveTaskId, { resumeMessages: latestMessages.slice(1) })
+            }
+          },
         })
         totalTokensUsed += totalTokens
       } catch (error) {
         loopFailed = true
-        emit({ error: networkError(error) })
+        if (!cancelled) emit({ error: networkError(error) })
       } finally {
         clearInterval(heartbeat)
         if (effectiveTaskId) {
-          const status = loopFailed
-            ? "failed"
-            : completed ? "completed"
-            : waitingForUser || publishCalled ? "waiting_for_user" : "running"
-          await recorder.setTaskStatus(status)
+          if (supabase && userId) {
+            const { data } = await supabase.from('agent_tasks').select('status').eq('id', effectiveTaskId).eq('user_id', userId).single()
+            cancelled = data?.status === 'cancelled'
+          }
+          if (!cancelled) {
+            const status = loopFailed
+              ? "failed"
+              : completed ? "completed"
+              : waitingForUser || publishCalled ? "waiting_for_user" : "running"
+            await recorder.setTaskStatus(status)
+          }
+          if (finalText.trim()) {
+            await recorder.artifact('summary', {
+              title: 'Code Agent 回复',
+              content: finalText,
+              meta: { responseId, sessionId, completed, waitingForUser, publishCalled },
+            })
+          }
+          if (supabase && userId && typeof responseId === 'string' && typeof sessionId === 'string' && finalText.trim()) {
+            await supabase.from('code_messages').delete().eq('id', responseId).eq('user_id', userId)
+            await supabase.from('code_messages').insert({
+              id: responseId,
+              session_id: sessionId,
+              user_id: userId,
+              role: 'assistant',
+              content: finalText,
+              meta: { taskId: effectiveTaskId },
+            })
+          }
         }
         if (userId && supabase) await addQuotaUsage(supabase, userId, totalTokensUsed, model, thinking, usingBalance)
-        done(controller)
+        if (clientConnected) {
+          try { done(controller) } catch { clientConnected = false }
+        }
       }
     },
+    cancel() { clientConnected = false },
   })
 
   return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } })
