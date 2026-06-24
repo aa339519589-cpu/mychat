@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
   const login = store.get('gh_login')?.value ?? 'me'
   if (!token) return new Response(JSON.stringify({ error: '未连接 GitHub' }), { status: 401 })
 
-  const tierCfg = TIER_MAP[tier as keyof typeof TIER_MAP] ?? TIER_MAP['正构']
+  const tierCfg = tier === '观照' ? TIER_MAP['正构'] : (TIER_MAP[tier as keyof typeof TIER_MAP] ?? TIER_MAP['正构'])
   const model = tierCfg.model
   const thinking = tierCfg.thinking
 

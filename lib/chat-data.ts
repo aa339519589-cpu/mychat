@@ -1,4 +1,4 @@
-export type Tier = "绝句" | "正构" | "鸿篇"
+export type Tier = "绝句" | "正构" | "鸿篇" | "观照"
 
 export type TierConfig = { id: Tier; label: string; desc: string; model: string; thinking: boolean }
 
@@ -7,7 +7,10 @@ export const TIERS: TierConfig[] = [
   { id: "绝句", label: "快速", desc: "迅捷",  model: "deepseek-v4-flash", thinking: false },
   { id: "正构", label: "均衡", desc: "稳健",  model: "deepseek-v4-flash", thinking: true  },
   { id: "鸿篇", label: "深度", desc: "深推",  model: "deepseek-v4-pro",   thinking: true  },
+  { id: "观照", label: "视觉", desc: "Omni",  model: "mimo-v2.5",         thinking: false },
 ]
+
+export const CODE_TIERS = TIERS.filter(t => t.id !== "观照")
 
 export const TIER_MAP: Record<Tier, TierConfig> = Object.fromEntries(TIERS.map(t => [t.id, t])) as Record<Tier, TierConfig>
 
@@ -20,6 +23,7 @@ export type Message = {
   isError?: boolean
   thinking?: string
   images?: string[]
+  imageSummary?: string
   memoryNotes?: string[]
   files?: string[]
   searchNotes?: { query: string; results: { title: string; url: string }[] }[]

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { ChevronLeft, Loader2, Check, X, ExternalLink, GitBranch, CornerDownLeft, Trash2, Plus, FilePlus2, FileEdit, Rocket, FolderGit2, ChevronDown, Square } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { type Tier, TIERS, TIER_MAP } from "@/lib/chat-data"
+import { type Tier, CODE_TIERS } from "@/lib/chat-data"
 import {
   type CodeMessage, type CodeStep, type CodeSession, type CodeMemory, type PlanAction, type ApplyResult,
   fetchCodeSessions, createCodeSession, touchCodeSession,
@@ -139,7 +139,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       setConnected(!!d.connected); setLogin(d.login ?? "")
     }).catch(() => setConnected(false))
     try {
-      const t = localStorage.getItem("code_tier") as Tier | null; if (t && TIERS.some(x => x.id === t)) setTier(t)
+      const t = localStorage.getItem("code_tier") as Tier | null; if (t && CODE_TIERS.some(x => x.id === t)) setTier(t)
       setAuto(localStorage.getItem("code_auto") === "1")
     } catch {}
   }, [])
@@ -617,7 +617,7 @@ function ModelOverlay({ tier, onPick, onClose }: { tier: Tier; onPick: (t: Tier)
   return (
     <OverlayShell title="切换模型" onClose={onClose}>
       <div className="space-y-1.5">
-        {TIERS.map(t => (
+        {CODE_TIERS.map(t => (
           <button key={t.id} onClick={() => onPick(t.id)} className="flex w-full items-center gap-3 rounded-lg border px-4 py-2.5 text-left transition-colors hover:bg-secondary/60"
             style={{ borderColor: tier === t.id ? ACCENT : "var(--border)" }}>
             <span className="flex-1 text-[13px] text-foreground" style={{ fontFamily: MONO }}>{t.label}</span>

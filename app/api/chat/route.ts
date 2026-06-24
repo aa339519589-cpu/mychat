@@ -3,18 +3,19 @@ import type { Memory } from '@/lib/memory-data'
 import { TIER_MAP } from '@/lib/chat-data'
 import { buildSystem } from '@/lib/llm/system'
 import { send, done, networkError } from '@/lib/llm/stream'
-import { toOpenAI, chatCompletionsUrl, injectAttachmentsOpenAI } from '@/lib/llm/openai'
+import { chatCompletionsUrl, injectAttachmentsOpenAI } from '@/lib/llm/openai'
 import { runAgentLoop, type ExecuteTool } from '@/lib/llm/agent-loop'
 import type { Emit, ChatEvent } from '@/lib/llm/events'
+import type { RawMsg } from '@/lib/llm/types'
+import { buildModelContext } from '@/lib/llm/context'
+import { getModelCapability } from '@/lib/llm/models'
+import { ensureImageSummaries } from '@/lib/llm/image-context'
 import { activeTools, toOpenAITools, execTool, type ToolContext } from '@/lib/tools'
 import { log } from '@/lib/logger'
 import { validate } from '@/lib/validation'
 import { addQuotaUsage } from '@/lib/quota'
 import { ocrPageImages } from '@/lib/mimo'
 import { resolveAuth, getMemoryEnabled, enforceLimits } from '@/lib/api/guard'
-
-const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY ?? ''
-const DEEPSEEK_BASE_URL = 'https://api.deepseek.com'
 
 const MAX_TOOL_ROUNDS = 6
 const MAX_CONTINUATIONS = 4
@@ -67,15 +68,16 @@ export async function POST(req: NextRequest) {
     return new Response(JSON.stringify({ error: (e as Error).message }), { status: 400, headers: { 'Content-Type': 'application/json' } })
   }
 
-  if (!DEEPSEEK_API_KEY) {
-    log.error('chat', 'DEEPSEEK_API_KEY not configured')
-    return new Response(JSON.stringify({ error: '服务未配置（DEEPSEEK_API_KEY 未设置）' }), { status: 500 })
-  }
-
   const tierCfg = TIER_MAP[tier as keyof typeof TIER_MAP] ?? TIER_MAP['绝句']
   // 深度研究模式：强制使用最强模型 + 开启思考链
   const model = deepResearch ? 'deepseek-v4-pro' : tierCfg.model
   const thinking = deepResearch ? true : tierCfg.thinking
+  const capability = getModelCapability(model)
+  const apiKey = process.env[capability.provider.apiKeyEnv] ?? ''
+  if (!apiKey) {
+    log.error('chat', `${capability.provider.apiKeyEnv} not configured`)
+    return new Response(JSON.stringify({ error: `服务未配置（${capability.provider.apiKeyEnv} 未设置）` }), { status: 500 })
+  }
 
   // 鉴权 + 记忆开关 + 限流/额度闸门（统一收敛到 guard 层）
   const auth = await resolveAuth()
@@ -91,7 +93,7 @@ export async function POST(req: NextRequest) {
 
   // 关闭记忆时：既不挂记忆工具（上面已过滤），也不注入已存的记忆
   const effectiveMemories = memoryEnabled ? (memories as Memory[] | undefined) : undefined
-  const url = chatCompletionsUrl(DEEPSEEK_BASE_URL)
+  const url = chatCompletionsUrl(capability.provider.baseUrl)
   const SYSTEM = buildSystem(effectiveMemories, { webSearch: flags.webSearch, memoryEnabled, project })
   const openaiTools = toOpenAITools(tools)
 
@@ -99,23 +101,6 @@ export async function POST(req: NextRequest) {
     async start(controller) {
       const emit: Emit = (e) => send(controller, e)
       let totalTokensUsed = 0
-      const msgs: any[] = [{ role: 'system', content: SYSTEM }, ...toOpenAI(messages)]
-
-      // 深度研究：幽灵提示前置注入到最后一条用户消息，前端不可见
-      if (deepResearch) {
-        for (let i = msgs.length - 1; i >= 0; i--) {
-          if (msgs[i].role === 'user') {
-            const m = msgs[i]
-            if (typeof m.content === 'string') {
-              m.content = DEEP_RESEARCH_PREFIX + m.content
-            } else if (Array.isArray(m.content)) {
-              const textItem = m.content.find((c: any) => c.type === 'text')
-              if (textItem) textItem.text = DEEP_RESEARCH_PREFIX + textItem.text
-            }
-            break
-          }
-        }
-      }
 
       // 工具执行：派发到注册表，把工具产生的前端事件（memory / search）实时 emit 出去
       const executeTool: ExecuteTool = async (name, input) => {
@@ -125,6 +110,25 @@ export async function POST(req: NextRequest) {
       }
 
       try {
+        const preparedMessages = await ensureImageSummaries(messages as RawMsg[], { supabase, userId, emit })
+        const msgs: any[] = [{ role: 'system', content: SYSTEM }, ...buildModelContext(preparedMessages, capability)]
+
+        // 深度研究：幽灵提示前置注入到最后一条用户消息，前端不可见
+        if (deepResearch) {
+          for (let i = msgs.length - 1; i >= 0; i--) {
+            if (msgs[i].role === 'user') {
+              const m = msgs[i]
+              if (typeof m.content === 'string') {
+                m.content = DEEP_RESEARCH_PREFIX + m.content
+              } else if (Array.isArray(m.content)) {
+                const textItem = m.content.find((c: any) => c.type === 'text')
+                if (textItem) textItem.text = DEEP_RESEARCH_PREFIX + textItem.text
+              }
+              break
+            }
+          }
+        }
+
         // 扫描件 OCR 较慢，先给个状态提示，避免用户干等 + 保持连接活跃
         const hasScanned = Array.isArray(attachments) && attachments.some((a: any) => a?.pageImages?.length)
         if (hasScanned) emit({ thinking: '正在识别扫描件内容，请稍候……' })
@@ -132,7 +136,7 @@ export async function POST(req: NextRequest) {
         await injectAttachmentsOpenAI(msgs, processedAttachments)
 
         const { totalTokens } = await runAgentLoop({
-          url, apiKey: DEEPSEEK_API_KEY, model, thinking,
+          url, apiKey, model, adapter: capability.provider.adapter, thinking,
           messages: msgs, tools: openaiTools, emit, executeTool,
           maxRounds: MAX_TOOL_ROUNDS,
           leakedRetry: true,

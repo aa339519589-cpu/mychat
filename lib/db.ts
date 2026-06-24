@@ -234,15 +234,27 @@ export async function fetchMessages(conversationId: string): Promise<Message[]> 
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: true })
   if (error || !data) return []
-  return data.map(r => ({
-    id: r.id as string,
-    role: r.role as "user" | "assistant",
-    content: (r.content as string) ?? "",
-    thinking: (r.thinking as string) || undefined,
-    images: (r.images as string[]) || undefined,
-    time: "",
-    ts: (r.created_at as string) || undefined,
-  }))
+  return data.map(r => {
+    const stored = r.images as unknown
+    const images = Array.isArray(stored)
+      ? stored.filter((value): value is string => typeof value === "string")
+      : Array.isArray((stored as any)?.refs)
+        ? (stored as any).refs.filter((value: unknown): value is string => typeof value === "string")
+        : undefined
+    const imageSummary = !Array.isArray(stored) && typeof (stored as any)?.image_summary === "string"
+      ? (stored as any).image_summary as string
+      : undefined
+    return {
+      id: r.id as string,
+      role: r.role as "user" | "assistant",
+      content: (r.content as string) ?? "",
+      thinking: (r.thinking as string) || undefined,
+      images: images?.length ? images : undefined,
+      imageSummary,
+      time: "",
+      ts: (r.created_at as string) || undefined,
+    }
+  })
 }
 
 export async function insertMessage(userId: string, conversationId: string, msg: Message): Promise<void> {
@@ -253,7 +265,7 @@ export async function insertMessage(userId: string, conversationId: string, msg:
     user_id: userId,
     role: msg.role,
     content: msg.content,
-    images: msg.images ?? null,
+    images: msg.images?.length ? { refs: msg.images, image_summary: msg.imageSummary ?? null } : null,
     thinking: msg.thinking ?? null,
   })
   if (error) console.error("insertMessage", error)
