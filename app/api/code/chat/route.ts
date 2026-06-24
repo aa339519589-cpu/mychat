@@ -16,8 +16,8 @@ const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY ?? ''
 const DEEPSEEK_BASE_URL = 'https://api.deepseek.com'
 const TAVILY_API_KEY = process.env.TAVILY_API_KEY ?? ''
 
-const ROUNDS_NORMAL = 10
-const ROUNDS_GOAL = 24
+const ROUNDS_NORMAL = 30
+const ROUNDS_GOAL = 60
 const MAX_FILE_READS = 30
 
 function buildCodeSystem(repo: string | null, defaultBranch: string | null, login: string, memories: string[], goal: boolean): string {

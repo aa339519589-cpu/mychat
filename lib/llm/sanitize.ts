@@ -172,6 +172,38 @@ export function parseDsmlToolCalls(raw: string): { id: string; name: string; arg
       }
     }
   }
+
+  // 兜底：裸 XML 格式 <tool_name attr="val">（非 DSML，纯 XML，某些模型在长上下文中会退化成这种格式）
+  if (calls.length === 0) {
+    // 匹配已知工具名组成的 XML 标签：<tool_name key="val" key2="val2">
+    // 内容可选（自闭合或成对标签）
+    const knownTools = ['list_files', 'read_file', 'create_repo', 'write_files', 'edit_file',
+      'delete_files', 'execute', 'enable_pages', 'code_remember', 'search',
+      'web_search', 'remember', 'forget', 'update_memory']
+    const toolNames = knownTools.join('|')
+    const bareXmlRe = new RegExp(
+      `<(${toolNames})((?:\\s+[a-zA-Z_][a-zA-Z0-9_]*\\s*=\\s*"(?:[^"\\\\]|\\\\.)*")*)\\s*(?:>([\\s\\S]*?)<\\/\\1>|\\/?>)`,
+      'gi'
+    )
+    let bm: RegExpExecArray | null
+    while ((bm = bareXmlRe.exec(raw)) !== null) {
+      const name = bm[1].trim()
+      const attrs = bm[2] || ''
+      const args: Record<string, string> = {}
+      // 逐属性解析 key="val"
+      const attrRe = /([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*"((?:[^"\\]|\\.)*)"/g
+      let am: RegExpExecArray | null
+      while ((am = attrRe.exec(attrs)) !== null) args[am[1].trim()] = am[2].replace(/\\"/g, '"')
+      // 成对标签有文本内容
+      const inner = bm[3]?.trim()
+      if (inner) args._content = inner
+      const key = `${name}:${JSON.stringify(args)}`
+      if (name && !calls.some(c => `${c.name}:${c.args}` === key)) {
+        calls.push({ id: `xml_${calls.length}_${Math.random().toString(36).slice(2, 8)}`, name, args: JSON.stringify(args) })
+      }
+    }
+  }
+
   return calls
 }
 
