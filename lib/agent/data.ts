@@ -124,7 +124,16 @@ export async function createTask(
     .select()
     .single()
 
-  if (error || !data) return { error: error?.message ?? "创建任务失败" }
+  if (error || !data) {
+    console.error('[agent/data] createTask failed', {
+      message: error?.message,
+      code: error?.code,
+      details: error?.details,
+      hint: error?.hint,
+      payload: { id, userId, goal: input.goal?.slice(0, 80), mode: input.mode ?? "auto", repo: input.repo }
+    })
+    return { error: error?.message ?? "创建任务失败" }
+  }
   return mapTask(data)
 }
 

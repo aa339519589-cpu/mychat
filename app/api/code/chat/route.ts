@@ -148,11 +148,17 @@ export async function POST(req: NextRequest) {
       // 后端兜底创建 task
       const lastMsg = (messages as any[])?.at(-1)?.content?.slice(0, 200) || "代码改动"
       const { data: newTask, error: createErr } = await supabase.from("agent_tasks")
-        .insert({ user_id: userId, goal: lastMsg, repo, status: "planning", mode: "pr" })
+        .insert({ user_id: userId, goal: lastMsg, repo, status: "planning", mode: "auto" })
         .select("id").single()
       if (createErr || !newTask) {
-        console.error('[code/chat] backend task creation failed', createErr)
-        return new Response(JSON.stringify({ error: 'Agent Task 创建失败，请刷新页面重试' }), { status: 500 })
+        console.error('[code/chat] backend task creation failed', {
+          message: createErr?.message,
+          code: createErr?.code,
+          details: createErr?.details,
+          hint: createErr?.hint,
+        })
+        const detail = createErr?.message || '未知数据库错误'
+        return new Response(JSON.stringify({ error: `Agent Task 创建失败：${detail}` }), { status: 500 })
       }
       effectiveTaskId = newTask.id
       console.warn('[code/chat] backend auto-created task', { taskId: effectiveTaskId, repo })
