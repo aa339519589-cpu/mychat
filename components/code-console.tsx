@@ -21,7 +21,7 @@ import rehypeKatex from "rehype-katex"
 import { stripToolMarkup } from "@/lib/llm/sanitize"
 
 const MONO = "ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Courier New',monospace"
-const ACCENT = "var(--code-accent)"  // 亮色=Claude橙 oklch(0.62 0.15 38)；暗色=蓝 oklch(0.52 0.12 256)；在 globals.css 定义
+const ACCENT = "var(--code-accent)"  // 亮暗模式统一使用同一枚橙；在 globals.css 定义
 
 type RepoItem = { name: string; full_name: string; private: boolean; description: string }
 type Overlay = null | "model" | "memory" | "resume" | "context" | "tasks"
@@ -83,7 +83,7 @@ function ThinkingTimer() {
     return () => clearInterval(t)
   }, [])
   const fmt = sec < 60 ? `${sec}秒` : `${Math.floor(sec / 60)}分钟${sec % 60 ? `${sec % 60}秒` : ""}`
-  return <span className="text-[12px] text-muted-foreground" style={{ fontFamily: MONO }}>({fmt} thinking)</span>
+  return <span className="text-[13px] text-muted-foreground" style={{ fontFamily: MONO }}>({fmt} thinking)</span>
 }
 
 // 单个计划动作的展示（含 diff）
@@ -515,7 +515,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
             <MessageView key={m.id} m={m} login={login} />
           ))}
           {(streaming || applying) && (
-            <div className="flex items-center gap-1.5 text-[12px] text-muted-foreground" aria-live="polite">
+            <div className="flex items-center gap-2 text-[13px] text-muted-foreground" aria-live="polite">
               <WorkingDots className="shrink-0" style={{ color: ACCENT }} />
               <ThinkingTimer />
             </div>

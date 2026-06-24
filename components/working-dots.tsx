@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils"
 // 顺序：暗点从右下开始 → 右上 → 左上 → 左下 → 右下 ...
 // 等效果：3 个亮点的「星座」在正方形里旋转
 //
-// 视觉：纯像素点，不是圆球，不是圆圈，1.5px × 1.5px 正方形
+// 视觉：纯像素点，不是圆球，不是圆圈；尺寸稍放大，深色下更容易看清
 
 type Props = { className?: string; style?: React.CSSProperties }
 
@@ -15,8 +15,8 @@ export function WorkingDots({ className, style }: Props) {
     <span
       className={cn("inline-grid shrink-0 select-none", className)}
       style={{
-        width: "0.45em",
-        height: "0.45em",
+        width: "0.72em",
+        height: "0.72em",
         gridTemplateColumns: "1fr 1fr",
         gridTemplateRows: "1fr 1fr",
         gap: "0",
