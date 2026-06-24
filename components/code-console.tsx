@@ -59,16 +59,16 @@ function computeDiff(oldText: string, newText: string): DiffLine[] {
 function DiffBody({ oldContent, newContent }: { oldContent: string; newContent: string }) {
   const lines = computeDiff(oldContent, newContent)
   return (
-    <div className="max-h-[300px] overflow-auto" style={{ fontFamily: MONO, fontSize: "11px", lineHeight: "1.65" }}>
+    <div className="max-h-[300px] overflow-auto overscroll-x-contain" style={{ fontFamily: MONO, fontSize: "11px", lineHeight: "1.65" }}>
       {lines.map((ln, idx) => (
-        <div key={idx} className="flex" style={{
+        <div key={idx} className="flex min-w-0" style={{
           background: ln.type === "add" ? "color-mix(in oklab, #3fb950 16%, transparent)" : ln.type === "del" ? "color-mix(in oklab, #f85149 14%, transparent)" : undefined,
           borderLeft: ln.type === "add" ? "2px solid #3fb950" : ln.type === "del" ? "2px solid #f85149" : "2px solid transparent",
         }}>
           <span className="shrink-0 select-none px-2 text-center text-muted-foreground/60" style={{ width: 18 }}>
             {ln.type === "add" ? "+" : ln.type === "del" ? "-" : " "}
           </span>
-          <span className="whitespace-pre-wrap break-all pr-2 text-foreground/85">{ln.text || " "}</span>
+          <span className="whitespace-pre-wrap break-all pr-2 text-foreground/85 min-w-0">{ln.text || " "}</span>
         </div>
       ))}
     </div>
@@ -97,11 +97,11 @@ function PlanActionView({ a, login }: { a: PlanAction; login: string }) {
   // write_file
   const isNew = !a.oldContent
   return (
-    <div className="overflow-hidden rounded-lg border border-border">
-      <div className="flex items-center gap-2 bg-secondary/60 px-3 py-1.5 text-[11px] text-muted-foreground">
-        {isNew ? <FilePlus2 className="size-3.5" /> : <FileEdit className="size-3.5" />}
+    <div className="overflow-hidden rounded-lg border border-border min-w-0">
+      <div className="flex items-center gap-2 bg-secondary/60 px-3 py-1.5 text-[11px] text-muted-foreground min-w-0">
+        {isNew ? <FilePlus2 className="size-3.5 shrink-0" /> : <FileEdit className="size-3.5 shrink-0" />}
         <span className="truncate font-medium text-foreground/80">{a.path}</span>
-        <span className="opacity-70">{isNew ? "新建" : "修改"}</span>
+        <span className="opacity-70 shrink-0">{isNew ? "新建" : "修改"}</span>
       </div>
       <DiffBody oldContent={a.oldContent} newContent={a.newContent} />
     </div>
@@ -110,8 +110,9 @@ function PlanActionView({ a, login }: { a: PlanAction; login: string }) {
 
 function Row({ icon, label }: { icon: React.ReactNode; label: string }) {
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[12px] text-foreground/85">
-      <span style={{ color: ACCENT }}>{icon}</span>{label}
+    <div className="flex items-center gap-2 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[12px] text-foreground/85 min-w-0">
+      <span className="shrink-0" style={{ color: ACCENT }}>{icon}</span>
+      <span className="truncate">{label}</span>
     </div>
   )
 }
@@ -473,8 +474,8 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
     <Shell onExit={() => { setEntered(false); setGhMenu(false) }} login={login} repo={repo} onSwitchRepo={() => { setEntered(false); setGhMenu(false) }}
       onGhMenu={() => setGhMenu(true)} ghMenu={ghMenu} onCloseGh={() => setGhMenu(false)} onDisconnect={disconnect}
       auto={auto} onToggleAuto={toggleAuto}>
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-5 md:px-8" style={{ fontFamily: MONO }}>
-        <div className="mx-auto max-w-3xl space-y-4">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-5 md:px-8" style={{ fontFamily: MONO }}>
+        <div className="mx-auto max-w-3xl min-w-0 space-y-4">
           {messages.length === 0 && (
             <p className="text-[12px] text-muted-foreground">
               {repo ? "描述问题或想做的改动，我会自己浏览仓库、定位、动手。" : "告诉我你想做什么（比如「做个番茄钟」），我会新建仓库、写代码、上线。"} 输入 / 看命令。
@@ -647,7 +648,7 @@ function Shell({ children, onExit, repo, login, onSwitchRepo, onGhMenu, ghMenu, 
   onToggleAuto?: () => void
 }) {
   return (
-    <div className="fixed inset-0 z-[60] flex flex-col bg-background paper-grain">
+    <div className="fixed inset-0 z-[60] flex flex-col bg-background paper-grain overflow-hidden">
       <div className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-2.5 md:px-8">
         <button onClick={onExit} className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[12px] text-muted-foreground transition-colors hover:bg-secondary" style={{ fontFamily: MONO }}>
           <ChevronLeft className="size-4" />退出
@@ -721,7 +722,7 @@ function MessageView({ m, login, streaming }: { m: CodeMessage; login: string; s
         </div>
       )}
       {m.content && !m.isError && (
-        <div className="text-[13.5px] leading-[1.7] text-foreground/90" style={{ fontFamily: MONO }}>
+        <div className="text-[13.5px] leading-[1.7] text-foreground/90 min-w-0 [overflow-wrap:anywhere]" style={{ fontFamily: MONO }}>
           <ReactMarkdown
             remarkPlugins={[remarkMath, remarkGfm]}
             rehypePlugins={[rehypeKatex]}
@@ -732,10 +733,10 @@ function MessageView({ m, login, streaming }: { m: CodeMessage; login: string; s
               em: ({ children }) => <em className="italic">{children}</em>,
               code: ({ className, children, ...props }) => {
                 const isInline = !className
-                if (isInline) return <code className="rounded bg-secondary/60 px-1 py-0.5 text-[12px]" {...props}>{children}</code>
-                return <code className="block overflow-x-auto rounded bg-secondary/40 px-3 py-2 text-[12px] leading-relaxed" {...props}>{children}</code>
+                if (isInline) return <code className="rounded bg-secondary/60 px-1 py-0.5 text-[12px] break-all" {...props}>{children}</code>
+                return <code className="block overflow-x-auto rounded bg-secondary/40 px-3 py-2 text-[12px] leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere]" {...props}>{children}</code>
               },
-              pre: ({ children }) => <pre className="max-w-full overflow-x-auto rounded bg-secondary/40 p-3 mb-2 text-[12px] border border-border/30">{children}</pre>,
+              pre: ({ children }) => <pre className="max-w-full overflow-x-auto overscroll-x-contain rounded bg-secondary/40 p-3 mb-2 text-[12px] border border-border/30">{children}</pre>,
               ul: ({ children }) => <ul className="list-disc pl-5 mb-2 space-y-0.5">{children}</ul>,
               ol: ({ children }) => <ol className="list-decimal pl-5 mb-2 space-y-0.5">{children}</ol>,
               li: ({ children }) => <li className="mb-0.5">{children}</li>,
@@ -767,21 +768,21 @@ function MessageView({ m, login, streaming }: { m: CodeMessage; login: string; s
         <div className="mt-1">
           <button
             onClick={() => setStepsOpen(v => !v)}
-            className="flex items-center gap-1.5 text-[11px] text-muted-foreground/70 transition-colors hover:text-muted-foreground"
+            className="flex items-center gap-1.5 text-[11px] text-muted-foreground/70 transition-colors hover:text-muted-foreground max-w-full min-w-0"
             style={{ fontFamily: MONO }}
           >
-            <ChevronDown className={cn("size-3 transition-transform", stepsOpen && "rotate-180")} />
-            {readCount > 0 && <span>已读 {readCount} 文件{notableSteps.length > 0 && " · "}</span>}
+            <ChevronDown className={cn("size-3 shrink-0 transition-transform", stepsOpen && "rotate-180")} />
+            {readCount > 0 && <span className="shrink-0">已读 {readCount} 文件{notableSteps.length > 0 && " · "}</span>}
             {notableSteps.map((s, i) => (
-              <span key={i}>{s.label}{i < notableSteps.length - 1 && " · "}</span>
+              <span key={i} className="truncate">{s.label}{i < notableSteps.length - 1 && " · "}</span>
             ))}
           </button>
           {stepsOpen && (
-            <div className="mt-1 space-y-0.5 pl-5">
+            <div className="mt-1 space-y-0.5 pl-5 min-w-0">
               {steps.map((s, i) => (
-                <div key={i} className="flex items-center gap-1.5 text-[11px] text-muted-foreground/60">
+                <div key={i} className="flex items-center gap-1.5 text-[11px] text-muted-foreground/60 min-w-0">
                   <span className="shrink-0" style={{ color: s.kind === "edit" || s.kind === "repo" || s.kind === "deploy" ? ACCENT : "var(--muted-foreground)", opacity: 0.5 }}>·</span>
-                  {s.label}
+                  <span className="truncate">{s.label}</span>
                 </div>
               ))}
             </div>
@@ -799,31 +800,31 @@ function ResultCard({ r }: { r: ApplyResult }) {
   console.log('[CodeConsole] ResultCard', { mode: r.mode, isPR, prUrl: r.pullRequestUrl, branch: r.branch, sha: r.commitSha })
   if (isPR) {
     return (
-      <div className="mt-1 space-y-1.5 rounded-lg border px-3 py-2.5 text-[12px]" style={{ borderColor: "#3fb950", background: "color-mix(in oklab, #3fb950 8%, transparent)" }}>
+      <div className="mt-1 space-y-1.5 rounded-lg border px-3 py-2.5 text-[12px] min-w-0" style={{ borderColor: "#3fb950", background: "color-mix(in oklab, #3fb950 8%, transparent)" }}>
         <div className="flex items-center gap-2 font-medium text-foreground">
-          <Check className="size-3.5" style={{ color: "#3fb950" }} />
-          已创建 Pull Request
+          <Check className="size-3.5 shrink-0" style={{ color: "#3fb950" }} />
+          <span className="min-w-0 break-all">已创建 Pull Request</span>
         </div>
         {r.pullRequestUrl && (
-          <a href={r.pullRequestUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 font-medium underline-offset-2 hover:underline" style={{ color: "#3fb950" }}>
-            <ExternalLink className="size-3" />查看 Pull Request #{r.pullRequestNumber ?? "?"}
+          <a href={r.pullRequestUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 font-medium underline-offset-2 hover:underline min-w-0" style={{ color: "#3fb950" }}>
+            <ExternalLink className="size-3 shrink-0" /><span className="truncate">查看 Pull Request #{r.pullRequestNumber ?? "?"}</span>
           </a>
         )}
-        {r.branch && <p className="text-muted-foreground/70">分支：{r.branch}</p>}
-        {r.commitSha && <p className="text-muted-foreground/70" style={{ fontFamily: MONO }}>commit：{r.commitSha.slice(0, 7)}</p>}
-        {r.message && <p className="text-muted-foreground/60 italic">{r.message}</p>}
+        {r.branch && <p className="text-muted-foreground/70 truncate">分支：{r.branch}</p>}
+        {r.commitSha && <p className="text-muted-foreground/70 truncate" style={{ fontFamily: MONO }}>commit：{r.commitSha.slice(0, 7)}</p>}
+        {r.message && <p className="text-muted-foreground/60 italic break-all">{r.message}</p>}
       </div>
     )
   }
   return (
-    <div className="mt-1 space-y-1 rounded-lg border px-3 py-2.5 text-[12px]" style={{ borderColor: ACCENT, background: "color-mix(in oklab, " + ACCENT + " 8%, transparent)" }}>
-      <div className="flex items-center gap-2 font-medium text-foreground">
-        <Check className="size-3.5" style={{ color: ACCENT }} />
-        已提交并推送（mode: {r.mode || "direct_push"}）{r.created ? "（新仓库已创建）" : ""}
+    <div className="mt-1 space-y-1 rounded-lg border px-3 py-2.5 text-[12px] min-w-0" style={{ borderColor: ACCENT, background: "color-mix(in oklab, " + ACCENT + " 8%, transparent)" }}>
+      <div className="flex items-center gap-2 font-medium text-foreground min-w-0">
+        <Check className="size-3.5 shrink-0" style={{ color: ACCENT }} />
+        <span className="min-w-0 break-all">已提交并推送（mode: {r.mode || "direct_push"}）{r.created ? "（新仓库已创建）" : ""}</span>
       </div>
-      {r.repoUrl && <a href={r.repoUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-muted-foreground underline-offset-2 hover:underline"><ExternalLink className="size-3" />在 GitHub 查看仓库</a>}
-      {r.pagesUrl && <a href={r.pagesUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 underline-offset-2 hover:underline" style={{ color: ACCENT }}><Rocket className="size-3" />已上线：{r.pagesUrl}</a>}
-      {r.message && <p className="text-muted-foreground/60 italic">{r.message}</p>}
+      {r.repoUrl && <a href={r.repoUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-muted-foreground underline-offset-2 hover:underline min-w-0"><ExternalLink className="size-3 shrink-0" /><span className="truncate">在 GitHub 查看仓库</span></a>}
+      {r.pagesUrl && <a href={r.pagesUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 underline-offset-2 hover:underline min-w-0" style={{ color: ACCENT }}><Rocket className="size-3 shrink-0" /><span className="truncate">已上线：{r.pagesUrl}</span></a>}
+      {r.message && <p className="text-muted-foreground/60 italic break-all">{r.message}</p>}
     </div>
   )
 }
