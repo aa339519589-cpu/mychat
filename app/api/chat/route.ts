@@ -17,7 +17,7 @@ import { addQuotaUsage } from '@/lib/quota'
 import { ocrPageImages } from '@/lib/mimo'
 import { resolveAuth, getMemoryEnabled, enforceLimits } from '@/lib/api/guard'
 
-const MAX_TOOL_ROUNDS = 6
+const SAFETY_ROUNDS = 9999
 const MAX_CONTINUATIONS = 4
 
 // 深度研究幽灵提示词：前置注入到用户消息，前端不可见
@@ -138,7 +138,7 @@ export async function POST(req: NextRequest) {
         const { totalTokens } = await runAgentLoop({
           url, apiKey, model, adapter: capability.provider.adapter, thinking,
           messages: msgs, tools: openaiTools, emit, executeTool,
-          maxRounds: MAX_TOOL_ROUNDS,
+          maxRounds: SAFETY_ROUNDS,
           leakedRetry: true,
           autoContinue: { maxContinuations: MAX_CONTINUATIONS },
           onTurn: ({ phase, round, turn }) => {

@@ -16,9 +16,9 @@ const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY ?? ''
 const DEEPSEEK_BASE_URL = 'https://api.deepseek.com'
 const TAVILY_API_KEY = process.env.TAVILY_API_KEY ?? ''
 
-const ROUNDS_NORMAL = 30
-const ROUNDS_GOAL = 60
-const MAX_FILE_READS = 30
+// Agent 不设轮次上限——让它跑到任务完成自然停。
+// 9999 仅作为防止死循环的安全兜底，实际操作中模型完成使命自然会停下。
+const SAFETY_ROUNDS = 9999
 
 function buildCodeSystem(repo: string | null, defaultBranch: string | null, login: string, memories: string[], goal: boolean): string {
   let s = `你是「小克 · 代码」，一个能真正操作用户 GitHub 账号的编程助手，运行在网页应用的 Code 板块里。当前用户的 GitHub 用户名是 ${login}。
@@ -120,13 +120,12 @@ export async function POST(req: NextRequest) {
     { type: 'function', function: { name: 'search', description: '网络搜索（文档、API、技术资料等）。需要查阅外部资源时用。', parameters: { type: 'object', properties: { query: { type: 'string', description: '搜索关键词或短语' } }, required: ['query'] } } },
   ]
 
-  const maxRounds = goal ? ROUNDS_GOAL : ROUNDS_NORMAL
+  const maxRounds = SAFETY_ROUNDS
 
   const stream = new ReadableStream({
     async start(controller) {
       const emit: Emit = (e) => send(controller, e)
       let totalTokensUsed = 0
-      let fileReads = 0
       const shaCache = new Map<string, string>()  // path → 读过的旧内容（给前端做 diff）
       const msgs: any[] = [{ role: 'system', content: SYSTEM }, ...toOpenAI(messages)]
 
@@ -142,8 +141,6 @@ export async function POST(req: NextRequest) {
           if (!repo) return '尚未选择仓库。'
           const path = String(input?.path ?? '').trim()
           if (!path) return '缺少 path。'
-          if (fileReads >= MAX_FILE_READS) return '读取文件数已达上限，请基于已读内容继续。'
-          fileReads++
           emit({ step: { kind: 'read', label: `读取 ${path}` } })
           const r = await readFile(token!, repo, path)
           if ('error' in r) return `读取失败：${r.error}`
