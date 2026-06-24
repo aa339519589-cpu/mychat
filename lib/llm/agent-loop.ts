@@ -34,18 +34,19 @@ export type AgentLoopOpts = {
 export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: number }> {
   const { url, apiKey, model, adapter, thinking, messages: msgs, tools, emit, executeTool, maxRounds, leakedRetry, autoContinue, onTurn } = opts
   let totalTokens = 0
-  let retriedNoTools = false
   let lastHadToolCalls = false
   let lastTurn: TurnResult | null = null
   let consecutiveFailures = 0
   const MAX_CONSECUTIVE_FAILURES = 2
+  let leakedRetriesThisRound = 0
+  const MAX_LEAKED_RETRIES_PER_ROUND = 2
 
   for (let round = 0; round < maxRounds; round++) {
     let turn = await runTurn(url, apiKey, model, msgs, tools, emit, { thinking, adapter })
     totalTokens += turn.totalTokens
     onTurn?.({ phase: 'round', round, turn })
 
-    // 网络级失败重试一次（延迟 1s，给上游恢复时间）
+    // 网络级失败重试（延迟 1s，给上游恢复时间）
     if (turn.failed && consecutiveFailures < MAX_CONSECUTIVE_FAILURES) {
       consecutiveFailures++
       await new Promise(r => setTimeout(r, 1000))
@@ -56,29 +57,26 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
     if (turn.failed) consecutiveFailures++
     else consecutiveFailures = 0
 
-    // 工具协议泄漏：DSML 工具调用写进了 content 但未被解析为标准 tool_calls。
-    // 分为两种情况处理：
-    // 1) 过滤后正文为空 → 全部是工具协议，关工具重试一轮
-    // 2) 正文非空但末尾有未闭合工具调用 → 流被截断，交给 autoContinue 续写
-    if (leakedRetry && turn.leaked && !turn.failed) {
-      if (turn.toolCalls.length === 0) {
-        if (!turn.content.trim() && !retriedNoTools) {
-          // 情况1：正文全被剥掉——都是工具协议泄漏，关工具重试
-          retriedNoTools = true
-          turn = await runTurn(url, apiKey, model, msgs, [], emit, { thinking, adapter })
-          totalTokens += turn.totalTokens
-          onTurn?.({ phase: 'leaked-retry', round, turn })
-        } else if (!retriedNoTools && turn.hasIncompleteToolCall) {
-          // 情况2：有正文但末尾 DSML 未闭合——可能是 length 截断，重试带正文继续
-          // 把已过滤的正文当作 assistant 回复，再补一条系统指令让模型继续
-          retriedNoTools = true
-          msgs.push({ role: 'assistant', content: turn.content })
-          msgs.push({ role: 'user', content: '继续。不要在正文中使用 DSML 工具调用，用标准 function calling 或直接用文字说明。' })
-          turn = await runTurn(url, apiKey, model, msgs, [], emit, { thinking, adapter })
-          totalTokens += turn.totalTokens
-          onTurn?.({ phase: 'leaked-retry', round, turn })
-        }
+    // 工具协议泄漏：content 里有 DSML 等标记被剥掉了，但标准 tool_calls 为空。
+    // 说明模型试图在正文里写工具调用（而非用标准 function calling）。
+    // 无论正文是否为空、DSML 是否闭合，一律关工具让模型重述——宁可多一轮也比中断好。
+    leakedRetriesThisRound = 0
+    while (
+      leakedRetry &&
+      turn.leaked &&
+      turn.toolCalls.length === 0 &&
+      !turn.failed &&
+      leakedRetriesThisRound < MAX_LEAKED_RETRIES_PER_ROUND
+    ) {
+      leakedRetriesThisRound++
+      // 把已过滤的正文当作 assistant 消息接入，然后补一条用户指令
+      if (turn.content.trim()) {
+        msgs.push({ role: 'assistant', content: turn.content })
       }
+      msgs.push({ role: 'user', content: '继续完成你的回复。禁止在正文中使用 DSML 或任何 <｜ ｜> 标记来调用工具——你必须使用标准的 function calling。如果你的上一条回复被截断了，请重新完整输出。' })
+      turn = await runTurn(url, apiKey, model, msgs, [], emit, { thinking, adapter })
+      totalTokens += turn.totalTokens
+      onTurn?.({ phase: 'leaked-retry', round, turn })
     }
 
     lastTurn = turn

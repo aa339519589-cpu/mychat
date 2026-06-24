@@ -109,9 +109,13 @@ export function makeContentFilter() {
 
   function flush(): string {
     if (waitingClose) {
+      // 未闭合工具区：不用硬丢弃，用 stripToolMarkup 把残留的 DSML 标签清掉，
+      // 尽可能恢复其中的可读文本（模型可能已经在工具调用后开始写正文了）。
+      const rescued = stripToolMarkup(buf)
       buf = ""
       waitingClose = null
-      return "" // 未闭合的工具区整体丢弃
+      // 只返回有实质内容的 rescue（避免把纯工具碎片当正文）
+      return rescued.trim() ? rescued : ""
     }
     const out = stripStandalone(buf)
     buf = ""
@@ -128,14 +132,18 @@ export function parseDsmlToolCalls(raw: string): { id: string; name: string; arg
   if (!raw || !/DSML/i.test(raw)) return []
   const calls: { id: string; name: string; args: string }[] = []
 
-  // 多模式匹配，覆盖不同全/半角竖线组合、空格变化
+  // 多模式匹配，覆盖不同全/半角竖线组合、空格变化、引号变体
   const invokeRes = [
     // 标准全角 DSML：<｜DSML｜invoke name="...">...</｜DSML｜invoke>
     /<[｜|]+\s*DSML\s*[｜|]*\s*invoke\s+name\s*=\s*"([^"]+)"[^>]*>([\s\S]*?)<\/[｜|]+\s*DSML\s*[｜|]*\s*invoke\s*>/gi,
     // 半角竖线：<||DSML||invoke name="...">...</||DSML||invoke>
     /<\|\|?\s*DSML\s*\|?\|\s*invoke\s+name\s*=\s*"([^"]+)"[^>]*>([\s\S]*?)<\/\|?\|\s*DSML\s*\|?\|\s*invoke\s*>/gi,
-    // 宽松兜底：< 任意 DSML invoke
+    // 宽松兜底：< 任意 DSML invoke（双引号）
     /<[^>]*DSML[^>]*invoke\s+name\s*=\s*"([^"]+)"[^>]*>([\s\S]*?)<\/[^>]*DSML[^>]*invoke\s*>/gi,
+    // 单引号 name
+    /<[｜|]+\s*DSML\s*[｜|]*\s*invoke\s+name\s*=\s*'([^']+)'[^>]*>([\s\S]*?)<\/[｜|]+\s*DSML\s*[｜|]*\s*invoke\s*>/gi,
+    // 无引号 name（name=word 而非 name="word"）
+    /<[｜|]+\s*DSML\s*[｜|]*\s*invoke\s+name\s*=\s*(\S+?)(?:\s+[^>]*)?>([\s\S]*?)<\/[｜|]+\s*DSML\s*[｜|]*\s*invoke\s*>/gi,
   ]
 
   for (const invokeRe of invokeRes) {
@@ -149,6 +157,10 @@ export function parseDsmlToolCalls(raw: string): { id: string; name: string; arg
         /<[｜|]+\s*DSML\s*[｜|]*\s*parameter\s+name\s*=\s*"([^"]+)"[^>]*>([\s\S]*?)<\/[｜|]+\s*DSML\s*[｜|]*\s*parameter\s*>/gi,
         /<\|\|?\s*DSML\s*\|?\|\s*parameter\s+name\s*=\s*"([^"]+)"[^>]*>([\s\S]*?)<\/\|?\|\s*DSML\s*\|?\|\s*parameter\s*>/gi,
         /<[^>]*DSML[^>]*parameter\s+name\s*=\s*"([^"]+)"[^>]*>([\s\S]*?)<\/[^>]*DSML[^>]*parameter\s*>/gi,
+        // 单引号
+        /<[｜|]+\s*DSML\s*[｜|]*\s*parameter\s+name\s*=\s*'([^']+)'[^>]*>([\s\S]*?)<\/[｜|]+\s*DSML\s*[｜|]*\s*parameter\s*>/gi,
+        // 无引号 name + string 属性中取实际值
+        /<[｜|]+\s*DSML\s*[｜|]*\s*parameter\s+name\s*=\s*(\S+?)(?:\s+string\s*=\s*"(?:true|false)")?[^>]*>([\s\S]*?)<\/[｜|]+\s*DSML\s*[｜|]*\s*parameter\s*>/gi,
       ]
       for (const paramRe of paramRes) {
         let pm: RegExpExecArray | null
@@ -167,14 +179,26 @@ export function parseDsmlToolCalls(raw: string): { id: string; name: string; arg
 // 用于 agent-loop 判断是否需要 auto-continue 来获取完整的工具调用闭合标签。
 export function hasIncompleteDsmlToolCall(raw: string): boolean {
   if (!raw || !/DSML/i.test(raw)) return false
-  // 找到最后一个 DSML invoke 的开标记
-  const openRe = /<[｜|]+\s*DSML\s*[｜|]*\s*invoke\s+name\s*=\s*"[^"]+"[^>]*>/gi
+  // 找到最后一个 DSML invoke 的开标记（支持双引号、单引号、无引号 name）
+  const openRes = [
+    /<[｜|]+\s*DSML\s*[｜|]*\s*invoke\s+name\s*=\s*"[^"]*"[^>]*>/gi,
+    /<[｜|]+\s*DSML\s*[｜|]*\s*invoke\s+name\s*=\s*'[^']*'[^>]*>/gi,
+    /<[｜|]+\s*DSML\s*[｜|]*\s*invoke\s+name\s*=\s*\S+[^>]*>/gi,
+    /<[^>]*DSML[^>]*invoke\s+name\s*=\s*"[^"]*"[^>]*>/gi,
+  ]
   let lastOpen = -1
-  let m: RegExpExecArray | null
-  while ((m = openRe.exec(raw)) !== null) lastOpen = m.index
+  for (const openRe of openRes) {
+    let m: RegExpExecArray | null
+    while ((m = openRe.exec(raw)) !== null) {
+      if (m.index > lastOpen) lastOpen = m.index
+    }
+  }
   if (lastOpen === -1) return false
-  // 查这个开标记后面有没有对应的闭合
+  // 查这个开标记后面有没有对应的闭合（同样支持多种变体）
   const after = raw.slice(lastOpen)
-  const closeRe = /<\/[｜|]+\s*DSML\s*[｜|]*\s*invoke\s*>/gi
-  return !closeRe.test(after)
+  const closeRes = [
+    /<\/[｜|]+\s*DSML\s*[｜|]*\s*invoke\s*>/gi,
+    /<\/[^>]*DSML[^>]*invoke\s*>/gi,
+  ]
+  return !closeRes.some(re => re.test(after))
 }
