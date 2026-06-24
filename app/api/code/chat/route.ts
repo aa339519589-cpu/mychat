@@ -12,6 +12,7 @@ import { addQuotaUsage } from '@/lib/quota'
 import { resolveAuth, enforceLimits } from '@/lib/api/guard'
 import { runInSandbox } from '@/lib/sandbox'
 import { runInWorkspace } from '@/lib/agent/shell'
+import { isolatedShellConfigured } from '@/lib/agent/isolated-shell'
 import { createRecorder } from '@/lib/agent/recorder'
 import { codeContinuationPrompt } from '@/lib/agent/continuation'
 import {
@@ -31,6 +32,9 @@ const DEEPSEEK_BASE_URL = 'https://api.deepseek.com'
 const TAVILY_API_KEY = process.env.TAVILY_API_KEY ?? ''
 
 function buildCodeSystem(repo: string | null, login: string, memories: string[], hasWorkspace: boolean): string {
+  const executePermission = isolatedShellConfigured()
+    ? '在当前任务独享的 Linux 沙箱中执行完整终端命令；服务器密钥不会进入沙箱'
+    : '在 workspace 里执行受控命令（node --check、npm run build、npm test 等）'
   const wsSection = hasWorkspace ? `
 🚫 你已进入 Workspace 模式。你没有直接推 main 的能力，也没有 GitHub 认证信息。
 你唯一能做的发布方式：完成文件修改 → 展示 diff → 让用户点击底部「确认发布」按钮。
@@ -44,7 +48,7 @@ function buildCodeSystem(repo: string | null, login: string, memories: string[],
 你能使用的工具：
 - write_files / edit_file / delete_files：直接修改 workspace 里的真实文件（会自动 snapshot 备份）
 - apply_patch：用 unified diff 批量修改代码
-- execute：在 workspace 里执行命令（node --check、npm run build、npm test 等）
+- execute：${executePermission}
 - list_files / search_files / read_file：浏览、搜索并读取 workspace 文件
 - git_diff：查看当前全部真实改动
 - verify：自动安装依赖并运行项目可用的 lint、类型检查、测试和构建
@@ -262,7 +266,7 @@ export async function POST(req: NextRequest) {
     { type: 'function', function: { name: 'write_files', description: isWs ? '直接在 workspace 中写入真实文件（会自动 snapshot 备份）。传完整文件内容。' : '生成改动计划，用户确认后执行。传完整文件内容。', parameters: { type: 'object', properties: { files: { type: 'array', items: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string', description: '完整文件内容' } }, required: ['path', 'content'] } } }, required: ['files'] } } },
     { type: 'function', function: { name: 'edit_file', description: isWs ? '直接在 workspace 中精确修改文件（会自动 snapshot 备份）。传 old_string 和 new_string。' : '生成改动计划，用户确认后执行。用 old_string 定位原文，替换成 new_string。', parameters: { type: 'object', properties: { path: { type: 'string', description: '文件路径' }, old_string: { type: 'string', description: '原文片段（必须唯一）' }, new_string: { type: 'string', description: '替换内容' } }, required: ['path', 'old_string', 'new_string'] } } },
     { type: 'function', function: { name: 'delete_files', description: isWs ? '直接从 workspace 中删除真实文件（会自动 snapshot 备份）。' : '生成删除计划，用户确认后执行。', parameters: { type: 'object', properties: { paths: { type: 'array', items: { type: 'string' } } }, required: ['paths'] } } },
-    { type: 'function', function: { name: 'execute', description: isWs ? '在 workspace 中执行命令（node --check、npm run build、npm test 等）。改完代码后建议先跑校验。' : '在沙箱中执行命令（node --check、node -e、python3 -c 等）。', parameters: { type: 'object', properties: { command: { type: 'string', description: '要执行的命令' } }, required: ['command'] } } },
+    { type: 'function', function: { name: 'execute', description: isWs ? `${isolatedShellConfigured() ? '在当前任务独享的 Linux 沙箱中执行完整终端命令' : '在 workspace 中执行受控命令'}。改完代码后使用 verify 完整校验。` : '在沙箱中执行命令（node --check、node -e、python3 -c 等）。', parameters: { type: 'object', properties: { command: { type: 'string', description: '要执行的命令' } }, required: ['command'] } } },
     { type: 'function', function: { name: 'enable_pages', description: '对纯静态/前端项目开启 GitHub Pages，让项目有可访问网址（上线）。', parameters: { type: 'object', properties: {} } } },
     { type: 'function', function: { name: 'code_remember', description: '记住一条关于本仓库的长期事实。', parameters: { type: 'object', properties: { content: { type: 'string' } }, required: ['content'] } } },
     { type: 'function', function: { name: 'search', description: '网络搜索（文档、API、技术资料等）。需要查阅外部资源时用。', parameters: { type: 'object', properties: { query: { type: 'string', description: '搜索关键词或短语' } }, required: ['query'] } } },

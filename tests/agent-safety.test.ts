@@ -2,6 +2,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { classifyFileRisk, classifyPublishRisk, isProtectedBranch } from "../lib/agent/risk"
 import { checkCommand } from "../lib/agent/command-security"
+import { isolatedShellConfigured } from "../lib/agent/isolated-shell"
 
 test("protected branches can never be published", () => {
   for (const branch of ["main", "master", "production", "prod", "release"]) {
@@ -19,4 +20,16 @@ test("sensitive files are blocked and workflows require confirmation", () => {
 test("workspace shell blocks direct main pushes", () => {
   assert.equal(checkCommand("git push origin main").allowed, false)
   assert.equal(checkCommand("npm test").allowed, true)
+})
+
+test("isolated shell activates only when its own key is configured", { concurrency: false }, t => {
+  const previous = process.env.E2B_API_KEY
+  t.after(() => {
+    if (previous === undefined) delete process.env.E2B_API_KEY
+    else process.env.E2B_API_KEY = previous
+  })
+  delete process.env.E2B_API_KEY
+  assert.equal(isolatedShellConfigured(), false)
+  process.env.E2B_API_KEY = "test-key"
+  assert.equal(isolatedShellConfigured(), true)
 })

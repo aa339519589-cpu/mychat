@@ -6,6 +6,7 @@ import { json } from "@/lib/api/response"
 import { addStep, updateWorkspaceStatus } from "@/lib/agent/data"
 import { requireWorkspace } from "@/lib/agent/workspace-route"
 import { cleanupWorkspace } from "@/lib/agent/snapshot"
+import { cleanupIsolatedWorkspace } from "@/lib/agent/isolated-shell"
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
   const { taskId } = await params
@@ -14,6 +15,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ ta
 
   // 清理本地目录
   const result = cleanupWorkspace(taskId, ctx.userId)
+  if (result.ok) await cleanupIsolatedWorkspace(ctx.supabase, ctx.userId, taskId)
 
   // 更新 DB 状态
   if (result.ok) {

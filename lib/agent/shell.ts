@@ -9,6 +9,7 @@ import { workspacePath } from "./workspace"
 import { checkCommand, sanitizeCommandOutput } from "./command-security"
 import { safeResolve } from "./path-security"
 import { createRecorder } from "./recorder"
+import { isolatedShellConfigured, runInIsolatedWorkspace } from "./isolated-shell"
 
 const DEFAULT_TIMEOUT = 60_000       // 默认 60 秒
 const MAX_TIMEOUT = 300_000          // 最多 5 分钟
@@ -22,6 +23,7 @@ export type ShellResult = {
   timedOut: boolean
   blocked: boolean
   blockedReason?: string
+  backend?: "isolated" | "local"
 }
 
 export type ShellOptions = {
@@ -60,13 +62,7 @@ export async function runInWorkspace(
   const wsPath = workspacePath(userId, taskId)
   if (!existsSync(join(wsPath, ".git"))) return blockedOut("Workspace 未就绪，请先创建 workspace")
 
-  // ② 命令安全检查
-  const verdict = checkCommand(command)
-  if (!verdict.allowed) return blockedOut(verdict.reason)
-
-  // ③ cwd 安全校验
-  const timeout = Math.min(opts.timeoutMs ?? DEFAULT_TIMEOUT, MAX_TIMEOUT)
-  const maxOut = opts.maxOutputChars ?? DEFAULT_MAX_OUTPUT
+  // ② cwd 安全校验
   let cwd = wsPath
   if (opts.cwd) {
     const resolved = safeResolve(wsPath, opts.cwd)
@@ -74,14 +70,27 @@ export async function runInWorkspace(
     cwd = resolved
   }
 
-  // ④ recorder
+  const isolated = isolatedShellConfigured()
+  if (!isolated) {
+    const verdict = checkCommand(command)
+    if (!verdict.allowed) return blockedOut(verdict.reason)
+  }
+
+  // ③ recorder
   const recorder = createRecorder({ supabase, userId, taskId })
 
   await recorder.step("tool_call", `执行: ${command.slice(0, 80)}`)
 
-  const safeInput = { command, cwd: opts.cwd ?? ".", timeoutMs: timeout }
+  const safeInput = { command, cwd: opts.cwd ?? ".", backend: isolated ? "isolated" : "local" }
 
-  const result = await execCommand(command, cwd, timeout, maxOut)
+  const result = isolated
+    ? await runInIsolatedWorkspace(supabase, userId, taskId, command, opts)
+    : await execCommand(
+        command,
+        cwd,
+        Math.min(opts.timeoutMs ?? DEFAULT_TIMEOUT, MAX_TIMEOUT),
+        opts.maxOutputChars ?? DEFAULT_MAX_OUTPUT,
+      )
 
   // 写入 tool_call（已通过 recorder）
   await recorder.recordToolCall("execute", safeInput, () =>
@@ -141,6 +150,7 @@ async function execCommand(
         durationMs,
         timedOut,
         blocked: false,
+        backend: "local",
       })
     }
 
@@ -175,5 +185,6 @@ function blockedOut(reason: string): ShellResult {
   return {
     stdout: "", stderr: "", exitCode: null, durationMs: 0, timedOut: false,
     blocked: true, blockedReason: reason,
+    backend: "local",
   }
 }

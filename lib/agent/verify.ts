@@ -1,7 +1,6 @@
 // Verification Runner：按序运行 lint → typecheck → test → build
 // 每步记录 steps / tool_calls / artifacts，解析错误
 
-import { execSync } from "child_process"
 import { existsSync } from "fs"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { workspaceRoot } from "./workspace"
@@ -9,7 +8,7 @@ import { detectProjectCommands } from "./project-detect"
 import { parseAllErrors, type VerificationErrors } from "./error-parser"
 import { redactSensitive } from "./path-security"
 import { addStep, addArtifact } from "./data"
-import { workspaceProcessEnv } from "./shell"
+import { runInWorkspace } from "./shell"
 
 type VerifyStep = {
   name: string
@@ -35,29 +34,22 @@ export type VerifyResult = {
 
 // ───────────── 运行单个命令 ─────────────
 
-function runCommand(root: string, command: string, timeoutMs = 120_000): { stdout: string; stderr: string; exitCode: number | null; timedOut: boolean } {
-  try {
-    const buf = execSync(command, {
-      cwd: root,
-      timeout: timeoutMs,
-      maxBuffer: 4 * 1024 * 1024,
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-      env: workspaceProcessEnv(),
-    })
-    return {
-      stdout: buf.slice(0, 100_000),
-      stderr: "",
-      exitCode: 0,
-      timedOut: false,
-    }
-  } catch (err: any) {
-    return {
-      stdout: (err?.stdout ? String(err.stdout) : "").slice(0, 100_000),
-      stderr: (err?.stderr ? String(err.stderr) : err?.message ?? "").slice(0, 100_000),
-      exitCode: err?.status ?? err?.exitCode ?? 1,
-      timedOut: err?.killed === true || err?.signal === "SIGTERM",
-    }
+async function runCommand(
+  supabase: SupabaseClient,
+  userId: string,
+  taskId: string,
+  command: string,
+  timeoutMs = 120_000,
+): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut: boolean }> {
+  const result = await runInWorkspace(supabase, userId, taskId, command, {
+    timeoutMs,
+    maxOutputChars: 100_000,
+  })
+  return {
+    stdout: result.stdout,
+    stderr: result.blocked ? result.blockedReason ?? "命令被拦截" : result.stderr,
+    exitCode: result.blocked ? 1 : result.exitCode,
+    timedOut: result.timedOut,
   }
 }
 
@@ -110,7 +102,7 @@ export async function runVerification(
       label: `安装依赖：${detected.installCommand}`,
       detail: detected.packageManager,
     })
-    const ir = runCommand(root, detected.installCommand, 180_000)
+    const ir = await runCommand(supabase, userId, taskId, detected.installCommand, 180_000)
     if (ir.exitCode !== 0) {
       return {
         ok: false,
@@ -164,7 +156,7 @@ export async function runVerification(
     })
 
     const start = Date.now()
-    const r = runCommand(root, command, timeout)
+    const r = await runCommand(supabase, userId, taskId, command, timeout)
     const duration = Date.now() - start
 
     const parsed = parseAllErrors(r.stdout, r.stderr, command)
