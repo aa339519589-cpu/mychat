@@ -487,20 +487,6 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
         </div>
       </div>
 
-      {/* 🔍 调试状态栏 — 临时，用于排查线上 PR 链路 */}
-      {currentTaskId && (
-        <div className="border-t border-border bg-yellow-50 dark:bg-yellow-950/20 px-3 py-1.5 md:px-8">
-          <div className="mx-auto flex max-w-3xl flex-wrap items-center gap-x-4 gap-y-0.5 text-[10px]" style={{ fontFamily: MONO }}>
-            <span>taskId: <b>{currentTaskId.slice(0,8)}…</b></span>
-            <span>repo: <b>{repo ?? "none"}</b></span>
-            <span>workspaceDirty: <b style={{ color: workspaceDirty ? "#3fb950" : "#f85149" }}>{String(workspaceDirty)}</b></span>
-            <span>pendingPlan: <b>{pendingPlan.length}</b></span>
-            <span>streaming: <b>{String(streaming)}</b></span>
-            <span>auto: <b>{String(auto)}</b></span>
-          </div>
-        </div>
-      )}
-
       {/* Workspace PR 按钮 — 独立于模型决策，检测到 diff 即显示 */}
       {currentTaskId && repo && workspaceDirty && !auto && (
         <div className="border-t border-border bg-secondary/40 px-4 py-3 md:px-8">
