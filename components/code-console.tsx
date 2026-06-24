@@ -14,6 +14,7 @@ import {
 import { WorkingDots } from "@/components/working-dots"
 import ReactMarkdown from "react-markdown"
 import remarkMath from "remark-math"
+import remarkGfm from "remark-gfm"
 import rehypeKatex from "rehype-katex"
 import { stripToolMarkup } from "@/lib/llm/sanitize"
 
@@ -551,7 +552,7 @@ function MessageView({ m, login, streaming }: { m: CodeMessage; login: string; s
       {m.content && !m.isError && (
         <div className="text-[13.5px] leading-[1.7] text-foreground/90" style={{ fontFamily: MONO }}>
           <ReactMarkdown
-            remarkPlugins={[remarkMath]}
+            remarkPlugins={[remarkMath, remarkGfm]}
             rehypePlugins={[rehypeKatex]}
             components={{
               p: ({ children }) => <p className="break-words mb-2 [overflow-wrap:anywhere]">{children}</p>,
@@ -569,13 +570,14 @@ function MessageView({ m, login, streaming }: { m: CodeMessage; login: string; s
               li: ({ children }) => <li className="mb-0.5">{children}</li>,
               blockquote: ({ children }) => <blockquote className="border-l-2 pl-3 mb-2 italic opacity-80" style={{ borderColor: ACCENT }}>{children}</blockquote>,
               table: ({ children }) => (
-                <div className="overflow-x-auto mb-2">
-                  <table className="min-w-full border-collapse border border-border/50 text-[12px]">{children}</table>
+                <div className="overflow-x-auto mb-3 rounded-lg border border-border/50">
+                  <table className="min-w-full border-collapse text-[12px]">{children}</table>
                 </div>
               ),
-              thead: ({ children }) => <thead className="bg-secondary/40">{children}</thead>,
-              th: ({ children }) => <th className="border border-border/50 px-2.5 py-1.5 text-left font-semibold">{children}</th>,
-              td: ({ children }) => <td className="border border-border/50 px-2.5 py-1.5">{children}</td>,
+              thead: ({ children }) => <thead className="border-b border-border/50 bg-secondary/30">{children}</thead>,
+              th: ({ children }) => <th className="border-r border-border/30 px-3 py-2 text-left font-semibold last:border-r-0">{children}</th>,
+              tbody: ({ children }) => <tbody className="[&_tr:nth-child(even)]:bg-secondary/20">{children}</tbody>,
+              td: ({ children }) => <td className="border-r border-border/20 px-3 py-1.5 last:border-r-0">{children}</td>,
               h1: ({ children }) => <h1 className="text-[15px] font-bold mb-2 mt-3">{children}</h1>,
               h2: ({ children }) => <h2 className="text-[14px] font-semibold mb-1.5 mt-2.5">{children}</h2>,
               h3: ({ children }) => <h3 className="text-[13.5px] font-semibold mb-1 mt-2">{children}</h3>,
