@@ -12,6 +12,10 @@ import {
   fetchCodeMemories, insertCodeMemory, deleteCodeMemory,
 } from "@/lib/code-data"
 import { WorkingDots } from "@/components/working-dots"
+import ReactMarkdown from "react-markdown"
+import remarkMath from "remark-math"
+import rehypeKatex from "rehype-katex"
+import { stripToolMarkup } from "@/lib/llm/sanitize"
 
 const MONO = "ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Courier New',monospace"
 const ACCENT = "var(--code-accent)"  // 亮色=Claude橙 oklch(0.62 0.15 38)；暗色=蓝 oklch(0.52 0.12 256)；在 globals.css 定义
@@ -544,7 +548,47 @@ function MessageView({ m, login, streaming }: { m: CodeMessage; login: string; s
           <ThinkingTimer />
         </div>
       )}
-      {m.content && <p className={cn("whitespace-pre-wrap break-words text-[13.5px] leading-[1.7]", m.isError ? "text-destructive" : "text-foreground/90")}>{m.content}</p>}
+      {m.content && !m.isError && (
+        <div className="text-[13.5px] leading-[1.7] text-foreground/90" style={{ fontFamily: MONO }}>
+          <ReactMarkdown
+            remarkPlugins={[remarkMath]}
+            rehypePlugins={[rehypeKatex]}
+            components={{
+              p: ({ children }) => <p className="break-words mb-2 [overflow-wrap:anywhere]">{children}</p>,
+              a: ({ children, href }) => <a href={href} className="break-all underline underline-offset-4" style={{ color: ACCENT }} target="_blank" rel="noreferrer">{children}</a>,
+              strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+              em: ({ children }) => <em className="italic">{children}</em>,
+              code: ({ className, children, ...props }) => {
+                const isInline = !className
+                if (isInline) return <code className="rounded bg-secondary/60 px-1 py-0.5 text-[12px]" {...props}>{children}</code>
+                return <code className="block overflow-x-auto rounded bg-secondary/40 px-3 py-2 text-[12px] leading-relaxed" {...props}>{children}</code>
+              },
+              pre: ({ children }) => <pre className="max-w-full overflow-x-auto rounded bg-secondary/40 p-3 mb-2 text-[12px] border border-border/30">{children}</pre>,
+              ul: ({ children }) => <ul className="list-disc pl-5 mb-2 space-y-0.5">{children}</ul>,
+              ol: ({ children }) => <ol className="list-decimal pl-5 mb-2 space-y-0.5">{children}</ol>,
+              li: ({ children }) => <li className="mb-0.5">{children}</li>,
+              blockquote: ({ children }) => <blockquote className="border-l-2 pl-3 mb-2 italic opacity-80" style={{ borderColor: ACCENT }}>{children}</blockquote>,
+              table: ({ children }) => (
+                <div className="overflow-x-auto mb-2">
+                  <table className="min-w-full border-collapse border border-border/50 text-[12px]">{children}</table>
+                </div>
+              ),
+              thead: ({ children }) => <thead className="bg-secondary/40">{children}</thead>,
+              th: ({ children }) => <th className="border border-border/50 px-2.5 py-1.5 text-left font-semibold">{children}</th>,
+              td: ({ children }) => <td className="border border-border/50 px-2.5 py-1.5">{children}</td>,
+              h1: ({ children }) => <h1 className="text-[15px] font-bold mb-2 mt-3">{children}</h1>,
+              h2: ({ children }) => <h2 className="text-[14px] font-semibold mb-1.5 mt-2.5">{children}</h2>,
+              h3: ({ children }) => <h3 className="text-[13.5px] font-semibold mb-1 mt-2">{children}</h3>,
+              hr: () => <hr className="my-3 border-border/40" />,
+            }}
+          >
+            {stripToolMarkup(m.content)}
+          </ReactMarkdown>
+        </div>
+      )}
+      {m.content && m.isError && (
+        <p className="whitespace-pre-wrap break-words text-[13.5px] leading-[1.7] text-destructive">{m.content}</p>
+      )}
       {/* 操作摘要（步骤折叠） */}
       {steps.length > 0 && (
         <div className="mt-1">
