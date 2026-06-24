@@ -31,24 +31,27 @@ const SAFETY_ROUNDS = 9999
 
 function buildCodeSystem(repo: string | null, defaultBranch: string | null, login: string, memories: string[], goal: boolean, hasWorkspace: boolean): string {
   const wsSection = hasWorkspace ? `
-【Workspace 模式】你已经在一个真实 workspace 中工作，仓库已 clone 到本地。
-- write_files / edit_file / delete_files：直接修改 workspace 里的真实文件（会先自动 snapshot 备份）
-- apply_patch：用 unified diff 批量修改代码（推荐！先用 dryRun: true 预览，确认后 dryRun: false 执行）
-- execute：在 workspace 里执行命令（如 node --check 文件.js、npm run build、npm test 等）
+🚫 你已进入 Workspace 模式。你没有直接推 main 的能力，也没有 GitHub 认证信息。
+你唯一能做的发布方式：完成文件修改 → 展示 diff → 让用户点击底部「确认并创建 PR」按钮。
+
+禁止在你的回复中出现以下任何内容：
+- "直接写入 main"、"直接提交 main"、"直接推送"、"直推"、"选项 A"、"选项 B"
+- "无法创建 PR"、"没有 PR API"、"没有 GitHub 认证"
+- "git push"、"gh pr create"、"手动 git"、"手动创建 PR"
+- 任何形式的 "你可以手动..." git 命令示例
+
+你能使用的工具：
+- write_files / edit_file / delete_files：直接修改 workspace 里的真实文件（会自动 snapshot 备份）
+- apply_patch：用 unified diff 批量修改代码
+- execute：在 workspace 里执行命令（node --check、npm run build、npm test 等）
 - list_files / read_file：直接读取 workspace 文件
-- publish：声明改动完成，等待用户确认发布（用户会看到「确认并创建 PR」按钮）
+- publish：通知系统改动完成，触发底部「确认并创建 PR」按钮
 
-【发布方式（重要）】
-- 你改完代码后，回复中说明改了什么，然后告诉用户「请点击底部「确认并创建 PR」按钮发布」
-- 平台后端会自动完成 git commit → push agent branch → 创建 Pull Request
-- 改动通过 PR 审核，不会直接推到 main
-
-【禁止事项】
-- 绝对不要建议用户手动执行 git clone / git checkout / git add / git commit / git push / gh pr create 等命令
-- 绝对不要在 shell 里执行 git push 或 gh pr create
-- 你没有 GitHub 认证信息，发布 PR 只能通过平台后端完成
-- 绝对不要声称「没有 PR API」或「没有 GitHub 认证信息」或「只能直接推 main」
-- 不要给用户输出任何手动 git 命令的示例
+改完代码后的标准流程：
+1. 展示 diff（让用户看到你改了什么）
+2. 调用 publish 工具
+3. 在回复中写："✅ 改动已完成。请点击底部「确认并创建 PR」按钮发布。"
+4. 不要提供任何其他发布方案或选项
 ` : `
 【Plan 模式】你目前没有 workspace，改动通过 plan 模式执行：
 - write_files / edit_file / delete_files：生成改动计划，展示给用户确认后执行
@@ -76,7 +79,7 @@ ${wsSection}
 3. 改现有项目：先 list_files / read_file 定位，再 edit_file 或 write_files 给出改动${hasWorkspace ? "，推荐用 apply_patch 批量修改" : ""}。
 4. 改完代码后执行一次语法校验（如 node --check）。
 ${hasWorkspace
-  ? "5. 改完后清楚地告诉用户你改了什么，用户点击「确认并创建 PR」即可自动发布为 Pull Request。你不需要等待用户确认 plan——workspace 模式直接生效。"
+  ? "5. 改完调用 publish 工具，然后告诉用户点击「确认并创建 PR」。绝不要提直接推 main 或手动 git。"
   : "5. 你的改动会生成待执行计划展示给用户，用户确认后提交并推送。"}
 6. 回复【开头第一行】必须是 git 提交信息（20 字内中文，如「新增 edit_file 工具」）。
 7. 做完用中文简明说明，像干练的工程师，不要 emoji。

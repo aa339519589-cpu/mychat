@@ -203,8 +203,9 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
 
   // ── 执行计划：直接推送（用户已选）──
   async function applyPlan(plan: PlanAction[], aiMsgId: string) {
-    if (!plan.length && !currentTaskId) return  // workspace 模式允许空 plan
+    if (!plan.length && !currentTaskId && !workspaceDirty) return  // workspace 模式允许空 plan
     setApplying(true); setApplyError(null)
+    console.log('[CodeConsole] applyPlan called', { planLen: plan.length, currentTaskId, workspaceDirty, repo })
     try {
       const created = plan.find(a => a.kind === "create_repo") as Extract<PlanAction, { kind: "create_repo" }> | undefined
       // 提取 git commit message：跳过对话碎片行，取第一条有实质内容的行
@@ -217,8 +218,10 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
         body: JSON.stringify({ repo, actions: plan, message: summary, taskId: currentTaskId }),
       })
       const data = await res.json()
+      console.log('[CodeConsole] applyPlan response', { ok: res.ok, status: res.status, mode: data?.mode, error: data?.error })
       if (res.ok) {
         const result = data as ApplyResult
+        console.log('[CodeConsole] applyPlan OK', { mode: result.mode, prUrl: result.pullRequestUrl, branch: result.branch })
         if (result.created && result.repo) { setRepo(result.repo); setRepos(null) }
         setMessages(prev => prev.map(m => m.id === aiMsgId ? { ...m, result } : m))
         setPendingPlan([])
@@ -308,6 +311,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       }
       // workspace 模式：即使 plan 为空，也显示 PR 确认按钮
       if (!plan.length && !hadError && taskId) {
+        console.log('[CodeConsole] workspaceDirty → true', { taskId, currentTaskId, planLen: plan.length })
         setWorkspaceDirty(true)
       }
     }
@@ -399,7 +403,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
                 className="flex items-center gap-1 rounded-lg px-3.5 py-1.5 text-[12px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
                 style={{ background: ACCENT }}>
                 {applying ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
-                {applying ? <>执行中… <ThinkingTimer /></> : currentTaskId ? "确认并创建 PR" : "确认并执行"}
+                {applying ? <>执行中… <ThinkingTimer /></> : (currentTaskId || workspaceDirty) ? "确认并创建 PR" : "确认并执行"}
               </button>
             </div>
             </div>
@@ -655,11 +659,12 @@ function MessageView({ m, login, streaming }: { m: CodeMessage; login: string; s
 
 function ResultCard({ r }: { r: ApplyResult }) {
   const isPR = r.mode === "workspace_pr"
+  console.log('[CodeConsole] ResultCard', { mode: r.mode, isPR, prUrl: r.pullRequestUrl })
   return (
     <div className="mt-1 space-y-1 rounded-lg border px-3 py-2.5 text-[12px]" style={{ borderColor: ACCENT, background: "color-mix(in oklab, " + ACCENT + " 8%, transparent)" }}>
       <div className="flex items-center gap-2 font-medium text-foreground">
         <Check className="size-3.5" style={{ color: ACCENT }} />
-        {isPR ? "已创建 Pull Request" : "已提交并推送"}{r.created ? "（新仓库已创建）" : ""}
+        {isPR ? "已创建 Pull Request" : `已提交并推送（mode: ${r.mode || "direct_push"}）`}{r.created ? "（新仓库已创建）" : ""}
       </div>
       {isPR && r.pullRequestUrl && (
         <a href={r.pullRequestUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-muted-foreground underline-offset-2 hover:underline">
