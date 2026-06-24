@@ -415,7 +415,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
             onChange={e => { setInput(e.target.value); const el = e.target; el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 160) + "px" }}
             onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (!streaming) onSubmit() } }}
             placeholder={goalArmed ? "描述目标，我会自主多轮完成……" : (repo ? "描述问题，或输入 / 调用命令……" : "想做什么？比如「做个番茄钟」……")}
-            className="min-h-0 flex-1 resize-none bg-transparent py-0 text-[14px] leading-6 text-foreground outline-none placeholder:text-muted-foreground/60"
+            className="min-h-0 flex-1 resize-none bg-transparent py-0 text-base leading-6 text-foreground outline-none placeholder:text-muted-foreground/60"
             style={{ fontFamily: MONO }}
           />
           {streaming ? (
