@@ -397,7 +397,7 @@ export async function fetchProjectContext(projectId: string): Promise<ProjectCon
   ])
   return {
     id: projectId,
-    instructions: (proj as ProjectRow | null)?.instructions ?? "",
+    instructions: (proj as { instructions: string } | null)?.instructions ?? "",
     files: files.map(f => ({ name: f.name, content: f.content })),
     projectMemories: mems.map(m => ({ id: m.id, content: m.content })),
   }
