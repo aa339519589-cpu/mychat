@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { modelContent, type CodeMessage } from '../lib/code-data'
 import { codeContinuationPrompt } from '../lib/agent/continuation'
-import { enablePages } from '../lib/github'
+import { enablePages, mergePullRequest } from '../lib/github'
 
 test('execution receipts are returned to the next model turn', () => {
   const message: CodeMessage = {
@@ -27,25 +27,29 @@ test('execution receipts are returned to the next model turn', () => {
 test('Code Agent continues dirty workspaces but stops after publish', () => {
   const base = {
     workspace: true,
-    idleCount: 0,
     usedTools: true,
     hasChanges: true,
     published: false,
+    completed: false,
+    waitingForUser: false,
     plannedRepo: false,
     plannedFiles: 0,
   }
   assert.match(codeContinuationPrompt(base) ?? '', /继续自主检查/)
   assert.equal(codeContinuationPrompt({ ...base, published: true }), null)
-  assert.equal(codeContinuationPrompt({ ...base, hasChanges: false, idleCount: 1 }), null)
+  assert.match(codeContinuationPrompt({ ...base, hasChanges: false }) ?? '', /complete/)
+  assert.equal(codeContinuationPrompt({ ...base, hasChanges: false, completed: true }), null)
+  assert.equal(codeContinuationPrompt({ ...base, hasChanges: false, waitingForUser: true }), null)
 })
 
 test('new projects cannot stop before repo and files are planned', () => {
   const base = {
     workspace: false,
-    idleCount: 0,
     usedTools: false,
     hasChanges: false,
     published: false,
+    completed: false,
+    waitingForUser: false,
     plannedRepo: true,
     plannedFiles: 0,
   }
@@ -84,5 +88,21 @@ test('Pages reports pending instead of claiming deployment succeeded', { concurr
   assert.deepEqual(
     await enablePages('token', 'owner/project', 'main', { timeoutMs: 0, intervalMs: 0 }),
     { status: 'pending', url: 'https://owner.github.io/project/' },
+  )
+})
+
+test('website publishing merges the exact PR head through GitHub', { concurrency: false }, async t => {
+  const originalFetch = globalThis.fetch
+  t.after(() => { globalThis.fetch = originalFetch })
+  globalThis.fetch = async (input, init) => {
+    assert.equal(String(input), 'https://api.github.com/repos/owner/project/pulls/7/merge')
+    assert.equal(init?.method, 'PUT')
+    assert.deepEqual(JSON.parse(String(init?.body)), { sha: 'head-sha', merge_method: 'merge' })
+    return Response.json({ merged: true, sha: 'merge-sha' })
+  }
+
+  assert.deepEqual(
+    await mergePullRequest('token', 'owner/project', 7, 'head-sha'),
+    { merged: true, commitSha: 'merge-sha' },
   )
 })

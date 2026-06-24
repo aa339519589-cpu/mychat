@@ -248,8 +248,12 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       const data = await res.json()
       if (res.ok) {
         const result = data as ApplyResult
-        await appendReceipt(result, currentTaskId)
+        const next = await appendReceipt(result, currentTaskId)
         setWorkspaceDirty(false)
+        setApplying(false)
+        void runSend("平台已经完成本次确认操作。根据执行回执继续完成原始任务，主动检查发布和网页状态；只有整个目标真正完成并验证后才能结束。", {
+          internal: true, baseMessages: next, repo,
+        })
       } else {
         setApplyError(data.error ?? "PR 创建失败")
       }
@@ -519,13 +523,13 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
           <div className="mx-auto max-w-3xl">
             {applyError && <p className="mb-2 text-[12px] leading-relaxed text-destructive">{applyError}</p>}
             <div className="flex items-center gap-3">
-            <span className="text-[12px] text-foreground" style={{ fontFamily: MONO }}>Workspace 已修改，可发布为 Pull Request</span>
+            <span className="text-[12px] text-foreground" style={{ fontFamily: MONO }}>改动完成，等待确认发布</span>
             <div className="ml-auto flex gap-2">
               <button onClick={publishWorkspacePR} disabled={applying}
                 className="flex items-center gap-1 rounded-lg px-3.5 py-1.5 text-[12px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
                 style={{ background: ACCENT }}>
                 {applying ? <Loader2 className="size-3.5 animate-spin" /> : <GitBranch className="size-3.5" />}
-                {applying ? <>创建 PR… <ThinkingTimer /></> : "创建 PR"}
+                {applying ? <>发布中… <ThinkingTimer /></> : "确认发布"}
               </button>
             </div>
             </div>
@@ -804,11 +808,12 @@ function MessageView({ m, login, streaming }: { m: CodeMessage; login: string; s
 function ResultCard({ r }: { r: ApplyResult }) {
   const isPR = r.mode === "workspace_pr"
   if (isPR) {
+    const title = r.pagesStatus === "ready" ? "网页已经发布" : r.merged ? "Pull Request 已合并" : "已创建 Pull Request"
     return (
       <div className="mt-1 space-y-1.5 rounded-lg border px-3 py-2.5 text-[12px] min-w-0" style={{ borderColor: "#3fb950", background: "color-mix(in oklab, #3fb950 8%, transparent)" }}>
         <div className="flex items-center gap-2 font-medium text-foreground">
           <Check className="size-3.5 shrink-0" style={{ color: "#3fb950" }} />
-          <span className="min-w-0 break-all">已创建 Pull Request</span>
+          <span className="min-w-0 break-all">{title}</span>
         </div>
         {r.pullRequestUrl && (
           <a href={r.pullRequestUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 font-medium underline-offset-2 hover:underline min-w-0" style={{ color: "#3fb950" }}>
@@ -817,6 +822,9 @@ function ResultCard({ r }: { r: ApplyResult }) {
         )}
         {r.branch && <p className="text-muted-foreground/70 truncate">分支：{r.branch}</p>}
         {r.commitSha && <p className="text-muted-foreground/70 truncate" style={{ fontFamily: MONO }}>commit：{r.commitSha.slice(0, 7)}</p>}
+        {r.pagesUrl && r.pagesStatus === "ready" && <a href={r.pagesUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 font-medium underline-offset-2 hover:underline min-w-0" style={{ color: "#3fb950" }}><Rocket className="size-3 shrink-0" /><span className="truncate">打开网页</span></a>}
+        {r.pagesUrl && r.pagesStatus === "pending" && <p className="text-muted-foreground">网页仍在部署，Agent 会继续检查</p>}
+        {r.pagesStatus === "failed" && <p className="text-destructive">网页部署失败：{r.pagesError}</p>}
         {r.message && <p className="text-muted-foreground/60 italic break-all">{r.message}</p>}
       </div>
     )

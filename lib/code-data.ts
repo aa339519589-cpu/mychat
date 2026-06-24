@@ -16,6 +16,7 @@ export type ApplyResult = {
   repo?: string; repoUrl?: string; pagesUrl?: string; commitSha?: string; created?: boolean
   mode?: "workspace_pr" | "direct_push"
   pullRequestUrl?: string; pullRequestNumber?: number; branch?: string
+  merged?: boolean; mergeCommitSha?: string
   pagesStatus?: "ready" | "pending" | "failed"
   pagesError?: string
   message?: string
@@ -112,6 +113,8 @@ export function modelContent(msg: CodeMessage): string {
     r.commitSha && `提交：${r.commitSha}`,
     r.branch && `分支：${r.branch}`,
     r.pullRequestUrl && `Pull Request：${r.pullRequestUrl}`,
+    r.merged && `Pull Request 已合并：是`,
+    r.mergeCommitSha && `合并提交：${r.mergeCommitSha}`,
     r.pagesUrl && `Pages 地址：${r.pagesUrl}`,
     r.pagesStatus && `Pages 状态：${r.pagesStatus}`,
     r.pagesError && `Pages 错误：${r.pagesError}`,

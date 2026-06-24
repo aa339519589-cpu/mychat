@@ -22,13 +22,13 @@ export type AgentLoopOpts = {
   tools: any[]               // provider 格式的工具数组（空数组 = 不带工具）
   emit: Emit
   executeTool: ExecuteTool
-  maxRounds: number
+  maxRounds?: number
   // chat：工具协议泄漏成正文且无可用内容时，关工具重试一轮
   leakedRetry?: boolean
   // chat：finish_reason === 'length' 时自动续写，前端无感拼接
-  autoContinue?: { maxContinuations: number }
+  autoContinue?: { maxContinuations?: number }
   idleContinuation?: {
-    maxContinuations: number
+    maxContinuations?: number
     prompt: (info: { turn: TurnResult; idleCount: number }) => string | null | Promise<string | null>
   }
   // 诊断日志钩子（循环本身不做日志，交给调用方）
@@ -45,7 +45,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
   const MAX_LEAKED_RETRIES_PER_ROUND = 2
   let idleCount = 0
 
-  for (let round = 0; round < maxRounds; round++) {
+  for (let round = 0; maxRounds === undefined || round < maxRounds; round++) {
     let turn = await runTurn(url, apiKey, model, msgs, tools, emit, { thinking, adapter })
     totalTokens += turn.totalTokens
     onTurn?.({ phase: 'round', round, turn })
@@ -58,7 +58,12 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
       totalTokens += turn.totalTokens
       onTurn?.({ phase: 'round', round, turn })
     }
-    if (turn.failed) { consecutiveFailures++; lastTurn = turn; continue }
+    if (turn.failed) {
+      consecutiveFailures++
+      lastTurn = turn
+      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) throw new Error('模型连接连续失败')
+      continue
+    }
     consecutiveFailures = 0
 
     // 工具协议泄漏：content 里有 DSML 等标记被剥掉了，但标准 tool_calls 为空。
@@ -91,7 +96,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
     lastTurn = turn
     lastHadToolCalls = turn.toolCalls.length > 0
     if (!lastHadToolCalls) {
-      if (idleContinuation && idleCount < idleContinuation.maxContinuations) {
+      if (idleContinuation && (idleContinuation.maxContinuations === undefined || idleCount < idleContinuation.maxContinuations)) {
         const prompt = await idleContinuation.prompt({ turn, idleCount })
         if (prompt) {
           if (turn.content.trim()) msgs.push({ role: 'assistant', content: turn.content })
@@ -124,7 +129,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
   if (autoContinue && lastTurn && !lastTurn.failed) {
     let cur = lastTurn
     let cont = 0
-    while (cont < autoContinue.maxContinuations && !cur.failed) {
+    while ((autoContinue.maxContinuations === undefined || cont < autoContinue.maxContinuations) && !cur.failed) {
       const needContinue = cur.finishReason === 'length' || cur.truncated || cur.hasIncompleteToolCall
       if (!needContinue) break
       cont++
@@ -134,7 +139,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
       totalTokens += cur.totalTokens
       onTurn?.({ phase: 'continue', round: cont, turn: cur })
     }
-    if (!cur.failed && cur.finishReason === 'length' && cont >= autoContinue.maxContinuations) {
+    if (!cur.failed && cur.finishReason === 'length' && autoContinue.maxContinuations !== undefined && cont >= autoContinue.maxContinuations) {
       emit({ text: '\n\n（内容较长，已输出至上限，可回复”继续”获取后续。）' })
     } else if (!cur.failed && (cur.truncated || cur.hasIncompleteToolCall)) {
       emit({ text: '\n\n（回复异常中断，请点击重新生成。）' })

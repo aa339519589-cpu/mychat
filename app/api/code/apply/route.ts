@@ -1,5 +1,5 @@
 import { cookies } from 'next/headers'
-import { repoMeta, createRepo, commitFiles, enablePages, type FileWrite } from '@/lib/github'
+import { repoMeta, createRepo, commitFiles, enablePages, mergePullRequest, type FileWrite } from '@/lib/github'
 import { resolveAuth } from '@/lib/api/guard'
 import { getTaskDetail } from '@/lib/agent/data'
 import { publishWorkspaceToPullRequest, getWorkspaceGitStatus } from '@/lib/agent/git-publish'
@@ -96,14 +96,71 @@ export async function POST(req: Request) {
       }, { status: 502 })
     }
 
+    const targetRepo = sessionRepo ?? detail.repo ?? ""
+    const deployPages = detail.meta?.deployPages === true
+    let merged = false
+    let mergeCommitSha: string | undefined
+    let pagesUrl: string | undefined
+    let pagesStatus: "ready" | "pending" | "failed" | undefined
+    let pagesError: string | undefined
+
+    if (deployPages) {
+      const pullNumber = result.pr?.pullRequestNumber
+      const headSha = result.commit?.commitSha
+      if (!pullNumber || !headSha || !targetRepo) {
+        return Response.json({ error: 'Pull Request 已创建，但缺少合并信息，无法继续上线' }, { status: 502 })
+      }
+      const merge = await mergePullRequest(token, targetRepo, pullNumber, headSha)
+      if (!merge.merged) {
+        await supabase.from('agent_tasks').update({
+          status: 'failed', error: merge.error,
+          meta: { ...(detail.meta ?? {}), deploymentStatus: 'blocked', deploymentError: merge.error },
+          updated_at: new Date().toISOString(),
+        }).eq('id', taskId).eq('user_id', userId)
+        return Response.json({ error: `Pull Request 已创建，但 GitHub 没有允许自动合并：${merge.error}` }, { status: 409 })
+      }
+      merged = true
+      mergeCommitSha = merge.commitSha
+      const meta = await repoMeta(token, targetRepo)
+      const baseBranch = meta?.defaultBranch ?? detail.branch ?? 'main'
+      const pages = await enablePages(token, targetRepo, baseBranch, {
+        verifyUrl: !meta?.isPrivate,
+        expectedCommitSha: mergeCommitSha,
+      })
+      pagesUrl = pages.url
+      pagesStatus = pages.status
+      if (pages.status === 'failed') pagesError = pages.error
+      await supabase.from('agent_tasks').update({
+        meta: {
+          ...(detail.meta ?? {}), deployPages: true,
+          deploymentStatus: pages.status,
+          pagesUrl: pages.url,
+          deploymentError: pages.status === 'failed' ? pages.error : null,
+          mergeCommitSha,
+        },
+        updated_at: new Date().toISOString(),
+      }).eq('id', taskId).eq('user_id', userId)
+    }
+
     return Response.json({
       mode: "workspace_pr",
       pullRequestUrl: result.pr?.pullRequestUrl,
       pullRequestNumber: result.pr?.pullRequestNumber,
       commitSha: result.commit?.commitSha,
       branch: result.push?.branch,
+      merged,
+      mergeCommitSha,
+      pagesUrl,
+      pagesStatus,
+      pagesError,
       changedFiles: result.status?.changedFiles,
-      message: "已创建 Pull Request（非直推 main）",
+      message: deployPages
+        ? pagesStatus === 'ready'
+          ? "已通过 Pull Request 合并并完成网页部署"
+          : pagesStatus === 'failed'
+            ? "已通过 Pull Request 合并，但网页部署失败，Agent 将继续排查"
+            : "已通过 Pull Request 合并，网页仍在部署"
+        : "已创建 Pull Request（非直推 main）",
     })
   }
 
@@ -146,7 +203,10 @@ export async function POST(req: Request) {
 
   // 3) 开启 Pages（若有）
   if (actions.some(a => a.kind === 'enable_pages')) {
-    const pages = await enablePages(token, targetRepo, targetBranch, { verifyUrl: !createAction.private })
+    const pages = await enablePages(token, targetRepo, targetBranch, {
+      verifyUrl: !createAction.private,
+      expectedCommitSha: result.commitSha,
+    })
     result.pagesUrl = pages.url
     result.pagesStatus = pages.status
     if (pages.status === 'failed') result.pagesError = pages.error

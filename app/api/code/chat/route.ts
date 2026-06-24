@@ -5,7 +5,7 @@ import { send, done, networkError } from '@/lib/llm/stream'
 import { toOpenAI, chatCompletionsUrl } from '@/lib/llm/openai'
 import { runAgentLoop, type ExecuteTool } from '@/lib/llm/agent-loop'
 import type { Emit } from '@/lib/llm/events'
-import { listTree, readFile, repoMeta } from '@/lib/github'
+import { listTree, readFile, repoMeta, waitForPages } from '@/lib/github'
 import { log } from '@/lib/logger'
 import { validate } from '@/lib/validation'
 import { addQuotaUsage } from '@/lib/quota'
@@ -27,12 +27,10 @@ const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY ?? ''
 const DEEPSEEK_BASE_URL = 'https://api.deepseek.com'
 const TAVILY_API_KEY = process.env.TAVILY_API_KEY ?? ''
 
-const SAFETY_ROUNDS = 32
-
 function buildCodeSystem(repo: string | null, login: string, memories: string[], hasWorkspace: boolean): string {
   const wsSection = hasWorkspace ? `
 🚫 你已进入 Workspace 模式。你没有直接推 main 的能力，也没有 GitHub 认证信息。
-你唯一能做的发布方式：完成文件修改 → 展示 diff → 让用户点击底部「确认并创建 PR」按钮。
+你唯一能做的发布方式：完成文件修改 → 展示 diff → 让用户点击底部「确认发布」按钮。
 
 禁止在你的回复中出现以下任何内容：
 - "直接写入 main"、"直接提交 main"、"直接推送"、"直推"、"选项 A"、"选项 B"
@@ -45,12 +43,15 @@ function buildCodeSystem(repo: string | null, login: string, memories: string[],
 - apply_patch：用 unified diff 批量修改代码
 - execute：在 workspace 里执行命令（node --check、npm run build、npm test 等）
 - list_files / read_file：直接读取 workspace 文件
-- publish：通知系统改动完成，触发底部「确认并创建 PR」按钮
+- publish：改动完成后请求用户确认发布；网页任务必须设置 deploy_pages=true
+- check_deployment：确认发布后检查网页是否已经真正可访问
+- complete：只有整个任务已经完成并验证后才能调用
+- ask_user：只有缺少权限或必须由用户决定时才能提问并暂停
 
 改完代码后的标准流程：
 1. 展示 diff（让用户看到你改了什么）
-2. 调用 publish 工具
-3. 在回复中写："✅ 改动已完成。请点击底部「确认并创建 PR」按钮发布。"
+2. 调用 publish 工具；用户要求网页上线时设置 deploy_pages=true
+3. 告诉用户："改动已完成，请点击底部确认发布。"
 4. 不要提供任何其他发布方案或选项
 ` : `
 【Plan 模式】你目前没有 workspace，改动通过 plan 模式执行：
@@ -72,6 +73,9 @@ ${wsSection}
 - enable_pages：开启 GitHub Pages 上线。
 - code_remember：记住一条本仓库的长期事实。
 - search：网络搜索文档、API、技术资料。
+- check_deployment：检查 GitHub Pages 是否构建完成且网页可访问。
+- complete：明确声明整个任务已经完成。仍有改动或待发布步骤时禁止调用。
+- ask_user：遇到自己无法解决的权限或选择问题时，向用户提出一个明确问题。
 
 工作方式（重要）：
 1. 用户用大白话描述要做什么。你自行判断、定位文件、动手修改。
@@ -79,7 +83,7 @@ ${wsSection}
 3. 改现有项目：先 list_files / read_file 定位，再 edit_file 或 write_files 给出改动${hasWorkspace ? "，推荐用 apply_patch 批量修改" : ""}。
 4. 改完代码后执行一次语法校验（如 node --check）。
 ${hasWorkspace
-  ? "5. 改完调用 publish 工具，然后告诉用户点击「确认并创建 PR」。绝不要提直接推 main 或手动 git。"
+  ? "5. 改完调用 publish 工具。网页上线任务必须设置 deploy_pages=true。确认发布后的结果会自动交还给你继续检查，全部完成后调用 complete。"
   : "5. 你的改动会生成待执行计划展示给用户，用户确认后提交并推送。"}
 6. 回复【开头第一行】必须是 git 提交信息（20 字内中文，如「新增 edit_file 工具」）。
 7. 做完用中文简明说明，像干练的工程师，不要 emoji。
@@ -93,7 +97,7 @@ ${hasWorkspace
   else s += `\n\n用户尚未选择仓库。做新项目用 create_repo 新建。`
 
   if (memories.length) s += `\n\n本仓库记忆（${memories.length} 条）：\n${memories.map(m => `- ${m}`).join('\n')}`
-  s += `\n\n【Agent 模式】这是持续执行任务，不是一问一答。请自主连续使用工具推进，读取结果后决定下一步，直到目标完成、验证通过，或确实需要用户授权。不要让用户反复说“继续”。`
+  s += `\n\n【Agent 模式】这是持续执行任务，不是一问一答。请自主连续使用工具推进，读取结果后决定下一步。除等待用户确认发布、遇到明确权限问题、或调用 complete 确认全部完成外，不得停止。不要让用户反复说“继续”。`
   return s
 }
 
@@ -186,10 +190,12 @@ export async function POST(req: NextRequest) {
 
   // 2. 仓库元数据
   let defaultBranch: string | null = null
+  let repoIsPrivate = false
   if (repo) {
     const meta = await repoMeta(token, repo)
     if (!meta) return new Response(JSON.stringify({ error: '仓库访问失败，请重新连接 GitHub' }), { status: 502 })
     defaultBranch = meta.defaultBranch
+    repoIsPrivate = meta.isPrivate
   }
 
   let memContents: string[] = []
@@ -253,12 +259,13 @@ export async function POST(req: NextRequest) {
     { type: 'function', function: { name: 'code_remember', description: '记住一条关于本仓库的长期事实。', parameters: { type: 'object', properties: { content: { type: 'string' } }, required: ['content'] } } },
     { type: 'function', function: { name: 'search', description: '网络搜索（文档、API、技术资料等）。需要查阅外部资源时用。', parameters: { type: 'object', properties: { query: { type: 'string', description: '搜索关键词或短语' } }, required: ['query'] } } },
     { type: 'function', function: { name: 'apply_patch', description: isWs ? '直接在 workspace 中应用 unified diff patch 批量修改代码（推荐！）。先传 dryRun: true 预览；确认后传 dryRun: false 执行。' : '应用 unified diff patch 批量修改代码。仅在 workspace 模式下可用。', parameters: { type: 'object', properties: { patch: { type: 'string', description: 'unified diff 格式的 patch 内容' }, dryRun: { type: 'boolean', description: '是否仅预览（dry-run），默认 false' } }, required: ['patch'] } } },
-    ...(isWs ? [{ type: 'function', function: { name: 'publish', description: '声明所有文件改动已完成，通知用户点击「确认并创建 PR」按钮。平台后端会自动完成 git commit → push agent branch → 创建 Pull Request。不会直推 main。', parameters: { type: 'object', properties: {} } } }] : []),
+    ...(isWs ? [{ type: 'function', function: { name: 'publish', description: '文件改动和测试完成后请求用户确认发布。普通代码任务创建 PR；用户要求网页上线时 deploy_pages 必须为 true，确认后平台会通过 PR 合并并完成 Pages 部署。绝不直推 main。', parameters: { type: 'object', properties: { deploy_pages: { type: 'boolean', description: '用户要求网页上线或提供可访问网址时必须为 true' } }, required: ['deploy_pages'] } } }] : []),
+    ...(isWs ? [{ type: 'function', function: { name: 'check_deployment', description: '检查 GitHub Pages 是否构建完成并且网页确实可以访问。部署未完成时继续检查，不要让用户代替你检查。', parameters: { type: 'object', properties: {} } } }] : []),
+    { type: 'function', function: { name: 'complete', description: '只有整个任务已经完成并验证后才能调用。仍有文件改动、待确认发布或待部署时禁止调用。', parameters: { type: 'object', properties: {} } } },
+    { type: 'function', function: { name: 'ask_user', description: '只有缺少权限、缺少必要信息或必须由用户做决定时才能调用。普通技术问题必须自己解决。', parameters: { type: 'object', properties: { question: { type: 'string', description: '只问一个用户能直接回答的问题' }, reason: { type: 'string', description: '说明为什么 Agent 无法自行继续' } }, required: ['question', 'reason'] } } },
   ]
   const unavailable = new Set(isWs ? ['create_repo', 'enable_pages'] : ['apply_patch', 'publish'])
   const tools = allTools.filter(tool => !unavailable.has(tool.function.name))
-
-  const maxRounds = SAFETY_ROUNDS
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -278,6 +285,8 @@ export async function POST(req: NextRequest) {
       const wsUserId = userId ?? ""
       let usedTools = false
       let publishCalled = false
+      let completed = false
+      let waitingForUser = false
       let plannedRepo = false
       let plannedFiles = 0
 
@@ -288,7 +297,7 @@ export async function POST(req: NextRequest) {
       }
 
       const executeTool: ExecuteTool = async (name, input) => {
-        usedTools = true
+        if (name !== 'complete') usedTools = true
         if (name === 'list_files') {
           // 如果有 workspace，列 workspace 文件；否则走 GitHub
           if (wsReady) {
@@ -479,23 +488,77 @@ export async function POST(req: NextRequest) {
         }
         if (name === 'publish') {
           if (!wsReady) return 'publish 需要 workspace。当前没有就绪的 workspace。'
-          emit({ step: { kind: 'deploy', label: '准备创建 Pull Request' } })
+          emit({ step: { kind: 'deploy', label: '准备发布' } })
           // 检查是否有改动
           const changed = getChangedFiles(wsTaskId, wsUserId)
           const fileList = changed.ok ? changed.data.files.map(f => `  ${f.status} ${f.path}`).join('\n') : ''
           if (!fileList) return 'Workspace 还没有文件改动，不能发布。继续完成原始任务。'
+          const task = await getTaskDetail(supabase!, wsUserId, wsTaskId)
+          if (!("workspace" in task)) return '无法读取任务状态，暂时不能发布。'
+          const deployPages = input?.deploy_pages === true
+          const { error: metaError } = await supabase!.from('agent_tasks').update({
+            meta: { ...(task.meta ?? {}), deployPages },
+            updated_at: new Date().toISOString(),
+          }).eq('id', wsTaskId).eq('user_id', wsUserId)
+          if (metaError) return `保存发布目标失败：${metaError.message}`
           publishCalled = true
-          return `✅ 改动已就绪，等待用户确认创建 PR。
+          return `改动已就绪，等待用户确认发布。
 
 变更文件：
 ${fileList || '（请先修改文件）'}
 
-下一步：用户在底部点击「确认并创建 PR」按钮，平台后端会自动：
+下一步：用户在底部点击「确认发布」按钮，平台后端会自动：
 1. git commit 所有改动
 2. push agent branch 到 GitHub
-3. 创建 Pull Request
+3. 创建 Pull Request${deployPages ? '\n4. 通过 Pull Request 合并到 main\n5. 开启 GitHub Pages 并等待网页可访问' : ''}
 
 不会直接推送到 main 分支。`
+        }
+        if (name === 'complete') {
+          if (wsReady && !usedTools) return '还没有执行任何检查，不能直接宣布完成。先核对仓库或发布结果。'
+          if (wsReady && workspaceHasChanges()) return 'Workspace 仍有未发布改动，不能完成。先测试并调用 publish。'
+          if (!wsReady && (!plannedRepo || plannedFiles === 0)) return '新项目计划还不完整，不能完成。'
+          if (wsReady) {
+            const task = await getTaskDetail(supabase!, wsUserId, wsTaskId)
+            if ("workspace" in task && task.meta?.deployPages === true && task.meta?.deploymentStatus !== 'ready') {
+              return '网页还没有确认可访问，不能完成。继续调用 check_deployment；如果构建失败，主动排查并修复。'
+            }
+          }
+          completed = true
+          return '任务已明确标记为完成。请给出最终结果，不要再提出未完成事项。'
+        }
+        if (name === 'check_deployment') {
+          if (!wsReady || !repo) return '当前没有可检查的网页部署。'
+          emit({ step: { kind: 'deploy', label: '检查网页部署' } })
+          const task = await getTaskDetail(supabase!, wsUserId, wsTaskId)
+          const expectedCommitSha = "workspace" in task && typeof task.meta?.mergeCommitSha === 'string'
+            ? task.meta.mergeCommitSha
+            : undefined
+          const pages = await waitForPages(token!, repo, {
+            verifyUrl: !repoIsPrivate,
+            expectedCommitSha,
+          })
+          if ("workspace" in task) {
+            await supabase!.from('agent_tasks').update({
+              meta: {
+                ...(task.meta ?? {}),
+                deploymentStatus: pages.status,
+                pagesUrl: pages.url,
+                deploymentError: pages.status === 'failed' ? pages.error : null,
+              },
+              updated_at: new Date().toISOString(),
+            }).eq('id', wsTaskId).eq('user_id', wsUserId)
+          }
+          if (pages.status === 'ready') return `网页已经构建完成并可访问：${pages.url}`
+          if (pages.status === 'failed') return `网页部署失败：${pages.error}。请主动排查原因并修复。`
+          return `网页仍在部署：${pages.url}。任务尚未完成，请继续检查。`
+        }
+        if (name === 'ask_user') {
+          const question = String(input?.question ?? '').trim()
+          const reason = String(input?.reason ?? '').trim()
+          if (!question || !reason) return '必须说明具体问题和无法自行继续的原因。'
+          waitingForUser = true
+          return `需要用户处理：${question}\n原因：${reason}`
         }
         if (name === 'search') {
           const query = String(input?.query ?? '').trim()
@@ -530,17 +593,16 @@ ${fileList || '（请先修改文件）'}
         const { totalTokens } = await runAgentLoop({
           url, apiKey: DEEPSEEK_API_KEY, model, adapter: 'deepseek-openai', thinking,
           messages: msgs, tools, emit, executeTool,
-          maxRounds,
           leakedRetry: true,
-          autoContinue: { maxContinuations: 4 },
+          autoContinue: {},
           idleContinuation: {
-            maxContinuations: 4,
-            prompt: ({ idleCount }) => codeContinuationPrompt({
+            prompt: () => codeContinuationPrompt({
               workspace: wsReady,
-              idleCount,
               usedTools,
               hasChanges: workspaceHasChanges(),
               published: publishCalled,
+              completed,
+              waitingForUser,
               plannedRepo,
               plannedFiles,
             }),
@@ -555,7 +617,10 @@ ${fileList || '（请先修改文件）'}
         emit({ error: networkError(error) })
       } finally {
         if (effectiveTaskId) {
-          await recorder.setTaskStatus(loopFailed ? "failed" : workspaceHasChanges() ? "waiting_for_user" : "completed")
+          const status = loopFailed
+            ? "failed"
+            : waitingForUser || publishCalled || workspaceHasChanges() ? "waiting_for_user" : "completed"
+          await recorder.setTaskStatus(status)
         }
         if (userId && supabase) await addQuotaUsage(supabase, userId, totalTokensUsed, model, thinking, usingBalance)
         done(controller)

@@ -29,7 +29,7 @@ export async function listRepos(token: string): Promise<RepoItem[]> {
   }))
 }
 
-export type RepoMeta = { defaultBranch: string; canPush: boolean }
+export type RepoMeta = { defaultBranch: string; canPush: boolean; isPrivate: boolean }
 
 // 仓库元信息：默认分支 + 当前用户是否有写权限
 export async function repoMeta(token: string, repo: string): Promise<RepoMeta | null> {
@@ -39,6 +39,7 @@ export async function repoMeta(token: string, repo: string): Promise<RepoMeta | 
   return {
     defaultBranch: data.default_branch as string,
     canPush: !!(data.permissions as any)?.push,
+    isPrivate: !!data.private,
   }
 }
 
@@ -183,12 +184,84 @@ export type PagesResult =
   | { status: 'pending'; url: string }
   | { status: 'failed'; url: string; error: string }
 
+export type MergeResult =
+  | { merged: true; commitSha: string }
+  | { merged: false; error: string }
+
+type PagesWaitOptions = {
+  timeoutMs?: number
+  intervalMs?: number
+  verifyUrl?: boolean
+  expectedCommitSha?: string
+}
+
+export async function mergePullRequest(
+  token: string,
+  repo: string,
+  pullNumber: number,
+  headSha: string,
+): Promise<MergeResult> {
+  const res = await fetch(`${GH}/repos/${repo}/pulls/${pullNumber}/merge`, {
+    method: 'PUT',
+    headers: ghHeaders(token, true),
+    body: JSON.stringify({ sha: headSha, merge_method: 'merge' }),
+  }).catch(() => null)
+  if (!res) return { merged: false, error: '无法连接 GitHub 合并 Pull Request' }
+  const data = await res.json().catch(() => null)
+  if (!res.ok || !data?.merged) {
+    return { merged: false, error: data?.message ?? `GitHub 拒绝合并（HTTP ${res.status}）` }
+  }
+  return { merged: true, commitSha: String(data.sha ?? '') }
+}
+
+export async function waitForPages(
+  token: string,
+  repo: string,
+  options: PagesWaitOptions = {},
+  initialUrl?: string,
+): Promise<PagesResult> {
+  const owner = repo.split('/')[0]
+  const name = repo.split('/')[1]
+  let url = initialUrl ?? `https://${owner}.github.io/${name}/`
+  const timeoutMs = options.timeoutMs ?? 90_000
+  const intervalMs = options.intervalMs ?? 3_000
+  const deadline = Date.now() + timeoutMs
+  do {
+    const statusRes = await fetch(`${GH}/repos/${repo}/pages`, { headers: ghHeaders(token) }).catch(() => null)
+    if (statusRes?.ok) {
+      const data = await statusRes.json().catch(() => null)
+      if (data?.html_url) url = data.html_url
+      if (data?.status === 'errored') return { status: 'failed', url, error: 'GitHub Pages 构建失败' }
+      if (data?.status === 'built') {
+        if (options.expectedCommitSha) {
+          const buildRes = await fetch(`${GH}/repos/${repo}/pages/builds/latest`, { headers: ghHeaders(token) }).catch(() => null)
+          const build = buildRes?.ok ? await buildRes.json().catch(() => null) : null
+          if (build?.commit !== options.expectedCommitSha) {
+            if (Date.now() < deadline) await sleep(intervalMs)
+            continue
+          }
+          if (build?.status === 'errored') return { status: 'failed', url, error: 'GitHub Pages 最新版本构建失败' }
+          if (build?.status !== 'built') {
+            if (Date.now() < deadline) await sleep(intervalMs)
+            continue
+          }
+        }
+        if (options.verifyUrl === false) return { status: 'ready', url }
+        const site = await fetch(url, { redirect: 'follow', cache: 'no-store' }).catch(() => null)
+        if (site?.ok) return { status: 'ready', url }
+      }
+    }
+    if (Date.now() < deadline) await sleep(intervalMs)
+  } while (Date.now() < deadline)
+  return { status: 'pending', url }
+}
+
 // 开启 Pages 后等待 GitHub 构建完成，并验证最终网址确实可访问。
 export async function enablePages(
   token: string,
   repo: string,
   branch: string,
-  options: { timeoutMs?: number; intervalMs?: number; verifyUrl?: boolean } = {},
+  options: PagesWaitOptions = {},
 ): Promise<PagesResult> {
   const res = await fetch(`${GH}/repos/${repo}/pages`, {
     method: 'POST', headers: ghHeaders(token, true),
@@ -201,30 +274,20 @@ export async function enablePages(
     const err = await res?.json().catch(() => null)
     return { status: 'failed', url, error: `开启 Pages 失败：${(err as any)?.message ?? '未知错误'}` }
   }
+  if (res.status === 409) {
+    const update = await fetch(`${GH}/repos/${repo}/pages`, {
+      method: 'PUT', headers: ghHeaders(token, true),
+      body: JSON.stringify({ source: { branch, path: '/' } }),
+    }).catch(() => null)
+    if (!update?.ok) {
+      const err = await update?.json().catch(() => null)
+      return { status: 'failed', url, error: `更新 Pages 失败：${(err as any)?.message ?? '未知错误'}` }
+    }
+  }
   try {
     const data = await res.json()
     if (data?.html_url) url = data.html_url
   } catch {}
 
-  const timeoutMs = options.timeoutMs ?? 90_000
-  const intervalMs = options.intervalMs ?? 3_000
-  const deadline = Date.now() + timeoutMs
-  do {
-    const statusRes = await fetch(`${GH}/repos/${repo}/pages`, { headers: ghHeaders(token) }).catch(() => null)
-    if (statusRes?.ok) {
-      const data = await statusRes.json().catch(() => null)
-      if (data?.html_url) url = data.html_url
-      if (data?.status === 'errored') {
-        return { status: 'failed', url, error: 'GitHub Pages 构建失败' }
-      }
-      if (data?.status === 'built') {
-        if (options.verifyUrl === false) return { status: 'ready', url }
-        const site = await fetch(url, { redirect: 'follow', cache: 'no-store' }).catch(() => null)
-        if (site?.ok) return { status: 'ready', url }
-      }
-    }
-    if (Date.now() < deadline) await sleep(intervalMs)
-  } while (Date.now() < deadline)
-
-  return { status: 'pending', url }
+  return waitForPages(token, repo, options, url)
 }
