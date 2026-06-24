@@ -18,9 +18,10 @@ create table if not exists public.agent_tasks (
   branch text not null default 'main',
 
   -- 生命周期
-  status text not null default 'pending' check (status in (
-    'pending', 'running', 'waiting_confirm', 'cancelled',
-    'failed', 'completed', 'paused'
+  status text not null default 'queued' check (status in (
+    'queued', 'planning', 'indexing', 'reading', 'editing', 'running',
+    'testing', 'fixing', 'reviewing', 'waiting_for_user', 'creating_pr',
+    'deploying', 'completed', 'failed', 'cancelled'
   )),
   error text,
 
@@ -31,7 +32,13 @@ create table if not exists public.agent_tasks (
   finished_at timestamptz,
 
   -- 元数据
-  meta jsonb
+  meta jsonb,
+
+  -- PR / Publish
+  agent_branch text,
+  pull_request_url text,
+  pull_request_number integer,
+  commit_sha text
 );
 
 alter table public.agent_tasks enable row level security;
@@ -113,7 +120,7 @@ create table if not exists public.agent_workspaces (
 
   -- 状态
   status text not null default 'created' check (status in (
-    'created', 'cloning', 'ready', 'error', 'cleaned'
+    'created', 'cloning', 'ready', 'dirty', 'failed', 'cleaned'
   )),
 
   created_at timestamptz not null default now(),
@@ -134,7 +141,7 @@ create table if not exists public.agent_artifacts (
 
   -- 产物分类
   kind text not null default 'other' check (kind in (
-    'diff', 'log', 'screenshot', 'pr', 'deploy', 'file', 'other'
+    'diff', 'log', 'screenshot', 'build_report', 'test_report', 'deploy_link', 'pr_link', 'pr', 'deploy', 'file', 'summary', 'other'
   )),
   title text,
   content text,

@@ -29,6 +29,10 @@ function mapTask(row: any): AgentTask {
     updatedAt: row.updated_at,
     startedAt: row.started_at ?? null,
     finishedAt: row.finished_at ?? null,
+    agentBranch: row.agent_branch ?? null,
+    pullRequestUrl: row.pull_request_url ?? null,
+    pullRequestNumber: row.pull_request_number ?? null,
+    commitSha: row.commit_sha ?? null,
   }
 }
 
@@ -112,7 +116,7 @@ export async function createTask(
       mode: input.mode ?? "auto",
       repo: input.repo ?? null,
       branch: input.branch ?? "main",
-      status: "pending",
+      status: "queued",
       meta: input.meta ?? null,
       created_at: now,
       updated_at: now,
@@ -183,7 +187,15 @@ export async function updateTaskStatus(
   userId: string,
   taskId: string,
   status: string,
-  extra?: { error?: string; startedAt?: string; finishedAt?: string },
+  extra?: {
+    error?: string
+    startedAt?: string
+    finishedAt?: string
+    agentBranch?: string
+    pullRequestUrl?: string
+    pullRequestNumber?: number
+    commitSha?: string
+  },
 ): Promise<AgentTask | { error: string }> {
   const update: Record<string, unknown> = {
     status,
@@ -192,6 +204,10 @@ export async function updateTaskStatus(
   if (extra?.error !== undefined) update.error = extra.error
   if (extra?.startedAt) update.started_at = extra.startedAt
   if (extra?.finishedAt) update.finished_at = extra.finishedAt
+  if (extra?.agentBranch) update.agent_branch = extra.agentBranch
+  if (extra?.pullRequestUrl) update.pull_request_url = extra.pullRequestUrl
+  if (extra?.pullRequestNumber != null) update.pull_request_number = extra.pullRequestNumber
+  if (extra?.commitSha) update.commit_sha = extra.commitSha
 
   const { error, data } = await supabase
     .from("agent_tasks")
@@ -222,7 +238,7 @@ export async function resumeTask(
   userId: string,
   taskId: string,
 ): Promise<AgentTask | { error: string }> {
-  // 只允许恢复 cancelled / failed / paused 的任务
+  // 只允许恢复 cancelled / failed / waiting_for_user 的任务
   const { data: task } = await supabase
     .from("agent_tasks")
     .select("status")
@@ -231,11 +247,11 @@ export async function resumeTask(
     .single()
 
   if (!task) return { error: "任务不存在" }
-  if (!["cancelled", "failed", "paused"].includes(task.status)) {
+  if (!["cancelled", "failed", "waiting_for_user"].includes(task.status)) {
     return { error: `当前状态 ${task.status} 不可恢复` }
   }
 
-  return updateTaskStatus(supabase, userId, taskId, "pending", {
+  return updateTaskStatus(supabase, userId, taskId, "queued", {
     error: undefined,
     finishedAt: undefined,
   })
@@ -410,6 +426,33 @@ export async function addWorkspace(
   return mapWorkspace(data)
 }
 
+// 更新 workspace 状态
+export async function updateWorkspaceStatus(
+  supabase: SupabaseClient,
+  userId: string,
+  taskId: string,
+  status: string,
+  extra?: { path?: string; commitSha?: string },
+): Promise<AgentWorkspace | { error: string }> {
+  const update: Record<string, unknown> = {
+    status,
+    updated_at: new Date().toISOString(),
+  }
+  if (extra?.path) update.path = extra.path
+  if (extra?.commitSha) update.commit_sha = extra.commitSha
+
+  const { error, data } = await supabase
+    .from("agent_workspaces")
+    .update(update)
+    .eq("task_id", taskId)
+    .eq("user_id", userId)
+    .select()
+    .single()
+
+  if (error || !data) return { error: error?.message ?? "更新 workspace 失败" }
+  return mapWorkspace(data)
+}
+
 // ───────────── 产物 ─────────────
 
 export async function addArtifact(
@@ -458,6 +501,66 @@ export async function listArtifacts(
     .eq("user_id", userId)
     .order("created_at")
   return (data ?? []).map(mapArtifact)
+}
+
+// 按 kind 查询产物（用于查 snapshot）
+export async function getArtifactsByKind(
+  supabase: SupabaseClient,
+  userId: string,
+  taskId: string,
+  kind: string,
+): Promise<AgentArtifact[]> {
+  const { data } = await supabase
+    .from("agent_artifacts")
+    .select("*")
+    .eq("task_id", taskId)
+    .eq("user_id", userId)
+    .eq("kind", kind)
+    .order("created_at", { ascending: false })
+  return (data ?? []).map(mapArtifact)
+}
+
+// 获取最近的 snapshot artifact
+export async function getLatestSnapshotArtifact(
+  supabase: SupabaseClient,
+  userId: string,
+  taskId: string,
+): Promise<AgentArtifact | null> {
+  const snapshots = await getArtifactsByKind(supabase, userId, taskId, "summary")
+  return snapshots.find(a => a.title?.startsWith("snapshot:")) ?? null
+}
+
+// 按 snapshotId 查 artifact
+export async function getSnapshotArtifact(
+  supabase: SupabaseClient,
+  userId: string,
+  taskId: string,
+  snapshotId: string,
+): Promise<AgentArtifact | null> {
+  const { data } = await supabase
+    .from("agent_artifacts")
+    .select("*")
+    .eq("task_id", taskId)
+    .eq("user_id", userId)
+    .eq("title", `snapshot:${snapshotId}`)
+    .limit(1)
+  return data?.length ? mapArtifact(data[0]) : null
+}
+
+// 获取 workspace（仅通过 taskId + userId，不查 task detail）
+export async function getWorkspaceByTaskId(
+  supabase: SupabaseClient,
+  userId: string,
+  taskId: string,
+): Promise<AgentWorkspace | null> {
+  const { data } = await supabase
+    .from("agent_workspaces")
+    .select("*")
+    .eq("task_id", taskId)
+    .eq("user_id", userId)
+    .limit(1)
+    .single()
+  return data ? mapWorkspace(data) : null
 }
 
 // ───────────── 确认记录 ─────────────

@@ -11,6 +11,13 @@ import { validate } from '@/lib/validation'
 import { addQuotaUsage } from '@/lib/quota'
 import { resolveAuth, enforceLimits } from '@/lib/api/guard'
 import { runInSandbox } from '@/lib/sandbox'
+import {
+  writeWorkspaceFile, editWorkspaceFile, deleteWorkspaceFile,
+  getWorkspaceDiff, getChangedFiles, readWorkspaceFile, workspaceRoot,
+} from '@/lib/agent/workspace'
+import { applyWorkspacePatch, dryRunWorkspacePatch } from '@/lib/agent/patch'
+import { getTaskDetail } from '@/lib/agent/data'
+import { existsSync } from 'fs'
 
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY ?? ''
 const DEEPSEEK_BASE_URL = 'https://api.deepseek.com'
@@ -61,7 +68,7 @@ export async function POST(req: NextRequest) {
   let body: any = {}
   try { body = await req.json() } catch { return new Response(JSON.stringify({ error: '请求体格式错误' }), { status: 400 }) }
 
-  const { repo = null, tier = '正构', goal = false, messages } = body
+  const { repo = null, tier = '正构', goal = false, messages, taskId = null } = body
   try {
     validate.array(messages, 'messages', { minLength: 1 })
     if (repo !== null && (typeof repo !== 'string' || !repo.includes('/'))) throw new Error('仓库参数无效')
@@ -118,6 +125,7 @@ export async function POST(req: NextRequest) {
     { type: 'function', function: { name: 'enable_pages', description: '对纯静态/前端项目开启 GitHub Pages，让项目有可访问网址（上线）。', parameters: { type: 'object', properties: {} } } },
     { type: 'function', function: { name: 'code_remember', description: '记住一条关于本仓库的长期事实。', parameters: { type: 'object', properties: { content: { type: 'string' } }, required: ['content'] } } },
     { type: 'function', function: { name: 'search', description: '网络搜索（文档、API、技术资料等）。需要查阅外部资源时用。', parameters: { type: 'object', properties: { query: { type: 'string', description: '搜索关键词或短语' } }, required: ['query'] } } },
+    { type: 'function', function: { name: 'apply_patch', description: '应用 unified diff patch 批量修改代码（比 write_files/edit_file 更高效）。先传 dryRun: true 预览；确认后传 dryRun: false 执行。', parameters: { type: 'object', properties: { patch: { type: 'string', description: 'unified diff 格式的 patch 内容' }, dryRun: { type: 'boolean', description: '是否仅预览（dry-run），默认 false' } }, required: ['patch'] } } },
   ]
 
   const maxRounds = SAFETY_ROUNDS
@@ -129,8 +137,31 @@ export async function POST(req: NextRequest) {
       const shaCache = new Map<string, string>()  // path → 读过的旧内容（给前端做 diff）
       const msgs: any[] = [{ role: 'system', content: SYSTEM }, ...toOpenAI(messages)]
 
+      // ── Workspace 上下文：如果有 taskId，检查 workspace 是否就绪 ──
+      let wsReady = false
+      let wsTaskId = ""
+      let wsUserId = ""
+      if (taskId && userId && supabase) {
+        const detail = await getTaskDetail(supabase, userId, taskId).catch(() => null)
+        if (detail && "workspace" in detail && detail.workspace?.status === "ready" && detail.workspace?.path && existsSync(detail.workspace.path)) {
+          wsReady = true
+          wsTaskId = taskId
+          wsUserId = userId
+          log.info("codeChat", `Workspace ready: ${detail.workspace.path}`)
+        }
+      }
+
       const executeTool: ExecuteTool = async (name, input) => {
         if (name === 'list_files') {
+          // 如果有 workspace，列 workspace 文件；否则走 GitHub
+          if (wsReady) {
+            emit({ step: { kind: 'list', label: '浏览 workspace 文件' } })
+            const { listWorkspaceFiles } = await import('@/lib/agent/workspace')
+            const res = listWorkspaceFiles(wsTaskId, wsUserId)
+            if (res.ok) return `Workspace 共 ${res.data.total} 个文件${res.data.truncated ? '（已截断）' : ''}：\n${res.data.files.join('\n')}`
+            return `列出文件失败：${res.error}`
+          }
+          if (!repo) return '尚未选择仓库。'
           if (!repo) return '尚未选择仓库。'
           emit({ step: { kind: 'list', label: '浏览仓库文件结构' } })
           const { paths, truncated } = await listTree(token!, repo, defaultBranch!)
@@ -138,10 +169,19 @@ export async function POST(req: NextRequest) {
           return `仓库共 ${paths.length} 个文件${truncated ? '（已截断）' : ''}：\n${paths.join('\n')}`
         }
         if (name === 'read_file') {
-          if (!repo) return '尚未选择仓库。'
           const path = String(input?.path ?? '').trim()
           if (!path) return '缺少 path。'
           emit({ step: { kind: 'read', label: `读取 ${path}` } })
+
+          // Workspace 优先
+          if (wsReady) {
+            const res = readWorkspaceFile(wsTaskId, wsUserId, path)
+            if (!res.ok) return `读取失败：${res.error}`
+            shaCache.set(path, res.data.content)
+            return `文件 ${path} 内容：\n\`\`\`\n${res.data.content}\n\`\`\``
+          }
+
+          if (!repo) return '尚未选择仓库。'
           const r = await readFile(token!, repo, path)
           if ('error' in r) return `读取失败：${r.error}`
           shaCache.set(path, r.content)
@@ -157,6 +197,29 @@ export async function POST(req: NextRequest) {
         if (name === 'write_files') {
           const files = Array.isArray(input?.files) ? input.files : []
           if (!files.length) return '没有要写的文件。'
+
+          // Workspace 优先：直接写文件
+          if (wsReady) {
+            const results: string[] = []
+            for (const f of files) {
+              const path = String(f?.path ?? '').trim()
+              const content = String(f?.content ?? '')
+              if (!path) continue
+              emit({ step: { kind: 'edit', label: `写入 ${path}` } })
+              const res = await writeWorkspaceFile(wsTaskId, wsUserId, path, content, supabase ?? undefined)
+              if (res.ok) {
+                shaCache.set(path, content)
+                results.push(`✅ ${path}（${res.data.created ? '新建' : '覆盖'}）\n${res.data.diff.slice(0, 500)}`)
+              } else {
+                results.push(`❌ ${path}：${res.error}`)
+              }
+            }
+            const changed = getChangedFiles(wsTaskId, wsUserId)
+            const changedList = changed.ok ? changed.data.files.map(f => `  ${f.status} ${f.path}`).join('\n') : ''
+            return `已在 workspace 写入 ${files.length} 个文件：\n${results.join('\n')}\n\n变更文件：\n${changedList || '（无变更）'}`
+          }
+
+          // 旧行为：生成 plan
           for (const f of files) {
             const path = String(f?.path ?? '').trim()
             const content = String(f?.content ?? '')
@@ -173,12 +236,20 @@ export async function POST(req: NextRequest) {
           return `已加入计划：写入 ${files.length} 个文件（等待用户确认/自动执行）。`
         }
         if (name === 'edit_file') {
-          if (!repo) return '尚未选择仓库。'
           const path = String(input?.path ?? '').trim()
           const oldString = String(input?.old_string ?? '')
           const newString = String(input?.new_string ?? '')
           if (!path || !oldString) return '缺少 path 或 old_string。'
           emit({ step: { kind: 'edit', label: `编辑 ${path}` } })
+
+          // Workspace 优先
+          if (wsReady) {
+            const res = await editWorkspaceFile(wsTaskId, wsUserId, path, oldString, newString, supabase ?? undefined)
+            if (!res.ok) return `编辑失败：${res.error}`
+            return `✅ 已在 workspace 编辑 ${path}（替换 1 处）\n${res.data.diff.slice(0, 500)}`
+          }
+
+          if (!repo) return '尚未选择仓库。'
           const r = await readFile(token!, repo, path)
           if ('error' in r) return `读取失败：${r.error}`
           const content = r.content
@@ -192,6 +263,21 @@ export async function POST(req: NextRequest) {
         }
         if (name === 'delete_files') {
           const paths = Array.isArray(input?.paths) ? input.paths : []
+
+          // Workspace 优先
+          if (wsReady) {
+            const results: string[] = []
+            for (const p of paths) {
+              const path = String(p ?? '').trim()
+              if (!path) continue
+              emit({ step: { kind: 'edit', label: `删除 ${path}` } })
+              const res = await deleteWorkspaceFile(wsTaskId, wsUserId, path, supabase ?? undefined)
+              results.push(res.ok ? `✅ 删除 ${path}` : `❌ ${path}：${res.error}`)
+            }
+            return `已在 workspace 删除文件：\n${results.join('\n')}`
+          }
+
+          // 旧行为：生成 plan
           for (const p of paths) {
             const path = String(p ?? '').trim()
             if (!path) continue
@@ -284,6 +370,28 @@ export async function POST(req: NextRequest) {
           }
           emit({ step: { kind: 'memory', label: `记住：${content.slice(0, 40)}` } })
           return ok ? '已记住。' : '记忆保存失败（可能未建表）。'
+        }
+        if (name === 'apply_patch') {
+          const patch = String(input?.patch ?? '').trim()
+          if (!patch) return '缺少 patch 内容。'
+          const dryRun = input?.dryRun === true
+
+          // Workspace 专用
+          if (wsReady) {
+            emit({ step: { kind: 'edit', label: dryRun ? 'apply_patch (dry-run)' : 'apply_patch' } })
+            if (dryRun) {
+              const res = dryRunWorkspacePatch(wsTaskId, wsUserId, patch)
+              if (!res.ok) return `❌ Dry-run 失败：${res.error}`
+              return `✅ Dry-run 通过：${res.changedFiles.length} 个文件将被修改\n${res.diffSummary.slice(0, 2000)}`
+            }
+            const applyRes = await applyWorkspacePatch(wsTaskId, wsUserId, patch, { supabase: supabase ?? undefined })
+            if (!applyRes.ok) return `❌ Apply patch 失败：${applyRes.error}`
+            const changed = getChangedFiles(wsTaskId, wsUserId)
+            const files = changed.ok ? changed.data.files.map(f => `  ${f.status} ${f.path}`).join('\n') : ''
+            return `✅ Patch 已应用：${applyRes.changedFiles.length} 个文件\n${files}\n\n${applyRes.diffSummary.slice(0, 2000)}`
+          }
+
+          return 'apply_patch 需要 workspace。当前没有就绪的 workspace。'
         }
         if (name === 'search') {
           const query = String(input?.query ?? '').trim()
