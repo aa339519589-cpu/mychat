@@ -4,7 +4,7 @@ import { resolveAuth } from '@/lib/api/guard'
 import { getTaskDetail } from '@/lib/agent/data'
 import { publishWorkspaceToPullRequest, getWorkspaceGitStatus } from '@/lib/agent/git-publish'
 import { existsSync } from 'fs'
-import { workspaceRoot } from '@/lib/agent/workspace'
+import { workspaceRoot, createWorkspaceForTask } from '@/lib/agent/workspace'
 
 // 用户在 Code 里点「确认」(或自动模式)后调用：
 //   - 有 taskId + ready workspace → 发布为 Pull Request
@@ -49,20 +49,12 @@ export async function POST(req: Request) {
 
     // 如果 workspace 不存在，自动创建
     if (!ws || ws.status === "created" || ws.status === "cloning" || ws.status === "failed" || !ws.path || !existsSync(ws.path)) {
-      // 调用 POST /api/agent/tasks/[taskId]/workspace 创建
       try {
-        const createRes = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL ?? ""}/api/agent/tasks/${taskId}/workspace`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Cookie: req.headers.get("cookie") ?? "",
-          },
-        })
-        if (createRes.ok) {
-          const created = await createRes.json()
-          if (created.path && existsSync(created.path)) {
-            ws = { ...(ws ?? { id: "", taskId, userId, repo: sessionRepo ?? "", branch: "main", commitSha: null, path: created.path, status: "ready", createdAt: "", updatedAt: "" }), path: created.path, status: "ready" }
-          }
+        const result = await createWorkspaceForTask(
+          supabase, userId, taskId, token, sessionRepo ?? "", detail.goal ?? "代码改动",
+        )
+        if (result && !("error" in result) && result.path && existsSync(result.path)) {
+          ws = { ...(ws ?? { id: "", taskId, userId, repo: sessionRepo ?? "", branch: "main", commitSha: null, path: result.path, status: "ready", createdAt: "", updatedAt: "" }), path: result.path, status: "ready" }
         }
       } catch {
         // workspace 创建失败，报错，不回退 direct_push

@@ -7,12 +7,12 @@ import { mkdir, rm } from "fs/promises"
 import { existsSync } from "fs"
 import { join } from "path"
 import { log } from "@/lib/logger"
+import { WORKSPACE_ROOT as ROOT } from "./workspace"
 
 const execAsync = promisify(exec)
 
 const CLONE_TIMEOUT_MS = 120_000  // clone 可能较慢（大仓库），给 2 分钟
 const GIT_TIMEOUT_MS = 30_000    // 其他 git 操作 30 秒
-const ROOT = "/tmp/mychat-agent-workspaces"
 
 // branch slug：目标摘要 + 时间戳
 // 确保不会出现空 slug（如 agent/-5e1l）

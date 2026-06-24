@@ -19,10 +19,12 @@ export type WorkspaceResult<T = void> =
 
 // ───────────── 内部：解析 workspace 路径 ─────────────
 
-// workspace 根目录约定：.claude/worktrees/{taskId}
+// workspace 根目录约定：统一使用 /tmp/mychat-agent-workspaces/{userId}/{taskId}
+// 与 lib/agent/git-workspace.ts 的 clone 路径保持一致
+export const WORKSPACE_ROOT = "/tmp/mychat-agent-workspaces"
+
 function workspaceRoot(taskId: string, userId: string): string {
-  // 与之前 clone 逻辑一致
-  return join(process.cwd(), ".claude", "worktrees", `${taskId}-${userId.slice(0, 8)}`)
+  return join(WORKSPACE_ROOT, userId, taskId)
 }
 
 // ───────────── 读取文件 ─────────────

@@ -15,7 +15,8 @@ import { runInWorkspace } from '@/lib/agent/shell'
 import { createRecorder, type RecordCtx } from '@/lib/agent/recorder'
 import {
   writeWorkspaceFile, editWorkspaceFile, deleteWorkspaceFile,
-  getWorkspaceDiff, getChangedFiles, readWorkspaceFile, workspaceRoot,
+  getWorkspaceDiff, getChangedFiles, readWorkspaceFile,
+  createWorkspaceForTask,
 } from '@/lib/agent/workspace'
 import { applyWorkspacePatch, dryRunWorkspacePatch } from '@/lib/agent/patch'
 import { getTaskDetail } from '@/lib/agent/data'
@@ -200,19 +201,18 @@ export async function POST(req: NextRequest) {
     if (!wsPreReady) {
       console.warn('[code/chat] pre-creating workspace for task', effectiveTaskId)
       try {
-        const wsRes = await fetch(`${process.env.NEXT_PUBLIC_SITE_URL ?? ""}/api/agent/tasks/${effectiveTaskId}/workspace`, {
-          method: "POST",
-          headers: { Cookie: req.headers.get("cookie") ?? "" },
-        })
-        if (wsRes.ok) {
-          const wsData = await wsRes.json()
-          if (wsData.path && existsSync(wsData.path)) {
-            wsPreReady = true
-            console.warn('[code/chat] workspace pre-created', { path: wsData.path, branch: wsData.agentBranch })
-          }
+        const lastMsg = (messages as any[])[messages.length - 1]?.content?.slice(0, 200) || "代码改动"
+        const result = await createWorkspaceForTask(
+          supabase, userId, effectiveTaskId!, token, repo, lastMsg,
+        )
+        if (result && !("error" in result) && result.path && existsSync(result.path)) {
+          wsPreReady = true
+          console.warn('[code/chat] workspace pre-created', { path: result.path, branch: result.agentBranch })
+        } else if (result && "error" in result) {
+          console.error('[code/chat] workspace pre-create failed', result.error)
         }
       } catch (err: any) {
-        console.error('[code/chat] workspace pre-create failed', err?.message)
+        console.error('[code/chat] workspace pre-create exception', err?.message)
       }
     }
     if (!wsPreReady) {
