@@ -381,7 +381,7 @@ export function getChangedFiles(taskId: string, userId: string): WorkspaceResult
       encoding: "utf-8",
     })
 
-    const lines = out.trim().split("\n").filter(Boolean)
+    const lines = out.split("\n").filter(line => line.trim().length > 0)
     const files: { path: string; status: string }[] = []
     let added = 0, modified = 0, deleted = 0
 

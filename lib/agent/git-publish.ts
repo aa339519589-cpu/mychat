@@ -228,7 +228,7 @@ export async function commitWorkspaceChanges(
   try {
     const commitEnv = ensureWorkspaceGitIdentity(root)
     // git add all
-    execSync("git add -A", {
+    execSync("git add -A -- . ':(exclude).claude/snapshots/**'", {
       cwd: root, timeout: 15000, maxBuffer: 256 * 1024, encoding: "utf-8", env: commitEnv,
     })
     // 再次确认没有高危文件被 staged

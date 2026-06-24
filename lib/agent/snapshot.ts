@@ -10,6 +10,12 @@ import { workspaceRoot } from "./workspace"
 import { redactSensitive } from "./path-security"
 import type { SnapshotRecord, RestoreResult } from "./types"
 
+const SNAPSHOT_ROOT = "/tmp/mychat-agent-snapshots"
+
+function snapshotDir(taskId: string, userId: string): string {
+  return join(SNAPSHOT_ROOT, userId, taskId)
+}
+
 // ───────────── 工具类型 ─────────────
 
 export type SnapshotResult =
@@ -302,7 +308,7 @@ export async function createWorkspaceSnapshot(
   // 3) 写本地 patch 文件
   let localOk = false
   try {
-    const snapDir = join(root, ".claude", "snapshots")
+    const snapDir = snapshotDir(taskId, userId)
     mkdirSync(snapDir, { recursive: true })
     writeFileSync(join(snapDir, `${snapshotId}.patch`), diff, "utf-8")
     const meta = { snapshotId, taskId, userId, reason, createdAt, fileCount: changedFiles.length }
@@ -361,7 +367,7 @@ export async function restoreWorkspaceSnapshot(
   let failedFiles = 0
 
   // ── Tier 1：本地 patch ──
-  const snapDir = join(root, ".claude", "snapshots")
+  const snapDir = snapshotDir(taskId, userId)
   const localPatchPath = join(snapDir, `${snapshotId}.patch`)
   if (existsSync(localPatchPath)) {
     try {
@@ -486,7 +492,7 @@ export async function listWorkspaceSnapshots(
   // 1) 本地 snapshots
   const root = workspaceRoot(taskId, userId)
   if (existsSync(root)) {
-    const snapDir = join(root, ".claude", "snapshots")
+    const snapDir = snapshotDir(taskId, userId)
     if (existsSync(snapDir)) {
       try {
         for (const entry of readdirSync(snapDir)) {
