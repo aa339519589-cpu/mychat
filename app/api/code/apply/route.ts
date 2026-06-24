@@ -1,5 +1,7 @@
 import { cookies } from 'next/headers'
 import { repoMeta, createRepo, commitFiles, enablePages, type FileWrite } from '@/lib/github'
+import { resolveAuth } from '@/lib/api/guard'
+import { createRecorder } from '@/lib/agent/recorder'
 
 // 用户在 Code 里点「确认」(或自动模式)后调用：把 AI 的改动计划【直接执行】到 GitHub。
 // 直接推送默认分支（用户已选），不走 PR。安全闸：≤20 文件、总量 ≤1MB、写操作前校验写权限。
@@ -16,8 +18,12 @@ export async function POST(req: Request) {
 
   const body = await req.json().catch(() => null)
   if (!body) return Response.json({ error: '请求体格式错误' }, { status: 400 })
-  const { repo: sessionRepo, actions, message } = body as { repo: string | null; actions: PlanAction[]; message: string }
+  const { repo: sessionRepo, actions, message, taskId } = body as { repo: string | null; actions: PlanAction[]; message: string; taskId?: string }
   if (!Array.isArray(actions) || actions.length === 0) return Response.json({ error: '没有要执行的改动' }, { status: 400 })
+
+  // Agent Task recorder
+  const auth = await resolveAuth()
+  const recorder = createRecorder({ supabase: auth.supabase, userId: auth.userId, taskId: taskId ?? null })
 
   const writes = actions.filter(a => a.kind === 'write_file') as Extract<PlanAction, { kind: 'write_file' }>[]
   const deletes = actions.filter(a => a.kind === 'delete_file') as Extract<PlanAction, { kind: 'delete_file' }>[]
@@ -34,7 +40,11 @@ export async function POST(req: Request) {
   const createAction = actions.find(a => a.kind === 'create_repo') as Extract<PlanAction, { kind: 'create_repo' }> | undefined
   if (createAction) {
     const r = await createRepo(token, createAction.name, createAction.description ?? '', !!createAction.private)
-    if ('error' in r) return Response.json({ error: r.error }, { status: 502 })
+    if ('error' in r) {
+      await recorder.setTaskStatus("failed", r.error)
+      await recorder.step("failed", "创建仓库失败", r.error)
+      return Response.json({ error: r.error }, { status: 502 })
+    }
     targetRepo = r.fullName
     targetBranch = r.defaultBranch
     result.repoUrl = r.htmlUrl
@@ -69,6 +79,28 @@ export async function POST(req: Request) {
     const p = await enablePages(token, targetRepo, targetBranch)
     if (!('error' in p)) result.pagesUrl = p.url
   }
+
+  // Agent Task 记录：改动已应用
+  await recorder.step("done", `应用完成 · ${result.commitSha ? `commit ${result.commitSha.slice(0, 7)}` : ''}${result.pagesUrl ? ` · 已上线` : ''}`)
+  if (result.repoUrl || targetRepo) {
+    await recorder.artifact("deploy", {
+      title: "仓库",
+      url: result.repoUrl ?? `https://github.com/${targetRepo}`,
+      content: result.created ? `新建仓库: ${targetRepo}` : `提交: ${result.commitSha ?? '无'}`,
+    })
+  }
+  if (result.pagesUrl) {
+    await recorder.artifact("deploy", { title: "上线地址", url: result.pagesUrl })
+  }
+  if (result.commitSha) {
+    await recorder.artifact("diff", {
+      title: `commit ${result.commitSha.slice(0, 7)}`,
+      content: `提交信息: ${message}\n文件数: ${writes.length + deletes.length}`,
+      meta: { commitSha: result.commitSha, repo: targetRepo, branch: targetBranch ?? "main" },
+    })
+  }
+  await recorder.setTaskStatus("completed")
+  await recorder.step("completed", "任务完成")
 
   return Response.json(result)
 }

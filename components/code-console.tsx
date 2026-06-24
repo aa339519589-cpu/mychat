@@ -136,6 +136,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
   const [applyError, setApplyError] = useState<string | null>(null)
   const [hiddenRepos, setHiddenRepos] = useState<string[]>([])
 
+  const [currentTaskId, setCurrentTaskId] = useState<string | null>(null)
   const [overlay, setOverlay] = useState<Overlay>(null)
   const [ghMenu, setGhMenu] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
@@ -212,7 +213,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
           const summary = commitLine.slice(0, 80) || "Claude 代码改动"
       const res = await fetch("/api/code/apply", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ repo, actions: plan, message: summary }),
+        body: JSON.stringify({ repo, actions: plan, message: summary, taskId: currentTaskId }),
       })
       const data = await res.json()
       if (res.ok) {
@@ -236,6 +237,18 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
     let sid = sessionId
     if (!sid && repo) { sid = await createCodeSession(userId, repo, text.slice(0, 40) || "未命名"); if (sid) setSessionId(sid) }
 
+    // 自动创建/复用 Agent Task
+    let taskId: string | null = currentTaskId
+    if (!taskId && repo) {
+      try {
+        const tres = await fetch("/api/agent/tasks", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ goal: text, mode: "auto", repo }),
+        })
+        if (tres.ok) { const t = await tres.json(); taskId = t.id; setCurrentTaskId(taskId) }
+      } catch {}
+    }
+
     const userMsg: CodeMessage = { id: crypto.randomUUID(), role: "user", content: text }
     const aiId = crypto.randomUUID()
     const aiMsg: CodeMessage = { id: aiId, role: "assistant", content: "", steps: [], plan: [] }
@@ -255,7 +268,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       const res = await fetch("/api/code/chat", {
         method: "POST", signal: controller.signal,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ repo, tier, goal, messages: history }),
+        body: JSON.stringify({ repo, tier, goal, messages: history, taskId }),
       })
       if (!res.ok) { const e = await res.json().catch(() => null); throw new Error(e?.error ?? `请求失败（${res.status}）`) }
       if (!res.body) throw new Error("无响应体")

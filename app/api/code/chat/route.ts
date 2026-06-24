@@ -11,6 +11,7 @@ import { validate } from '@/lib/validation'
 import { addQuotaUsage } from '@/lib/quota'
 import { resolveAuth, enforceLimits } from '@/lib/api/guard'
 import { runInSandbox } from '@/lib/sandbox'
+import { createRecorder, type RecordCtx } from '@/lib/agent/recorder'
 
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY ?? ''
 const DEEPSEEK_BASE_URL = 'https://api.deepseek.com'
@@ -61,7 +62,7 @@ export async function POST(req: NextRequest) {
   let body: any = {}
   try { body = await req.json() } catch { return new Response(JSON.stringify({ error: '请求体格式错误' }), { status: 400 }) }
 
-  const { repo = null, tier = '正构', goal = false, messages } = body
+  const { repo = null, tier = '正构', goal = false, messages, taskId: frontTaskId } = body
   try {
     validate.array(messages, 'messages', { minLength: 1 })
     if (repo !== null && (typeof repo !== 'string' || !repo.includes('/'))) throw new Error('仓库参数无效')
@@ -86,6 +87,16 @@ export async function POST(req: NextRequest) {
   const gate = await enforceLimits(auth)
   if (gate.response) return gate.response
   const usingBalance = gate.usingBalance
+
+  // Agent Task：校验或自动创建
+  let effectiveTaskId = (frontTaskId ?? null) as string | null
+  if (effectiveTaskId && supabase && userId) {
+    const { data: task } = await supabase.from("agent_tasks")
+      .select("id").eq("id", effectiveTaskId).eq("user_id", userId).single()
+    if (!task) effectiveTaskId = null // 不属于用户则忽略
+  }
+  const recorder = createRecorder({ supabase, userId, taskId: effectiveTaskId })
+  if (effectiveTaskId) await recorder.setTaskStatus("running")
 
   // 选了仓库才校验 + 取默认分支；没选（新建项目模式）则跳过
   let defaultBranch: string | null = null
@@ -130,6 +141,21 @@ export async function POST(req: NextRequest) {
       const msgs: any[] = [{ role: 'system', content: SYSTEM }, ...toOpenAI(messages)]
 
       const executeTool: ExecuteTool = async (name, input) => {
+        // 包装工具执行：自动记录 tool_call + step
+        const stepLabel = name === 'list_files' ? '浏览仓库' :
+          name === 'read_file' ? `读取 ${String(input?.path ?? '').slice(0, 40)}` :
+          name === 'write_files' ? '写入文件' :
+          name === 'edit_file' ? `编辑 ${String(input?.path ?? '').slice(0, 40)}` :
+          name === 'create_repo' ? '新建仓库' :
+          name === 'delete_files' ? '删除文件' :
+          name === 'execute' ? '执行命令' :
+          name === 'enable_pages' ? '上线' :
+          name === 'code_remember' ? '记忆' :
+          name === 'search' ? '搜索' : name
+
+        await recorder.step("tool_call", stepLabel)
+
+        return recorder.recordToolCall(name, input, async () => {
         if (name === 'list_files') {
           if (!repo) return '尚未选择仓库。'
           emit({ step: { kind: 'list', label: '浏览仓库文件结构' } })
@@ -311,7 +337,10 @@ export async function POST(req: NextRequest) {
           } catch { return '搜索异常。' }
         }
         return '未知工具。'
+        }) // recordToolCall wrapper closes here
       }
+
+      await recorder.step("planning", "理解任务目标")
 
       try {
         const { totalTokens } = await runAgentLoop({
@@ -322,10 +351,17 @@ export async function POST(req: NextRequest) {
           autoContinue: { maxContinuations: 4 },
           onTurn: ({ phase, round, turn }) => {
             log.info('codeChat', `Turn ${phase}`, { round, finishReason: turn.finishReason, leaked: turn.leaked, toolCalls: turn.toolCalls.length, contentLen: turn.content.length, truncated: turn.truncated })
+            if (phase === 'round' && turn.toolCalls.length > 0) {
+              recorder.step("tool_call", `准备调用 ${turn.toolCalls.length} 个工具`).catch(() => {})
+            }
           },
         })
         totalTokensUsed += totalTokens
+        await recorder.setTaskStatus("completed")
+        await recorder.step("completed", "任务完成")
       } catch (error) {
+        await recorder.setTaskStatus("failed", networkError(error))
+        await recorder.step("failed", "任务失败", networkError(error))
         emit({ error: networkError(error) })
       } finally {
         if (userId && supabase) await addQuotaUsage(supabase, userId, totalTokensUsed, model, thinking, usingBalance)
