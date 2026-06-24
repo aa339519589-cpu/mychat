@@ -215,7 +215,9 @@ export function listWorkspaceFiles(
   maxFiles = 400,
 ): WorkspaceResult<{ files: string[]; total: number; truncated: boolean }> {
   const root = workspaceRoot(taskId, userId)
-  const base = subPath ? join(root, subPath) : root
+  const checked = subPath ? validatePath(root, subPath) : null
+  if (checked && !checked.ok) return { ok: false, error: checked.error! }
+  const base = checked?.absolute ?? root
 
   if (!existsSync(base)) return { ok: false, error: `目录不存在：${subPath ?? "/"}` }
 
@@ -234,6 +236,49 @@ export function listWorkspaceFiles(
       truncated: files.length >= maxFiles,
     },
   }
+}
+
+// ───────────── 搜索 workspace 文本 ─────────────
+
+export function searchWorkspaceFiles(
+  taskId: string,
+  userId: string,
+  rawQuery: string,
+  options: { path?: string; caseSensitive?: boolean; maxResults?: number } = {},
+): WorkspaceResult<{ matches: string[]; searchedFiles: number; truncated: boolean }> {
+  const query = rawQuery.trim()
+  if (!query) return { ok: false, error: "搜索内容为空" }
+  if (query.length > 200) return { ok: false, error: "搜索内容过长（最多 200 字符）" }
+
+  const listed = listWorkspaceFiles(taskId, userId, options.path, 2000)
+  if (!listed.ok) return listed
+
+  const root = workspaceRoot(taskId, userId)
+  const maxResults = Math.min(Math.max(options.maxResults ?? 100, 1), 200)
+  const needle = options.caseSensitive ? query : query.toLowerCase()
+  const matches: string[] = []
+  let searchedFiles = 0
+
+  for (const path of listed.data.files) {
+    const checked = validatePath(root, path)
+    if (!checked.ok || isBinaryFile(checked.absolute!) || fileTooBig(checked.absolute!, 512 * 1024)) continue
+
+    let content = ""
+    try { content = readFileSync(checked.absolute!, "utf-8") } catch { continue }
+    searchedFiles++
+
+    const lines = content.split("\n")
+    for (let index = 0; index < lines.length; index++) {
+      const haystack = options.caseSensitive ? lines[index] : lines[index].toLowerCase()
+      if (!haystack.includes(needle)) continue
+      matches.push(redactSensitive(`${path}:${index + 1}: ${lines[index].trim().slice(0, 300)}`))
+      if (matches.length >= maxResults) {
+        return { ok: true, data: { matches, searchedFiles, truncated: true } }
+      }
+    }
+  }
+
+  return { ok: true, data: { matches, searchedFiles, truncated: false } }
 }
 
 function walk(dir: string, root: string, out: string[], max: number) {
@@ -262,12 +307,24 @@ export function getWorkspaceDiff(taskId: string, userId: string): string {
   if (!existsSync(root)) return ""
 
   try {
-    const out = execSync("git diff --no-color", {
+    let out = execSync("git diff --no-color", {
       cwd: root,
       timeout: 30_000,
       maxBuffer: 2 * 1024 * 1024,
       encoding: "utf-8",
     })
+
+    const untracked = execSync("git ls-files --others --exclude-standard", {
+      cwd: root,
+      timeout: 10_000,
+      maxBuffer: 512 * 1024,
+      encoding: "utf-8",
+    }).trim().split("\n").filter(Boolean)
+    for (const path of untracked) {
+      const checked = validatePath(root, path)
+      if (checked.ok) out += `${out ? "\n" : ""}${getFileDiff(root, path)}`
+      if (out.length >= 2 * 1024 * 1024) return out.slice(0, 2 * 1024 * 1024)
+    }
     return out
   } catch {
     return ""

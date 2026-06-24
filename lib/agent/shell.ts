@@ -30,6 +30,19 @@ export type ShellOptions = {
   maxOutputChars?: number
 }
 
+export function workspaceProcessEnv(): NodeJS.ProcessEnv {
+  return {
+    PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+    HOME: process.env.HOME ?? "/tmp",
+    LANG: "en_US.UTF-8",
+    NODE_ENV: process.env.NODE_ENV ?? "",
+    GIT_AUTHOR_NAME: "mychat-agent",
+    GIT_AUTHOR_EMAIL: "mychat-agent@users.noreply.github.com",
+    GIT_COMMITTER_NAME: "mychat-agent",
+    GIT_COMMITTER_EMAIL: "mychat-agent@users.noreply.github.com",
+  }
+}
+
 // ── 执行命令 ──
 
 export async function runInWorkspace(
@@ -113,16 +126,7 @@ async function execCommand(
     const child = spawn("sh", ["-c", command], {
       cwd,
       timeout: timeoutMs,
-      env: {
-        PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
-        HOME: process.env.HOME ?? "/tmp",
-        LANG: "en_US.UTF-8",
-        NODE_ENV: process.env.NODE_ENV ?? "",
-        GIT_AUTHOR_NAME: "mychat-agent",
-        GIT_AUTHOR_EMAIL: "agent@mychat.local",
-        GIT_COMMITTER_NAME: "mychat-agent",
-        GIT_COMMITTER_EMAIL: "agent@mychat.local",
-      },
+      env: workspaceProcessEnv(),
       stdio: ["ignore", "pipe", "pipe"],
     })
 

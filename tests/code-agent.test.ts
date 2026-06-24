@@ -4,6 +4,9 @@ import { modelContent, type CodeMessage } from '../lib/code-data'
 import { codeContinuationPrompt } from '../lib/agent/continuation'
 import { inferPublishPendingFromMessages, shouldShowWorkspacePublish } from '../lib/code-agent-ui'
 import { enablePages, mergePullRequest } from '../lib/github'
+import { getWorkspaceDiff, searchWorkspaceFiles, workspaceRoot } from '../lib/agent/workspace'
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 
 test('execution receipts are returned to the next model turn', () => {
   const message: CodeMessage = {
@@ -149,4 +152,23 @@ test('publish button hides after publish receipt arrives', () => {
     ),
     false,
   )
+})
+
+test('workspace search returns line locations and diff includes new files', t => {
+  const taskId = `search-${Date.now()}`
+  const userId = 'test-user'
+  const root = workspaceRoot(taskId, userId)
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+
+  mkdirSync(`${root}/src`, { recursive: true })
+  execFileSync('git', ['init', '-q'], { cwd: root })
+  writeFileSync(`${root}/src/app.ts`, 'const marker = "Agent permission"\n')
+
+  const search = searchWorkspaceFiles(taskId, userId, 'agent permission')
+  assert.equal(search.ok, true)
+  if (search.ok) assert.deepEqual(search.data.matches, ['src/app.ts:1: const marker = "Agent permission"'])
+
+  const diff = getWorkspaceDiff(taskId, userId)
+  assert.match(diff, /\+\+\+ b\/src\/app\.ts/)
+  assert.match(diff, /Agent permission/)
 })

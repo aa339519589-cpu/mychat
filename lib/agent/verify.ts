@@ -9,6 +9,7 @@ import { detectProjectCommands } from "./project-detect"
 import { parseAllErrors, type VerificationErrors } from "./error-parser"
 import { redactSensitive } from "./path-security"
 import { addStep, addArtifact } from "./data"
+import { workspaceProcessEnv } from "./shell"
 
 type VerifyStep = {
   name: string
@@ -42,6 +43,7 @@ function runCommand(root: string, command: string, timeoutMs = 120_000): { stdou
       maxBuffer: 4 * 1024 * 1024,
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
+      env: workspaceProcessEnv(),
     })
     return {
       stdout: buf.slice(0, 100_000),

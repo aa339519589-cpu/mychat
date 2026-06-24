@@ -4,7 +4,7 @@ import type { ToolDef, ToolOutcome } from './types'
 
 const MAX_CHARS = 8000  // 正文上限，避免一次塞太多灌爆上下文
 
-async function readPage(rawUrl: string): Promise<string> {
+export async function readPage(rawUrl: string): Promise<string> {
   const url = String(rawUrl ?? '').trim()
   if (!/^https?:\/\//i.test(url)) return '无效的网址：必须以 http:// 或 https:// 开头。'
   try {

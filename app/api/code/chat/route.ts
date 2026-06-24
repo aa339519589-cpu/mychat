@@ -16,11 +16,14 @@ import { createRecorder } from '@/lib/agent/recorder'
 import { codeContinuationPrompt } from '@/lib/agent/continuation'
 import {
   writeWorkspaceFile, editWorkspaceFile, deleteWorkspaceFile,
-  getChangedFiles, readWorkspaceFile,
+  getChangedFiles, getWorkspaceDiff, readWorkspaceFile, searchWorkspaceFiles,
   createWorkspaceForTask,
 } from '@/lib/agent/workspace'
 import { applyWorkspacePatch, dryRunWorkspacePatch } from '@/lib/agent/patch'
 import { getTaskDetail } from '@/lib/agent/data'
+import { runVerification } from '@/lib/agent/verify'
+import { redactSensitive } from '@/lib/agent/path-security'
+import { readPage } from '@/lib/tools/fetch-url'
 import { existsSync } from 'fs'
 
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY ?? ''
@@ -42,7 +45,9 @@ function buildCodeSystem(repo: string | null, login: string, memories: string[],
 - write_files / edit_file / delete_files：直接修改 workspace 里的真实文件（会自动 snapshot 备份）
 - apply_patch：用 unified diff 批量修改代码
 - execute：在 workspace 里执行命令（node --check、npm run build、npm test 等）
-- list_files / read_file：直接读取 workspace 文件
+- list_files / search_files / read_file：浏览、搜索并读取 workspace 文件
+- git_diff：查看当前全部真实改动
+- verify：自动安装依赖并运行项目可用的 lint、类型检查、测试和构建
 - publish：改动完成后请求用户确认发布；网页任务必须设置 deploy_pages=true
 - check_deployment：确认发布后检查网页是否已经真正可访问
 - complete：只有整个任务已经完成并验证后才能调用
@@ -73,6 +78,8 @@ ${wsSection}
 - enable_pages：开启 GitHub Pages 上线。
 - code_remember：记住一条本仓库的长期事实。
 - search：网络搜索文档、API、技术资料。
+- fetch_url：读取指定网页的正文。
+- search_files / git_diff / verify：搜索代码、查看真实改动、自动验证当前 workspace。
 - check_deployment：检查 GitHub Pages 是否构建完成且网页可访问。
 - complete：明确声明整个任务已经完成。仍有改动或待发布步骤时禁止调用。
 - ask_user：遇到自己无法解决的权限或选择问题时，向用户提出一个明确问题。
@@ -81,7 +88,7 @@ ${wsSection}
 1. 用户用大白话描述要做什么。你自行判断、定位文件、动手修改。
 2. 做新项目：create_repo → write_files 写全部文件 →（纯前端）enable_pages 上线。
 3. 改现有项目：先 list_files / read_file 定位，再 edit_file 或 write_files 给出改动${hasWorkspace ? "，推荐用 apply_patch 批量修改" : ""}。
-4. 改完代码后执行一次语法校验（如 node --check）。
+4. 改完代码后调用 verify 自动验证；失败就继续修复并重新验证。
 ${hasWorkspace
   ? "5. 改完调用 publish 工具。网页上线任务必须设置 deploy_pages=true。确认发布后的结果会自动交还给你继续检查，全部完成后调用 complete。"
   : "5. 你的改动会生成待执行计划展示给用户，用户确认后提交并推送。"}
@@ -249,6 +256,7 @@ export async function POST(req: NextRequest) {
   const isWs = !!repo
   const allTools = [
     { type: 'function', function: { name: 'list_files', description: isWs ? '列出 workspace 中的文件列表。' : '列出当前仓库完整文件路径列表。', parameters: { type: 'object', properties: {} } } },
+    ...(isWs ? [{ type: 'function', function: { name: 'search_files', description: '在 workspace 全文搜索代码，返回真实文件路径和行号。定位实现、引用或错误来源时优先使用。', parameters: { type: 'object', properties: { query: { type: 'string', description: '要搜索的原文' }, path: { type: 'string', description: '可选，限制在某个子目录' }, case_sensitive: { type: 'boolean', description: '是否区分大小写，默认 false' } }, required: ['query'] } } }] : []),
     { type: 'function', function: { name: 'read_file', description: isWs ? '读取 workspace 中文件的完整内容。修改前必须先读。' : '读取当前仓库某文件的真实完整内容。修改前必须先读。', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } } },
     { type: 'function', function: { name: 'create_repo', description: '新建一个 GitHub 仓库（做新项目时用）。', parameters: { type: 'object', properties: { name: { type: 'string', description: '英文小写连字符，如 pomodoro-timer' }, description: { type: 'string' }, private: { type: 'boolean', description: '是否私有，默认 false' } }, required: ['name'] } } },
     { type: 'function', function: { name: 'write_files', description: isWs ? '直接在 workspace 中写入真实文件（会自动 snapshot 备份）。传完整文件内容。' : '生成改动计划，用户确认后执行。传完整文件内容。', parameters: { type: 'object', properties: { files: { type: 'array', items: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string', description: '完整文件内容' } }, required: ['path', 'content'] } } }, required: ['files'] } } },
@@ -258,7 +266,10 @@ export async function POST(req: NextRequest) {
     { type: 'function', function: { name: 'enable_pages', description: '对纯静态/前端项目开启 GitHub Pages，让项目有可访问网址（上线）。', parameters: { type: 'object', properties: {} } } },
     { type: 'function', function: { name: 'code_remember', description: '记住一条关于本仓库的长期事实。', parameters: { type: 'object', properties: { content: { type: 'string' } }, required: ['content'] } } },
     { type: 'function', function: { name: 'search', description: '网络搜索（文档、API、技术资料等）。需要查阅外部资源时用。', parameters: { type: 'object', properties: { query: { type: 'string', description: '搜索关键词或短语' } }, required: ['query'] } } },
+    { type: 'function', function: { name: 'fetch_url', description: '打开指定公开网址并读取正文。用于深入阅读搜索结果、文档或检查公开页面内容。', parameters: { type: 'object', properties: { url: { type: 'string', description: '完整的 http 或 https 网址' } }, required: ['url'] } } },
     { type: 'function', function: { name: 'apply_patch', description: isWs ? '直接在 workspace 中应用 unified diff patch 批量修改代码（推荐！）。先传 dryRun: true 预览；确认后传 dryRun: false 执行。' : '应用 unified diff patch 批量修改代码。仅在 workspace 模式下可用。', parameters: { type: 'object', properties: { patch: { type: 'string', description: 'unified diff 格式的 patch 内容' }, dryRun: { type: 'boolean', description: '是否仅预览（dry-run），默认 false' } }, required: ['patch'] } } },
+    ...(isWs ? [{ type: 'function', function: { name: 'git_diff', description: '查看 workspace 当前完整 git diff 和变更文件。修改后、发布前必须用它核对真实改动。', parameters: { type: 'object', properties: {} } } }] : []),
+    ...(isWs ? [{ type: 'function', function: { name: 'verify', description: '自动识别项目并运行可用的 lint、类型检查、测试和构建。默认在需要时安装依赖；发布前必须验证通过。', parameters: { type: 'object', properties: { install: { type: 'boolean', description: '缺少依赖时是否自动安装，默认 true' }, steps: { type: 'array', items: { type: 'string', enum: ['lint', 'typecheck', 'test', 'build'] }, description: '可选，只运行指定检查；默认运行全部可用检查' } } } } }] : []),
     ...(isWs ? [{ type: 'function', function: { name: 'publish', description: '文件改动和测试完成后请求用户确认发布。普通代码任务创建 PR；用户要求网页上线时 deploy_pages 必须为 true，确认后平台会通过 PR 合并并完成 Pages 部署。绝不直推 main。', parameters: { type: 'object', properties: { deploy_pages: { type: 'boolean', description: '用户要求网页上线或提供可访问网址时必须为 true' } }, required: ['deploy_pages'] } } }] : []),
     ...(isWs ? [{ type: 'function', function: { name: 'check_deployment', description: '检查 GitHub Pages 是否构建完成并且网页确实可以访问。部署未完成时继续检查，不要让用户代替你检查。', parameters: { type: 'object', properties: {} } } }] : []),
     { type: 'function', function: { name: 'complete', description: '只有整个任务已经完成并验证后才能调用。仍有文件改动、待确认发布或待部署时禁止调用。', parameters: { type: 'object', properties: {} } } },
@@ -289,6 +300,7 @@ export async function POST(req: NextRequest) {
       let waitingForUser = false
       let plannedRepo = false
       let plannedFiles = 0
+      let verifiedDiff: string | null = null
 
       const workspaceHasChanges = () => {
         if (!wsReady) return false
@@ -312,6 +324,19 @@ export async function POST(req: NextRequest) {
           const { paths, truncated } = await listTree(token!, repo, defaultBranch!)
           if (!paths.length) return '仓库为空或无法获取文件列表。'
           return `仓库共 ${paths.length} 个文件${truncated ? '（已截断）' : ''}：\n${paths.join('\n')}`
+        }
+        if (name === 'search_files') {
+          if (!wsReady) return 'search_files 需要 workspace。'
+          const query = String(input?.query ?? '').trim()
+          if (!query) return '缺少 query。'
+          emit({ step: { kind: 'read', label: `搜索代码：${query.slice(0, 50)}` } })
+          const result = searchWorkspaceFiles(wsTaskId, wsUserId, query, {
+            path: typeof input?.path === 'string' ? input.path : undefined,
+            caseSensitive: input?.case_sensitive === true,
+          })
+          if (!result.ok) return `搜索失败：${result.error}`
+          if (!result.data.matches.length) return `已搜索 ${result.data.searchedFiles} 个文件，没有找到“${query}”。`
+          return `找到 ${result.data.matches.length} 处匹配${result.data.truncated ? '（结果已截断）' : ''}：\n${result.data.matches.join('\n')}`
         }
         if (name === 'read_file') {
           const path = String(input?.path ?? '').trim()
@@ -454,6 +479,23 @@ export async function POST(req: NextRequest) {
             return `沙箱执行异常：${err?.message ?? '未知错误'}`
           }
         }
+        if (name === 'verify') {
+          if (!wsReady || !supabase) return 'verify 需要 workspace。'
+          const allowed = new Set(['lint', 'typecheck', 'test', 'build'])
+          const requested = Array.isArray(input?.steps)
+            ? input.steps.filter((step: unknown) => typeof step === 'string' && allowed.has(step))
+            : undefined
+          emit({ step: { kind: 'read', label: '自动验证项目' } })
+          const result = await runVerification(wsTaskId, wsUserId, supabase, {
+            install: input?.install !== false,
+            steps: requested?.length ? requested : undefined,
+          })
+          verifiedDiff = result.ok ? getWorkspaceDiff(wsTaskId, wsUserId) : null
+          const steps = result.steps.map(step => `${step.name}: ${step.skipped ? '跳过' : step.passed ? '通过' : '失败'}`).join('\n')
+          const failed = result.steps.find(step => !step.passed)
+          const detail = failed ? redactSensitive(failed.stderr || failed.stdout).slice(0, 6000) : ''
+          return `${result.summary}\n${steps}${detail ? `\n\n失败详情：\n${detail}` : ''}`
+        }
         if (name === 'code_remember') {
           const content = String(input?.content ?? '').trim()
           if (!content || !repo) return content ? '尚未选择仓库，无法记忆。' : '内容为空。'
@@ -486,8 +528,19 @@ export async function POST(req: NextRequest) {
 
           return 'apply_patch 需要 workspace。当前没有就绪的 workspace。'
         }
+        if (name === 'git_diff') {
+          if (!wsReady) return 'git_diff 需要 workspace。'
+          emit({ step: { kind: 'read', label: '查看真实 git diff' } })
+          const changed = getChangedFiles(wsTaskId, wsUserId)
+          const files = changed.ok ? changed.data.files.map(file => `${file.status} ${file.path}`).join('\n') : ''
+          const diff = redactSensitive(getWorkspaceDiff(wsTaskId, wsUserId)).slice(0, 30000)
+          return diff ? `变更文件：\n${files}\n\n真实 diff：\n${diff}` : 'Workspace 当前没有改动。'
+        }
         if (name === 'publish') {
           if (!wsReady) return 'publish 需要 workspace。当前没有就绪的 workspace。'
+          if (verifiedDiff === null || verifiedDiff !== getWorkspaceDiff(wsTaskId, wsUserId)) {
+            return '当前改动还没有通过最新一轮自动验证。先调用 verify；失败就修复并重新验证。'
+          }
           emit({ step: { kind: 'deploy', label: '准备发布' } })
           // 检查是否有改动
           const changed = getChangedFiles(wsTaskId, wsUserId)
@@ -584,6 +637,12 @@ ${fileList || '（请先修改文件）'}
             }
             return out || '未找到相关结果。'
           } catch { return '搜索异常。' }
+        }
+        if (name === 'fetch_url') {
+          const url = String(input?.url ?? '').trim()
+          if (!url) return '网址为空。'
+          emit({ step: { kind: 'read', label: `读取网页：${url.slice(0, 60)}` } })
+          return readPage(url)
         }
         return '未知工具。'
       }
