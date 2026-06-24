@@ -472,14 +472,37 @@ export async function createWorkspaceForTask(
   if (typeof result === "object" && result !== null && "error" in result) {
     return { error: (result as any).error }
   }
-  return {
+  const wsPath = workspacePath(userId, taskId)
+  const wsInfo = {
     taskId, userId, repo,
     baseBranch: (result as any)?.branch ?? "main",
     agentBranch: (result as any)?.agentBranch ?? `agent/${taskId.slice(0, 8)}`,
-    path: workspacePath(userId, taskId),
+    path: wsPath,
     commit: (result as any)?.commitSha ?? null,
     status: "ready",
   }
+
+  // 持久化到 agent_workspaces 表，确保后续 getTaskDetail 能查到
+  try {
+    const { addWorkspace } = await import("./data")
+    await addWorkspace(supabase, userId, {
+      taskId,
+      repo,
+      branch: wsInfo.baseBranch,
+      commitSha: wsInfo.commit,
+      path: wsPath,
+    })
+    // 更新状态为 ready
+    const { updateWorkspaceStatus } = await import("./data")
+    await updateWorkspaceStatus(supabase, userId, taskId, "ready", {
+      path: wsPath,
+      commitSha: wsInfo.commit,
+    })
+  } catch (err: any) {
+    console.error('[workspace] DB persist failed (non-fatal)', err?.message)
+  }
+
+  return wsInfo
 }
 
 // compat: re-export for remote consumers
