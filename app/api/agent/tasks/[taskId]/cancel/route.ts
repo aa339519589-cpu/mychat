@@ -13,7 +13,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ ta
 
   const { taskId } = await params
   const result = await cancelTask(auth.supabase, auth.userId, taskId)
-  if ("error" in result) return json(result, 400)
+  if (result.error) return json(result, 400)
 
   return json(result)
 }

@@ -17,7 +17,7 @@ async function getContext(taskId: string) {
   if (!supabase || !userId) return { error: json({ error: "未登录" }, 401) }
 
   const detail = await getTaskDetail(supabase, userId, taskId)
-  if (!("workspace" in detail)) return { error: json(detail, 404) }
+  if (detail.error) return { error: json(detail, 404) }
 
   const ws = detail.workspace
   if (!ws || (ws.status !== "ready" && ws.status !== "dirty")) return { error: json({ error: "Workspace 未就绪" }, 400) }

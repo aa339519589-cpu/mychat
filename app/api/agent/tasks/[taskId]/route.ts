@@ -15,7 +15,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tas
   if (!taskId) return json({ error: "缺少 taskId" }, 400)
 
   const detail = await getTaskDetail(auth.supabase, auth.userId, taskId)
-  if ("error" in detail) return json(detail, 404)
+  if (detail.error) return json(detail, 404)
 
   return json(detail)
 }

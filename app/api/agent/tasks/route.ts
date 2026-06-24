@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
   if (!body?.goal) return json({ error: "缺少 goal" }, 400)
 
   const result = await createTask(auth.supabase, auth.userId, body)
-  if ("error" in result) {
+  if (result.error) {
     console.error('[agent/tasks] createTask failed', { error: result.error, goal: body.goal?.slice(0, 80), repo: body.repo })
     return json(result, 500)
   }
