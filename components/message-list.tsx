@@ -181,8 +181,8 @@ export function MessageList({
                 </div>
               )}
               {m.content && (
-                <div className="max-w-[90%] min-w-0 rounded-[1.5rem] rounded-tr-md user-bubble-bg px-5 py-3 md:max-w-[85%]">
-                  <p className="break-words text-[17px] font-[400] italic leading-[1.82] tracking-[0.001em] text-secondary-foreground [overflow-wrap:anywhere] md:text-[18px]">{m.content}</p>
+                <div className="max-w-[86%] min-w-0 rounded-[2rem] border border-white/10 bg-[#050505] px-6 py-4 text-white shadow-sm md:max-w-[82%]">
+                  <p className="break-words font-sans text-[17px] font-[400] not-italic leading-[1.75] tracking-[0.001em] text-white [overflow-wrap:anywhere] md:text-[18px]">{m.content}</p>
                 </div>
               )}
             </div>
