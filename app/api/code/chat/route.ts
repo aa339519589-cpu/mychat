@@ -283,6 +283,7 @@ export async function POST(req: NextRequest) {
         safeSend({ heartbeat: true })
       }, 8_000)
       const emit: Emit = (event) => {
+        if ('thinking' in event) return
         if ('text' in event) finalText += event.text
         if ('error' in event) finalText = `${finalText}${finalText ? '\n\n' : ''}${event.error}`
         if ('step' in event) void recorder.step(event.step.kind, event.step.label)
