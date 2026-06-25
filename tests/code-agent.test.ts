@@ -1,10 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { modelContent, type CodeMessage } from '../lib/code-data'
-import { codeContinuationPrompt, isCodeUserBlocker } from '../lib/agent/continuation'
+import { codeContinuationPrompt, isCodeUserBlocker, looksLikeCodeSelfTalk } from '../lib/agent/continuation'
 import { inferPublishPendingFromMessages, isFalseCodePause, isStaleRunningCodeTask, shouldShowWorkspacePublish } from '../lib/code-agent-ui'
 import { enablePages, mergePullRequest } from '../lib/github'
 import { getWorkspaceDiff, searchWorkspaceFiles, workspaceRoot } from '../lib/agent/workspace'
+import { runTurn } from '../lib/llm/turn'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 
@@ -66,6 +67,47 @@ test('Code Agent cannot pause for work it can do itself', () => {
   assert.equal(isCodeUserBlocker('请让我继续', '下一步需要发布上线'), false)
   assert.equal(isCodeUserBlocker('请重新授权 GitHub', '当前授权失效，无法读取私有仓库'), true)
   assert.equal(isCodeUserBlocker('请选择保留旧版还是采用新版', '两个产品方案互斥，需要你决定'), true)
+})
+
+test('verbose code self-talk is detected but publish summary is preserved', () => {
+  const selfTalk = `
+好的，让我检查一下当前部署版本的状态。
+让我看看页面加载了哪些内容。
+让我再检查一下当前代码中的 CDN 地址和加载逻辑。
+现在我来全面修复这个问题。
+`
+  assert.equal(looksLikeCodeSelfTalk(selfTalk), true)
+  assert.equal(looksLikeCodeSelfTalk('改动已就绪，等待用户确认发布。\n\n变更文件：\nM index.html'), false)
+})
+
+test('runTurn suppresses code self-talk while preserving tool calls', { concurrency: false }, async t => {
+  const originalFetch = globalThis.fetch
+  t.after(() => { globalThis.fetch = originalFetch })
+  globalThis.fetch = async () => Response.json({
+    choices: [{
+      finish_reason: 'tool_calls',
+      message: {
+        content: '好的，让我先检查一下。让我看看这个问题。现在我来读取文件并继续分析。',
+        tool_calls: [{
+          index: 0,
+          id: 'call_1',
+          function: { name: 'read_file', arguments: '{"path":"README.md"}' },
+        }],
+      },
+    }],
+  })
+
+  const events: any[] = []
+  const turn = await runTurn('https://example.com', 'key', 'model', [], [], event => { events.push(event) }, {
+    deferTextUntilTurnEnd: true,
+    suppressCodeSelfTalk: true,
+  })
+
+  assert.equal(turn.content, '')
+  assert.equal(events.some(event => 'text' in event), false)
+  assert.equal(turn.toolCalls.length, 1)
+  assert.equal(turn.toolCalls[0].name, 'read_file')
+  assert.equal(turn.assistantMessage?.content, null)
 })
 
 test('Pages is ready only after GitHub reports built and the URL responds', { concurrency: false }, async t => {
