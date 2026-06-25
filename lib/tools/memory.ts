@@ -4,7 +4,7 @@
 import type { ToolDef, ToolContext, ToolOutcome, ToolSchema } from './types'
 import { log } from '@/lib/logger'
 
-type MemoryResult = { action: 'create' | 'update' | 'delete'; id?: string; content?: string; ok: boolean; timestamp?: string }
+type MemoryResult = { action: 'create' | 'update' | 'delete' | 'duplicate'; id?: string; content?: string; ok: boolean; timestamp?: string }
 
 // ── 去重工具 ──
 // 用字符级 2-gram Jaccard 相似度做轻量去重，无需嵌入模型。
@@ -57,14 +57,9 @@ async function runMemoryOp(ctx: ToolContext, opName: string, table: string, inpu
       // 去重：检查是否已有相似记忆
       const similar = await findSimilarMemory(supabase, table, userId, content, projectId)
       if (similar) {
-        // 已有相似记忆：直接更新（新内容可能更准确/详细）
-        const { error } = await supabase.from(table).update({ content, updated_at: ts }).eq('id', similar.id)
-        if (error) {
-          log.error('memory', `remember 去重更新失败 (${table})`, error)
-          return { action: 'update', id: similar.id, content, ok: false, timestamp: ts }
-        }
-        log.info('memory', `remember 去重更新（相似度跳过新增）`, { table, projectId: projectId ?? null, oldContent: similar.content.slice(0, 60), newContent: content.slice(0, 60) })
-        return { action: 'update', id: similar.id, content, ok: true, timestamp: ts }
+        // 已有相似记忆：不自动写库，反馈给模型让它自行决定合并/更新/跳过
+        log.info('memory', `remember 发现相似记忆，反馈模型自行处理`, { table, projectId: projectId ?? null, similarId: similar.id, newContent: content.slice(0, 60), oldContent: similar.content.slice(0, 60) })
+        return { action: 'duplicate', id: similar.id, content: similar.content, ok: true, timestamp: ts }
       }
 
       const id = crypto.randomUUID()
@@ -103,6 +98,12 @@ function memoryTool(name: string, description: string, table: string, schema: To
     enabled: f => f.loggedIn && f.memoryEnabled && (isProject ? !!f.projectId : !f.projectId),
     execute: async (input, ctx): Promise<ToolOutcome> => {
       const r = await runMemoryOp(ctx, name, table, input)
+      if (r.action === 'duplicate') {
+        return {
+          result: `这条内容与已有记忆高度相似（id: ${r.id}，内容: ${r.content}）。请自行判断：如需用新内容替换旧内容或合并两条，调用 ${isProject ? 'update_project_memory' : 'update_memory'}；如新内容只是重复，无需操作。`,
+          event: { memory: r },
+        }
+      }
       return { result: r.ok ? '操作成功' : '操作失败', event: { memory: r } }
     },
   }
