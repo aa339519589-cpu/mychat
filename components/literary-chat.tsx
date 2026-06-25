@@ -28,6 +28,7 @@ import { PanelLeft, Folder, ChevronDown } from "lucide-react"
 import { parseArtifact, artifactTitle } from "@/lib/artifact"
 import { ArtifactPanel } from "@/components/artifact-panel"
 import { ConversationMenu, ConversationRename } from "@/components/conversation-menu"
+import type { SearchMode } from "@/lib/search-mode"
 
 type HistoryMsg = { id?: string; role: string; content: string; images?: string[]; imageSummary?: string; ts?: string }
 
@@ -42,7 +43,7 @@ export function LiteraryChat() {
   const [codeOpen, setCodeOpen] = useState(false)
   const [memories, setMemories] = useState<Memory[]>([])
   const [memoryEnabled, setMemoryEnabledState] = useState(true)
-  const [webSearch, setWebSearch] = useState(false)
+  const [searchMode, setSearchMode] = useState<SearchMode>("off")
   const [deepResearch, setDeepResearch] = useState(false)
   const [activeTier, setActiveTier] = useState<Tier>("绝句")
   const [openArtifactId, setOpenArtifactId] = useState<string | null>(null)
@@ -218,7 +219,7 @@ export function LiteraryChat() {
           messages: history,
           memories: memoryEnabled && memories.length > 0 ? memories : undefined,
           attachments: attachments && attachments.length > 0 ? attachments : undefined,
-          webSearch,
+          searchMode,
           deepResearch,
           project: projectCtx,
         }),
@@ -736,8 +737,8 @@ export function LiteraryChat() {
           activeTier={activeTier}
           onTierChange={handleTierChange}
           mobile={mobile}
-          webSearch={webSearch}
-          onWebSearchChange={setWebSearch}
+          searchMode={searchMode}
+          onSearchModeChange={setSearchMode}
           deepResearch={deepResearch}
           onDeepResearchChange={setDeepResearch}
           isLoading={isLoading}

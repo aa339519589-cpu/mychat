@@ -1,5 +1,6 @@
 import type { Memory } from '@/lib/memory-data'
 import type { ProjectContext } from '@/lib/project-data'
+import type { SearchMode } from '@/lib/search-mode'
 
 const BASE_SYSTEM = `你叫小克，是一个聊天伙伴，用清楚、自然的中文交谈。说有用的话，不要故意文艺。不要使用 emoji，必要时可以用颜文字。
 
@@ -160,7 +161,7 @@ Function-plot 规则：
 - 可以引用公开 CDN（jsDelivr、unpkg、cdnjs），不能请求用户的私有接口。
 - 不要在标签外解释代码；前后用一两句话说明即可。`
 
-type SystemFlags = { webSearch?: boolean; memoryEnabled?: boolean; project?: ProjectContext }
+type SystemFlags = { searchMode?: SearchMode; latestBeijingDate?: string | null; memoryEnabled?: boolean; project?: ProjectContext }
 
 // 拼装系统提示词：基础人设 + 已记住的用户信息（带 id 供模型修改/删除）+ 联网提示
 export function buildSystem(memories?: Memory[], flags?: SystemFlags): string {
@@ -190,8 +191,12 @@ export function buildSystem(memories?: Memory[], flags?: SystemFlags): string {
 - 需要修改或删除某条时，使用对应的 id。
 ${memBlock}`
   }
-  if (flags?.webSearch) {
-    system += `\n\n你可以调用 web_search 工具联网搜索。当问题涉及实时信息、最新事件或你不确定的事实时，先搜索再回答。`
+  if (flags?.searchMode && flags.searchMode !== 'off') {
+    const dateAnchor = flags.latestBeijingDate ? `本轮最新时间锚点是 ${flags.latestBeijingDate} 北京时间。` : ''
+    const searchRule = flags.searchMode === 'deep'
+      ? '当前已开启「深度联网」：先以本轮最新的北京时间为检索基准，必须广泛检索并整合 40 到 80 个来源，再给结论。若来源数不足，不要装作已经查全。'
+      : '当前已开启「联网」：先以本轮最新的北京时间为检索基准，优先查最新来源；单次联网检索最多使用 20 个来源，避免无边际乱搜。'
+    system += `\n\n${dateAnchor}${searchRule}`
   }
   // 项目背景：专属指令/人设 + 参考资料正文。资料按预算截断，避免撑爆上下文。
   if (flags?.project) {

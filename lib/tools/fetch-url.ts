@@ -25,7 +25,7 @@ export const fetchUrlTool: ToolDef = {
   name: 'fetch_url',
   description: '打开一个网址并读取网页正文。当用户给出链接，或你在搜索结果里发现值得深入查看的链接时调用，以获取页面全文后再回答。',
   schema: { type: 'object', properties: { url: { type: 'string', description: '要读取的完整网址，必须以 http:// 或 https:// 开头' } }, required: ['url'] },
-  enabled: f => f.webSearch,
+  enabled: f => f.searchMode !== 'off',
   execute: async (input): Promise<ToolOutcome> => {
     const text = await readPage(input?.url)
     return { result: text }

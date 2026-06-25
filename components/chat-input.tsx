@@ -6,10 +6,11 @@ import { ChevronDown, X, Loader2, Plus, ImageIcon, FileText, Globe, ArrowUp, Squ
 import { TIERS, TIER_MAP, type Tier } from "@/lib/chat-data"
 import { prepareFile, type AttachedFile } from "@/lib/file-extract"
 import { modelSupportsImageInput } from "@/lib/llm/models"
+import type { SearchMode } from "@/lib/search-mode"
 
 export function ChatInput({
   onSend, activeTier, onTierChange, mobile,
-  webSearch, onWebSearchChange,
+  searchMode, onSearchModeChange,
   deepResearch, onDeepResearchChange,
   isLoading, onStop,
 }: {
@@ -17,8 +18,8 @@ export function ChatInput({
   activeTier: Tier
   onTierChange: (t: Tier) => void
   mobile: boolean
-  webSearch: boolean
-  onWebSearchChange: (on: boolean) => void
+  searchMode: SearchMode
+  onSearchModeChange: (mode: SearchMode) => void
   deepResearch: boolean
   onDeepResearchChange: (on: boolean) => void
   isLoading: boolean
@@ -113,7 +114,7 @@ export function ChatInput({
     }
   }
 
-  const hasActiveTools = webSearch || deepResearch
+  const hasActiveTools = searchMode !== "off" || deepResearch
   const canSend = !isLoading && (!!value.trim() || images.length > 0 || files.length > 0)
   const currentModelSupportsImages = modelSupportsImageInput(TIER_MAP[activeTier]?.model ?? '')
 
@@ -184,10 +185,16 @@ export function ChatInput({
               <PlusItem icon={<FileText className="size-4" />} label="文件" onClick={() => { setPlusOpen(false); fileInputRef.current?.click() }} />
               <div className="border-t border-border/40" />
               <PlusItem
-                icon={<Globe className={cn("size-4", webSearch && "text-primary")} />}
+                icon={<Globe className={cn("size-4", searchMode === "web" && "text-primary")} />}
                 label="联网"
-                onClick={() => onWebSearchChange(!webSearch)}
-                active={webSearch}
+                onClick={() => onSearchModeChange(searchMode === "web" ? "off" : "web")}
+                active={searchMode === "web"}
+              />
+              <PlusItem
+                icon={<Globe className={cn("size-4", searchMode === "deep" && "text-primary")} />}
+                label="深度联网"
+                onClick={() => onSearchModeChange(searchMode === "deep" ? "off" : "deep")}
+                active={searchMode === "deep"}
               />
               <PlusItem
                 icon={<Microscope className={cn("size-4", deepResearch && "text-primary")} />}

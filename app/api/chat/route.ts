@@ -16,9 +16,9 @@ import { validate } from '@/lib/validation'
 import { addQuotaUsage } from '@/lib/quota'
 import { ocrPageImages } from '@/lib/mimo'
 import { resolveAuth, getMemoryEnabled, enforceLimits } from '@/lib/api/guard'
+import { latestBeijingDateFromMessages, normalizeSearchMode } from '@/lib/search-mode'
 
 const SAFETY_ROUNDS = 9999
-const MAX_CONTINUATIONS = 4
 
 // 深度研究幽灵提示词：前置注入到用户消息，前端不可见
 const DEEP_RESEARCH_PREFIX = `Absolute maximum with no shortcuts permitted. You must treat this request as a highest-effort reasoning task. Before giving the final answer, fully understand the user's question, identify the real objective, and avoid answering only the surface wording. Do not rush to produce a response. Reasoning requirements:
@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
     return new Response(JSON.stringify({ error: '请求体格式错误' }), { status: 400, headers: { 'Content-Type': 'application/json' } })
   }
 
-  const { tier = '绝句', messages, memories, attachments, webSearch, deepResearch, project } = body
+  const { tier = '绝句', messages, memories, attachments, searchMode, webSearch, deepWebSearch, deepResearch, project } = body
 
   try {
     validate.array(messages, 'messages', { minLength: 1 })
@@ -87,20 +87,34 @@ export async function POST(req: NextRequest) {
   if (gate.response) return gate.response
   const usingBalance = gate.usingBalance
 
-  const flags = { loggedIn: !!userId, webSearch: !!webSearch, memoryEnabled, projectId: project?.id ?? null }
+  const effectiveSearchMode =
+    searchMode === 'web' || searchMode === 'deep'
+      ? searchMode
+      : normalizeSearchMode(webSearch, deepWebSearch)
+  const latestBeijingDate = latestBeijingDateFromMessages(messages as RawMsg[])
+  const flags = { loggedIn: !!userId, searchMode: effectiveSearchMode, memoryEnabled, projectId: project?.id ?? null }
   const tools = activeTools(flags)
-  const ctx: ToolContext = { supabase, userId, projectId: project?.id ?? null }
+  const ctx: ToolContext = { supabase, userId, projectId: project?.id ?? null, searchMode: effectiveSearchMode, latestBeijingDate }
 
   // 关闭记忆时：既不挂记忆工具（上面已过滤），也不注入已存的记忆
   const effectiveMemories = memoryEnabled ? (memories as Memory[] | undefined) : undefined
   const url = chatCompletionsUrl(capability.provider.baseUrl)
-  const SYSTEM = buildSystem(effectiveMemories, { webSearch: flags.webSearch, memoryEnabled, project })
+  const SYSTEM = buildSystem(effectiveMemories, { searchMode: effectiveSearchMode, latestBeijingDate, memoryEnabled, project })
   const openaiTools = toOpenAITools(tools)
 
   const stream = new ReadableStream({
     async start(controller) {
-      const emit: Emit = (e) => send(controller, e)
+      let clientConnected = true
+      const safeSend = (event: ChatEvent | { heartbeat: true }) => {
+        if (!clientConnected) return
+        try { send(controller, event) } catch { clientConnected = false }
+      }
+      const emit: Emit = (e) => {
+        if ('thinking' in e) return
+        safeSend(e)
+      }
       let totalTokensUsed = 0
+      const heartbeat = setInterval(() => safeSend({ heartbeat: true }), 8_000)
 
       // 工具执行：派发到注册表，把工具产生的前端事件（memory / search）实时 emit 出去
       const executeTool: ExecuteTool = async (name, input) => {
@@ -140,7 +154,7 @@ export async function POST(req: NextRequest) {
           messages: msgs, tools: openaiTools, emit, executeTool,
           maxRounds: SAFETY_ROUNDS,
           leakedRetry: true,
-          autoContinue: { maxContinuations: MAX_CONTINUATIONS },
+          autoContinue: {},
           onTurn: ({ phase, round, turn }) => {
             log.info('chat', `Turn ${phase}`, { round, finishReason: turn.finishReason, leaked: turn.leaked, toolCalls: turn.toolCalls.length, contentLen: turn.content.length, truncated: turn.truncated })
           },
@@ -149,6 +163,7 @@ export async function POST(req: NextRequest) {
       } catch (error) {
         emit({ error: networkError(error) })
       } finally {
+        clearInterval(heartbeat)
         // 写额度必须在关闭响应前完成，确保同步性
         if (userId && supabase) {
           await addQuotaUsage(supabase, userId, totalTokensUsed, model, thinking, usingBalance)

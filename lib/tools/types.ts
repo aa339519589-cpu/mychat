@@ -1,12 +1,15 @@
 // 工具契约：每个工具自包含一份定义（名字/描述/入参 schema）+ 启用条件 + 执行逻辑。
 // route.ts 不认识任何具体工具，只按这份契约遍历、转格式、派发执行。
 import type { createClient } from '@/lib/supabase/server'
+import type { SearchMode } from '@/lib/search-mode'
 
 // 执行工具时能拿到的运行环境（用于写当前登录用户自己的数据，受 RLS 隔离）
 export type ToolContext = {
   supabase: Awaited<ReturnType<typeof createClient>> | null
   userId: string | null
   projectId?: string | null  // 有值 = 当前在项目内，记忆写 project_memories 表
+  searchMode?: SearchMode
+  latestBeijingDate?: string | null
 }
 
 // 工具执行结果：result 回灌给模型；event 可选，推给前端展示（如 memory / search）
@@ -25,7 +28,7 @@ export type ToolSchema = {
 // 本次请求的上下文开关，决定哪些工具可用
 export type ToolFlags = {
   loggedIn: boolean       // 已登录 → 记忆类工具可用
-  webSearch: boolean      // 用户开启联网开关 → 搜索工具可用
+  searchMode: SearchMode  // 搜索档位：关闭 / 联网 / 深度联网
   memoryEnabled: boolean  // 用户开启记忆总开关 → 记忆类工具可用
   projectId?: string | null  // 有值 = 当前在项目内
 }
