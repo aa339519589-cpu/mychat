@@ -37,7 +37,7 @@ function MdContent({ text }: { text: string }) {
         ul: ({ children }) => <ul className="mb-3 list-inside list-disc space-y-1.5 pl-2">{children}</ul>,
         ol: ({ children }) => <ol className="mb-3 list-inside list-decimal space-y-1.5 pl-2">{children}</ol>,
         li: ({ children }) => <li className="break-words [overflow-wrap:anywhere]">{children}</li>,
-        blockquote: ({ children }) => <blockquote className="my-3 rounded-r border-l-4 border-primary/45 bg-muted/20 py-2 pl-4 pr-3 font-[650] italic text-muted-foreground">{children}</blockquote>,
+        blockquote: ({ children }) => <blockquote className="my-3 rounded-r border-l-4 border-primary/45 bg-muted/20 py-2 pl-4 pr-3 font-[600] italic text-muted-foreground">{children}</blockquote>,
         hr: () => <hr className="my-7 h-px border-0 bg-foreground/30 opacity-85" />,
         table: ({ children }) => <div className="my-3 overflow-x-auto"><table className="w-full overflow-hidden rounded-lg border border-collapse border-border/30">{children}</table></div>,
         thead: ({ children }) => <thead className="bg-muted/40 font-[760]">{children}</thead>,
@@ -60,7 +60,7 @@ function ThinkingBlock({ thinking, active }: { thinking: string; active?: boolea
     <div className="mb-4">
       <button
         onClick={() => setOpen(v => !v)}
-        className="flex items-center gap-1.5 text-[13px] font-[650] italic text-muted-foreground/75 transition-colors hover:text-muted-foreground md:text-sm"
+        className="flex items-center gap-1.5 text-[13px] font-[600] italic text-muted-foreground/75 transition-colors hover:text-muted-foreground md:text-sm"
       >
         {open ? <ChevronDown className="size-3.5 md:size-4" /> : <ChevronRight className="size-3.5 md:size-4" />}
         <span className={active ? "thinking-flow not-italic font-[700] tracking-wide" : undefined}>thinking</span>
@@ -83,7 +83,7 @@ function SearchBlock({ searches, replying }: { searches: { query: string; result
     <div className="mb-3">
       <button
         onClick={() => setOpen(v => !v)}
-        className="flex items-center gap-1.5 text-[13px] font-[650] italic text-muted-foreground/75 transition-colors hover:text-muted-foreground md:text-sm"
+        className="flex items-center gap-1.5 text-[13px] font-[600] italic text-muted-foreground/75 transition-colors hover:text-muted-foreground md:text-sm"
       >
         {open ? <ChevronDown className="size-3.5 md:size-4" /> : <ChevronRight className="size-3.5 md:size-4" />}
         <Globe className="size-3.5 md:size-4" />
@@ -93,7 +93,7 @@ function SearchBlock({ searches, replying }: { searches: { query: string; result
         <div className="mt-2 space-y-2.5 rounded-xl border border-border/40 bg-muted/20 px-4 py-3 text-[13px] md:text-sm">
           {searches.map((s, i) => (
             <div key={i} className="space-y-1">
-              <div className="text-xs font-[650] italic text-muted-foreground md:text-[13px]">搜索：{s.query}</div>
+              <div className="text-xs font-[600] italic text-muted-foreground md:text-[13px]">搜索：{s.query}</div>
               {s.results.map((r, j) => (
                 <a key={j} href={r.url} target="_blank" rel="noreferrer" className="block truncate text-xs font-[650] text-primary/80 underline underline-offset-2 hover:text-primary md:text-[13px]">
                   {r.title || r.url}
@@ -181,7 +181,7 @@ export function MessageList({
               )}
               {m.content && (
                 <div className="max-w-[90%] min-w-0 rounded-[1.5rem] rounded-tr-md user-bubble-bg px-5 py-3.5 md:max-w-[85%]">
-                  <p className="break-words text-[17px] font-[700] italic leading-[1.84] tracking-[0.002em] text-secondary-foreground [overflow-wrap:anywhere] md:text-[18px]">{m.content}</p>
+                  <p className="break-words text-[17px] font-[600] italic leading-[1.84] tracking-[0.002em] text-secondary-foreground [overflow-wrap:anywhere] md:text-[18px]">{m.content}</p>
                 </div>
               )}
             </div>
@@ -197,7 +197,7 @@ export function MessageList({
                 {m.memoryNotes && m.memoryNotes.length > 0 && (
                   <div className="mb-3 space-y-1">
                     {m.memoryNotes.map((note, i) => (
-                      <div key={i} className="flex items-center gap-1.5 text-[13px] font-[650] italic text-muted-foreground/80 md:text-sm">
+                      <div key={i} className="flex items-center gap-1.5 text-[13px] font-[600] italic text-muted-foreground/80 md:text-sm">
                         <Brain className="size-3.5 shrink-0 md:size-4" />
                         <span className="[overflow-wrap:anywhere]">{note}</span>
                       </div>
@@ -212,13 +212,13 @@ export function MessageList({
                     <div className="min-w-0 space-y-3">
                       {m.isError ? (
                         <div>
-                          <p className="break-words whitespace-pre-wrap text-sm font-[650] italic leading-relaxed text-muted-foreground [overflow-wrap:anywhere] md:text-[15px]">{m.content}</p>
+                          <p className="break-words whitespace-pre-wrap text-sm font-[600] italic leading-relaxed text-muted-foreground [overflow-wrap:anywhere] md:text-[15px]">{m.content}</p>
                         </div>
                       ) : (
                         <>
-                          {/* 文字回复：正文 17px / 桌面 18px，700 字重；标题按正文比例动态放大 */}
+                          {/* 文字回复：请求 600 字重；英文 Libre Baskerville 无 600 档，会继续贴近 700，中文 Noto Sans SC 使用真实 600 */}
                           {display && (
-                            <div className="text-[17px] font-[700] text-foreground md:text-[18px]">
+                            <div className="text-[17px] font-[600] text-foreground md:text-[18px]">
                               <MdContent text={display} />
                             </div>
                           )}
