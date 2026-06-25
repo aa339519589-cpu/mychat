@@ -38,7 +38,7 @@ function MdContent({ text }: { text: string }) {
         ol: ({ children }) => <ol className="list-decimal list-inside pl-2 space-y-1.5 mb-3">{children}</ol>,
         li: ({ children }) => <li className="break-words [overflow-wrap:anywhere]">{children}</li>,
         blockquote: ({ children }) => <blockquote className="border-l-4 border-primary/40 bg-muted/20 pl-4 py-2 pr-3 rounded-r my-3 italic text-muted-foreground">{children}</blockquote>,
-        hr: () => <hr className="my-6 border-border/35" />,
+        hr: () => <hr className="my-7 h-px border-0 bg-foreground/25 opacity-80" />,
         table: ({ children }) => <div className="overflow-x-auto my-3"><table className="w-full border-collapse border border-border/30 rounded-lg overflow-hidden">{children}</table></div>,
         thead: ({ children }) => <thead className="bg-muted/40 font-semibold">{children}</thead>,
         tbody: ({ children }) => <tbody>{children}</tbody>,
@@ -157,7 +157,7 @@ export function MessageList({
   const lastAiIdx = [...msgs].map((m, i) => ({ m, i })).reverse().find(({ m }) => m.role === 'assistant')?.i ?? -1
 
   return (
-    <article className="mx-auto w-full min-w-0 max-w-[56rem] overflow-x-clip px-4 py-6 md:ml-0 md:mr-auto md:px-6 md:py-8">
+    <article className="mx-auto w-full min-w-0 max-w-[58rem] overflow-x-clip px-3 py-6 sm:px-4 md:px-8 md:py-8">
       <div className="min-w-0 space-y-8 md:space-y-10">
         {msgs.map((m, idx) =>
           m.role === "user" ? (
@@ -180,16 +180,16 @@ export function MessageList({
                 </div>
               )}
               {m.content && (
-                <div className="max-w-[85%] min-w-0 rounded-[1.5rem] rounded-tr-md user-bubble-bg px-5 py-3.5">
+                <div className="max-w-[90%] min-w-0 rounded-[1.5rem] rounded-tr-md user-bubble-bg px-5 py-3.5 md:max-w-[85%]">
                   <p className="break-words text-[15px] italic leading-[1.9] tracking-wide text-secondary-foreground [overflow-wrap:anywhere]">{m.content}</p>
                 </div>
               )}
             </div>
           ) : (
-            <div key={m.id} className="group flex min-w-0 items-start gap-2">
-              <div className="avatar-box flex-shrink-0 self-start mt-0.5">
-                <Image src="/companion.png" alt="" width={40} height={40} priority className="avatar-light size-8 select-none md:size-10" />
-                <Image src="/companion-dark.png" alt="" width={40} height={40} priority className="avatar-dark size-8 select-none md:size-10" />
+            <div key={m.id} className="group grid min-w-0 grid-cols-[1.5rem_minmax(0,1fr)] items-start gap-1.5 md:grid-cols-[2.75rem_minmax(0,1fr)] md:gap-2">
+              <div className="avatar-box mt-0.5 h-6 w-6 flex-shrink-0 self-start md:h-10 md:w-10">
+                <Image src="/companion.png" alt="" width={40} height={40} priority className="avatar-light size-6 select-none md:size-10" />
+                <Image src="/companion-dark.png" alt="" width={40} height={40} priority className="avatar-dark size-6 select-none md:size-10" />
               </div>
               <div className="min-w-0 flex-1">
                 {m.thinking && <ThinkingBlock thinking={m.thinking} active={!!isLoading && idx === lastAiIdx && !m.content?.trim()} />}
