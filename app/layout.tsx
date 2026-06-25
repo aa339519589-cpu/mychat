@@ -1,20 +1,20 @@
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
-import { Spectral, Noto_Serif_SC } from 'next/font/google'
+import { Libre_Baskerville, Noto_Sans_SC } from 'next/font/google'
 import './globals.css'
 import 'katex/dist/katex.min.css'
 
-const spectral = Spectral({
+const libreBaskerville = Libre_Baskerville({
   variable: '--font-spectral',
   subsets: ['latin'],
-  weight: ['300', '400', '500', '600'],
+  weight: ['400', '700'],
   style: ['normal', 'italic'],
 })
 
-const notoSerifSC = Noto_Serif_SC({
+const notoSansSC = Noto_Sans_SC({
   variable: '--font-noto-serif-sc',
   subsets: ['latin'],
-  weight: ['300', '400', '500', '600'],
+  weight: ['400', '500', '600', '700', '800', '900'],
 })
 
 export const metadata: Metadata = {
@@ -59,7 +59,7 @@ export default function RootLayout({
   return (
     <html
       lang="zh-CN"
-      className={`${spectral.variable} ${notoSerifSC.variable} bg-background`}
+      className={`${libreBaskerville.variable} ${notoSansSC.variable} bg-background`}
     >
       <head>
         <link rel="preload" href="/companion.png" as="image" />
