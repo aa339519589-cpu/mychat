@@ -195,7 +195,7 @@ export function MessageList({
   const lastUserIdx = [...msgs].map((m, i) => ({ m, i })).reverse().find(({ m }) => m.role === 'user')?.i ?? -1
 
   return (
-    <article className="mx-auto w-full min-w-0 max-w-[44rem] overflow-x-clip px-4 py-6 md:px-6 md:py-8">
+    <article className="w-full min-w-0 max-w-[44rem] overflow-x-clip px-4 py-6 md:px-6 md:py-8">
       <div className="min-w-0 space-y-8 md:space-y-10">
         {msgs.map((m, idx) =>
           m.role === "user" ? (
