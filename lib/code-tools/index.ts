@@ -303,6 +303,26 @@ export function createCodeToolExecutor(options: CodeToolExecutorOptions) {
       let ok = false
       if (userId && supabase) {
         try {
+          // 去重：检查是否已有相似记忆
+          const { data: existing } = await supabase.from('code_memories').select('id, content').eq('user_id', userId).eq('repo', repo)
+          let duplicateId: string | null = null
+          let duplicateContent: string | null = null
+          if (existing?.length) {
+            for (const row of existing) {
+              const bigramsA = new Set<string>(), bigramsB = new Set<string>()
+              for (let i = 0; i < content.length - 1; i++) bigramsA.add(content.slice(i, i + 2))
+              for (let i = 0; i < row.content.length - 1; i++) bigramsB.add(row.content.slice(i, i + 2))
+              const intersection = new Set([...bigramsA].filter(x => bigramsB.has(x)))
+              const union = new Set([...bigramsA, ...bigramsB])
+              if (union.size > 0 && intersection.size / union.size > 0.55) { duplicateId = row.id; duplicateContent = row.content; break }
+            }
+          }
+          if (duplicateId && duplicateContent) {
+            const { error } = await supabase.from('code_memories').update({ content }).eq('id', duplicateId)
+            toolEmit({ step: { kind: 'memory', label: `更新：${content.slice(0, 40)}` } })
+            ok = !error
+            return ok ? `已更新已有记忆（旧内容: ${duplicateContent}）。` : '记忆更新失败。'
+          }
           const { error } = await supabase.from('code_memories').insert({ user_id: userId, repo, content })
           ok = !error
         } catch {
