@@ -54,7 +54,7 @@ function MdContent({ text }: { text: string }) {
 
 function ThinkingBlock({ thinking, active }: { thinking: string; active?: boolean }) {
   const [open, setOpen] = useState(false)
-  if (!thinking.trim()) return null
+  if (!thinking.trim() && !active) return null
   return (
     <div className="mb-4">
       <button
@@ -64,7 +64,7 @@ function ThinkingBlock({ thinking, active }: { thinking: string; active?: boolea
         {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
         <span className={active ? "thinking-flow not-italic font-medium tracking-wide" : undefined}>thinking</span>
       </button>
-      {open && (
+      {open && !!thinking.trim() && (
         <div className="mt-2 break-words whitespace-pre-wrap rounded-xl border border-border/40 bg-muted/20 px-4 py-3 text-[13px] italic leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
           {thinking}
         </div>
@@ -191,7 +191,7 @@ export function MessageList({
                 <Image src="/companion-dark.png" alt="" width={40} height={40} priority className="avatar-dark size-8 select-none md:size-10" />
               </div>
               <div className="min-w-0 flex-1">
-                {m.thinking && <ThinkingBlock thinking={m.thinking} active={!!isLoading && idx === lastAiIdx && !m.content?.trim()} />}
+                <ThinkingBlock thinking={m.thinking ?? ""} active={!!isLoading && idx === lastAiIdx && !m.content?.trim()} />
                 {m.searchNotes && m.searchNotes.length > 0 && <SearchBlock searches={m.searchNotes} replying={!!m.content} />}
                 {m.memoryNotes && m.memoryNotes.length > 0 && (
                   <div className="mb-3 space-y-1">
