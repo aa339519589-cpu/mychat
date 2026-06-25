@@ -5,6 +5,7 @@ import { upstreamError } from './stream'
 import { makeContentFilter, parseDsmlToolCalls, hasIncompleteDsmlToolCall } from './sanitize'
 import type { Emit } from './events'
 import { buildProviderRequest, type ProviderAdapterId } from './provider-adapters'
+import { looksLikeCodeSelfTalk } from '@/lib/agent/continuation'
 
 type ToolCall = { id: string; name: string; args: string }
 
@@ -20,12 +21,19 @@ export type TurnResult = {
   hasIncompleteToolCall: boolean
 }
 
+export type RunTurnOptions = {
+  thinking?: boolean
+  adapter?: ProviderAdapterId
+  deferTextUntilTurnEnd?: boolean
+  suppressCodeSelfTalk?: boolean
+}
+
 // 单轮请求：兼容流式 SSE 与一次性 JSON 两种返回；累积文本、思考链与工具调用。
 // emit 用于流式把 thinking/text/error 实时推给前端。
 export async function runTurn(
   url: string, apiKey: string, model: string,
   messages: any[], tools: any[], emit: Emit,
-  opts?: { thinking?: boolean; adapter?: ProviderAdapterId },
+  opts?: RunTurnOptions,
 ): Promise<TurnResult> {
   const request = buildProviderRequest(opts?.adapter ?? 'deepseek-openai', {
     model,
@@ -63,7 +71,10 @@ export async function runTurn(
     if (delta.content) {
       rawContent += String(delta.content)
       const safe = filter.feed(String(delta.content))
-      if (safe) { content += safe; emit({ text: safe }) }
+      if (safe) {
+        content += safe
+        if (!opts?.deferTextUntilTurnEnd) emit({ text: safe })
+      }
     }
     if (Array.isArray(delta.tool_calls)) {
       for (const tc of delta.tool_calls) {
@@ -101,7 +112,10 @@ export async function runTurn(
 
   // 放出过滤器里暂存的尾巴（确保被 hold 的安全文本最终也发出去）
   const tail = filter.flush()
-  if (tail) { content += tail; emit({ text: tail }) }
+  if (tail) {
+    content += tail
+    if (!opts?.deferTextUntilTurnEnd) emit({ text: tail })
+  }
 
   let toolCalls = Object.values(callMap).filter(t => t.name)
   // 标准 tool_calls 字段没拿到调用，但模型可能把调用用 DSML 文本写进了 content（deepseek-v4-pro 常见）
@@ -110,11 +124,13 @@ export async function runTurn(
     const parsed = parseDsmlToolCalls(rawContent)
     if (parsed.length) toolCalls = parsed
   }
+  const visibleContent = opts?.suppressCodeSelfTalk && looksLikeCodeSelfTalk(content) ? '' : content
+  if (opts?.deferTextUntilTurnEnd && visibleContent) emit({ text: visibleContent })
   let assistantMessage: any = null
   if (toolCalls.length) {
     assistantMessage = {
       role: 'assistant',
-      content: content || null,
+      content: visibleContent || null,
       tool_calls: toolCalls.map(t => ({ id: t.id, type: 'function', function: { name: t.name, arguments: t.args || '{}' } })),
     }
   }
@@ -124,5 +140,5 @@ export async function runTurn(
   const truncated = !finishReason && !sawDone && rawContent.length > 0
   // incomplete：末尾有未闭合的 DSML 工具调用（流被截断，需要 auto-continue）
   const hasIncompleteToolCall = toolCalls.length === 0 && hasIncompleteDsmlToolCall(rawContent)
-  return { assistantMessage, toolCalls, failed: false, totalTokens, content, finishReason, truncated, leaked, hasIncompleteToolCall }
+  return { assistantMessage, toolCalls, failed: false, totalTokens, content: visibleContent, finishReason, truncated, leaked, hasIncompleteToolCall }
 }
