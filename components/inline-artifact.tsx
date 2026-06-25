@@ -3,11 +3,12 @@
 import { useState } from "react"
 import { sanitizeSvg } from "@/lib/artifact"
 import { Maximize2, X } from "lucide-react"
+import { VisualReveal } from "@/components/visual-reveal"
 
 // 内联 SVG 渲染：直接注入对话 DOM（非 iframe）
-// - currentColor 继承 text-foreground，切换明暗主题时自动跟随
-// - viewBox + 宽度自适应；桌面限制最大宽度，手机全宽（比例分开）
-// - 背景透明，融入页面
+// - 统一放进固定浅色画布，不受明暗主题污染
+// - 若 SVG 仍在用 currentColor，也会继承固定墨色
+// - viewBox + 宽度自适应；桌面限制最大宽度，手机全宽
 export function InlineArtifact({ svg, done }: { svg: string; done: boolean }) {
   const [zoom, setZoom] = useState(false)
   const clean = sanitizeSvg(svg)
@@ -21,24 +22,25 @@ export function InlineArtifact({ svg, done }: { svg: string; done: boolean }) {
 
   return (
     <>
-      {/* 桌面端限制最大宽度，手机端全宽 */}
-      <div className="group/svg relative my-3 w-full animate-in fade-in duration-300 md:max-w-2xl">
-        <div
-          className="w-full overflow-hidden text-foreground [&>svg]:block [&>svg]:h-auto [&>svg]:w-full"
-          dangerouslySetInnerHTML={{ __html: clean }}
-        />
-        <button
-          onClick={() => setZoom(true)}
-          className="absolute right-1 top-1 flex size-6 items-center justify-center rounded-full bg-background/40 text-muted-foreground/50 opacity-0 backdrop-blur transition-opacity hover:text-foreground group-hover/svg:opacity-100"
-          aria-label="放大查看"
-        >
-          <Maximize2 className="size-3" />
-        </button>
-      </div>
+      <VisualReveal ready={!!clean} signature={done ? "done" : "stream"} className="my-3 w-full md:max-w-2xl">
+        <div className="group/svg relative w-full">
+          <div
+            className="visual-surface w-full overflow-hidden rounded-[1.55rem] p-4 text-[color:var(--visual-ink)] md:p-5 [&>svg]:block [&>svg]:h-auto [&>svg]:w-full"
+            dangerouslySetInnerHTML={{ __html: clean }}
+          />
+          <button
+            onClick={() => setZoom(true)}
+            className="absolute right-3 top-3 flex size-7 items-center justify-center rounded-full bg-white/85 text-[color:var(--visual-ink)] opacity-0 shadow-sm backdrop-blur transition-opacity hover:opacity-100 group-hover/svg:opacity-100"
+            aria-label="放大查看"
+          >
+            <Maximize2 className="size-3.5" />
+          </button>
+        </div>
+      </VisualReveal>
 
       {zoom && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-background/95 p-4 backdrop-blur md:p-10"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-background/92 p-4 backdrop-blur md:p-10"
           onClick={() => setZoom(false)}
         >
           <button
@@ -49,7 +51,7 @@ export function InlineArtifact({ svg, done }: { svg: string; done: boolean }) {
             <X className="size-5" />
           </button>
           <div
-            className="max-h-full w-full max-w-4xl text-foreground [&>svg]:mx-auto [&>svg]:block [&>svg]:h-auto [&>svg]:max-h-[88vh] [&>svg]:w-full"
+            className="visual-surface max-h-full w-full max-w-4xl rounded-[1.9rem] p-4 text-[color:var(--visual-ink)] md:p-6 [&>svg]:mx-auto [&>svg]:block [&>svg]:h-auto [&>svg]:max-h-[88vh] [&>svg]:w-full"
             onClick={e => e.stopPropagation()}
             dangerouslySetInnerHTML={{ __html: clean }}
           />

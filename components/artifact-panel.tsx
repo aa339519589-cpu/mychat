@@ -76,13 +76,15 @@ export function ArtifactPanel({
       {/* 主体 */}
       <div className="min-h-0 flex-1 overflow-hidden">
         {tab === "preview" ? (
-          <div className="h-full w-full overflow-auto">
-            <ArtifactFrame raw={raw} done={done} />
+          <div className="h-full w-full overflow-auto bg-[color:var(--visual-surface-strong)] p-4">
+            <div className="visual-surface min-h-full overflow-hidden rounded-[1.85rem]">
+              <ArtifactFrame raw={raw} done={done} />
+            </div>
           </div>
         ) : (
-          <div className="h-full overflow-auto bg-muted/20">
-            <pre className="min-w-full p-4 text-[12px] leading-relaxed">
-              <code className="whitespace-pre font-mono text-foreground/80">{raw}</code>
+          <div className="h-full overflow-auto bg-[color:var(--visual-surface-strong)] p-4">
+            <pre className="visual-surface min-w-full rounded-[1.85rem] p-4 text-[12px] leading-relaxed">
+              <code className="whitespace-pre font-mono text-[color:var(--visual-ink)]">{raw}</code>
             </pre>
           </div>
         )}

@@ -2,17 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState } from "react"
 
-type Colors = { fg: string; bg: string; scheme: "light" | "dark" }
-
-function readTheme(): Colors {
-  if (typeof document === "undefined") return { fg: "#1a1a1a", bg: "#ffffff", scheme: "light" }
-  const cs = getComputedStyle(document.documentElement)
-  const fg = cs.getPropertyValue("--foreground").trim() || "#1a1a1a"
-  const bg = cs.getPropertyValue("--background").trim() || "#ffffff"
-  const root = document.documentElement
-  const dark = root.classList.contains("dark") ||
-    (!root.classList.contains("light") && typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches)
-  return { fg, bg, scheme: dark ? "dark" : "light" }
+type Colors = { fg: string; bg: string; paper: string; border: string; scheme: "light" }
+const FIXED_COLORS: Colors = {
+  fg: "#2B221C",
+  bg: "#FBF7EF",
+  paper: "#FFFDF8",
+  border: "#E7DAC0",
+  scheme: "light",
 }
 
 // 内联模式：透明背景，高度自适应，ResizeObserver 上报
@@ -28,22 +24,39 @@ window.addEventListener("load",function(){__report();[200,600,1500].forEach(func
 ` : ''
   const bodyStyle = inline
     ? `html,body{background:transparent;margin:0;padding:0;color:var(--fg);font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;}`
-    : `html,body{background:transparent;margin:0;padding:16px;color:var(--fg);font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;min-height:100%;}`
+    : `html,body{background:var(--bg);margin:0;padding:16px;color:var(--fg);font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;min-height:100%;}`
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8">
 <style>
-:root{--fg:${c.fg};--bg:${c.bg};color-scheme:${c.scheme};}
+:root{--fg:${c.fg};--bg:${c.bg};--paper:${c.paper};--border:${c.border};color-scheme:${c.scheme};}
 ${bodyStyle}
-*{box-sizing:border-box;}#__v{width:100%;}
+*{box-sizing:border-box;}
+#__v{
+  width:100%;
+  min-height:${inline ? "0" : "calc(100vh - 32px)"};
+  opacity:0;
+  transform:translateY(12px) scale(0.986);
+  filter:blur(18px) saturate(.93);
+  transition:opacity .42s ease,transform .78s cubic-bezier(.22,1,.36,1),filter .9s cubic-bezier(.22,1,.36,1);
+}
+body.__revealed #__v{opacity:1;transform:none;filter:none;}
+body.__shell #__v{
+  background:${inline ? "transparent" : "var(--paper)"};
+  border:${inline ? "0" : "1px solid var(--border)"};
+  border-radius:${inline ? "0" : "28px"};
+  box-shadow:${inline ? "none" : "0 24px 60px rgba(92,63,34,.12)"};
+  overflow:hidden;
+}
 </style>
 <script>(function(){
 ${heightScript}
+function __show(){requestAnimationFrame(function(){requestAnimationFrame(function(){document.body.classList.add("__revealed");});});}
 window.addEventListener("message",function(e){var d=e.data||{};
-if(d.__art==="preview"){var v=document.getElementById("__v");if(v){v.innerHTML=d.html;${inline ? 'if(typeof __report==="function")setTimeout(__report,80);' : ''}}}
+if(d.__art==="preview"){var v=document.getElementById("__v");if(v){document.body.classList.remove("__revealed");v.innerHTML=d.html;__show();${inline ? 'if(typeof __report==="function")setTimeout(__report,80);' : ''}}}
 else if(d.__art==="final"){document.open();document.write(d.html);document.close();}});
 parent.postMessage({__art:"ready"},"*");
 })();</script>
-</head><body><div id="__v"></div></body></html>`
+</head><body class="__shell"><div id="__v"></div></body></html>`
 }
 
 // 完成时写入完整文档（注入主题变量 + 可选的高度上报脚本）
@@ -56,12 +69,23 @@ window.addEventListener("load",function(){__report();[300,800,2000].forEach(func
 })();</script>` : ''
   const inject = `<style>
 :root{--fg:${c.fg};--bg:${c.bg};color-scheme:${c.scheme};}
-html,body{background:transparent!important;${inline ? 'margin:0;padding:0;' : ''}color:var(--fg);}
+html,body{${inline ? 'margin:0;padding:0;' : ''}color:var(--fg);}
+body{
+  opacity:0;
+  transform:translateY(14px) scale(.988);
+  filter:blur(18px) saturate(.94);
+  transition:opacity .42s ease,transform .8s cubic-bezier(.22,1,.36,1),filter .92s cubic-bezier(.22,1,.36,1);
+}
+body.__artifact-ready{opacity:1;transform:none;filter:none;}
 </style>${heightScript}`
-  if (/<head[^>]*>/i.test(raw)) return raw.replace(/(<head[^>]*>)/i, `$1${inject}`)
-  if (/<\/head>/i.test(raw)) return raw.replace(/<\/head>/i, `${inject}</head>`)
-  if (/<body[^>]*>/i.test(raw)) return raw.replace(/(<body[^>]*>)/i, `$1${inject}`)
-  return inject + raw
+  const readyScript = `<script>(function(){
+function __show(){requestAnimationFrame(function(){requestAnimationFrame(function(){document.body.classList.add("__artifact-ready");});});}
+if(document.readyState==="loading"){window.addEventListener("load",__show,{once:true});}else{__show();}
+})();</script>`
+  if (/<head[^>]*>/i.test(raw)) return raw.replace(/(<head[^>]*>)/i, `$1${inject}${readyScript}`)
+  if (/<\/head>/i.test(raw)) return raw.replace(/<\/head>/i, `${inject}${readyScript}</head>`)
+  if (/<body[^>]*>/i.test(raw)) return raw.replace(/(<body[^>]*>)/i, `$1${inject}${readyScript}`)
+  return inject + readyScript + raw
 }
 
 export function ArtifactFrame({
@@ -75,7 +99,7 @@ export function ArtifactFrame({
   const [height, setHeight] = useState(40)
   const [ready, setReady] = useState(false)
   const finalizedRef = useRef(false)
-  const colors = useMemo(() => readTheme(), [])
+  const colors = useMemo(() => FIXED_COLORS, [])
   const srcDoc = useMemo(() => bootstrap(colors, inline), [colors, inline])
 
   useEffect(() => {
