@@ -14,6 +14,7 @@ import { InlineArtifact } from "@/components/inline-artifact"
 import { VegaChart } from "@/components/vega-chart"
 import { MermaidChart } from "@/components/mermaid-chart"
 import { FunctionPlotChart } from "@/components/function-plot-chart"
+import { normalizeMathDelimiters } from "@/lib/math"
 function MdContent({ text }: { text: string }) {
   return (
     <ReactMarkdown
@@ -47,7 +48,7 @@ function MdContent({ text }: { text: string }) {
         img: ({ src, alt }) => <img src={src} alt={alt} className="max-w-full h-auto rounded-lg my-3 border border-border/20" />,
       }}
     >
-      {text}
+      {normalizeMathDelimiters(text)}
     </ReactMarkdown>
   )
 }
