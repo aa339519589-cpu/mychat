@@ -16,7 +16,7 @@ export function ArtifactCard({
     <button
       onClick={onClick}
       className={cn(
-        "group flex w-full items-center gap-3 rounded-xl border px-3.5 py-3 text-left transition-colors",
+        "group flex w-full items-center gap-3 rounded-xl border px-3.5 py-3 text-left transition-colors animate-in fade-in duration-300",
         active
           ? "border-primary/50 bg-primary/5"
           : "border-border/60 bg-card/40 hover:border-border hover:bg-card/70",

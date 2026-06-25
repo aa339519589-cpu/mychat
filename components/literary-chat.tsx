@@ -208,7 +208,29 @@ export function LiteraryChat() {
 
     const history = messages
 
-    let fullReply = "", fullThinking = "", shownLen = 0, streamEnded = false, hadError = false
+    let fullReply = "", fullThinking = "", hadError = false
+    let renderScheduled = false
+    let rafId: number | null = null
+
+    const flushStreamMessage = () => {
+      renderScheduled = false
+      rafId = null
+      setConversations(prev => prev.map(c => c.id !== convId ? c : {
+        ...c,
+        messages: c.messages.map(m => m.id !== msgId ? m : {
+          ...m,
+          content: fullReply,
+          thinking: fullThinking || undefined,
+        }),
+      }))
+    }
+
+    const scheduleStreamMessage = () => {
+      if (hadError || renderScheduled) return
+      renderScheduled = true
+      rafId = requestAnimationFrame(flushStreamMessage)
+    }
+
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -234,27 +256,6 @@ export function LiteraryChat() {
       const reader = res.body.getReader()
       const dec = new TextDecoder()
       let buf = ""
-
-      // 节流播放器：把已收到的 fullReply 以稳定速度逐步"放"到前端。渲染组件本就支持
-      // 半成品容错渲染，所以放的过程中文字逐行冒出、图形逐笔画出——即使后端整块秒回，
-      // 也始终保持流式渲染的观感（纯前端噱头，与后端速度彻底解耦）。
-      const pace = new Promise<void>(resolve => {
-        const step = () => {
-          if (hadError) { resolve(); return }
-          if (shownLen < fullReply.length) {
-            const remaining = fullReply.length - shownLen
-            shownLen = Math.min(fullReply.length, shownLen + Math.max(4, Math.ceil(remaining / 12)))
-            const shown = fullReply.slice(0, shownLen)
-            setConversations(prev => prev.map(c => c.id !== convId ? c : {
-              ...c,
-              messages: c.messages.map(m => m.id !== msgId ? m : { ...m, content: shown, thinking: fullThinking || undefined }),
-            }))
-          }
-          if (streamEnded && shownLen >= fullReply.length) { resolve(); return }
-          requestAnimationFrame(step)
-        }
-        requestAnimationFrame(step)
-      })
 
       while (true) {
         const { done, value } = await reader.read()
@@ -307,21 +308,24 @@ export function LiteraryChat() {
               }))
               continue
             }
-            if (data.text) fullReply += data.text
+            if (data.text) {
+              fullReply += data.text
+              scheduleStreamMessage()
+            }
             if (data.thinking) {
               fullThinking += data.thinking
-              setConversations(prev => prev.map(c => c.id !== convId ? c : {
-                ...c,
-                messages: c.messages.map(m => m.id !== msgId ? m : { ...m, thinking: fullThinking }),
-              }))
+              scheduleStreamMessage()
             }
           } catch { /* skip bad event */ }
         }
       }
-      streamEnded = true
-      await pace
 
-      if (fullReply) {
+      if (!hadError) {
+        if (rafId !== null) cancelAnimationFrame(rafId)
+        flushStreamMessage()
+      }
+
+      if (!hadError && fullReply) {
         insertMessage(user.id, convId, { id: msgId, role: "assistant", content: fullReply, thinking: fullThinking || undefined, time: "" })
         touchConversation(convId)
         setConversations(prev => prev.map(c => c.id === convId ? { ...c, excerpt: fullReply.slice(0, 60), date: "今日" } : c))
@@ -337,7 +341,7 @@ export function LiteraryChat() {
         ),
       }))
     } finally {
-      streamEnded = true
+      if (rafId !== null) cancelAnimationFrame(rafId)
       setIsLoading(false)
     }
     return fullReply

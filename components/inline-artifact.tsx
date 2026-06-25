@@ -22,7 +22,7 @@ export function InlineArtifact({ svg, done }: { svg: string; done: boolean }) {
   return (
     <>
       {/* 桌面端限制最大宽度，手机端全宽 */}
-      <div className="group/svg relative my-3 w-full md:max-w-2xl">
+      <div className="group/svg relative my-3 w-full animate-in fade-in duration-300 md:max-w-2xl">
         <div
           className="w-full overflow-hidden text-foreground [&>svg]:block [&>svg]:h-auto [&>svg]:w-full"
           dangerouslySetInnerHTML={{ __html: clean }}

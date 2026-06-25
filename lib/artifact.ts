@@ -17,12 +17,30 @@ export type ArtifactParsed = {
   fnPlotDone: boolean
 }
 
+const ARTIFACT_OPEN_TAGS = [
+  '<vega>',
+  '<mermaid>',
+  '<function-plot>',
+  '<inline-artifact>',
+  '<artifact>',
+]
+
 const EMPTY: ArtifactParsed = {
   display: '', raw: null, done: false,
   inlineRaw: null, inlineDone: false,
   vegaRaw: null, vegaDone: false,
   mermaidRaw: null, mermaidDone: false,
   fnPlotRaw: null, fnPlotDone: false,
+}
+
+function trimTrailingArtifactPrelude(text: string): string {
+  const start = text.lastIndexOf('<')
+  if (start === -1) return text
+  const tail = text.slice(start)
+  if (ARTIFACT_OPEN_TAGS.some(tag => tag.startsWith(tail))) {
+    return text.slice(0, start).trimEnd()
+  }
+  return text
 }
 
 function parseTag(text: string, open: string, close: string): { before: string; body: string; after: string; closed: boolean } | null {
@@ -74,7 +92,7 @@ export function parseArtifact(text: string): ArtifactParsed {
     return { ...EMPTY, display, raw: panel.body, done: panel.closed }
   }
 
-  return { ...EMPTY, display: text }
+  return { ...EMPTY, display: trimTrailingArtifactPrelude(text) }
 }
 
 // 从内联内容里提取并安全清洗 SVG，直接注入对话 DOM 渲染
