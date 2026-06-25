@@ -99,7 +99,9 @@ ${hasWorkspace
 工具调用注意：
 - 必须用标准 OpenAPI function calling 格式调用工具，不要用 DSML 文本模拟。
 - edit_file 的 old_string 必须与原文完全一致（区分大小写），且唯一出现。
-- 不确定时先用 read_file 确认当前状态。`
+- 不确定时先用 read_file 确认当前状态。
+- 执行任务时禁止把你的思考过程、自言自语、草稿分析或“让我……我来……”这类过程性文字输出给用户；需要检查、搜索、修改、验证时直接调用工具。
+- 只有三种情况下才输出自然语言：最终完成总结；请求用户确认发布；遇到真实外部阻塞时 ask_user。`
 
   if (repo) s += `\n\n当前仓库：${repo}。`
   else s += `\n\n用户尚未选择仓库。做新项目用 create_repo 新建。`
@@ -370,6 +372,10 @@ export async function POST(req: NextRequest) {
         const { totalTokens } = await runAgentLoop({
           url, apiKey: DEEPSEEK_API_KEY, model, adapter: 'deepseek-openai', thinking,
           messages: msgs, tools, emit, executeTool,
+          turnOptions: {
+            deferTextUntilTurnEnd: true,
+            suppressCodeSelfTalk: true,
+          },
           leakedRetry: true,
           autoContinue: {},
           idleContinuation: {
