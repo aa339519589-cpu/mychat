@@ -20,6 +20,7 @@ import remarkGfm from "remark-gfm"
 import rehypeKatex from "rehype-katex"
 import { stripToolMarkup } from "@/lib/llm/sanitize"
 import { isFalseCodePause, isStaleRunningCodeTask, shouldShowWorkspacePublish } from "@/lib/code-agent-ui"
+import { normalizeMathDelimiters } from "@/lib/math"
 
 const MONO = "ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Courier New',monospace"
 const ACCENT = "var(--code-accent)"  // 亮色橙、暗色蓝；在 globals.css 定义
@@ -866,7 +867,7 @@ function MessageView({ m, login }: { m: CodeMessage; login: string }) {
               hr: () => <hr className="my-3 border-border/40" />,
             }}
           >
-            {stripToolMarkup(m.content)}
+            {normalizeMathDelimiters(stripToolMarkup(m.content))}
           </ReactMarkdown>
         </div>
       )}

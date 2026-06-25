@@ -109,10 +109,7 @@ export async function POST(req: NextRequest) {
         if (!clientConnected) return
         try { send(controller, event) } catch { clientConnected = false }
       }
-      const emit: Emit = (e) => {
-        if ('thinking' in e) return
-        safeSend(e)
-      }
+      const emit: Emit = (e) => safeSend(e)
       let totalTokensUsed = 0
       const heartbeat = setInterval(() => safeSend({ heartbeat: true }), 8_000)
 

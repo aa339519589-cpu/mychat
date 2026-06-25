@@ -12,8 +12,6 @@ export function ChatInput({
   onSend, activeTier, onTierChange, mobile,
   searchMode, onSearchModeChange,
   deepResearch, onDeepResearchChange,
-  seed,
-  isEditing, onCancelEdit,
   isLoading, onStop,
 }: {
   onSend: (text: string, images?: string[], files?: AttachedFile[]) => void
@@ -24,9 +22,6 @@ export function ChatInput({
   onSearchModeChange: (mode: SearchMode) => void
   deepResearch: boolean
   onDeepResearchChange: (on: boolean) => void
-  seed?: { text: string; images?: string[]; nonce: number } | null
-  isEditing?: boolean
-  onCancelEdit?: () => void
   isLoading: boolean
   onStop: () => void
 }) {
@@ -68,22 +63,6 @@ export function ChatInput({
     document.addEventListener("mousedown", handleClickOutside)
     return () => document.removeEventListener("mousedown", handleClickOutside)
   }, [plusOpen])
-
-  useEffect(() => {
-    if (!seed) return
-    setValue(seed.text)
-    setImages(seed.images ?? [])
-    setFiles([])
-    setFileError("")
-    requestAnimationFrame(() => {
-      resize()
-      const el = ref.current
-      if (!el) return
-      el.focus()
-      const end = el.value.length
-      el.setSelectionRange(end, end)
-    })
-  }, [seed?.nonce])
 
   function resize() {
     const el = ref.current
@@ -144,7 +123,7 @@ export function ChatInput({
       "relative z-10 mx-auto w-full shrink-0",
       mobile
         ? "bg-background px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2"
-        : "max-w-[44rem] px-10 pb-8 pt-2",
+        : "max-w-[56rem] px-10 pb-8 pt-2 md:ml-0 md:mr-auto",
     )}>
       {/* 三类图片/文件输入：拍照=唤起相机，图片=相册，文件=文档 */}
       <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden"
@@ -195,14 +174,6 @@ export function ChatInput({
         </p>
       )}
       {fileError && <p className="mb-2 px-2 text-xs text-destructive">{fileError}</p>}
-      {isEditing && (
-        <div className="mb-2 flex items-center justify-between px-1 text-xs text-muted-foreground">
-          <span>正在编辑上一条消息</span>
-          <button onClick={onCancelEdit} className="rounded-full px-2 py-1 transition-colors hover:bg-secondary/60 hover:text-foreground">
-            取消
-          </button>
-        </div>
-      )}
 
       <div className="flex min-w-0 items-end gap-2 rounded-3xl bg-secondary/50 py-2 pl-2 pr-2">
         {/* 加号：展开 Add(拍照/照片/文件) + 联网/仓库 */}

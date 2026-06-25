@@ -3,12 +3,6 @@
 import { useEffect, useRef, useState } from "react"
 import vegaEmbed from "vega-embed"
 import { Maximize2, X } from "lucide-react"
-import { VisualReveal } from "@/components/visual-reveal"
-
-const VISUAL_INK = "#2B221C"
-const VISUAL_BORDER = "#CDB798"
-const VISUAL_GRID = "rgba(115, 92, 68, 0.18)"
-const VEGA_PALETTE = ["#EB6A2A", "#2F8CA3", "#B34C63", "#618A3D", "#D3A128", "#6D5B98"]
 
 function describeError(error: unknown): string {
   if (error instanceof Error && error.message.trim()) return error.message.trim()
@@ -26,27 +20,18 @@ function normalizeSpec(spec: string) {
     config: {
       ...parsed.config,
       background: "transparent",
-      range: {
-        category: VEGA_PALETTE,
-        ...parsed.config?.range,
-      },
-      text: { color: VISUAL_INK, ...parsed.config?.text },
+      text: { color: "currentColor", ...parsed.config?.text },
       axis: {
-        labelColor: VISUAL_INK,
-        titleColor: VISUAL_INK,
-        domainColor: VISUAL_BORDER,
-        gridColor: VISUAL_GRID,
+        labelColor: "currentColor",
+        titleColor: "currentColor",
+        domainColor: "rgba(128, 128, 128, 0.3)",
+        gridColor: "rgba(128, 128, 128, 0.2)",
         ...parsed.config?.axis,
       },
       legend: {
-        labelColor: VISUAL_INK,
-        titleColor: VISUAL_INK,
+        labelColor: "currentColor",
+        titleColor: "currentColor",
         ...parsed.config?.legend,
-      },
-      header: {
-        labelColor: VISUAL_INK,
-        titleColor: VISUAL_INK,
-        ...parsed.config?.header,
       },
       view: {
         stroke: "transparent",
@@ -155,27 +140,23 @@ export function VegaChart({ spec, done }: { spec: string; done: boolean }) {
 
   return (
     <>
-      <VisualReveal ready={done && !error && !!spec.trim()} signature={spec} className="my-3 w-full">
-        <div className="group/chart relative w-full">
-          <div className="visual-surface rounded-[1.55rem] p-4 md:p-5">
-            <div
-              ref={containerRef}
-              className="w-full overflow-hidden [&>div]:block [&>div]:h-auto [&>div]:w-full [&>svg]:h-auto [&>svg]:w-full"
-            />
-          </div>
-          <button
-            onClick={() => setZoom(true)}
-            className="absolute right-3 top-3 flex size-7 items-center justify-center rounded-full bg-white/85 text-[color:var(--visual-ink)] opacity-0 shadow-sm backdrop-blur transition-opacity hover:opacity-100 group-hover/chart:opacity-100"
-            aria-label="放大查看"
-          >
-            <Maximize2 className="size-3.5" />
-          </button>
-        </div>
-      </VisualReveal>
+      <div className="group/chart relative my-3 w-full animate-in fade-in duration-300">
+        <div
+          ref={containerRef}
+          className="w-full text-foreground [&>div]:block [&>div]:h-auto [&>div]:w-full [&>svg]:h-auto [&>svg]:w-full"
+        />
+        <button
+          onClick={() => setZoom(true)}
+          className="absolute right-1 top-1 flex size-6 items-center justify-center rounded-full bg-background/40 text-muted-foreground/50 opacity-0 backdrop-blur transition-opacity hover:text-foreground group-hover/chart:opacity-100"
+          aria-label="放大查看"
+        >
+          <Maximize2 className="size-3" />
+        </button>
+      </div>
 
       {zoom && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-background/92 p-4 backdrop-blur md:p-10"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-background/95 p-4 backdrop-blur md:p-10"
           onClick={() => setZoom(false)}
         >
           <button
@@ -185,12 +166,11 @@ export function VegaChart({ spec, done }: { spec: string; done: boolean }) {
           >
             <X className="size-5" />
           </button>
-          <div className="visual-surface max-h-full w-full max-w-4xl rounded-[1.9rem] p-4 md:p-6" onClick={event => event.stopPropagation()}>
-            <div
-              ref={zoomContainerRef}
-              className="[&>div]:mx-auto [&>div]:block [&>div]:h-auto [&>div]:max-h-[88vh] [&>div]:w-full [&>svg]:max-h-[88vh] [&>svg]:w-full"
-            />
-          </div>
+          <div
+            ref={zoomContainerRef}
+            className="max-h-full w-full max-w-4xl text-foreground [&>div]:mx-auto [&>div]:block [&>div]:h-auto [&>div]:max-h-[88vh] [&>div]:w-full [&>svg]:max-h-[88vh] [&>svg]:w-full"
+            onClick={event => event.stopPropagation()}
+          />
         </div>
       )}
     </>

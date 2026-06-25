@@ -3,7 +3,7 @@
 import Image from "next/image"
 import { useState, useEffect } from "react"
 import type { Conversation } from "@/lib/chat-data"
-import { ChevronDown, ChevronRight, Brain, FileText, Globe, Copy, Check, RefreshCw, RotateCcw, PencilLine } from "lucide-react"
+import { ChevronDown, ChevronRight, Brain, FileText, Globe, Copy, Check, RefreshCw } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkMath from "remark-math"
 import rehypeKatex from "rehype-katex"
@@ -14,6 +14,7 @@ import { InlineArtifact } from "@/components/inline-artifact"
 import { VegaChart } from "@/components/vega-chart"
 import { MermaidChart } from "@/components/mermaid-chart"
 import { FunctionPlotChart } from "@/components/function-plot-chart"
+import { normalizeMathDelimiters } from "@/lib/math"
 function MdContent({ text }: { text: string }) {
   return (
     <ReactMarkdown
@@ -37,7 +38,7 @@ function MdContent({ text }: { text: string }) {
         ol: ({ children }) => <ol className="list-decimal list-inside pl-2 space-y-1.5 mb-3">{children}</ol>,
         li: ({ children }) => <li className="break-words [overflow-wrap:anywhere]">{children}</li>,
         blockquote: ({ children }) => <blockquote className="border-l-4 border-primary/40 bg-muted/20 pl-4 py-2 pr-3 rounded-r my-3 italic text-muted-foreground">{children}</blockquote>,
-        hr: () => <hr className="my-4 border-border/30" />,
+        hr: () => <hr className="my-6 border-border/35" />,
         table: ({ children }) => <div className="overflow-x-auto my-3"><table className="w-full border-collapse border border-border/30 rounded-lg overflow-hidden">{children}</table></div>,
         thead: ({ children }) => <thead className="bg-muted/40 font-semibold">{children}</thead>,
         tbody: ({ children }) => <tbody>{children}</tbody>,
@@ -47,14 +48,14 @@ function MdContent({ text }: { text: string }) {
         img: ({ src, alt }) => <img src={src} alt={alt} className="max-w-full h-auto rounded-lg my-3 border border-border/20" />,
       }}
     >
-      {text}
+      {normalizeMathDelimiters(text)}
     </ReactMarkdown>
   )
 }
 
 function ThinkingBlock({ thinking, active }: { thinking: string; active?: boolean }) {
   const [open, setOpen] = useState(false)
-  if (!thinking.trim() && !active) return null
+  if (!thinking.trim()) return null
   return (
     <div className="mb-4">
       <button
@@ -64,7 +65,7 @@ function ThinkingBlock({ thinking, active }: { thinking: string; active?: boolea
         {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
         <span className={active ? "thinking-flow not-italic font-medium tracking-wide" : undefined}>thinking</span>
       </button>
-      {open && !!thinking.trim() && (
+      {open && (
         <div className="mt-2 break-words whitespace-pre-wrap rounded-xl border border-border/40 bg-muted/20 px-4 py-3 text-[13px] italic leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
           {thinking}
         </div>
@@ -139,63 +140,24 @@ function AiActions({
   )
 }
 
-function UserActions({
-  show,
-  onRetry,
-  onEdit,
-}: {
-  show: boolean
-  onRetry?: () => void
-  onEdit?: () => void
-}) {
-  if (!show || (!onRetry && !onEdit)) return null
-  return (
-    <div className="mt-1.5 mr-2 flex items-center justify-end gap-0.5 text-muted-foreground/55">
-      {onRetry && (
-        <button
-          onClick={onRetry}
-          title="重新跑这一轮"
-          className="rounded-full p-1.5 transition-colors hover:bg-primary/10 hover:text-foreground"
-        >
-          <RotateCcw className="size-3.5" />
-        </button>
-      )}
-      {onEdit && (
-        <button
-          onClick={onEdit}
-          title="编辑后重发"
-          className="rounded-full p-1.5 transition-colors hover:bg-primary/10 hover:text-foreground"
-        >
-          <PencilLine className="size-3.5" />
-        </button>
-      )}
-    </div>
-  )
-}
-
 export function MessageList({
   conversation,
   onRegenerate,
-  onRetryUserMessage,
-  onEditUserMessage,
   isLoading,
   onOpenArtifact,
   openArtifactId,
 }: {
   conversation: Conversation
   onRegenerate?: () => void
-  onRetryUserMessage?: () => void
-  onEditUserMessage?: (messageId: string) => void
   isLoading?: boolean
   onOpenArtifact?: (msgId: string) => void
   openArtifactId?: string | null
 }) {
   const msgs = conversation.messages
   const lastAiIdx = [...msgs].map((m, i) => ({ m, i })).reverse().find(({ m }) => m.role === 'assistant')?.i ?? -1
-  const lastUserIdx = [...msgs].map((m, i) => ({ m, i })).reverse().find(({ m }) => m.role === 'user')?.i ?? -1
 
   return (
-    <article className="w-full min-w-0 max-w-[44rem] overflow-x-clip px-4 py-6 md:px-6 md:py-8">
+    <article className="mx-auto w-full min-w-0 max-w-[56rem] overflow-x-clip px-4 py-6 md:ml-0 md:mr-auto md:px-6 md:py-8">
       <div className="min-w-0 space-y-8 md:space-y-10">
         {msgs.map((m, idx) =>
           m.role === "user" ? (
@@ -222,11 +184,6 @@ export function MessageList({
                   <p className="break-words text-[15px] italic leading-[1.9] tracking-wide text-secondary-foreground [overflow-wrap:anywhere]">{m.content}</p>
                 </div>
               )}
-              <UserActions
-                show={idx === lastUserIdx && !isLoading && !m.files?.length && (!!m.content || !!m.images?.length)}
-                onRetry={onRetryUserMessage}
-                onEdit={onEditUserMessage ? () => onEditUserMessage(m.id) : undefined}
-              />
             </div>
           ) : (
             <div key={m.id} className="group flex min-w-0 items-start gap-2">
@@ -235,7 +192,7 @@ export function MessageList({
                 <Image src="/companion-dark.png" alt="" width={40} height={40} priority className="avatar-dark size-8 select-none md:size-10" />
               </div>
               <div className="min-w-0 flex-1">
-                <ThinkingBlock thinking={m.thinking ?? ""} active={!!isLoading && idx === lastAiIdx && !m.content?.trim()} />
+                {m.thinking && <ThinkingBlock thinking={m.thinking} active={!!isLoading && idx === lastAiIdx && !m.content?.trim()} />}
                 {m.searchNotes && m.searchNotes.length > 0 && <SearchBlock searches={m.searchNotes} replying={!!m.content} />}
                 {m.memoryNotes && m.memoryNotes.length > 0 && (
                   <div className="mb-3 space-y-1">
@@ -254,14 +211,14 @@ export function MessageList({
                   return (
                     <div className="min-w-0 space-y-3">
                       {m.isError ? (
-                        <div className="border-l border-border/70 pl-3">
+                        <div>
                           <p className="break-words whitespace-pre-wrap text-sm italic leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">{m.content}</p>
                         </div>
                       ) : (
                         <>
-                          {/* 文字回复：引导线只包文字 */}
+                          {/* 文字回复：直接放开正文宽度，不再占用左侧导览线空间 */}
                           {display && (
-                            <div className="border-l border-border/70 pl-3 text-[15px] text-foreground md:text-[17px]">
+                            <div className="text-[15px] text-foreground md:text-[17px]">
                               <MdContent text={display} />
                             </div>
                           )}
@@ -275,7 +232,7 @@ export function MessageList({
                           {inlineRaw !== null && <InlineArtifact svg={inlineRaw} done={inlineDone} />}
                           {/* 面板卡片（有 artifact）*/}
                           {raw !== null && (
-                            <div className="border-l border-border/70 pl-3">
+                            <div>
                               <ArtifactCard
                                 title={artifactTitle(raw)}
                                 done={done}
@@ -284,9 +241,9 @@ export function MessageList({
                               />
                             </div>
                           )}
-                          {/* 操作栏：永不加左侧引导线——按钮在手机上隐藏时 border-l 会变成一根孤立的空竖线 */}
+                          {/* 操作栏与正文对齐，避免左侧再吃掉一层空白 */}
                           {(!!display || raw !== null || idx === lastAiIdx) && (
-                            <div className="pl-3 space-y-3">
+                            <div className="space-y-3">
                               <AiActions
                                 text={display}
                                 isLast={idx === lastAiIdx}
