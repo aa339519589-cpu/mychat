@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/client"
 import type { Conversation, Message } from "@/lib/chat-data"
-import { fmtDate } from "./shared"
+import { fmtDate, lastExcerpt } from "./shared"
 
 // ───────────── 本地消息缓存 ─────────────
 // 目的：切换会话时先显示本地快照，再后台刷新 Supabase，避免点进去后一片空白。
