@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { modelContent, type CodeMessage } from '../lib/code-data'
-import { codeContinuationPrompt, isCodeUserBlocker, looksLikeCodeSelfTalk } from '../lib/agent/continuation'
+import { codeContinuationPrompt, isCodeUserBlocker, looksLikeCodePreamble, looksLikeCodeSelfTalk } from '../lib/agent/continuation'
 import { inferPublishPendingFromMessages, isFalseCodePause, isStaleRunningCodeTask, shouldShowWorkspacePublish } from '../lib/code-agent-ui'
 import { enablePages, mergePullRequest } from '../lib/github'
 import { getWorkspaceDiff, searchWorkspaceFiles, workspaceRoot } from '../lib/agent/workspace'
@@ -80,6 +80,13 @@ test('verbose code self-talk is detected but publish summary is preserved', () =
   assert.equal(looksLikeCodeSelfTalk('改动已就绪，等待用户确认发布。\n\n变更文件：\nM index.html'), false)
 })
 
+test('generic code preamble is detected but concrete summary is preserved', () => {
+  assert.equal(looksLikeCodePreamble('我来做这件事。'), true)
+  assert.equal(looksLikeCodePreamble('好的，我先处理一下。'), true)
+  assert.equal(looksLikeCodePreamble('我会修改 README.md 并创建 PR。'), false)
+  assert.equal(looksLikeCodePreamble('改动已生成，等待确认发布。'), false)
+})
+
 test('runTurn suppresses code self-talk while preserving tool calls', { concurrency: false }, async t => {
   const originalFetch = globalThis.fetch
   t.after(() => { globalThis.fetch = originalFetch })
@@ -107,6 +114,36 @@ test('runTurn suppresses code self-talk while preserving tool calls', { concurre
   assert.equal(events.some(event => 'text' in event), false)
   assert.equal(turn.toolCalls.length, 1)
   assert.equal(turn.toolCalls[0].name, 'read_file')
+  assert.equal(turn.assistantMessage?.content, null)
+})
+
+test('runTurn suppresses generic preamble before tool calls', { concurrency: false }, async t => {
+  const originalFetch = globalThis.fetch
+  t.after(() => { globalThis.fetch = originalFetch })
+  globalThis.fetch = async () => Response.json({
+    choices: [{
+      finish_reason: 'tool_calls',
+      message: {
+        content: '我来做这件事。',
+        tool_calls: [{
+          index: 0,
+          id: 'call_1',
+          function: { name: 'write_file', arguments: '{"path":"index.html","content":"hi"}' },
+        }],
+      },
+    }],
+  })
+
+  const events: any[] = []
+  const turn = await runTurn('https://example.com', 'key', 'model', [], [], event => { events.push(event) }, {
+    deferTextUntilTurnEnd: true,
+    suppressCodeSelfTalk: true,
+  })
+
+  assert.equal(turn.content, '')
+  assert.equal(events.some(event => 'text' in event), false)
+  assert.equal(turn.toolCalls.length, 1)
+  assert.equal(turn.toolCalls[0].name, 'write_file')
   assert.equal(turn.assistantMessage?.content, null)
 })
 

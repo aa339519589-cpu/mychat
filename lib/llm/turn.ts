@@ -5,7 +5,7 @@ import { upstreamError } from './stream'
 import { makeContentFilter, parseDsmlToolCalls, hasIncompleteDsmlToolCall } from './sanitize'
 import type { Emit } from './events'
 import { buildProviderRequest, type ProviderAdapterId } from './provider-adapters'
-import { looksLikeCodeSelfTalk } from '@/lib/agent/continuation'
+import { looksLikeCodePreamble, looksLikeCodeSelfTalk } from '@/lib/agent/continuation'
 
 type ToolCall = { id: string; name: string; args: string }
 
@@ -124,7 +124,11 @@ export async function runTurn(
     const parsed = parseDsmlToolCalls(rawContent)
     if (parsed.length) toolCalls = parsed
   }
-  const visibleContent = opts?.suppressCodeSelfTalk && looksLikeCodeSelfTalk(content) ? '' : content
+  const shouldSuppressContent = !!opts?.suppressCodeSelfTalk && (
+    looksLikeCodeSelfTalk(content)
+    || (toolCalls.length > 0 && looksLikeCodePreamble(content))
+  )
+  const visibleContent = shouldSuppressContent ? '' : content
   if (opts?.deferTextUntilTurnEnd && visibleContent) emit({ text: visibleContent })
   let assistantMessage: any = null
   if (toolCalls.length) {
