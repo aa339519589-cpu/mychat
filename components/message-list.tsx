@@ -217,9 +217,9 @@ export function MessageList({
                         </div>
                       ) : (
                         <>
-                          {/* 移动端正文左起约 18px；桌面端保持原 grid；正文行高 26px，字重 395 */}
+                          {/* 移动端正文左起约 18px；桌面端保持原 grid；正文行高 26px，字重 400 */}
                           {display && (
-                            <div className="text-[17px] font-[395] text-foreground md:text-[18px]">
+                            <div className="text-[17px] font-[400] text-foreground md:text-[18px]">
                               <MdContent text={display} />
                             </div>
                           )}
