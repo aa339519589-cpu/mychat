@@ -235,6 +235,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
     responseId?: string,
   ) {
     if (recoveryTimersRef.current.has(taskId)) return
+    setStreaming(true)
     const delay = Math.min(1_500 * 2 ** attempt, 30_000)
     const timer = window.setTimeout(async () => {
       recoveryTimersRef.current.delete(taskId)
@@ -470,14 +471,18 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
         // 用户主动停止 — 保留已有内容
         if (!fullText) fullText = "已停止。"
       } else {
-        hadError = true
         interrupted = e?.name === "TypeError" || /连接|network|fetch|load failed|请求失败（5\d\d）/i.test(String(e?.message ?? e))
-        fullText = `${fullText ? `${fullText}\n\n` : ""}请求失败：${e?.message ?? String(e)}`
+        if (interrupted && taskId && activeRepo) {
+          fullText = `${fullText ? `${fullText}\n\n` : ""}连接短暂中断，后台仍在继续执行，我正在自动接回结果……`
+        } else {
+          hadError = true
+          fullText = `${fullText ? `${fullText}\n\n` : ""}请求失败：${e?.message ?? String(e)}`
+        }
       }
       setMessages(prev => prev.map(m => m.id === aiId ? { ...m, content: fullText, isError: hadError || undefined } : m))
     } finally {
       // ═══ 第四步：无论如何都要恢复状态 ═══
-      setStreaming(false)
+      if (!(taskId && activeRepo && interrupted)) setStreaming(false)
       if (sid) {
         insertCodeMessage(userId, sid, {
           id: aiId, role: "assistant", content: fullText,
