@@ -181,7 +181,7 @@ export function MessageList({
                 </div>
               )}
               {m.content && (
-                <div className="max-w-[84%] min-w-0 rounded-[1.05rem] border border-white/10 bg-[#1C1C1C] px-4 py-2 text-left text-white shadow-sm md:max-w-[80%]">
+                <div className="max-w-[84%] min-w-0 rounded-[1.05rem] border border-white/10 bg-[#151515] px-4 py-2 text-left text-white shadow-sm md:max-w-[80%]">
                   <p className="break-words font-sans text-[17px] font-[400] not-italic leading-[1.38] tracking-[0.001em] text-left text-white [overflow-wrap:anywhere] md:text-[18px]">{m.content}</p>
                 </div>
               )}
@@ -217,9 +217,9 @@ export function MessageList({
                         </div>
                       ) : (
                         <>
-                          {/* 移动端正文左起约 18px；桌面端保持原 grid；正文行高 26px，字重 350 */}
+                          {/* 移动端正文左起约 18px；桌面端保持原 grid；正文行高 26px，字重 390 */}
                           {display && (
-                            <div className="text-[17px] font-[350] text-foreground md:text-[18px]">
+                            <div className="text-[17px] font-[390] text-foreground md:text-[18px]">
                               <MdContent text={display} />
                             </div>
                           )}
