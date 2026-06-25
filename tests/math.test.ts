@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { normalizeMathDelimiters } from '../lib/math'
+import { conversationExcerpt } from '../lib/data/shared'
 
 test('normalizes bracket math delimiters for markdown math renderer', () => {
   assert.equal(
@@ -18,5 +19,12 @@ test('does not normalize math delimiters inside code spans or fences', () => {
   assert.equal(
     normalizeMathDelimiters(input),
     '`\\(x\\)`\n\n```txt\n\\[x\\]\n```\n\n正文 $y$',
+  )
+})
+
+test('conversation excerpt hides math and markdown delimiters', () => {
+  assert.equal(
+    conversationExcerpt('**勾股定理**：$$\na^2+b^2=c^2\n$$'),
+    '勾股定理：a^2+b^2=c^2',
   )
 })

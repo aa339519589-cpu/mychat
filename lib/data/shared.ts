@@ -1,6 +1,7 @@
 import type { Message } from "@/lib/chat-data"
 import { parseArtifact, artifactTitle } from "@/lib/artifact"
 import { stripToolMarkup } from "@/lib/llm/content-filter"
+import { normalizeMathDelimiters } from "@/lib/math"
 
 export function fmtDate(iso: string): string {
   const d = new Date(iso)
@@ -22,12 +23,23 @@ export function conversationExcerpt(text?: string): string {
   const clean = stripToolMarkup(text ?? "").trim()
   if (!clean) return ""
   const parsed = parseArtifact(clean)
-  const display = parsed.display.replace(/\s+/g, " ").trim()
+  const display = previewText(parsed.display)
   if (display) return display.slice(0, 60)
   if (parsed.vegaRaw) return "图表"
   if (parsed.mermaidRaw) return "流程图"
   if (parsed.fnPlotRaw) return "函数图像"
   if (parsed.inlineRaw) return "图形"
   if (parsed.raw) return artifactTitle(parsed.raw)
-  return clean.replace(/\s+/g, " ").slice(0, 60)
+  return previewText(clean).slice(0, 60)
+}
+
+function previewText(text: string): string {
+  return normalizeMathDelimiters(text)
+    .replace(/\$\$([\s\S]*?)\$\$/g, (_match, body: string) => body.trim())
+    .replace(/\$([^$\n]+?)\$/g, (_match, body: string) => body.trim())
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\s+/g, " ")
+    .trim()
 }
