@@ -322,6 +322,9 @@ export async function POST(req: NextRequest) {
         if (!clientConnected) return
         try { send(controller, data) } catch { clientConnected = false }
       }
+      const streamHeartbeat = setInterval(() => {
+        safeSend({ heartbeat: true })
+      }, 8_000)
       const emit: Emit = (event) => {
         if ('text' in event) finalText += event.text
         if ('error' in event) finalText = `${finalText}${finalText ? '\n\n' : ''}${event.error}`
@@ -758,6 +761,7 @@ ${fileList || '（请先修改文件）'}
         loopFailed = true
         if (!cancelled) emit({ error: networkError(error) })
       } finally {
+        clearInterval(streamHeartbeat)
         clearInterval(heartbeat)
         if (effectiveTaskId) {
           if (supabase && userId) {
@@ -799,5 +803,12 @@ ${fileList || '（请先修改文件）'}
     cancel() { clientConnected = false },
   })
 
-  return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } })
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    },
+  })
 }
