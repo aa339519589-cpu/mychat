@@ -38,7 +38,7 @@ function MdContent({ text }: { text: string }) {
         ul: ({ children }) => <ul className="mb-3 list-inside list-disc space-y-1.5 pl-2">{children}</ul>,
         ol: ({ children }) => <ol className="mb-3 list-inside list-decimal space-y-1.5 pl-2">{children}</ol>,
         li: ({ children }) => <li className="break-words [overflow-wrap:anywhere]">{children}</li>,
-        blockquote: ({ children }) => <blockquote className="my-3 rounded-r border-l-4 border-primary/40 bg-muted/15 py-2 pl-4 pr-3 font-[350] italic text-muted-foreground">{children}</blockquote>,
+        blockquote: ({ children }) => <blockquote className="my-3 rounded-r border-l-4 border-primary/40 bg-muted/15 py-2 pl-4 pr-3 font-[400] italic text-muted-foreground">{children}</blockquote>,
         hr: () => <hr className="my-6 h-px border-0 bg-foreground/25 opacity-85" />,
         table: ({ children }) => <div className="my-3 overflow-x-auto"><table className="w-full overflow-hidden rounded-lg border border-collapse border-border/30">{children}</table></div>,
         thead: ({ children }) => <thead className="bg-muted/40 font-[500]">{children}</thead>,
@@ -61,13 +61,13 @@ function ThinkingBlock({ thinking, active }: { thinking: string; active?: boolea
     <div className="mb-3">
       <button
         onClick={() => setOpen(v => !v)}
-        className="flex items-center gap-1.5 text-xs font-[350] italic text-muted-foreground/70 transition-colors hover:text-muted-foreground md:text-[13px]"
+        className="flex items-center gap-1.5 text-xs font-[400] italic text-muted-foreground/70 transition-colors hover:text-muted-foreground md:text-[13px]"
       >
         {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
         <span className={active ? "thinking-flow not-italic font-[500] tracking-wide" : undefined}>thinking</span>
       </button>
       {open && (
-        <div className="mt-2 break-words whitespace-pre-wrap rounded-xl border border-border/30 bg-muted/15 px-4 py-2.5 text-[13px] font-[350] italic leading-relaxed text-muted-foreground [overflow-wrap:anywhere] md:text-sm">
+        <div className="mt-2 break-words whitespace-pre-wrap rounded-xl border border-border/30 bg-muted/15 px-4 py-2.5 text-[13px] font-[400] italic leading-relaxed text-muted-foreground [overflow-wrap:anywhere] md:text-sm">
           {thinking}
         </div>
       )}
@@ -84,7 +84,7 @@ function SearchBlock({ searches, replying }: { searches: { query: string; result
     <div className="mb-2.5">
       <button
         onClick={() => setOpen(v => !v)}
-        className="flex items-center gap-1.5 text-xs font-[350] italic text-muted-foreground/70 transition-colors hover:text-muted-foreground md:text-[13px]"
+        className="flex items-center gap-1.5 text-xs font-[400] italic text-muted-foreground/70 transition-colors hover:text-muted-foreground md:text-[13px]"
       >
         {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
         <Globe className="size-3.5" />
@@ -94,9 +94,9 @@ function SearchBlock({ searches, replying }: { searches: { query: string; result
         <div className="mt-2 space-y-2 rounded-xl border border-border/30 bg-muted/15 px-4 py-2.5 text-xs md:text-[13px]">
           {searches.map((s, i) => (
             <div key={i} className="space-y-1">
-              <div className="text-xs font-[350] italic text-muted-foreground">搜索：{s.query}</div>
+              <div className="text-xs font-[400] italic text-muted-foreground">搜索：{s.query}</div>
               {s.results.map((r, j) => (
-                <a key={j} href={r.url} target="_blank" rel="noreferrer" className="block truncate text-xs font-[350] text-primary/80 underline underline-offset-2 hover:text-primary">
+                <a key={j} href={r.url} target="_blank" rel="noreferrer" className="block truncate text-xs font-[400] text-primary/80 underline underline-offset-2 hover:text-primary">
                   {r.title || r.url}
                 </a>
               ))}
@@ -182,7 +182,7 @@ export function MessageList({
               )}
               {m.content && (
                 <div className="max-w-[90%] min-w-0 rounded-[1.5rem] rounded-tr-md user-bubble-bg px-5 py-3 md:max-w-[85%]">
-                  <p className="break-words text-[17px] font-[350] italic leading-[1.82] tracking-[0.001em] text-secondary-foreground [overflow-wrap:anywhere] md:text-[18px]">{m.content}</p>
+                  <p className="break-words text-[17px] font-[400] italic leading-[1.82] tracking-[0.001em] text-secondary-foreground [overflow-wrap:anywhere] md:text-[18px]">{m.content}</p>
                 </div>
               )}
             </div>
@@ -198,7 +198,7 @@ export function MessageList({
                 {m.memoryNotes && m.memoryNotes.length > 0 && (
                   <div className="mb-2.5 space-y-1">
                     {m.memoryNotes.map((note, i) => (
-                      <div key={i} className="flex items-center gap-1.5 text-xs font-[350] italic text-muted-foreground/75 md:text-[13px]">
+                      <div key={i} className="flex items-center gap-1.5 text-xs font-[400] italic text-muted-foreground/75 md:text-[13px]">
                         <Brain className="size-3.5 shrink-0" />
                         <span className="[overflow-wrap:anywhere]">{note}</span>
                       </div>
@@ -213,13 +213,13 @@ export function MessageList({
                     <div className="min-w-0 space-y-2.5">
                       {m.isError ? (
                         <div>
-                          <p className="break-words whitespace-pre-wrap text-sm font-[350] italic leading-relaxed text-muted-foreground [overflow-wrap:anywhere] md:text-[15px]">{m.content}</p>
+                          <p className="break-words whitespace-pre-wrap text-sm font-[400] italic leading-relaxed text-muted-foreground [overflow-wrap:anywhere] md:text-[15px]">{m.content}</p>
                         </div>
                       ) : (
                         <>
-                          {/* Claude-like：正文保持大字号，但权重压轻到 350；上下间距只收一点，不做过度压缩 */}
+                          {/* Claude-like：正文保持大字号，权重回到 400；上下间距只收一点，不做过度压缩 */}
                           {display && (
-                            <div className="text-[17px] font-[350] text-foreground md:text-[18px]">
+                            <div className="text-[17px] font-[400] text-foreground md:text-[18px]">
                               <MdContent text={display} />
                             </div>
                           )}
