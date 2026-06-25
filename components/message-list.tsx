@@ -22,7 +22,7 @@ function MdContent({ text }: { text: string }) {
       remarkPlugins={[remarkMath]}
       rehypePlugins={[rehypeKatex]}
       components={{
-        p: ({ children }) => <p className="mb-3 break-words leading-[1.86] tracking-[0.001em] [overflow-wrap:anywhere]">{children}</p>,
+        p: ({ children }) => <p className="mb-2.5 break-words leading-[26px] tracking-[0.001em] [overflow-wrap:anywhere]">{children}</p>,
         a: ({ children, href }) => <a href={href} className="break-all underline underline-offset-4 text-primary hover:text-primary/80">{children}</a>,
         strong: ({ children }) => <strong className="font-[600]">{children}</strong>,
         em: ({ children }) => <em className="italic">{children}</em>,
@@ -181,14 +181,14 @@ export function MessageList({
                 </div>
               )}
               {m.content && (
-                <div className="max-w-[84%] min-w-0 rounded-[1.05rem] border border-white/10 bg-[#050505] px-4 py-2 text-left text-white shadow-sm md:max-w-[80%]">
+                <div className="max-w-[84%] min-w-0 rounded-[1.05rem] border border-white/10 bg-[#1C1C1C] px-4 py-2 text-left text-white shadow-sm md:max-w-[80%]">
                   <p className="break-words font-sans text-[17px] font-[400] not-italic leading-[1.38] tracking-[0.001em] text-left text-white [overflow-wrap:anywhere] md:text-[18px]">{m.content}</p>
                 </div>
               )}
             </div>
           ) : (
-            <div key={m.id} className="group grid min-w-0 grid-cols-[1.75rem_minmax(0,1fr)] items-start gap-2 md:grid-cols-[3rem_minmax(0,1fr)] md:gap-2.5">
-              <div className="avatar-box mt-0.5 h-7 w-7 flex-shrink-0 self-start md:h-11 md:w-11">
+            <div key={m.id} className="group min-w-0 pl-[6px] md:grid md:grid-cols-[3rem_minmax(0,1fr)] md:items-start md:gap-2.5 md:pl-0">
+              <div className="avatar-box mb-2 h-7 w-7 flex-shrink-0 self-start md:mb-0 md:mt-0.5 md:h-11 md:w-11">
                 <Image src="/companion.png" alt="" width={44} height={44} priority className="avatar-light size-7 select-none md:size-11" />
                 <Image src="/companion-dark.png" alt="" width={44} height={44} priority className="avatar-dark size-7 select-none md:size-11" />
               </div>
@@ -217,9 +217,9 @@ export function MessageList({
                         </div>
                       ) : (
                         <>
-                          {/* Claude-like：正文保持大字号，权重回到 400；上下间距只收一点，不做过度压缩 */}
+                          {/* 移动端正文左起约 18px；桌面端保持原 grid；正文行高 26px，字重 350 */}
                           {display && (
-                            <div className="text-[17px] font-[400] text-foreground md:text-[18px]">
+                            <div className="text-[17px] font-[350] text-foreground md:text-[18px]">
                               <MdContent text={display} />
                             </div>
                           )}
