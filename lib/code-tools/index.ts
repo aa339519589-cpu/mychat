@@ -303,8 +303,27 @@ export function createCodeToolExecutor(options: CodeToolExecutorOptions) {
       let ok = false
       if (userId && supabase) {
         try {
-          const { error } = await supabase.from('code_memories').insert({ user_id: userId, repo, content })
-          ok = !error
+          // 去重：检查是否已有相似记忆，避免同内容反复创建
+          const { data: existing } = await supabase.from('code_memories').select('id, content').eq('user_id', userId).eq('repo', repo)
+          let duplicateId: string | null = null
+          if (existing?.length) {
+            for (const row of existing) {
+              const bigramsA = new Set<string>(), bigramsB = new Set<string>()
+              for (let i = 0; i < content.length - 1; i++) bigramsA.add(content.slice(i, i + 2))
+              for (let i = 0; i < row.content.length - 1; i++) bigramsB.add(row.content.slice(i, i + 2))
+              const intersection = new Set([...bigramsA].filter(x => bigramsB.has(x)))
+              const union = new Set([...bigramsA, ...bigramsB])
+              const score = union.size > 0 ? intersection.size / union.size : 0
+              if (score > 0.55) { duplicateId = row.id; break }
+            }
+          }
+          if (duplicateId) {
+            const { error } = await supabase.from('code_memories').update({ content }).eq('id', duplicateId)
+            ok = !error
+          } else {
+            const { error } = await supabase.from('code_memories').insert({ user_id: userId, repo, content })
+            ok = !error
+          }
         } catch {
           ok = false
         }

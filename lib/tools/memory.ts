@@ -6,6 +6,45 @@ import { log } from '@/lib/logger'
 
 type MemoryResult = { action: 'create' | 'update' | 'delete'; id?: string; content?: string; ok: boolean; timestamp?: string }
 
+// ── 去重工具 ──
+// 用字符级 2-gram Jaccard 相似度做轻量去重，无需嵌入模型。
+// 中文按字符切分，英文/数字自然被 2-gram 覆盖。
+function charBigramJaccard(a: string, b: string): number {
+  if (!a || !b) return 0
+  const bigramsA = new Set<string>()
+  const bigramsB = new Set<string>()
+  for (let i = 0; i < a.length - 1; i++) bigramsA.add(a.slice(i, i + 2))
+  for (let i = 0; i < b.length - 1; i++) bigramsB.add(b.slice(i, i + 2))
+  if (bigramsA.size === 0 && bigramsB.size === 0) return 0
+  const intersection = new Set([...bigramsA].filter(x => bigramsB.has(x)))
+  const union = new Set([...bigramsA, ...bigramsB])
+  return intersection.size / union.size
+}
+
+const DEDUP_THRESHOLD = 0.55  // Jaccard > 0.55 → 判定为重复/高度相似
+
+// 查询已有记忆，如果有高度相似的则返回那条记忆（用于更新），否则返回 null
+async function findSimilarMemory(
+  supabase: any, table: string, userId: string, content: string, projectId?: string | null,
+): Promise<{ id: string; content: string } | null> {
+  try {
+    let query = supabase.from(table).select('id, content').eq('user_id', userId)
+    if (projectId && table === 'project_memories') query = query.eq('project_id', projectId)
+    const { data } = await query
+    if (!data?.length) return null
+    let best: { id: string; content: string; score: number } | null = null
+    for (const row of data) {
+      const score = charBigramJaccard(content, row.content)
+      if (score > DEDUP_THRESHOLD && (!best || score > best.score)) {
+        best = { id: row.id, content: row.content, score }
+      }
+    }
+    return best ?? null
+  } catch {
+    return null  // 查询失败不阻塞记忆操作
+  }
+}
+
 async function runMemoryOp(ctx: ToolContext, opName: string, table: string, input: any): Promise<MemoryResult> {
   const { supabase, userId, projectId } = ctx
   if (!supabase || !userId) return { action: 'create', ok: false }
@@ -13,8 +52,22 @@ async function runMemoryOp(ctx: ToolContext, opName: string, table: string, inpu
     if (opName === 'remember' || opName === 'remember_project') {
       const content = String(input?.content ?? '').trim()
       if (!content) return { action: 'create', ok: false }
-      const id = crypto.randomUUID()
       const ts = new Date().toISOString()
+
+      // 去重：检查是否已有相似记忆
+      const similar = await findSimilarMemory(supabase, table, userId, content, projectId)
+      if (similar) {
+        // 已有相似记忆：直接更新（新内容可能更准确/详细）
+        const { error } = await supabase.from(table).update({ content, updated_at: ts }).eq('id', similar.id)
+        if (error) {
+          log.error('memory', `remember 去重更新失败 (${table})`, error)
+          return { action: 'update', id: similar.id, content, ok: false, timestamp: ts }
+        }
+        log.info('memory', `remember 去重更新（相似度跳过新增）`, { table, projectId: projectId ?? null, oldContent: similar.content.slice(0, 60), newContent: content.slice(0, 60) })
+        return { action: 'update', id: similar.id, content, ok: true, timestamp: ts }
+      }
+
+      const id = crypto.randomUUID()
       const row: Record<string, unknown> = { id, user_id: userId, content }
       if (projectId && table === 'project_memories') row.project_id = projectId
       const { error } = await supabase.from(table).insert(row)
