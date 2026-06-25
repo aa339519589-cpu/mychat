@@ -3,7 +3,7 @@
 import Image from "next/image"
 import { useState, useEffect } from "react"
 import type { Conversation } from "@/lib/chat-data"
-import { ChevronDown, ChevronRight, Brain, FileText, Globe, Copy, Check, RefreshCw, RotateCcw, PencilLine } from "lucide-react"
+import { ChevronDown, ChevronRight, Brain, FileText, Globe, Copy, Check, RefreshCw } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkMath from "remark-math"
 import rehypeKatex from "rehype-katex"
@@ -54,7 +54,7 @@ function MdContent({ text }: { text: string }) {
 
 function ThinkingBlock({ thinking, active }: { thinking: string; active?: boolean }) {
   const [open, setOpen] = useState(false)
-  if (!thinking.trim() && !active) return null
+  if (!thinking.trim()) return null
   return (
     <div className="mb-4">
       <button
@@ -64,7 +64,7 @@ function ThinkingBlock({ thinking, active }: { thinking: string; active?: boolea
         {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
         <span className={active ? "thinking-flow not-italic font-medium tracking-wide" : undefined}>thinking</span>
       </button>
-      {open && !!thinking.trim() && (
+      {open && (
         <div className="mt-2 break-words whitespace-pre-wrap rounded-xl border border-border/40 bg-muted/20 px-4 py-3 text-[13px] italic leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
           {thinking}
         </div>
@@ -139,60 +139,21 @@ function AiActions({
   )
 }
 
-function UserActions({
-  show,
-  onRetry,
-  onEdit,
-}: {
-  show: boolean
-  onRetry?: () => void
-  onEdit?: () => void
-}) {
-  if (!show || (!onRetry && !onEdit)) return null
-  return (
-    <div className="mt-1.5 mr-2 flex items-center justify-end gap-0.5 text-muted-foreground/55">
-      {onRetry && (
-        <button
-          onClick={onRetry}
-          title="重新跑这一轮"
-          className="rounded-full p-1.5 transition-colors hover:bg-primary/10 hover:text-foreground"
-        >
-          <RotateCcw className="size-3.5" />
-        </button>
-      )}
-      {onEdit && (
-        <button
-          onClick={onEdit}
-          title="编辑后重发"
-          className="rounded-full p-1.5 transition-colors hover:bg-primary/10 hover:text-foreground"
-        >
-          <PencilLine className="size-3.5" />
-        </button>
-      )}
-    </div>
-  )
-}
-
 export function MessageList({
   conversation,
   onRegenerate,
-  onRetryUserMessage,
-  onEditUserMessage,
   isLoading,
   onOpenArtifact,
   openArtifactId,
 }: {
   conversation: Conversation
   onRegenerate?: () => void
-  onRetryUserMessage?: () => void
-  onEditUserMessage?: (messageId: string) => void
   isLoading?: boolean
   onOpenArtifact?: (msgId: string) => void
   openArtifactId?: string | null
 }) {
   const msgs = conversation.messages
   const lastAiIdx = [...msgs].map((m, i) => ({ m, i })).reverse().find(({ m }) => m.role === 'assistant')?.i ?? -1
-  const lastUserIdx = [...msgs].map((m, i) => ({ m, i })).reverse().find(({ m }) => m.role === 'user')?.i ?? -1
 
   return (
     <article className="mx-auto w-full min-w-0 max-w-[44rem] overflow-x-clip px-4 py-6 md:px-6 md:py-8">
@@ -222,11 +183,6 @@ export function MessageList({
                   <p className="break-words text-[15px] italic leading-[1.9] tracking-wide text-secondary-foreground [overflow-wrap:anywhere]">{m.content}</p>
                 </div>
               )}
-              <UserActions
-                show={idx === lastUserIdx && !isLoading && !m.files?.length && (!!m.content || !!m.images?.length)}
-                onRetry={onRetryUserMessage}
-                onEdit={onEditUserMessage ? () => onEditUserMessage(m.id) : undefined}
-              />
             </div>
           ) : (
             <div key={m.id} className="group flex min-w-0 items-start gap-2">
@@ -235,7 +191,7 @@ export function MessageList({
                 <Image src="/companion-dark.png" alt="" width={40} height={40} priority className="avatar-dark size-8 select-none md:size-10" />
               </div>
               <div className="min-w-0 flex-1">
-                <ThinkingBlock thinking={m.thinking ?? ""} active={!!isLoading && idx === lastAiIdx && !m.content?.trim()} />
+                {m.thinking && <ThinkingBlock thinking={m.thinking} active={!!isLoading && idx === lastAiIdx && !m.content?.trim()} />}
                 {m.searchNotes && m.searchNotes.length > 0 && <SearchBlock searches={m.searchNotes} replying={!!m.content} />}
                 {m.memoryNotes && m.memoryNotes.length > 0 && (
                   <div className="mb-3 space-y-1">

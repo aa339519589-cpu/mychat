@@ -31,7 +31,6 @@ import { ConversationMenu, ConversationRename } from "@/components/conversation-
 import type { SearchMode } from "@/lib/search-mode"
 
 type HistoryMsg = { id?: string; role: string; content: string; images?: string[]; imageSummary?: string; ts?: string }
-type ComposerSeed = { messageId: string; text: string; images?: string[]; nonce: number }
 
 export function LiteraryChat() {
   const [user, setUser] = useState<User | null>(null)
@@ -48,7 +47,6 @@ export function LiteraryChat() {
   const [deepResearch, setDeepResearch] = useState(false)
   const [activeTier, setActiveTier] = useState<Tier>("绝句")
   const [openArtifactId, setOpenArtifactId] = useState<string | null>(null)
-  const [composerSeed, setComposerSeed] = useState<ComposerSeed | null>(null)
   // 顶部对话菜单（Claude 式「项目名 / 标题 ⌄」）：触发按钮锚点 + 顶部就地改名
   const [headerMenuAnchor, setHeaderMenuAnchor] = useState<{ bottom: number; left: number } | null>(null)
   const [headerRenaming, setHeaderRenaming] = useState(false)
@@ -88,7 +86,6 @@ export function LiteraryChat() {
       setMemories([])
       setMemoryEnabledState(true)
       setActiveId("")
-      setComposerSeed(null)
       setProjects([])
       projectCtxRef.current.clear()
       draftIdRef.current = null
@@ -158,7 +155,6 @@ export function LiteraryChat() {
     setActiveId(id)
     setDrawerOpen(false)
     setOpenArtifactId(null)
-    setComposerSeed(null)
     if (loadedRef.current.has(id)) return
     loadedRef.current.add(id)
     const msgs = await fetchMessages(id)
@@ -356,80 +352,8 @@ export function LiteraryChat() {
     abortRef.current?.abort()
   }
 
-  function toHistory(messages: Message[]): HistoryMsg[] {
-    return messages.map(m => ({
-      id: m.id,
-      role: m.role,
-      content: m.content,
-      ...(m.images?.length ? { images: m.images } : {}),
-      ...(m.imageSummary ? { imageSummary: m.imageSummary } : {}),
-      ...(m.ts ? { ts: m.ts } : {}),
-    }))
-  }
-
-  async function rerunFromUserMessage(
-    sourceMessageId: string,
-    override?: { text?: string; images?: string[] | null; files?: AttachedFile[] },
-  ) {
-    if (!user || !active || isLoading) return
-
-    const msgs = active.messages
-    const sourceIdx = msgs.findIndex(m => m.id === sourceMessageId && m.role === "user")
-    if (sourceIdx === -1) return
-
-    const sourceMsg = msgs[sourceIdx]
-    const prefix = msgs.slice(0, sourceIdx)
-    const tail = msgs.slice(sourceIdx)
-    const nextImages = override?.images === undefined
-      ? sourceMsg.images
-      : override.images && override.images.length > 0
-        ? override.images
-        : undefined
-    const nextFiles = override?.files?.length ? override.files : undefined
-    const nextUser: Message = {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: override?.text ?? sourceMsg.content,
-      time: "此刻",
-      ts: new Date().toISOString(),
-      images: nextImages,
-      files: nextFiles?.map(f => f.name),
-    }
-    const assistantId = crypto.randomUUID()
-    const assistantMsg: Message = { id: assistantId, role: "assistant", content: "", thinking: "", time: "此刻" }
-
-    setOpenArtifactId(null)
-    setComposerSeed(null)
-    setConversations(prev => prev.map(c => c.id !== activeId ? c : {
-      ...c,
-      messages: [...prefix, nextUser, assistantMsg],
-    }))
-    setIsLoading(true)
-
-    try {
-      await Promise.all(tail.map(m => deleteMessageRow(m.id)))
-      await insertMessage(user.id, activeId, nextUser)
-      const projectCtx = await getProjectContext(active.projectId)
-      const controller = new AbortController()
-      abortRef.current = controller
-      const fullReply = await runAiStream(toHistory([...prefix, nextUser]), assistantId, activeId, controller, nextFiles, projectCtx)
-      if (prefix.length === 0 && fullReply) generateTitle(activeId, nextUser.content, fullReply)
-    } catch (e) {
-      console.error("rerunFromUserMessage failed", e)
-      setIsLoading(false)
-      setConversations(prev => prev.map(c => c.id !== activeId ? c : {
-        ...c,
-        messages: [...prefix, nextUser, { ...assistantMsg, content: "发送失败，请重试", isError: true }],
-      }))
-    }
-  }
-
   async function handleSend(text: string, images?: string[], files?: AttachedFile[]) {
     if (!user || !active) return
-    if (composerSeed?.messageId) {
-      await rerunFromUserMessage(composerSeed.messageId, { text, images: images ?? null, files })
-      return
-    }
 
     const userMsg: Message = { id: crypto.randomUUID(), role: "user", content: text, time: "此刻", ts: new Date().toISOString(), images: images?.length ? images : undefined, files: files?.map(f => f.name) }
     const msgId = crypto.randomUUID()
@@ -470,7 +394,14 @@ export function LiteraryChat() {
         await insertMessage(user.id, convId, userMsg)
       }
 
-      const history = toHistory([...baseHistory, userMsg])
+      const history = [...baseHistory, userMsg].map(m => ({
+        id: m.id,
+        role: m.role,
+        content: m.content,
+        ...(m.images?.length ? { images: m.images } : {}),
+        ...(m.imageSummary ? { imageSummary: m.imageSummary } : {}),
+        ...(m.ts ? { ts: m.ts } : {}),
+      }))
 
       const projectCtx = await getProjectContext(active.projectId)
       const controller = new AbortController()
@@ -491,14 +422,18 @@ export function LiteraryChat() {
   async function handleRegenerate() {
     if (!user || !active || isLoading) return
     setOpenArtifactId(null)
-    setComposerSeed(null)
     const msgs = active.messages
     const lastAiIdx = [...msgs].map((m, i) => ({ m, i })).reverse().find(({ m }) => m.role === "assistant")?.i ?? -1
     if (lastAiIdx === -1) return
     const lastAiMsg = msgs[lastAiIdx]
 
     // 历史 = 最后一条 AI 消息之前的所有消息
-    const historyBeforeAi = toHistory(msgs.slice(0, lastAiIdx))
+    const historyBeforeAi = msgs.slice(0, lastAiIdx).map(m => ({
+      id: m.id, role: m.role, content: m.content,
+      ...(m.images?.length ? { images: m.images } : {}),
+      ...(m.imageSummary ? { imageSummary: m.imageSummary } : {}),
+      ...(m.ts ? { ts: m.ts } : {}),
+    }))
 
     const newMsgId = crypto.randomUUID()
     setConversations(prev => prev.map(c => c.id !== activeId ? c : {
@@ -522,31 +457,10 @@ export function LiteraryChat() {
     }
   }
 
-  async function handleRetryUserMessage() {
-    if (!active || isLoading) return
-    const lastUser = [...active.messages].reverse().find(m => m.role === "user" && !m.files?.length)
-    if (!lastUser) return
-    await rerunFromUserMessage(lastUser.id)
-  }
-
-  function handleEditUserMessage(messageId: string) {
-    if (!active || isLoading) return
-    const msg = active.messages.find(m => m.id === messageId && m.role === "user")
-    if (!msg || msg.files?.length) return
-    setOpenArtifactId(null)
-    setComposerSeed({
-      messageId: msg.id,
-      text: msg.content,
-      images: msg.images,
-      nonce: Date.now(),
-    })
-  }
-
   async function handleDelete(id: string) {
     deleteConversationRow(id)
     loadedRef.current.delete(id)
     if (draftIdRef.current === id) draftIdRef.current = null
-    if (activeId === id) setComposerSeed(null)
     const remaining = conversations.filter(c => c.id !== id)
     if (remaining.length === 0) {
       // 删到空了：起一个本地草稿，别再写库
@@ -571,7 +485,6 @@ export function LiteraryChat() {
   function handleNew() {
     if (!user) return
     setDrawerOpen(false)
-    setComposerSeed(null)
     // 已有一个空草稿（或当前正停在草稿上）：切过去即可，绝不重复创建——天然防连点
     if (draftIdRef.current) { setActiveId(draftIdRef.current); return }
     const id = crypto.randomUUID()
@@ -809,8 +722,6 @@ export function LiteraryChat() {
             <MessageList
               conversation={active}
               onRegenerate={handleRegenerate}
-              onRetryUserMessage={handleRetryUserMessage}
-              onEditUserMessage={handleEditUserMessage}
               isLoading={isLoading}
               onOpenArtifact={setOpenArtifactId}
               openArtifactId={openArtifactId}
@@ -834,9 +745,6 @@ export function LiteraryChat() {
           onSearchModeChange={setSearchMode}
           deepResearch={deepResearch}
           onDeepResearchChange={setDeepResearch}
-          seed={composerSeed ? { text: composerSeed.text, images: composerSeed.images, nonce: composerSeed.nonce } : null}
-          isEditing={!!composerSeed}
-          onCancelEdit={() => setComposerSeed(null)}
           isLoading={isLoading}
           onStop={handleStop}
         />
