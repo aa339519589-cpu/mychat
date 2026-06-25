@@ -300,37 +300,17 @@ export function createCodeToolExecutor(options: CodeToolExecutorOptions) {
     if (name === 'code_remember') {
       const content = String(input?.content ?? '').trim()
       if (!content || !repo) return content ? '尚未选择仓库，无法记忆。' : '内容为空。'
+      let ok = false
       if (userId && supabase) {
         try {
-          // 去重：检查是否已有相似记忆
-          const { data: existing } = await supabase.from('code_memories').select('id, content').eq('user_id', userId).eq('repo', repo)
-          let duplicateId: string | null = null
-          let duplicateContent: string | null = null
-          if (existing?.length) {
-            for (const row of existing) {
-              const bigramsA = new Set<string>(), bigramsB = new Set<string>()
-              for (let i = 0; i < content.length - 1; i++) bigramsA.add(content.slice(i, i + 2))
-              for (let i = 0; i < row.content.length - 1; i++) bigramsB.add(row.content.slice(i, i + 2))
-              const intersection = new Set([...bigramsA].filter(x => bigramsB.has(x)))
-              const union = new Set([...bigramsA, ...bigramsB])
-              const score = union.size > 0 ? intersection.size / union.size : 0
-              if (score > 0.55) { duplicateId = row.id; duplicateContent = row.content; break }
-            }
-          }
-          if (duplicateId && duplicateContent) {
-            const { error } = await supabase.from('code_memories').update({ content }).eq('id', duplicateId)
-            toolEmit({ step: { kind: 'memory', label: `更新：${content.slice(0, 40)}` } })
-            return error ? '记忆更新失败。' : `已更新已有记忆（id: ${duplicateId}，旧内容: ${duplicateContent}）。`
-          }
           const { error } = await supabase.from('code_memories').insert({ user_id: userId, repo, content })
-          if (!error) {
-            toolEmit({ step: { kind: 'memory', label: `记住：${content.slice(0, 40)}` } })
-            return '已记住。'
-          }
-        } catch { /* fall through */ }
+          ok = !error
+        } catch {
+          ok = false
+        }
       }
       toolEmit({ step: { kind: 'memory', label: `记住：${content.slice(0, 40)}` } })
-      return '记忆保存失败（可能未建表）。'
+      return ok ? '已记住。' : '记忆保存失败（可能未建表）。'
     }
 
     if (name === 'apply_patch') {
