@@ -38,7 +38,7 @@ function MdContent({ text }: { text: string }) {
         ol: ({ children }) => <ol className="list-decimal list-inside pl-2 space-y-1.5 mb-3">{children}</ol>,
         li: ({ children }) => <li className="break-words [overflow-wrap:anywhere]">{children}</li>,
         blockquote: ({ children }) => <blockquote className="border-l-4 border-primary/40 bg-muted/20 pl-4 py-2 pr-3 rounded-r my-3 italic text-muted-foreground">{children}</blockquote>,
-        hr: () => <hr className="my-4 border-border/30" />,
+        hr: () => <hr className="my-6 border-border/35" />,
         table: ({ children }) => <div className="overflow-x-auto my-3"><table className="w-full border-collapse border border-border/30 rounded-lg overflow-hidden">{children}</table></div>,
         thead: ({ children }) => <thead className="bg-muted/40 font-semibold">{children}</thead>,
         tbody: ({ children }) => <tbody>{children}</tbody>,
@@ -157,7 +157,7 @@ export function MessageList({
   const lastAiIdx = [...msgs].map((m, i) => ({ m, i })).reverse().find(({ m }) => m.role === 'assistant')?.i ?? -1
 
   return (
-    <article className="mx-auto w-full min-w-0 max-w-[44rem] overflow-x-clip px-4 py-6 md:px-6 md:py-8">
+    <article className="mx-auto w-full min-w-0 max-w-[56rem] overflow-x-clip px-4 py-6 md:ml-0 md:mr-auto md:px-6 md:py-8">
       <div className="min-w-0 space-y-8 md:space-y-10">
         {msgs.map((m, idx) =>
           m.role === "user" ? (
@@ -211,14 +211,14 @@ export function MessageList({
                   return (
                     <div className="min-w-0 space-y-3">
                       {m.isError ? (
-                        <div className="border-l border-border/70 pl-3">
+                        <div>
                           <p className="break-words whitespace-pre-wrap text-sm italic leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">{m.content}</p>
                         </div>
                       ) : (
                         <>
-                          {/* 文字回复：引导线只包文字 */}
+                          {/* 文字回复：直接放开正文宽度，不再占用左侧导览线空间 */}
                           {display && (
-                            <div className="border-l border-border/70 pl-3 text-[15px] text-foreground md:text-[17px]">
+                            <div className="text-[15px] text-foreground md:text-[17px]">
                               <MdContent text={display} />
                             </div>
                           )}
@@ -232,7 +232,7 @@ export function MessageList({
                           {inlineRaw !== null && <InlineArtifact svg={inlineRaw} done={inlineDone} />}
                           {/* 面板卡片（有 artifact）*/}
                           {raw !== null && (
-                            <div className="border-l border-border/70 pl-3">
+                            <div>
                               <ArtifactCard
                                 title={artifactTitle(raw)}
                                 done={done}
@@ -241,9 +241,9 @@ export function MessageList({
                               />
                             </div>
                           )}
-                          {/* 操作栏：永不加左侧引导线——按钮在手机上隐藏时 border-l 会变成一根孤立的空竖线 */}
+                          {/* 操作栏与正文对齐，避免左侧再吃掉一层空白 */}
                           {(!!display || raw !== null || idx === lastAiIdx) && (
-                            <div className="pl-3 space-y-3">
+                            <div className="space-y-3">
                               <AiActions
                                 text={display}
                                 isLast={idx === lastAiIdx}

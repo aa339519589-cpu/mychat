@@ -123,7 +123,7 @@ export function ChatInput({
       "relative z-10 mx-auto w-full shrink-0",
       mobile
         ? "bg-background px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2"
-        : "max-w-[44rem] px-10 pb-8 pt-2",
+        : "max-w-[56rem] px-10 pb-8 pt-2 md:ml-0 md:mr-auto",
     )}>
       {/* 三类图片/文件输入：拍照=唤起相机，图片=相册，文件=文档 */}
       <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden"

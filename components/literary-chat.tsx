@@ -730,7 +730,7 @@ export function LiteraryChat() {
             <EmptyState endpointName={activeName} />
           )}
           {isLoading && (
-            <div className="mx-auto max-w-[44rem] px-5 pb-4 text-sm italic md:px-10">
+            <div className="mx-auto max-w-[56rem] px-5 pb-4 text-sm italic md:ml-0 md:mr-auto md:px-10">
               <span className="thinking-flow">正在{activeName}思考……</span>
             </div>
           )}
