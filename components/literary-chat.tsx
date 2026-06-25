@@ -7,7 +7,7 @@ import {
   fetchMemories, insertMemory, updateMemory, deleteMemoryRow,
   fetchConversations, insertConversation, updateConversationTitle, touchConversation, deleteConversationRow,
   setConversationStarred, setConversationPinned, setConversationProject,
-  fetchMessages, insertMessage, lastExcerpt,
+  fetchMessages, insertMessage, lastExcerpt, conversationExcerpt,
   deleteMessageRow,
   fetchProfile, ensureProfile, setMemoryEnabled,
   fetchProjects, insertProject, updateProject, deleteProjectRow,
@@ -328,7 +328,7 @@ export function LiteraryChat() {
       if (!hadError && fullReply) {
         insertMessage(user.id, convId, { id: msgId, role: "assistant", content: fullReply, thinking: fullThinking || undefined, time: "" })
         touchConversation(convId)
-        setConversations(prev => prev.map(c => c.id === convId ? { ...c, excerpt: fullReply.slice(0, 60), date: "今日" } : c))
+        setConversations(prev => prev.map(c => c.id === convId ? { ...c, excerpt: conversationExcerpt(fullReply), date: "今日" } : c))
       }
     } catch (e: any) {
       if (e?.name === "AbortError") return fullReply  // 用户主动停止，保留已有内容

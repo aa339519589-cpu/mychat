@@ -13,7 +13,7 @@ import {
   MoreHorizontal, Star, Pin, Lock,
   Code2,
 } from "lucide-react"
-import { fetchQuota, type QuotaSnapshot } from "@/lib/data"
+import { conversationExcerpt, fetchQuota, type QuotaSnapshot } from "@/lib/data"
 import { ConversationMenu, ConversationRename } from "@/components/conversation-menu"
 
 // 二级页面：除根视图（侧栏主体）外的可滑入全屏页面。设置＝真正的二级滑入页（带返回头）。
@@ -940,6 +940,8 @@ function ConversationRow({ c, isActive, renaming, onSelect, onOpenMenu, onCommit
     )
   }
 
+  const excerpt = conversationExcerpt(c.excerpt)
+
   return (
     <div className="group relative">
       <button
@@ -955,7 +957,7 @@ function ConversationRow({ c, isActive, renaming, onSelect, onOpenMenu, onCommit
           </span>
           <span className="shrink-0 text-[11px] tracking-wider text-muted-foreground">{c.date}</span>
         </div>
-        {c.excerpt && <p className="mt-1.5 line-clamp-2 text-[13px] leading-relaxed text-muted-foreground">{c.excerpt}</p>}
+        {excerpt && <p className="mt-1.5 line-clamp-2 text-[13px] leading-relaxed text-muted-foreground">{excerpt}</p>}
       </button>
       <button
         onClick={e => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); onOpenMenu(c.id, { top: r.top, bottom: r.bottom, right: r.right }) }}
