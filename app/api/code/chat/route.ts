@@ -282,9 +282,18 @@ export async function POST(req: NextRequest) {
       const streamHeartbeat = setInterval(() => {
         safeSend({ heartbeat: true })
       }, 8_000)
+      let sawProgressEvent = false
+      let bufferedLeadText = ''
       const emit: Emit = (event) => {
         if ('thinking' in event) return
-        if ('text' in event) finalText += event.text
+        if ('plan' in event || 'step' in event) sawProgressEvent = true
+        if ('text' in event) {
+          if (!sawProgressEvent) {
+            bufferedLeadText += event.text
+            return
+          }
+          finalText += event.text
+        }
         if ('error' in event) finalText = `${finalText}${finalText ? '\n\n' : ''}${event.error}`
         if ('step' in event) void recorder.step(event.step.kind, event.step.label)
         safeSend(event)
@@ -410,6 +419,10 @@ export async function POST(req: NextRequest) {
         loopFailed = true
         if (!cancelled) emit({ error: networkError(error) })
       } finally {
+        if (!sawProgressEvent && !finalText.trim() && bufferedLeadText.trim()) {
+          finalText = bufferedLeadText
+          safeSend({ text: bufferedLeadText })
+        }
         clearInterval(streamHeartbeat)
         clearInterval(heartbeat)
         if (effectiveTaskId) {
