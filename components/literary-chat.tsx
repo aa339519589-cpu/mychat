@@ -666,7 +666,7 @@ export function LiteraryChat() {
 
   function renderChatPane(mobile: boolean) {
     return (
-      <main className={cn("flex min-w-0 flex-1 flex-col overflow-hidden", !mobile && "ml-2")}>
+      <main className={cn("flex min-w-0 flex-1 flex-col overflow-hidden", !mobile && "ml-0")}>
         <header className={cn(
           "z-10 flex shrink-0 items-center gap-3 bg-background/90 backdrop-blur-sm",
           mobile ? "px-4 pb-2 pt-[max(0.75rem,env(safe-area-inset-top))]" : "px-8 py-4",
@@ -763,7 +763,7 @@ export function LiteraryChat() {
   return (
     <>
       {codeOpen && <CodeConsole userId={user.id} onExit={() => setCodeOpen(false)} />}
-      <div className="hidden h-dvh min-h-0 w-full overflow-hidden bg-background p-4 paper-grain md:flex">
+      <div className="hidden h-dvh min-h-0 w-full overflow-hidden bg-background py-4 pr-4 pl-0 paper-grain md:flex">
         <div className={cn("shrink-0 overflow-hidden transition-[width] duration-300 ease-in-out", sidebarCollapsed ? "w-0" : "w-[20rem]")}>
           <div className="h-full w-[20rem] overflow-hidden border-r border-border/50 bg-sidebar/40">
             <AppSidebar {...sidebarProps} />
