@@ -26,6 +26,21 @@ const THINKING_CSS = `
   :root:not(.light) .thinking-flow {
     background-image: linear-gradient(90deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.35));
   }
+  :root:not(.light) article [role="button"][class*="bg-secondary\\/75"] {
+    background-color: #151515 !important;
+    border-color: rgba(255, 255, 255, 0.1) !important;
+    color: #fff !important;
+  }
+  :root:not(.light) article div[class*="bg-secondary\\/75"]:has(textarea) {
+    background-color: #151515 !important;
+    border-color: rgba(255, 255, 255, 0.1) !important;
+    color: #fff !important;
+  }
+  :root:not(.light) article [role="button"][class*="bg-secondary\\/75"] p,
+  :root:not(.light) article div[class*="bg-secondary\\/75"] textarea {
+    color: #fff !important;
+    -webkit-text-fill-color: #fff !important;
+  }
 }
 @keyframes mychat-thinking-flow {
   0% { background-position: 200% 50%; opacity: 0.55; }
