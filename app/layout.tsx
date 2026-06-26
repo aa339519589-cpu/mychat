@@ -2,6 +2,7 @@ import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import { Libre_Baskerville, Noto_Sans_SC } from 'next/font/google'
 import './globals.css'
+import './dark-background.css'
 import './thinking-flow.css'
 import 'katex/dist/katex.min.css'
 
@@ -48,7 +49,7 @@ export const viewport: Viewport = {
   colorScheme: 'light dark',
   themeColor: [
     { media: '(prefers-color-scheme: light)', color: '#FDF2E2' },
-    { media: '(prefers-color-scheme: dark)', color: '#1F1F1F' },
+    { media: '(prefers-color-scheme: dark)', color: '#222221' },
   ],
 }
 
