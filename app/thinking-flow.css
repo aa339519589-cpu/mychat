@@ -1,13 +1,14 @@
-/* 思考中的白光流动：必须是连续扫光，不能一帧一帧跳。 */
+/* 思考中的白光流动：文字常驻可见，只让亮光扫过，不做忽明忽暗。 */
 .thinking-flow {
   display: inline-block;
+  color: rgba(255, 255, 255, 0.78);
   background-image: linear-gradient(
     100deg,
-    currentColor 0%,
-    currentColor 34%,
-    rgba(255, 255, 255, 0.98) 48%,
-    currentColor 62%,
-    currentColor 100%
+    rgba(255, 255, 255, 0.78) 0%,
+    rgba(255, 255, 255, 0.78) 36%,
+    #ffffff 48%,
+    rgba(255, 255, 255, 0.78) 60%,
+    rgba(255, 255, 255, 0.78) 100%
   );
   background-size: 260% 100%;
   background-position: 130% 0;
@@ -18,6 +19,18 @@
   animation: thinking-flow-sweep 1.45s linear infinite;
   transform: translateZ(0);
   will-change: background-position;
+}
+
+:root:not(.dark) .thinking-flow {
+  color: color-mix(in srgb, currentColor 82%, black 18%);
+  background-image: linear-gradient(
+    100deg,
+    color-mix(in srgb, currentColor 82%, black 18%) 0%,
+    color-mix(in srgb, currentColor 82%, black 18%) 36%,
+    #ffffff 48%,
+    color-mix(in srgb, currentColor 82%, black 18%) 60%,
+    color-mix(in srgb, currentColor 82%, black 18%) 100%
+  );
 }
 
 @keyframes thinking-flow-sweep {
