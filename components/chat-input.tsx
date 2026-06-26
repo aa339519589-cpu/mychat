@@ -2,7 +2,7 @@
 
 import { useRef, useState, useEffect } from "react"
 import { cn } from "@/lib/utils"
-import { ChevronDown, X, Loader2, Plus, FileText, Globe, ArrowUp, Square, Check, Microscope } from "lucide-react"
+import { ChevronDown, X, Loader2, Plus, Paperclip, FileText, Globe, ArrowUp, Square, Check, Microscope, Telescope } from "lucide-react"
 import { TIERS, TIER_MAP, type Tier } from "@/lib/chat-data"
 import { prepareFile, type AttachedFile } from "@/lib/file-extract"
 import type { SearchMode } from "@/lib/search-mode"
@@ -173,11 +173,11 @@ export function ChatInput({
       {fileError && <p className="mb-2 px-2 text-xs text-destructive">{fileError}</p>}
 
       <div className="flex min-w-0 items-end gap-2 rounded-3xl bg-secondary/50 py-2 pl-2 pr-2">
-        {/* 加号：展开 Add + 联网/仓库 */}
+        {/* 添加：展开 Add + 联网/仓库 */}
         <div ref={plusMenuRef} className="relative mb-0.5 shrink-0">
           {plusOpen && (
             <div className="absolute bottom-full left-0 mb-2 w-[8rem] overflow-hidden rounded-xl border border-border/60 bg-card shadow-lg">
-              <PlusItem icon={<Plus className="size-4" />} label="添加" onClick={() => { setPlusOpen(false); addInputRef.current?.click() }} />
+              <PlusItem icon={<Paperclip className="size-4" />} label="添加" onClick={() => { setPlusOpen(false); addInputRef.current?.click() }} />
               <div className="border-t border-border/40" />
               <PlusItem
                 icon={<Globe className={cn("size-4", searchMode === "web" && "text-primary")} />}
@@ -186,7 +186,7 @@ export function ChatInput({
                 active={searchMode === "web"}
               />
               <PlusItem
-                icon={<Globe className={cn("size-4", searchMode === "deep" && "text-primary")} />}
+                icon={<Telescope className={cn("size-4", searchMode === "deep" && "text-primary")} />}
                 label="深度联网"
                 onClick={() => onSearchModeChange(searchMode === "deep" ? "off" : "deep")}
                 active={searchMode === "deep"}
@@ -209,7 +209,7 @@ export function ChatInput({
                 : "text-muted-foreground hover:bg-background/40 hover:text-foreground",
             )}
           >
-            <Plus className={cn("size-4 transition-transform", plusOpen && "rotate-45")} />
+            <Paperclip className={cn("size-4 transition-transform", plusOpen && "rotate-45")} />
             {hasActiveTools && !plusOpen && (
               <span className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-primary ring-2 ring-card" />
             )}
