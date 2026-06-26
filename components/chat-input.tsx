@@ -310,7 +310,7 @@ export function ChatInput({
             {modelPage === "list" ? (
               <div className="flex min-h-0 flex-1 flex-col gap-2.5 px-4 pb-4">
                 <div className="min-h-0 overflow-hidden rounded-[1.25rem] bg-card/70 dark:bg-[#151515]"><div className="max-h-[27dvh] overflow-y-auto">
-                  {MODEL_SHEET_TIERS.map((id, index) => <ModelRow key={id} label={TIER_MAP[id].label} desc={TIER_MAP[id].desc} active={activeTier === id} divided={index > 0} onClick={() => selectTier(id)} />)}
+                  {MODEL_SHEET_TIERS.map((id, index) => <ModelRow key={id} label={TIER_MAP[id].label} active={activeTier === id} divided={index > 0} onClick={() => selectTier(id)} />)}
                   {customModels.map((m, index) => <ModelRow key={m.id} label={m.label} desc={`${m.supportsVision ? "视觉 · " : ""}${m.model}`} active={activeTier === m.id} divided={MODEL_SHEET_TIERS.length > 0 || index > 0} onClick={() => selectTier(m.id)} onDelete={() => removeCustomModel(m.id)} />)}
                 </div></div>
                 <button onClick={() => setModelPage("more")} className="flex h-12 shrink-0 items-center rounded-[1.25rem] bg-card/70 px-4 text-left text-[16px] font-[600] tracking-[-0.01em] text-foreground transition-colors hover:bg-card dark:bg-[#151515]"><span className="flex-1">More models</span><ChevronRight className="size-4 text-muted-foreground" /></button>
