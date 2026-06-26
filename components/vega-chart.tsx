@@ -9,13 +9,29 @@ function describeError(error: unknown): string {
   return "图表配置无效或渲染器执行失败"
 }
 
+function isDesktopViewport() {
+  return typeof window !== "undefined" && window.matchMedia("(min-width: 768px)").matches
+}
+
+function responsiveHeight(value: unknown) {
+  const desktop = isDesktopViewport()
+  const fallback = desktop ? 320 : 240
+  const cap = desktop ? 420 : 260
+  return typeof value === "number" ? Math.min(value, cap) : value ?? fallback
+}
+
+function chartMaxHeight(): string {
+  return isDesktopViewport() ? "62dvh" : "42dvh"
+}
+
 function normalizeSpec(spec: string) {
   const parsed = JSON.parse(spec)
   return {
     ...parsed,
     $schema: parsed.$schema || "https://vega.github.io/schema/vega-lite/v5.json",
-    width: parsed.width ?? "container",
-    autosize: parsed.autosize ?? { type: "fit-x", contains: "padding", resize: true },
+    width: "container",
+    height: responsiveHeight(parsed.height),
+    autosize: parsed.autosize ?? { type: "fit", contains: "padding", resize: true },
     background: "transparent",
     config: {
       ...parsed.config,
@@ -50,10 +66,12 @@ async function renderChartInto(container: HTMLDivElement, spec: string) {
   })
   const svg = container.querySelector("svg")
   if (svg) {
+    svg.removeAttribute("width")
     svg.removeAttribute("height")
     svg.style.width = "100%"
     svg.style.height = "auto"
     svg.style.maxWidth = "100%"
+    svg.style.maxHeight = chartMaxHeight()
   }
   return () => result.view.finalize()
 }
@@ -140,10 +158,10 @@ export function VegaChart({ spec, done }: { spec: string; done: boolean }) {
 
   return (
     <>
-      <div className="group/chart relative my-3 w-full animate-in fade-in duration-300">
+      <div className="group/chart relative my-3 flex w-full min-w-0 justify-center overflow-hidden animate-in fade-in duration-300">
         <div
           ref={containerRef}
-          className="w-full text-foreground [&>div]:block [&>div]:h-auto [&>div]:w-full [&>svg]:h-auto [&>svg]:w-full"
+          className="w-full min-w-0 text-foreground [&>div]:block [&>div]:h-auto [&>div]:w-full [&>svg]:h-auto [&>svg]:max-h-[42dvh] [&>svg]:max-w-full [&>svg]:w-full md:[&>svg]:max-h-[62dvh]"
         />
         <button
           onClick={() => setZoom(true)}
@@ -168,7 +186,7 @@ export function VegaChart({ spec, done }: { spec: string; done: boolean }) {
           </button>
           <div
             ref={zoomContainerRef}
-            className="max-h-full w-full max-w-4xl text-foreground [&>div]:mx-auto [&>div]:block [&>div]:h-auto [&>div]:max-h-[88vh] [&>div]:w-full [&>svg]:max-h-[88vh] [&>svg]:w-full"
+            className="max-h-full w-full max-w-4xl text-foreground [&>div]:mx-auto [&>div]:block [&>div]:h-auto [&>div]:max-h-[88dvh] [&>div]:w-full [&>svg]:h-auto [&>svg]:max-h-[88dvh] [&>svg]:max-w-full [&>svg]:w-full"
             onClick={event => event.stopPropagation()}
           />
         </div>
