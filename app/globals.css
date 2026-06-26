@@ -228,3 +228,32 @@
     padding-right: 2.5rem;
   }
 }
+
+.avatar-box {
+  position: relative;
+  overflow: hidden;
+}
+.avatar-box .avatar-light,
+.avatar-box .avatar-dark {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+.avatar-box .avatar-dark {
+  display: none;
+}
+.dark .avatar-box .avatar-light {
+  display: none;
+}
+.dark .avatar-box .avatar-dark {
+  display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) .avatar-box .avatar-light {
+    display: none;
+  }
+  :root:not(.light) .avatar-box .avatar-dark {
+    display: block;
+  }
+}
