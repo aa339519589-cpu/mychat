@@ -34,6 +34,7 @@ export function ChatInput({
   const [files, setFiles] = useState<AttachedFile[]>([])
   const [fileLoading, setFileLoading] = useState(false)
   const [fileError, setFileError] = useState("")
+  const [sendPending, setSendPending] = useState(false)
   const addInputRef = useRef<HTMLInputElement>(null)
   const plusMenuRef = useRef<HTMLDivElement>(null)
 
@@ -69,15 +70,38 @@ export function ChatInput({
     el.style.height = Math.min(el.scrollHeight, 180) + "px"
   }
 
-  function submit() {
-    const text = value.trim()
-    if (!text && images.length === 0 && files.length === 0) return
-    onSend(text, images.length > 0 ? images : undefined, files.length > 0 ? files : undefined)
+  function clearComposer() {
     setValue("")
     setImages([])
     setFiles([])
     setFileError("")
     if (ref.current) ref.current.style.height = "auto"
+  }
+
+  useEffect(() => {
+    if (!sendPending) return
+    if (!isLoading) return
+    clearComposer()
+    setSendPending(false)
+  }, [sendPending, isLoading])
+
+  useEffect(() => {
+    if (!sendPending || isLoading) return
+    const timer = window.setTimeout(() => setSendPending(false), 700)
+    return () => window.clearTimeout(timer)
+  }, [sendPending, isLoading])
+
+  function submit() {
+    if (sendPending) return
+    const text = value.trim()
+    if (!text && images.length === 0 && files.length === 0) return
+    setSendPending(true)
+    try {
+      onSend(text, images.length > 0 ? images : undefined, files.length > 0 ? files : undefined)
+    } catch (e) {
+      setSendPending(false)
+      throw e
+    }
   }
 
   function addImageFile(file: File) {
@@ -117,7 +141,7 @@ export function ChatInput({
   }
 
   const hasActiveTools = searchMode !== "off" || deepResearch || historyRetrieval
-  const canSend = !isLoading && (!!value.trim() || images.length > 0 || files.length > 0)
+  const canSend = !isLoading && !sendPending && (!!value.trim() || images.length > 0 || files.length > 0)
 
   return (
     <div className={cn(
@@ -226,7 +250,7 @@ export function ChatInput({
           rows={1}
           value={value}
           onChange={e => { setValue(e.target.value); resize() }}
-          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !isLoading) { e.preventDefault(); submit() } }}
+          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !isLoading && !sendPending) { e.preventDefault(); submit() } }}
           placeholder="说点什么……"
           className={cn(
             "block min-w-0 flex-1 resize-none bg-transparent py-1.5 text-[16px] leading-[1.7] tracking-wide text-foreground outline-none placeholder:italic placeholder:text-muted-foreground",
