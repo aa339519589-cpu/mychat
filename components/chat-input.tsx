@@ -2,7 +2,7 @@
 
 import { useRef, useState, useEffect } from "react"
 import { cn } from "@/lib/utils"
-import { ChevronDown, X, Loader2, Plus, Paperclip, FileText, Globe, ArrowUp, Square, Check, Microscope, Search } from "lucide-react"
+import { ChevronDown, X, Loader2, Plus, Paperclip, FileText, Globe, ArrowUp, Square, Check, Microscope, Search, Telescope } from "lucide-react"
 import { TIERS, TIER_MAP, type Tier } from "@/lib/chat-data"
 import { prepareFile, type AttachedFile } from "@/lib/file-extract"
 import type { SearchMode } from "@/lib/search-mode"
@@ -191,7 +191,7 @@ export function ChatInput({
                 active={historyRetrieval}
               />
               <PlusItem
-                icon={<Globe className={cn("size-4", searchMode === "deep" && "text-primary")} />}
+                icon={<Telescope className={cn("size-4", searchMode === "deep" && "text-primary")} />}
                 label="深度联网"
                 onClick={() => onSearchModeChange(searchMode === "deep" ? "off" : "deep")}
                 active={searchMode === "deep"}
