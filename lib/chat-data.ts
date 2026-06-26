@@ -7,10 +7,11 @@ export const TIERS: TierConfig[] = [
   { id: "绝句", label: "快速", desc: "迅捷",  model: "deepseek-v4-flash", thinking: false },
   { id: "正构", label: "均衡", desc: "稳健",  model: "deepseek-v4-flash", thinking: true  },
   { id: "鸿篇", label: "深度", desc: "深推",  model: "deepseek-v4-pro",   thinking: true  },
+  // 观照只作为图片解析器，不在前端模型列表展示。
   { id: "观照", label: "视觉", desc: "V2.5",  model: "mimo-v2.5",         thinking: false },
 ]
 
-export const MODEL_SHEET_TIERS: Tier[] = ["观照", "鸿篇", "正构", "绝句"]
+export const MODEL_SHEET_TIERS: Tier[] = ["鸿篇", "正构", "绝句"]
 
 export const CODE_TIERS = TIERS.filter(t => t.id !== "观照")
 
