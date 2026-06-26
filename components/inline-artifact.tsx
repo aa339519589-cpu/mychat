@@ -1,16 +1,61 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { sanitizeSvg } from "@/lib/artifact"
 import { Maximize2, X } from "lucide-react"
 
+function numericAttr(tag: string, name: string): number | null {
+  const m = tag.match(new RegExp(`\\s${name}\\s*=\\s*["']?([0-9.]+)`, "i"))
+  const n = m ? Number(m[1]) : NaN
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+function svgAspect(svg: string): number | null {
+  const tag = svg.match(/<svg\b[^>]*>/i)?.[0]
+  if (!tag) return null
+
+  const viewBox = tag.match(/\sviewBox\s*=\s*["']\s*[-0-9.]+[,\s]+[-0-9.]+[,\s]+([0-9.]+)[,\s]+([0-9.]+)/i)
+  if (viewBox) {
+    const w = Number(viewBox[1])
+    const h = Number(viewBox[2])
+    if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) return w / h
+  }
+
+  const w = numericAttr(tag, "width")
+  const h = numericAttr(tag, "height")
+  return w && h ? w / h : null
+}
+
+function fitWidthForViewport(aspect: number | null): string {
+  if (typeof window === "undefined" || !aspect) return "100%"
+  const desktop = window.matchMedia("(min-width: 768px)").matches
+  const viewportCap = window.innerHeight * (desktop ? 0.62 : 0.42)
+  const hardCap = desktop ? 620 : 360
+  const maxHeight = Math.min(viewportCap, hardCap)
+  const width = Math.max(220, Math.round(maxHeight * aspect))
+  return `min(100%, ${width}px)`
+}
+
 // 内联 SVG 渲染：直接注入对话 DOM（非 iframe）
 // - currentColor 继承 text-foreground，切换明暗主题时自动跟随
-// - viewBox + 宽度自适应；桌面限制最大宽度，手机全宽（比例分开）
+// - 桌面/手机分开限制：手机按视口高度收缩，桌面保留更大预览
 // - 背景透明，融入页面
 export function InlineArtifact({ svg, done }: { svg: string; done: boolean }) {
   const [zoom, setZoom] = useState(false)
   const clean = sanitizeSvg(svg)
+  const aspect = useMemo(() => clean ? svgAspect(clean) : null, [clean])
+  const [fitWidth, setFitWidth] = useState(() => fitWidthForViewport(aspect))
+
+  useEffect(() => {
+    const update = () => setFitWidth(fitWidthForViewport(aspect))
+    update()
+    window.addEventListener("resize", update)
+    window.addEventListener("orientationchange", update)
+    return () => {
+      window.removeEventListener("resize", update)
+      window.removeEventListener("orientationchange", update)
+    }
+  }, [aspect])
 
   if (!clean) {
     // 流式中还没输出 <svg> 时给个占位；已完成却非 SVG 则静默（文字部分通常已有内容）
@@ -21,10 +66,11 @@ export function InlineArtifact({ svg, done }: { svg: string; done: boolean }) {
 
   return (
     <>
-      {/* 桌面端限制最大宽度，手机端全宽 */}
-      <div className="group/svg relative my-3 w-full animate-in fade-in duration-300 md:max-w-2xl">
+      {/* 桌面端限制最大宽度，手机端按屏幕高度动态收缩 */}
+      <div className="group/svg relative my-3 flex w-full min-w-0 justify-center overflow-hidden animate-in fade-in duration-300 md:max-w-2xl">
         <div
-          className="w-full overflow-hidden text-foreground [&>svg]:block [&>svg]:h-auto [&>svg]:w-full"
+          style={{ width: fitWidth }}
+          className="min-w-0 overflow-hidden text-foreground [&>svg]:mx-auto [&>svg]:block [&>svg]:h-auto [&>svg]:max-h-[42dvh] [&>svg]:max-w-full [&>svg]:w-full md:[&>svg]:max-h-[62dvh]"
           dangerouslySetInnerHTML={{ __html: clean }}
         />
         <button
@@ -49,7 +95,7 @@ export function InlineArtifact({ svg, done }: { svg: string; done: boolean }) {
             <X className="size-5" />
           </button>
           <div
-            className="max-h-full w-full max-w-4xl text-foreground [&>svg]:mx-auto [&>svg]:block [&>svg]:h-auto [&>svg]:max-h-[88vh] [&>svg]:w-full"
+            className="max-h-full w-full max-w-4xl text-foreground [&>svg]:mx-auto [&>svg]:block [&>svg]:h-auto [&>svg]:max-h-[88dvh] [&>svg]:max-w-full [&>svg]:w-auto"
             onClick={e => e.stopPropagation()}
             dangerouslySetInnerHTML={{ __html: clean }}
           />
