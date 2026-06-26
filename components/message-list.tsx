@@ -2,8 +2,8 @@
 
 import Image from "next/image"
 import { useState, useEffect } from "react"
-import type { Conversation } from "@/lib/chat-data"
-import { ChevronDown, ChevronRight, Brain, FileText, Globe, Copy, Check, RefreshCw } from "lucide-react"
+import type { Conversation, Message } from "@/lib/chat-data"
+import { ChevronDown, ChevronRight, Brain, FileText, Globe, Copy, Check, RefreshCw, Pencil, X } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkMath from "remark-math"
 import rehypeKatex from "rehype-katex"
@@ -15,6 +15,7 @@ import { VegaChart } from "@/components/vega-chart"
 import { MermaidChart } from "@/components/mermaid-chart"
 import { FunctionPlotChart } from "@/components/function-plot-chart"
 import { normalizeMathDelimiters } from "@/lib/math"
+import { cn } from "@/lib/utils"
 
 function MdContent({ text }: { text: string }) {
   return (
@@ -108,7 +109,6 @@ function SearchBlock({ searches, replying }: { searches: { query: string; result
   )
 }
 
-// 单个 AI 消息的操作栏（仅模型回复：复制 + 重新生成，常驻显示）
 function AiActions({
   text, isLast, isLoading,
   onCopy, onRegenerate,
@@ -144,18 +144,44 @@ function AiActions({
 export function MessageList({
   conversation,
   onRegenerate,
+  onEditUserMessage,
+  onRegenerateFromUser,
   isLoading,
   onOpenArtifact,
   openArtifactId,
 }: {
   conversation: Conversation
   onRegenerate?: () => void
+  onEditUserMessage?: (messageId: string, content: string) => void
+  onRegenerateFromUser?: (messageId: string) => void
   isLoading?: boolean
   onOpenArtifact?: (msgId: string) => void
   openArtifactId?: string | null
 }) {
   const msgs = conversation.messages
   const lastAiIdx = [...msgs].map((m, i) => ({ m, i })).reverse().find(({ m }) => m.role === 'assistant')?.i ?? -1
+  const [activeUserId, setActiveUserId] = useState<string | null>(null)
+  const [editingUserId, setEditingUserId] = useState<string | null>(null)
+  const [editDraft, setEditDraft] = useState("")
+
+  function startEdit(m: Message) {
+    if (isLoading) return
+    setActiveUserId(m.id)
+    setEditingUserId(m.id)
+    setEditDraft(m.content)
+  }
+  function cancelEdit() {
+    setEditingUserId(null)
+    setEditDraft("")
+  }
+  function commitEdit() {
+    if (!editingUserId) return
+    const text = editDraft.trim()
+    if (!text) return
+    onEditUserMessage?.(editingUserId, text)
+    setEditingUserId(null)
+    setEditDraft("")
+  }
 
   return (
     <article className="mx-auto w-full min-w-0 max-w-[58rem] overflow-x-clip px-3 py-5 sm:px-4 md:px-8 md:py-6">
@@ -181,10 +207,56 @@ export function MessageList({
                 </div>
               )}
               {m.content && (
-                <div className="max-w-[84%] min-w-0 rounded-[1.05rem] border border-white/10 bg-[#151515] px-4 py-2 text-left text-white shadow-sm md:max-w-[80%]">
-                  <p className="break-words font-sans text-[17px] font-[400] not-italic leading-[1.38] tracking-[0.001em] text-left text-white [overflow-wrap:anywhere] md:text-[18px]">{m.content}</p>
-                </div>
+                editingUserId === m.id ? (
+                  <div className="max-w-[84%] min-w-0 rounded-[1.05rem] border border-white/10 bg-[#151515] px-4 py-2 text-left text-white shadow-sm md:max-w-[80%]">
+                    <textarea
+                      value={editDraft}
+                      onChange={e => setEditDraft(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === "Escape") cancelEdit()
+                        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) commitEdit()
+                      }}
+                      autoFocus
+                      rows={Math.min(6, Math.max(2, editDraft.split("\n").length))}
+                      className="w-full min-w-0 resize-none bg-transparent font-sans text-[17px] font-[400] leading-[1.38] tracking-[0.001em] text-white outline-none [overflow-wrap:anywhere] md:text-[18px]"
+                    />
+                  </div>
+                ) : (
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setActiveUserId(activeUserId === m.id ? null : m.id)}
+                    onKeyDown={e => { if (e.key === "Enter") setActiveUserId(activeUserId === m.id ? null : m.id) }}
+                    className="max-w-[84%] min-w-0 cursor-pointer rounded-[1.05rem] border border-white/10 bg-[#151515] px-4 py-2 text-left text-white shadow-sm md:max-w-[80%]"
+                  >
+                    <p className="break-words font-sans text-[17px] font-[400] not-italic leading-[1.38] tracking-[0.001em] text-left text-white [overflow-wrap:anywhere] md:text-[18px]">{m.content}</p>
+                  </div>
+                )
               )}
+              <div className={cn(
+                "mt-1 flex items-center justify-end gap-1 overflow-hidden pr-1 transition-all duration-300 ease-out",
+                activeUserId === m.id || editingUserId === m.id ? "max-h-10 translate-y-0 opacity-100" : "pointer-events-none max-h-0 -translate-y-1 opacity-0",
+              )}>
+                {editingUserId === m.id ? (
+                  <>
+                    <button onClick={commitEdit} disabled={!editDraft.trim() || isLoading} title="保存并重新回复" className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-foreground disabled:opacity-30">
+                      <Check className="size-4" />
+                    </button>
+                    <button onClick={cancelEdit} title="取消" className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-foreground">
+                      <X className="size-4" />
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button onClick={() => startEdit(m)} disabled={isLoading} title="编辑" className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-foreground disabled:opacity-30">
+                      <Pencil className="size-4" />
+                    </button>
+                    <button onClick={() => onRegenerateFromUser?.(m.id)} disabled={isLoading} title="从这里重新回复" className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-foreground disabled:opacity-30">
+                      <RefreshCw className="size-4" />
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           ) : (
             <div key={m.id} className="group min-w-0 pl-[6px] md:grid md:grid-cols-[3rem_minmax(0,1fr)] md:items-start md:gap-2.5 md:pl-0">
@@ -213,8 +285,6 @@ export function MessageList({
                   </div>
                 )}
                 {(() => {
-                  // content 始终是模型原始全文，渲染时实时拆分两种 artifact
-                  // stripToolMarkup 兜底：万一后端有漏网的工具协议标记（DSML 等），前端也绝不渲染出来
                   const { display, raw, done, inlineRaw, inlineDone, vegaRaw, vegaDone, mermaidRaw, mermaidDone, fnPlotRaw, fnPlotDone } = parseArtifact(stripToolMarkup(m.content ?? ''))
                   return (
                     <div className="min-w-0 space-y-2.5">
@@ -224,21 +294,15 @@ export function MessageList({
                         </div>
                       ) : (
                         <>
-                          {/* 移动端正文左起约 18px；桌面端保持原 grid；正文行高 26px，字重 400 */}
                           {display && (
                             <div className="text-[17px] font-[400] text-foreground md:text-[18px]">
                               <MdContent text={display} />
                             </div>
                           )}
-                          {/* Vega-Lite 图表 */}
                           {vegaRaw !== null && <VegaChart spec={vegaRaw} done={vegaDone} />}
-                          {/* Mermaid 流程图 */}
                           {mermaidRaw !== null && <MermaidChart code={mermaidRaw} done={mermaidDone} />}
-                          {/* Function-plot 数学函数 */}
                           {fnPlotRaw !== null && <FunctionPlotChart spec={fnPlotRaw} done={fnPlotDone} />}
-                          {/* 内联 SVG */}
                           {inlineRaw !== null && <InlineArtifact svg={inlineRaw} done={inlineDone} />}
-                          {/* 面板卡片（有 artifact）*/}
                           {raw !== null && (
                             <div>
                               <ArtifactCard
@@ -249,7 +313,6 @@ export function MessageList({
                               />
                             </div>
                           )}
-                          {/* 操作栏与正文对齐，避免左侧再吃掉一层空白 */}
                           {(!!display || raw !== null || idx === lastAiIdx) && (
                             <div className="space-y-2.5">
                               <AiActions
