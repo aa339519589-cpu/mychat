@@ -637,7 +637,7 @@ export function LiteraryChat() {
   }
   async function handleMemoryEdit(id: string, content: string) {
     const ts = new Date().toISOString()
-    setMemories(prev => prev.map(m => m.id === id ? { ...m, content, timestamp: ts }))
+    setMemories(prev => prev.map(m => m.id === id ? { ...m, content, timestamp: ts } : m))
     updateMemory(id, content)
   }
   async function handleMemoryDelete(id: string) {
