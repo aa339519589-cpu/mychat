@@ -13,6 +13,7 @@ type StoredCustomModel = {
   model: string
   baseUrl: string
   credential: string
+  supportsVision: boolean
 }
 
 const CUSTOM_MODELS_KEY = "chat_custom_models"
@@ -31,13 +32,17 @@ function readCustomModels(): StoredCustomModel[] {
     const raw = JSON.parse(localStorage.getItem(CUSTOM_MODELS_KEY) || "[]")
     if (!Array.isArray(raw)) return []
     return raw
-      .map((m: any) => ({
-        id: typeof m.id === "string" ? m.id : "",
-        label: typeof m.label === "string" ? m.label.trim() : "",
-        model: typeof m.model === "string" ? m.model.trim() : "",
-        baseUrl: typeof m.baseUrl === "string" ? m.baseUrl.trim() : "",
-        credential: typeof m.credential === "string" ? m.credential.trim() : "",
-      }))
+      .map((m: any) => {
+        const label = typeof m.label === "string" ? m.label.trim() : ""
+        const model = typeof m.model === "string" ? m.model.trim() : ""
+        const baseUrl = typeof m.baseUrl === "string" ? m.baseUrl.trim() : ""
+        const credential = typeof m.credential === "string" ? m.credential.trim() : ""
+        const supportsVision = m.supportsVision === true
+        const id = typeof m.id === "string" && m.id.startsWith("custom:")
+          ? m.id
+          : (label && model && baseUrl && credential ? encodeCustomModelId({ label, model, baseUrl, credential, supportsVision }) : "")
+        return { id, label, model, baseUrl, credential, supportsVision }
+      })
       .filter((m: StoredCustomModel) => m.id.startsWith("custom:") && m.label && m.model && m.baseUrl && m.credential)
   } catch {
     return []
@@ -87,9 +92,14 @@ export function ChatInput({
   const [customModel, setCustomModel] = useState("")
   const [customBaseUrl, setCustomBaseUrl] = useState("")
   const [customCredential, setCustomCredential] = useState("")
+  const [customSupportsVision, setCustomSupportsVision] = useState(false)
   const [customError, setCustomError] = useState("")
 
-  useEffect(() => { setCustomModels(readCustomModels()) }, [])
+  useEffect(() => {
+    const models = readCustomModels()
+    setCustomModels(models)
+    writeCustomModels(models)
+  }, [])
 
   useEffect(() => {
     if (!tierMenuOpen) return
@@ -202,7 +212,7 @@ export function ChatInput({
       setCustomError("名称、模型、URL、密钥都要填。")
       return
     }
-    const nextModel: StoredCustomModel = { id: encodeCustomModelId({ label, model, baseUrl, credential }), label, model, baseUrl, credential }
+    const nextModel: StoredCustomModel = { id: encodeCustomModelId({ label, model, baseUrl, credential, supportsVision: customSupportsVision }), label, model, baseUrl, credential, supportsVision: customSupportsVision }
     saveCustomModels([...customModels, nextModel])
     onTierChange(nextModel.id as Tier)
     try { localStorage.setItem("chat_active_tier", nextModel.id) } catch {}
@@ -210,6 +220,7 @@ export function ChatInput({
     setCustomModel("")
     setCustomBaseUrl("")
     setCustomCredential("")
+    setCustomSupportsVision(false)
     setCustomError("")
     setModelPage("list")
   }
@@ -300,7 +311,7 @@ export function ChatInput({
               <div className="flex min-h-0 flex-1 flex-col gap-4 px-5 pb-5">
                 <div className="min-h-0 overflow-hidden rounded-[1.55rem] bg-card/70 dark:bg-[#151515]"><div className="max-h-[46dvh] overflow-y-auto">
                   {MODEL_SHEET_TIERS.map((id, index) => <ModelRow key={id} label={TIER_MAP[id].label} desc={TIER_MAP[id].desc} active={activeTier === id} divided={index > 0} onClick={() => selectTier(id)} />)}
-                  {customModels.map((m, index) => <ModelRow key={m.id} label={m.label} desc={m.model} active={activeTier === m.id} divided={MODEL_SHEET_TIERS.length > 0 || index > 0} onClick={() => selectTier(m.id)} onDelete={() => removeCustomModel(m.id)} />)}
+                  {customModels.map((m, index) => <ModelRow key={m.id} label={m.label} desc={`${m.supportsVision ? "视觉 · " : ""}${m.model}`} active={activeTier === m.id} divided={MODEL_SHEET_TIERS.length > 0 || index > 0} onClick={() => selectTier(m.id)} onDelete={() => removeCustomModel(m.id)} />)}
                 </div></div>
                 <button onClick={() => setModelPage("more")} className="flex h-16 shrink-0 items-center rounded-[1.55rem] bg-card/70 px-5 text-left text-[21px] font-[650] tracking-[-0.02em] text-foreground transition-colors hover:bg-card dark:bg-[#151515]"><span className="flex-1">More models</span><ChevronRight className="size-5 text-muted-foreground" /></button>
               </div>
@@ -311,10 +322,14 @@ export function ChatInput({
                   <Field label="模型名" value={customModel} onChange={setCustomModel} placeholder="your-model" />
                   <Field label="URL" value={customBaseUrl} onChange={setCustomBaseUrl} placeholder="https://api.example.com/v1" />
                   <Field label="密钥" value={customCredential} onChange={setCustomCredential} placeholder="填写密钥" password />
+                  <label className="flex items-center justify-between rounded-[1rem] border border-border/50 bg-background/65 px-3 py-3 dark:border-white/10 dark:bg-[#20201f]">
+                    <span className="text-sm font-[600] text-foreground">支持视觉，图片直接给该模型读取</span>
+                    <input type="checkbox" checked={customSupportsVision} onChange={e => setCustomSupportsVision(e.target.checked)} className="size-4 accent-current" />
+                  </label>
                   {customError && <p className="px-1 text-sm text-destructive">{customError}</p>}
                   <button onClick={addCustomModel} className="mt-1 flex h-12 w-full items-center justify-center rounded-[1rem] bg-foreground text-sm font-[600] text-background transition-opacity hover:opacity-90">添加模型</button>
                 </div>
-                <p className="px-2 pt-3 text-xs leading-relaxed text-muted-foreground/75">保存后会回到上一页，并追加在「快速」下面；模型太多时列表内部滚动，不会顶掉聊天区。</p>
+                <p className="px-2 pt-3 text-xs leading-relaxed text-muted-foreground/75">开启视觉后，图片会直接交给这个模型；不开启时，仍由小米解析图片后再交给模型回复。</p>
               </div>
             )}
           </section>
