@@ -209,7 +209,7 @@ export function ChatInput({
                 : "text-muted-foreground hover:bg-background/40 hover:text-foreground",
             )}
           >
-            <Paperclip className={cn("size-4 transition-transform", plusOpen && "rotate-45")} />
+            <Plus className={cn("size-4 transition-transform", plusOpen && "rotate-45")} />
             {hasActiveTools && !plusOpen && (
               <span className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-primary ring-2 ring-card" />
             )}
