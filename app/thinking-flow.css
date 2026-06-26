@@ -1,0 +1,33 @@
+/* 思考中的白光流动：必须是连续扫光，不能一帧一帧跳。 */
+.thinking-flow {
+  display: inline-block;
+  background-image: linear-gradient(
+    100deg,
+    currentColor 0%,
+    currentColor 34%,
+    rgba(255, 255, 255, 0.98) 48%,
+    currentColor 62%,
+    currentColor 100%
+  );
+  background-size: 260% 100%;
+  background-position: 130% 0;
+  background-repeat: no-repeat;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: thinking-flow-sweep 1.45s linear infinite;
+  transform: translateZ(0);
+  will-change: background-position;
+}
+
+@keyframes thinking-flow-sweep {
+  from { background-position: 130% 0; }
+  to { background-position: -130% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thinking-flow {
+    animation: none;
+    background-position: 50% 0;
+  }
+}
