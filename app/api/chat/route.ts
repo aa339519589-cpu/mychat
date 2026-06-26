@@ -192,25 +192,24 @@ export async function POST(req: NextRequest) {
     return new Response(JSON.stringify({ error: (e as Error).message }), { status: 400, headers: { 'Content-Type': 'application/json' } })
   }
 
-  const extraModel = normalizeExternalModel(externalModel) ?? decodeCustomModelTier(tier)
-  const usingExternalModel = !!extraModel && !deepResearch
+  const external = deepResearch ? null : (normalizeExternalModel(externalModel) ?? decodeCustomModelTier(tier))
   const tierCfg = TIER_MAP[tier as keyof typeof TIER_MAP] ?? TIER_MAP['绝句']
-  const model = deepResearch ? 'deepseek-v4-pro' : (usingExternalModel ? extraModel.model : tierCfg.model)
-  const thinking = usingExternalModel ? false : (deepResearch ? true : tierCfg.thinking)
+  const model = deepResearch ? 'deepseek-v4-pro' : (external ? external.model : tierCfg.model)
+  const thinking = external ? false : (deepResearch ? true : tierCfg.thinking)
   const baseCapability = getModelCapability('deepseek-v4-flash')
-  const capability = usingExternalModel
+  const capability = external
     ? {
         ...baseCapability,
         id: model,
-        supportsVision: extraModel.supportsVision,
-        supportsImageInput: extraModel.supportsVision,
-        provider: { ...baseCapability.provider, adapter: 'openai-compatible' as const, baseUrl: extraModel.baseUrl },
+        supportsVision: external.supportsVision,
+        supportsImageInput: external.supportsVision,
+        provider: { ...baseCapability.provider, adapter: 'openai-compatible' as const, baseUrl: external.baseUrl },
       }
     : getModelCapability(model)
-  const apiKey = usingExternalModel ? extraModel.token : (process.env[capability.provider.apiKeyEnv] ?? '')
+  const apiKey = external ? external.token : (process.env[capability.provider.apiKeyEnv] ?? '')
   if (!apiKey) {
-    log.error('chat', usingExternalModel ? 'External model token missing' : `${capability.provider.apiKeyEnv} not configured`)
-    return new Response(JSON.stringify({ error: usingExternalModel ? '自定义模型未填写密钥' : `服务未配置（${capability.provider.apiKeyEnv} 未设置）` }), { status: 500 })
+    log.error('chat', external ? 'External model token missing' : `${capability.provider.apiKeyEnv} not configured`)
+    return new Response(JSON.stringify({ error: external ? '自定义模型未填写密钥' : `服务未配置（${capability.provider.apiKeyEnv} 未设置）` }), { status: 500 })
   }
 
   const auth = await resolveAuth()
@@ -251,7 +250,7 @@ export async function POST(req: NextRequest) {
   const effectiveMemories = memoryEnabled && !project?.id ? (memories as Memory[] | undefined) : undefined
   const url = chatCompletionsUrl(capability.provider.baseUrl)
   const SYSTEM = buildSystem(effectiveMemories, { searchMode: effectiveSearchMode, latestBeijingDate, memoryEnabled, project }) + renderConversationSummary(conversationSummary) + activeHistoryContext + MARKDOWN_DIVIDER_GUARD
-  const openaiTools = usingExternalModel ? [] : toOpenAITools(tools)
+  const openaiTools = external ? [] : toOpenAITools(tools)
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -292,7 +291,7 @@ export async function POST(req: NextRequest) {
           url, apiKey, model, adapter: capability.provider.adapter, thinking,
           messages: msgs, tools: openaiTools, emit, executeTool,
           maxRounds: SAFETY_ROUNDS,
-          leakedRetry: !usingExternalModel,
+          leakedRetry: !external,
           autoContinue: {},
           onTurn: ({ phase, round, turn }) => log.info('chat', `Turn ${phase}`, { round, finishReason: turn.finishReason, leaked: turn.leaked, toolCalls: turn.toolCalls.length, contentLen: turn.content.length, truncated: turn.truncated }),
         })
