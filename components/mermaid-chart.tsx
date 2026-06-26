@@ -9,6 +9,22 @@ function describeError(error: unknown): string {
   return "Mermaid 语法无效或渲染器执行失败"
 }
 
+function chartMaxHeight(): string {
+  if (typeof window === "undefined") return "42dvh"
+  return window.matchMedia("(min-width: 768px)").matches ? "62dvh" : "42dvh"
+}
+
+function fitSvg(container: HTMLDivElement) {
+  const svg = container.querySelector("svg")
+  if (!svg) return
+  svg.removeAttribute("width")
+  svg.removeAttribute("height")
+  svg.style.width = "auto"
+  svg.style.height = "auto"
+  svg.style.maxWidth = "100%"
+  svg.style.maxHeight = chartMaxHeight()
+}
+
 export function MermaidChart({ code, done }: { code: string; done: boolean }) {
   const ref = useRef<HTMLDivElement>(null)
   const [error, setError] = useState<string | null>(null)
@@ -44,6 +60,7 @@ export function MermaidChart({ code, done }: { code: string; done: boolean }) {
         const { svg } = await mermaid.render(id.current, code.trim())
         if (!cancelled) {
           element.innerHTML = svg
+          fitSvg(element)
           setError(null)
         }
       } catch (err) {
@@ -73,7 +90,7 @@ export function MermaidChart({ code, done }: { code: string; done: boolean }) {
   return (
     <div
       ref={ref}
-      className="my-3 w-full overflow-x-auto animate-in fade-in duration-300 [&>svg]:mx-auto [&>svg]:block [&>svg]:max-w-full [&>svg]:h-auto"
+      className="my-3 flex w-full min-w-0 justify-center overflow-hidden animate-in fade-in duration-300 [&>svg]:block [&>svg]:h-auto [&>svg]:max-h-[42dvh] [&>svg]:max-w-full md:[&>svg]:max-h-[62dvh]"
     />
   )
 }
