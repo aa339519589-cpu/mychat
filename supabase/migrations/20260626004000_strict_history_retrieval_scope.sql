@@ -1,4 +1,7 @@
-create or replace function public.match_conversation_chunks(
+drop function if exists public.match_conversation_chunks(vector(1536), uuid, uuid, integer, double precision);
+drop function if exists public.match_conversation_chunks_text(text, uuid, uuid, integer);
+
+create function public.match_conversation_chunks(
   query_embedding vector(1536),
   match_user_id uuid,
   match_project_id uuid default null,
@@ -41,7 +44,7 @@ as $$
   limit match_count;
 $$;
 
-create or replace function public.match_conversation_chunks_text(
+create function public.match_conversation_chunks_text(
   query_text text,
   match_user_id uuid,
   match_project_id uuid default null,
@@ -91,4 +94,4 @@ as $$
 $$;
 
 comment on function public.match_conversation_chunks is 'Strict scoped semantic retrieval. null project means ordinary Chat only; project id means that project only.';
-comment on function public.match_conversation_chunks_text is 'Strict scoped keyword retrieval. null project means ordinary Chat only; project id means that project only.';
+comment on function public.match_conversation_chunks_text is 'Strict scoped keyword retrieval. null project means ordinary Chat only; project id means ordinary project only.';
