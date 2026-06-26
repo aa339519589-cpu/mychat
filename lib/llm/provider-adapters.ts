@@ -1,4 +1,4 @@
-export type ProviderAdapterId = 'deepseek-openai' | 'mimo-openai'
+export type ProviderAdapterId = 'deepseek-openai' | 'mimo-openai' | 'openai-compatible'
 
 type RequestOptions = {
   model: string
@@ -13,14 +13,17 @@ export function buildProviderRequest(adapter: ProviderAdapterId, opts: RequestOp
     model: opts.model,
     messages: opts.messages,
     stream: true,
-    thinking: { type: opts.thinking ? 'enabled' : 'disabled' },
     stream_options: { include_usage: true },
+  }
+
+  if (adapter !== 'openai-compatible') {
+    body.thinking = { type: opts.thinking ? 'enabled' : 'disabled' }
   }
 
   if (adapter === 'mimo-openai') body.max_completion_tokens = 65_536
   else body.max_tokens = 65_536
 
-  if (opts.tools.length) {
+  if (opts.tools.length && adapter !== 'openai-compatible') {
     body.tools = opts.tools
     body.tool_choice = 'auto'
   }
