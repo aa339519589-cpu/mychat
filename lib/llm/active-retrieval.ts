@@ -53,7 +53,7 @@ function embeddingConfig() {
   }
 }
 
-function enabled(): boolean {
+function embeddingEnabled(): boolean {
   const cfg = embeddingConfig()
   return !!cfg.apiKey && !!cfg.model
 }
@@ -112,10 +112,7 @@ async function embed(input: string): Promise<number[] | null> {
 
     const res = await fetch(`${cfg.baseUrl}/embeddings`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${cfg.apiKey}`,
-      },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
       body: JSON.stringify(body),
     })
     if (!res.ok) {
@@ -150,22 +147,12 @@ export function latestUserQuery(messages: RawMsg[]): string {
 }
 
 export async function ensureConversationIndexed(supabase: SupabaseServer | null, userId: string | null, conversationId: string | null): Promise<void> {
-  if (!enabled() || !supabase || !userId || !conversationId) return
+  if (!supabase || !userId || !conversationId) return
 
   try {
     const [{ data: conversation }, { data: messages, error: msgError }] = await Promise.all([
-      supabase
-        .from('conversations')
-        .select('id, title, project_id, updated_at')
-        .eq('id', conversationId)
-        .eq('user_id', userId)
-        .maybeSingle(),
-      supabase
-        .from('messages')
-        .select('id, role, content, images, created_at')
-        .eq('conversation_id', conversationId)
-        .eq('user_id', userId)
-        .order('created_at', { ascending: true }),
+      supabase.from('conversations').select('id, title, project_id, updated_at').eq('id', conversationId).eq('user_id', userId).maybeSingle(),
+      supabase.from('messages').select('id, role, content, images, created_at').eq('conversation_id', conversationId).eq('user_id', userId).order('created_at', { ascending: true }),
     ])
     if (msgError || !conversation) return
 
@@ -174,11 +161,7 @@ export async function ensureConversationIndexed(supabase: SupabaseServer | null,
     if (!chunks.length) return
 
     const hashes = chunks.map(c => hash(c.content))
-    const { data: existing } = await supabase
-      .from('conversation_chunks')
-      .select('content_hash')
-      .eq('conversation_id', conversationId)
-      .in('content_hash', hashes)
+    const { data: existing } = await supabase.from('conversation_chunks').select('content_hash').eq('conversation_id', conversationId).in('content_hash', hashes)
 
     const seen = new Set((existing ?? []).map((r: any) => r.content_hash as string))
     const pending = chunks.filter(c => !seen.has(hash(c.content))).slice(0, 24)
@@ -187,8 +170,7 @@ export async function ensureConversationIndexed(supabase: SupabaseServer | null,
     const conv = conversation as ConversationRow
     const rowsToInsert = []
     for (const chunk of pending) {
-      const embedding = await embed(chunk.content)
-      if (!embedding) return
+      const vector = embeddingEnabled() ? await embed(chunk.content) : null
       rowsToInsert.push({
         user_id: userId,
         conversation_id: conversationId,
@@ -199,7 +181,7 @@ export async function ensureConversationIndexed(supabase: SupabaseServer | null,
         content: chunk.content,
         content_hash: hash(chunk.content),
         token_count: estimateTokens(chunk.content),
-        embedding,
+        embedding: vector,
       })
     }
 
@@ -211,34 +193,34 @@ export async function ensureConversationIndexed(supabase: SupabaseServer | null,
   }
 }
 
-export async function backfillUserConversationIndex(supabase: SupabaseServer | null, userId: string | null, limit = 40): Promise<{ indexed: number; enabled: boolean }> {
-  if (!enabled() || !supabase || !userId) return { indexed: 0, enabled: enabled() }
+export async function backfillUserConversationIndex(supabase: SupabaseServer | null, userId: string | null, limit = 40): Promise<{ indexed: number; embeddingEnabled: boolean }> {
+  if (!supabase || !userId) return { indexed: 0, embeddingEnabled: embeddingEnabled() }
 
-  const { data } = await supabase
-    .from('conversations')
-    .select('id')
-    .eq('user_id', userId)
-    .order('updated_at', { ascending: false })
-    .limit(limit)
+  const { data } = await supabase.from('conversations').select('id').eq('user_id', userId).order('updated_at', { ascending: false }).limit(limit)
 
   let indexed = 0
   for (const c of data ?? []) {
     await ensureConversationIndexed(supabase, userId, (c as any).id)
     indexed++
   }
-  return { indexed, enabled: true }
+  return { indexed, embeddingEnabled: embeddingEnabled() }
 }
 
 function keywordScore(query: string, content: string): number {
-  const words = query
-    .toLowerCase()
-    .split(/[\s,，。.!?！？、/\\|]+/)
-    .map(w => w.trim())
-    .filter(w => w.length >= 2)
-    .slice(0, 16)
+  const words = query.toLowerCase().split(/[\s,，。.!?！？、/\\|]+/).map(w => w.trim()).filter(w => w.length >= 2).slice(0, 16)
   if (!words.length) return 0
   const lower = content.toLowerCase()
   return words.reduce((acc, w) => acc + (lower.includes(w) ? 0.04 : 0), 0)
+}
+
+function textSearchQuery(query: string): string {
+  return query
+    .replace(/[()&|!:*'"<>]/g, ' ')
+    .split(/[\s,，。.!?！？、/\\|]+/)
+    .map(w => w.trim())
+    .filter(w => w.length >= 2)
+    .slice(0, 12)
+    .join(' | ')
 }
 
 function renderHits(hits: RetrievalHit[]): string {
@@ -249,7 +231,7 @@ function renderHits(hits: RetrievalHit[]): string {
   for (const hit of hits) {
     const title = hit.conversation_title?.trim() || '未命名聊天'
     const content = hit.content.trim()
-    const block = `【历史片段｜${title}｜相似度 ${hit.similarity.toFixed(2)}】\n${content}`
+    const block = `【历史片段｜${title}｜匹配度 ${hit.similarity.toFixed(2)}】\n${content}`
     if (used + block.length > INJECT_CHAR_BUDGET) break
     used += block.length
     parts.push(block)
@@ -257,6 +239,25 @@ function renderHits(hits: RetrievalHit[]): string {
 
   if (!parts.length) return ''
   return `\n\n【主动检索到的历史对话片段】\n下面是系统从历史聊天中临时检索到的相关原文片段。它不是 Memory，不要把它写入长期记忆；只在本轮回答中作为参考。若片段和用户当前问题无关，请忽略。\n\n${parts.join('\n\n---\n\n')}`
+}
+
+async function retrieveByTextSearch(supabase: SupabaseServer, userId: string, projectId: string | null | undefined, query: string, force: boolean): Promise<RetrievalHit[]> {
+  const fts = textSearchQuery(query)
+  if (!fts) return []
+  const { data, error } = await supabase.rpc('match_conversation_chunks_text', {
+    query_text: fts,
+    match_user_id: userId,
+    match_project_id: projectId ?? null,
+    match_count: RETRIEVAL_TOP_K,
+  })
+  if (error || !data) return []
+
+  const hits = (data as RetrievalHit[])
+    .map(hit => ({ ...hit, similarity: hit.similarity + keywordScore(query, hit.content) + (projectId && hit.project_id === projectId ? 0.04 : 0) }))
+    .sort((a, b) => b.similarity - a.similarity)
+
+  if (!force && hits[0] && hits[0].similarity < 0.08) return []
+  return hits.slice(0, INJECT_TOP_K)
 }
 
 export async function retrieveHistoryContext(opts: {
@@ -267,35 +268,34 @@ export async function retrieveHistoryContext(opts: {
   query: string
 }): Promise<string> {
   const { supabase, userId, conversationId, projectId, query } = opts
-  if (!enabled() || !supabase || !userId || !query.trim()) return ''
+  if (!supabase || !userId || !query.trim()) return ''
 
   const force = shouldForceHistoryRetrieval(query)
   try {
-    const queryEmbedding = await embed(query)
-    if (!queryEmbedding) return ''
+    const queryEmbedding = embeddingEnabled() ? await embed(query) : null
 
-    const { data, error } = await supabase.rpc('match_conversation_chunks', {
-      query_embedding: queryEmbedding,
-      match_user_id: userId,
-      match_project_id: projectId ?? null,
-      match_count: RETRIEVAL_TOP_K,
-      similarity_threshold: force ? FORCE_SIMILARITY_THRESHOLD : DEFAULT_SIMILARITY_THRESHOLD,
-    })
-    if (error || !data) return ''
+    if (queryEmbedding) {
+      const { data, error } = await supabase.rpc('match_conversation_chunks', {
+        query_embedding: queryEmbedding,
+        match_user_id: userId,
+        match_project_id: projectId ?? null,
+        match_count: RETRIEVAL_TOP_K,
+        similarity_threshold: force ? FORCE_SIMILARITY_THRESHOLD : DEFAULT_SIMILARITY_THRESHOLD,
+      })
+      if (!error && data) {
+        const hits = (data as RetrievalHit[])
+          .map(hit => ({
+            ...hit,
+            similarity: hit.similarity + keywordScore(query, hit.content) + (projectId && hit.project_id === projectId ? 0.04 : 0) + (conversationId && hit.conversation_id === conversationId ? 0.02 : 0),
+          }))
+          .sort((a, b) => b.similarity - a.similarity)
+          .slice(0, INJECT_TOP_K)
+        if (force || !hits[0] || hits[0].similarity >= DEFAULT_SIMILARITY_THRESHOLD) return renderHits(hits)
+      }
+    }
 
-    const hits = (data as RetrievalHit[])
-      .map(hit => ({
-        ...hit,
-        similarity: hit.similarity
-          + keywordScore(query, hit.content)
-          + (projectId && hit.project_id === projectId ? 0.04 : 0)
-          + (conversationId && hit.conversation_id === conversationId ? 0.02 : 0),
-      }))
-      .sort((a, b) => b.similarity - a.similarity)
-      .slice(0, INJECT_TOP_K)
-
-    if (!force && hits[0] && hits[0].similarity < DEFAULT_SIMILARITY_THRESHOLD) return ''
-    return renderHits(hits)
+    const textHits = await retrieveByTextSearch(supabase, userId, projectId, query, force)
+    return renderHits(textHits)
   } catch (e) {
     log.warn('activeRetrieval', 'Retrieval skipped', e)
     return ''
