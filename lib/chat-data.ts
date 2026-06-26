@@ -10,6 +10,8 @@ export const TIERS: TierConfig[] = [
   { id: "观照", label: "视觉", desc: "V2.5",  model: "mimo-v2.5",         thinking: false },
 ]
 
+export const MODEL_SHEET_TIERS: Tier[] = ["观照", "鸿篇", "正构", "绝句"]
+
 export const CODE_TIERS = TIERS.filter(t => t.id !== "观照")
 
 export const TIER_MAP: Record<Tier, TierConfig> = Object.fromEntries(TIERS.map(t => [t.id, t])) as Record<Tier, TierConfig>
