@@ -41,6 +41,12 @@ function writeCachedMessages(conversationId: string, messages: Message[]) {
   }
 }
 
+function updateCachedMessageContent(conversationId: string, messageId: string, content: string) {
+  const cached = readCachedMessages(conversationId)
+  if (!cached.length) return
+  writeCachedMessages(conversationId, cached.map(m => m.id === messageId ? { ...m, content } : m))
+}
+
 function removeCachedMessages(conversationId: string) {
   if (typeof window === "undefined") return
   try { window.localStorage.removeItem(cacheKey(conversationId)) } catch {}
@@ -208,6 +214,13 @@ export async function insertMessage(userId: string, conversationId: string, msg:
     thinking: msg.thinking ?? null,
   })
   if (error) console.error("insertMessage", error)
+}
+
+export async function updateMessageContent(conversationId: string, messageId: string, content: string): Promise<void> {
+  updateCachedMessageContent(conversationId, messageId, content)
+  const supabase = createClient()
+  const { error } = await supabase.from("messages").update({ content }).eq("id", messageId)
+  if (error) console.error("updateMessageContent", error)
 }
 
 export async function deleteMessageRow(id: string): Promise<void> {
