@@ -15,6 +15,74 @@ function readTheme(): Colors {
   return { fg, bg, scheme: dark ? "dark" : "light" }
 }
 
+function responsiveGuardCss(inline: boolean): string {
+  return `
+html,body{width:100%;max-width:100%;overflow-x:hidden;overscroll-behavior:contain;}
+body{touch-action:pan-y;}
+img,svg,canvas,video{max-width:100%;}
+img,video{height:auto;}
+svg{height:auto;}
+canvas{height:auto;}
+#__v{width:100%;max-width:100%;overflow:hidden;}
+#__v>*{max-width:100%;}
+@media (max-width:767px){
+  html,body{min-width:0!important;}
+  body{${inline ? '' : 'padding:8px!important;'}font-size:14px;}
+  table{display:block;max-width:100%;overflow-x:auto;}
+  pre{max-width:100%;overflow-x:auto;}
+  [style*="min-width"]{min-width:0!important;}
+  [style*="width"]{max-width:100%!important;}
+}
+`
+}
+
+function mobileFitScript(): string {
+  return `
+<script>(function(){
+var WRAP_ID="__artifact_mobile_fit_wrap";
+var fitting=false;
+function shouldFit(){return window.matchMedia&&window.matchMedia("(max-width: 767px)").matches;}
+function ensureWrap(){
+  if(!document.body) return null;
+  var wrap=document.getElementById(WRAP_ID);
+  if(wrap) return wrap;
+  wrap=document.createElement("div");
+  wrap.id=WRAP_ID;
+  wrap.style.transformOrigin="top left";
+  while(document.body.firstChild) wrap.appendChild(document.body.firstChild);
+  document.body.appendChild(wrap);
+  return wrap;
+}
+function fit(){
+  if(fitting) return;
+  fitting=true;
+  requestAnimationFrame(function(){
+    fitting=false;
+    var wrap=ensureWrap();
+    if(!wrap) return;
+    wrap.style.transform="";
+    wrap.style.width="100%";
+    document.body.style.overflowX="hidden";
+    document.documentElement.style.overflowX="hidden";
+    document.body.style.minHeight="";
+    if(!shouldFit()) return;
+    var vw=document.documentElement.clientWidth||window.innerWidth||0;
+    if(!vw) return;
+    var natural=Math.max(wrap.scrollWidth,wrap.offsetWidth,document.body.scrollWidth,document.documentElement.scrollWidth);
+    if(natural<=vw+2) return;
+    var scale=Math.max(0.35,Math.min(1,vw/natural));
+    wrap.style.width=natural+"px";
+    wrap.style.transform="scale("+scale+")";
+    document.body.style.minHeight=Math.ceil(wrap.scrollHeight*scale)+"px";
+  });
+}
+window.addEventListener("load",function(){fit();[120,360,900,1800].forEach(function(t){setTimeout(fit,t);});});
+window.addEventListener("resize",fit);
+window.addEventListener("orientationchange",fit);
+if(window.ResizeObserver){try{new ResizeObserver(fit).observe(document.documentElement);}catch(e){}}
+})();</script>`
+}
+
 // 内联模式：透明背景，高度自适应，ResizeObserver 上报
 // 面板模式：铺满容器，背景由面板控制
 function bootstrap(c: Colors, inline: boolean): string {
@@ -34,19 +102,25 @@ window.addEventListener("load",function(){__report();[200,600,1500].forEach(func
 <style>
 :root{--fg:${c.fg};--bg:${c.bg};color-scheme:${c.scheme};}
 ${bodyStyle}
-*{box-sizing:border-box;}#__v{width:100%;}
+*{box-sizing:border-box;}
+${responsiveGuardCss(inline)}
 </style>
 <script>(function(){
 ${heightScript}
+var __previewTimer=0,__previewHtml="";
+function __applyPreview(){var v=document.getElementById("__v");if(v){v.innerHTML=__previewHtml;${inline ? 'if(typeof __report==="function")setTimeout(__report,80);' : ''}}}
 window.addEventListener("message",function(e){var d=e.data||{};
-if(d.__art==="preview"){var v=document.getElementById("__v");if(v){v.innerHTML=d.html;${inline ? 'if(typeof __report==="function")setTimeout(__report,80);' : ''}}}
+if(d.__art==="preview"){
+  __previewHtml=d.html||"";
+  if(!__previewTimer){__previewTimer=setTimeout(function(){__previewTimer=0;__applyPreview();},120);}
+}
 else if(d.__art==="final"){document.open();document.write(d.html);document.close();}});
 parent.postMessage({__art:"ready"},"*");
 })();</script>
 </head><body><div id="__v"></div></body></html>`
 }
 
-// 完成时写入完整文档（注入主题变量 + 可选的高度上报脚本）
+// 完成时写入完整文档（注入主题变量 + 可选的高度上报脚本 + 移动端缩放保护）
 function prepareFinal(raw: string, c: Colors, inline: boolean): string {
   const heightScript = inline ? `
 <script>(function(){
@@ -57,7 +131,9 @@ window.addEventListener("load",function(){__report();[300,800,2000].forEach(func
   const inject = `<style>
 :root{--fg:${c.fg};--bg:${c.bg};color-scheme:${c.scheme};}
 html,body{background:transparent!important;${inline ? 'margin:0;padding:0;' : ''}color:var(--fg);}
-</style>${heightScript}`
+*{box-sizing:border-box;}
+${responsiveGuardCss(inline)}
+</style>${heightScript}${mobileFitScript()}`
   if (/<head[^>]*>/i.test(raw)) return raw.replace(/(<head[^>]*>)/i, `$1${inject}`)
   if (/<\/head>/i.test(raw)) return raw.replace(/<\/head>/i, `${inject}</head>`)
   if (/<body[^>]*>/i.test(raw)) return raw.replace(/(<body[^>]*>)/i, `$1${inject}`)
@@ -91,10 +167,13 @@ export function ArtifactFrame({
     return () => window.removeEventListener("message", onMsg)
   }, [inline])
 
-  // 流式预览：静态内容边生成边显现
+  // 流式预览：降频写入 iframe，避免模型生成 artifact 时拖住主线程和滚动。
   useEffect(() => {
     if (!ready || done) return
-    iframeRef.current?.contentWindow?.postMessage({ __art: "preview", html: raw }, "*")
+    const timer = window.setTimeout(() => {
+      iframeRef.current?.contentWindow?.postMessage({ __art: "preview", html: raw }, "*")
+    }, 80)
+    return () => window.clearTimeout(timer)
   }, [raw, ready, done])
 
   // 完成：document.write 完整文档，CDN 脚本执行
