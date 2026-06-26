@@ -299,25 +299,25 @@ export function ChatInput({
       {tierMenuOpen && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/45 px-2 pb-2 pt-12 backdrop-blur-[2px] md:items-center md:p-4">
           <button className="absolute inset-0 cursor-default" aria-label="关闭模型选择" onClick={() => setTierMenuOpen(false)} />
-          <section className="relative flex h-[min(52dvh,500px)] w-full max-w-[42rem] flex-col overflow-hidden rounded-[2rem] border border-border/50 bg-background/95 shadow-2xl paper-grain dark:border-white/10 dark:bg-[#20201f] md:max-h-[540px]">
-            <div className="mx-auto mt-3 h-1.5 w-20 rounded-full bg-muted-foreground/35" />
-            <div className="flex h-14 shrink-0 items-center justify-center px-5">
-              {modelPage === "more" && <button onClick={() => setModelPage("list")} className="absolute left-4 flex size-10 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-secondary/70 hover:text-foreground"><ChevronLeft className="size-5" /></button>}
-              <h2 className="text-[20px] font-[650] tracking-[-0.02em] text-foreground">{modelPage === "list" ? "Select model" : "More models"}</h2>
-              <button onClick={() => setTierMenuOpen(false)} className="absolute right-4 flex size-10 items-center justify-center rounded-full border border-border/50 bg-secondary/70 text-muted-foreground shadow-sm transition-colors hover:text-foreground dark:border-white/10 dark:bg-[#151515]"><X className="size-5" /></button>
+          <section className="relative flex h-[min(50dvh,460px)] w-full max-w-[42rem] flex-col overflow-hidden rounded-[1.75rem] border border-border/50 bg-background/95 shadow-2xl paper-grain dark:border-white/10 dark:bg-[#20201f] md:max-h-[500px]">
+            <div className="mx-auto mt-3 h-1 w-16 rounded-full bg-muted-foreground/35" />
+            <div className="flex h-12 shrink-0 items-center justify-center px-4">
+              {modelPage === "more" && <button onClick={() => setModelPage("list")} className="absolute left-3 flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-secondary/70 hover:text-foreground"><ChevronLeft className="size-4" /></button>}
+              <h2 className="text-[17px] font-[600] tracking-[-0.01em] text-foreground">{modelPage === "list" ? "Select model" : "More models"}</h2>
+              <button onClick={() => setTierMenuOpen(false)} className="absolute right-3 flex size-9 items-center justify-center rounded-full border border-border/50 bg-secondary/70 text-muted-foreground shadow-sm transition-colors hover:text-foreground dark:border-white/10 dark:bg-[#151515]"><X className="size-4" /></button>
             </div>
 
             {modelPage === "list" ? (
-              <div className="flex min-h-0 flex-1 flex-col gap-3 px-5 pb-5">
-                <div className="min-h-0 overflow-hidden rounded-[1.55rem] bg-card/70 dark:bg-[#151515]"><div className="max-h-[28dvh] overflow-y-auto">
+              <div className="flex min-h-0 flex-1 flex-col gap-2.5 px-4 pb-4">
+                <div className="min-h-0 overflow-hidden rounded-[1.25rem] bg-card/70 dark:bg-[#151515]"><div className="max-h-[27dvh] overflow-y-auto">
                   {MODEL_SHEET_TIERS.map((id, index) => <ModelRow key={id} label={TIER_MAP[id].label} desc={TIER_MAP[id].desc} active={activeTier === id} divided={index > 0} onClick={() => selectTier(id)} />)}
                   {customModels.map((m, index) => <ModelRow key={m.id} label={m.label} desc={`${m.supportsVision ? "视觉 · " : ""}${m.model}`} active={activeTier === m.id} divided={MODEL_SHEET_TIERS.length > 0 || index > 0} onClick={() => selectTier(m.id)} onDelete={() => removeCustomModel(m.id)} />)}
                 </div></div>
-                <button onClick={() => setModelPage("more")} className="flex h-14 shrink-0 items-center rounded-[1.55rem] bg-card/70 px-5 text-left text-[20px] font-[650] tracking-[-0.02em] text-foreground transition-colors hover:bg-card dark:bg-[#151515]"><span className="flex-1">More models</span><ChevronRight className="size-5 text-muted-foreground" /></button>
+                <button onClick={() => setModelPage("more")} className="flex h-12 shrink-0 items-center rounded-[1.25rem] bg-card/70 px-4 text-left text-[16px] font-[600] tracking-[-0.01em] text-foreground transition-colors hover:bg-card dark:bg-[#151515]"><span className="flex-1">More models</span><ChevronRight className="size-4 text-muted-foreground" /></button>
               </div>
             ) : (
-              <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
-                <div className="space-y-3 rounded-[1.55rem] bg-card/70 p-4 dark:bg-[#151515]">
+              <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
+                <div className="space-y-3 rounded-[1.25rem] bg-card/70 p-4 dark:bg-[#151515]">
                   <Field label="显示名" value={customLabel} onChange={setCustomLabel} placeholder="Minimax" />
                   <Field label="模型名" value={customModel} onChange={setCustomModel} placeholder="your-model" />
                   <Field label="URL" value={customBaseUrl} onChange={setCustomBaseUrl} placeholder="https://api.example.com/v1" />
@@ -345,10 +345,10 @@ function PlusItem({ icon, label, onClick, active }: { icon: React.ReactNode; lab
 
 function ModelRow({ label, desc, active, divided, onClick, onDelete }: { label: string; desc?: string; active?: boolean; divided?: boolean; onClick: () => void; onDelete?: () => void }) {
   return (
-    <div className={cn("flex items-center gap-2 px-5 py-3.5", divided && "border-t border-border/40 dark:border-white/10")}>
-      <button onClick={onClick} className="min-w-0 flex-1 text-left"><div className={cn("truncate text-[20px] font-[650] tracking-[-0.02em]", active ? "text-foreground" : "text-foreground/92")}>{label}</div>{desc && <div className="mt-1 truncate text-[14px] font-[550] text-muted-foreground">{desc}</div>}</button>
-      {onDelete && <button onClick={e => { e.stopPropagation(); onDelete() }} className="flex size-9 shrink-0 items-center justify-center rounded-full text-muted-foreground/70 transition-colors hover:bg-secondary/70 hover:text-foreground" aria-label={`删除 ${label}`}><Trash2 className="size-4" /></button>}
-      {active && <Check className="size-6 shrink-0 text-primary" />}
+    <div className={cn("flex items-center gap-2 px-4 py-2.5", divided && "border-t border-border/40 dark:border-white/10")}>
+      <button onClick={onClick} className="min-w-0 flex-1 text-left"><div className={cn("truncate text-[16px] font-[600] tracking-[-0.01em]", active ? "text-foreground" : "text-foreground/92")}>{label}</div>{desc && <div className="mt-0.5 truncate text-[12px] font-[500] text-muted-foreground">{desc}</div>}</button>
+      {onDelete && <button onClick={e => { e.stopPropagation(); onDelete() }} className="flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground/70 transition-colors hover:bg-secondary/70 hover:text-foreground" aria-label={`删除 ${label}`}><Trash2 className="size-3.5" /></button>}
+      {active && <Check className="size-5 shrink-0 text-primary" />}
     </div>
   )
 }
