@@ -54,11 +54,11 @@ function MdContent({ text }: { text: string }) {
   )
 }
 
-function ThinkingBlock({ thinking, active }: { thinking: string; active?: boolean }) {
+function ThinkingBlock({ thinking, active, className = "mb-3" }: { thinking: string; active?: boolean; className?: string }) {
   const [open, setOpen] = useState(false)
   if (!thinking.trim()) return null
   return (
-    <div className="mb-3">
+    <div className={className}>
       <button
         onClick={() => setOpen(v => !v)}
         className="flex items-center gap-1.5 text-xs font-[400] italic text-muted-foreground/70 transition-colors hover:text-muted-foreground md:text-[13px]"
@@ -188,12 +188,19 @@ export function MessageList({
             </div>
           ) : (
             <div key={m.id} className="group min-w-0 pl-[6px] md:grid md:grid-cols-[3rem_minmax(0,1fr)] md:items-start md:gap-2.5 md:pl-0">
-              <div className="avatar-box mb-2 h-7 w-7 flex-shrink-0 self-start md:mb-0 md:mt-0.5 md:h-11 md:w-11">
-                <Image src="/companion.png" alt="" width={44} height={44} priority className="avatar-light size-7 select-none md:size-11" />
-                <Image src="/companion-dark.png" alt="" width={44} height={44} priority className="avatar-dark size-7 select-none md:size-11" />
+              <div className="flex items-center gap-2 md:contents">
+                <div className="avatar-box h-7 w-7 flex-shrink-0 self-start md:mb-0 md:mt-0.5 md:h-11 md:w-11">
+                  <Image src="/companion.png" alt="" width={44} height={44} priority className="avatar-light size-7 select-none md:size-11" />
+                  <Image src="/companion-dark.png" alt="" width={44} height={44} priority className="avatar-dark size-7 select-none md:size-11" />
+                </div>
+                <div className="min-w-0 md:hidden">
+                  {m.thinking && <ThinkingBlock thinking={m.thinking} active={!!isLoading && idx === lastAiIdx && !m.content?.trim()} className="mb-0" />}
+                </div>
               </div>
-              <div className="min-w-0 flex-1">
-                {m.thinking && <ThinkingBlock thinking={m.thinking} active={!!isLoading && idx === lastAiIdx && !m.content?.trim()} />}
+              <div className="mt-2 min-w-0 flex-1 md:mt-0">
+                <div className="hidden md:block">
+                  {m.thinking && <ThinkingBlock thinking={m.thinking} active={!!isLoading && idx === lastAiIdx && !m.content?.trim()} />}
+                </div>
                 {m.searchNotes && m.searchNotes.length > 0 && <SearchBlock searches={m.searchNotes} replying={!!m.content} />}
                 {m.memoryNotes && m.memoryNotes.length > 0 && (
                   <div className="mb-2.5 space-y-1">
