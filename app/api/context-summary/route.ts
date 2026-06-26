@@ -122,6 +122,17 @@ export async function POST(req: NextRequest) {
 
     if (msgError) return json({ ok: false, error: msgError.message }, 500)
     const rows = (messages ?? []) as MessageRow[]
+
+    const markerMissing = !!conversation.summary_until_message_id && !rows.some(m => m.id === conversation.summary_until_message_id)
+    if (markerMissing) {
+      await supabase
+        .from('conversations')
+        .update({ context_summary: null, summary_until_message_id: null, summary_token_count: 0 })
+        .eq('id', conversationId)
+        .eq('user_id', userId)
+      return json({ ok: true, reset: 'stale_summary_marker_missing' })
+    }
+
     if (rows.length <= RECENT_CONTEXT_MESSAGES) {
       return json({ ok: true, skipped: 'not_enough_messages', totalMessages: rows.length })
     }
