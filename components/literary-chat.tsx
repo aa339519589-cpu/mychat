@@ -7,7 +7,7 @@ import {
   fetchMemories, insertMemory, updateMemory, deleteMemoryRow,
   fetchConversations, insertConversation, updateConversationTitle, touchConversation, deleteConversationRow,
   setConversationStarred, setConversationPinned, setConversationProject,
-  fetchMessages, insertMessage, lastExcerpt, conversationExcerpt,
+  fetchMessages, insertMessage, updateMessageContent, lastExcerpt, conversationExcerpt,
   deleteMessageRow,
   fetchProfile, ensureProfile, setMemoryEnabled,
   fetchProjects, insertProject, updateProject, deleteProjectRow,
@@ -32,6 +32,17 @@ import type { SearchMode } from "@/lib/search-mode"
 
 type HistoryMsg = { id?: string; role: string; content: string; images?: string[]; imageSummary?: string; ts?: string }
 
+function toHistoryMsg(m: Message): HistoryMsg {
+  return {
+    id: m.id,
+    role: m.role,
+    content: m.content,
+    ...(m.images?.length ? { images: m.images } : {}),
+    ...(m.imageSummary ? { imageSummary: m.imageSummary } : {}),
+    ...(m.ts ? { ts: m.ts } : {}),
+  }
+}
+
 export function LiteraryChat() {
   const [user, setUser] = useState<User | null>(null)
   const [authChecked, setAuthChecked] = useState(false)
@@ -47,7 +58,6 @@ export function LiteraryChat() {
   const [deepResearch, setDeepResearch] = useState(false)
   const [activeTier, setActiveTier] = useState<Tier>("绝句")
   const [openArtifactId, setOpenArtifactId] = useState<string | null>(null)
-  // 顶部对话菜单（Claude 式「项目名 / 标题 ⌄」）：触发按钮锚点 + 顶部就地改名
   const [headerMenuAnchor, setHeaderMenuAnchor] = useState<{ bottom: number; left: number } | null>(null)
   const [headerRenaming, setHeaderRenaming] = useState(false)
   const [projects, setProjects] = useState<Project[]>([])
@@ -55,9 +65,8 @@ export function LiteraryChat() {
   const abortRef = useRef<AbortController | null>(null)
   const loadedRef = useRef<Set<string>>(new Set())
   const projectCtxRef = useRef<Map<string, ProjectContext>>(new Map())
-  const draftIdRef = useRef<string | null>(null)   // 当前本地草稿会话的 id（最多一个）
+  const draftIdRef = useRef<string | null>(null)
 
-  // OAuth 在 Code 板块内发起，授权回跳后带 ?github=connected：自动重新打开 Code
   useEffect(() => {
     if (typeof window !== "undefined" && window.location.search.includes("github=")) {
       if (window.location.search.includes("github=connected")) setCodeOpen(true)
@@ -65,7 +74,6 @@ export function LiteraryChat() {
     }
   }, [])
 
-  // 检查登录状态，并监听登录/登出
   useEffect(() => {
     const supabase = createClient()
     supabase.auth.getUser().then(({ data }) => {
@@ -79,7 +87,6 @@ export function LiteraryChat() {
     return () => sub.subscription.unsubscribe()
   }, [])
 
-  // 登录后从云端加载记忆 + 对话；登出则清空
   useEffect(() => {
     if (!user) {
       setConversations([])
@@ -104,12 +111,9 @@ export function LiteraryChat() {
         const saved = localStorage.getItem("chat_active_tier") as Tier | null
         if (saved && TIERS.some(t => t.id === saved)) setActiveTier(saved)
       } catch {}
-      // 旧 bug 留下的"空会话"（确知 0 条消息）：不仅前端隐藏，更直接删库彻底清掉，根治"清不掉的死会话"。
-      // count 拿不到（undefined）的一律按"非空"对待，绝不误删/误藏。
       for (const c of convs) if (c.msgCount === 0) deleteConversationRow(c.id)
       const real = convs.filter(c => c.msgCount !== 0)
       if (real.length === 0) {
-        // 没有任何真实会话：起一个本地草稿（先不写库），用户发首条消息时才真正创建
         const id = crypto.randomUUID()
         draftIdRef.current = id
         setConversations([{ id, title: "未命名的篇章", excerpt: "", date: "今日", messages: [], draft: true }])
@@ -192,10 +196,9 @@ export function LiteraryChat() {
         setConversations(prev => prev.map(c => c.id === convId ? { ...c, title: clean } : c))
         updateConversationTitle(convId, clean)
       }
-    } catch { /* 标题生成失败不影响主流程 */ }
+    } catch {}
   }
 
-  // ── 核心：运行 AI 流式响应，被 handleSend 和 handleRegenerate 共用 ──
   async function runAiStream(
     messages: HistoryMsg[],
     msgId: string,
@@ -207,7 +210,6 @@ export function LiteraryChat() {
     if (!user) { setIsLoading(false); return "" }
 
     const history = messages
-
     let fullReply = "", fullThinking = "", hadError = false
     let renderScheduled = false
     let rafId: number | null = null
@@ -316,7 +318,7 @@ export function LiteraryChat() {
               fullThinking += data.thinking
               scheduleStreamMessage()
             }
-          } catch { /* skip bad event */ }
+          } catch {}
         }
       }
 
@@ -331,7 +333,7 @@ export function LiteraryChat() {
         setConversations(prev => prev.map(c => c.id === convId ? { ...c, excerpt: conversationExcerpt(fullReply), date: "今日" } : c))
       }
     } catch (e: any) {
-      if (e?.name === "AbortError") return fullReply  // 用户主动停止，保留已有内容
+      if (e?.name === "AbortError") return fullReply
       setConversations(prev => prev.map(c => c.id !== convId ? c : {
         ...c,
         messages: c.messages.map((m, i, arr) =>
@@ -347,7 +349,6 @@ export function LiteraryChat() {
     return fullReply
   }
 
-  // ── 停止生成 ──
   function handleStop() {
     abortRef.current?.abort()
   }
@@ -363,17 +364,12 @@ export function LiteraryChat() {
     const draftId = active.id
     const baseHistory = active.messages
 
-    // 1) 先把用户气泡 + 空 AI 占位立刻显示出来——必须抢在任何网络 await 之前。
-    //    否则草稿首轮要等落库往返才看到自己刚发的话（这正是"发出去整页空白、等回复完才一起冒出来"的根因）。
     setConversations(prev => prev.map(c => c.id === draftId
       ? { ...c, draft: false, messages: [...c.messages, userMsg, assistantMsg] }
       : c))
     setIsLoading(true)
 
-    // 2) 草稿此刻才落库（在后台进行，不阻塞上面的显示）；拿到真实 id 后把临时 id 悄悄换掉
     let convId = draftId
-    // 整段用 try/catch 兜底：落库 / 取项目背景 等任一 await 抛错（如网络抖动）时，
-    // 绝不能让 isLoading 卡在 true、界面静默卡死——这正是"消息发出却像消失了，退出重进才好"的根因。
     try {
       if (wasDraft) {
         const realId = await insertConversation(user.id, "未命名的篇章", active.projectId ?? undefined)
@@ -394,15 +390,7 @@ export function LiteraryChat() {
         await insertMessage(user.id, convId, userMsg)
       }
 
-      const history = [...baseHistory, userMsg].map(m => ({
-        id: m.id,
-        role: m.role,
-        content: m.content,
-        ...(m.images?.length ? { images: m.images } : {}),
-        ...(m.imageSummary ? { imageSummary: m.imageSummary } : {}),
-        ...(m.ts ? { ts: m.ts } : {}),
-      }))
-
+      const history = [...baseHistory, userMsg].map(toHistoryMsg)
       const projectCtx = await getProjectContext(active.projectId)
       const controller = new AbortController()
       abortRef.current = controller
@@ -418,7 +406,6 @@ export function LiteraryChat() {
     }
   }
 
-  // ── 重新生成最后一条 AI 回复 ──
   async function handleRegenerate() {
     if (!user || !active || isLoading) return
     setOpenArtifactId(null)
@@ -427,14 +414,7 @@ export function LiteraryChat() {
     if (lastAiIdx === -1) return
     const lastAiMsg = msgs[lastAiIdx]
 
-    // 历史 = 最后一条 AI 消息之前的所有消息
-    const historyBeforeAi = msgs.slice(0, lastAiIdx).map(m => ({
-      id: m.id, role: m.role, content: m.content,
-      ...(m.images?.length ? { images: m.images } : {}),
-      ...(m.imageSummary ? { imageSummary: m.imageSummary } : {}),
-      ...(m.ts ? { ts: m.ts } : {}),
-    }))
-
+    const historyBeforeAi = msgs.slice(0, lastAiIdx).map(toHistoryMsg)
     const newMsgId = crypto.randomUUID()
     setConversations(prev => prev.map(c => c.id !== activeId ? c : {
       ...c,
@@ -457,13 +437,61 @@ export function LiteraryChat() {
     }
   }
 
+  async function regenerateFromUserMessage(userMessageId: string, editedContent?: string) {
+    if (!user || !active || isLoading) return
+    setOpenArtifactId(null)
+    const convId = active.id
+    const msgs = active.messages
+    const userIdx = msgs.findIndex(m => m.id === userMessageId && m.role === "user")
+    if (userIdx === -1) return
+
+    const sourceUser = msgs[userIdx]
+    const nextContent = (editedContent ?? sourceUser.content).trim()
+    if (!nextContent) return
+    const nextUser: Message = { ...sourceUser, content: nextContent, ts: sourceUser.ts ?? new Date().toISOString() }
+    const removed = msgs.slice(userIdx + 1)
+    const newMsgId = crypto.randomUUID()
+    const assistantMsg: Message = { id: newMsgId, role: "assistant", content: "", thinking: "", time: "此刻" }
+
+    setConversations(prev => prev.map(c => c.id !== convId ? c : {
+      ...c,
+      messages: [...msgs.slice(0, userIdx), nextUser, assistantMsg],
+    }))
+
+    if (nextContent !== sourceUser.content.trim()) updateMessageContent(convId, sourceUser.id, nextContent)
+    removed.forEach(m => deleteMessageRow(m.id))
+
+    setIsLoading(true)
+    try {
+      const history = [...msgs.slice(0, userIdx), nextUser].map(toHistoryMsg)
+      const projectCtx = await getProjectContext(active.projectId)
+      const controller = new AbortController()
+      abortRef.current = controller
+      await runAiStream(history, newMsgId, convId, controller, undefined, projectCtx)
+    } catch (e) {
+      console.error("regenerateFromUserMessage failed", e)
+      setIsLoading(false)
+      setConversations(prev => prev.map(c => c.id !== convId ? c : {
+        ...c,
+        messages: c.messages.map(m => m.id === newMsgId ? { ...m, content: "重新回复失败，请重试", isError: true } : m),
+      }))
+    }
+  }
+
+  function handleEditUserMessage(messageId: string, content: string) {
+    regenerateFromUserMessage(messageId, content)
+  }
+
+  function handleRegenerateFromUser(messageId: string) {
+    regenerateFromUserMessage(messageId)
+  }
+
   async function handleDelete(id: string) {
     deleteConversationRow(id)
     loadedRef.current.delete(id)
     if (draftIdRef.current === id) draftIdRef.current = null
     const remaining = conversations.filter(c => c.id !== id)
     if (remaining.length === 0) {
-      // 删到空了：起一个本地草稿，别再写库
       const draftId = crypto.randomUUID()
       draftIdRef.current = draftId
       setConversations([{ id: draftId, title: "未命名的篇章", excerpt: "", date: "今日", messages: [], draft: true }])
@@ -485,7 +513,6 @@ export function LiteraryChat() {
   function handleNew() {
     if (!user) return
     setDrawerOpen(false)
-    // 已有一个空草稿（或当前正停在草稿上）：切过去即可，绝不重复创建——天然防连点
     if (draftIdRef.current) { setActiveId(draftIdRef.current); return }
     const id = crypto.randomUUID()
     draftIdRef.current = id
@@ -493,7 +520,6 @@ export function LiteraryChat() {
     setActiveId(id)
   }
 
-  // ── 会话菜单：收藏 / 置顶 / 改名 / 移入移出项目 ──
   function handleToggleStar(id: string) {
     const cur = conversations.find(c => c.id === id)
     if (!cur) return
@@ -519,8 +545,6 @@ export function LiteraryChat() {
     setConversationProject(id, projectId)
   }
 
-  // ── 项目 ──
-  // 取项目背景（指令 + 资料）；按 projectId 缓存，资料/指令变动时清缓存
   async function getProjectContext(projectId?: string | null): Promise<ProjectContext | undefined> {
     if (!projectId) return undefined
     const cached = projectCtxRef.current.get(projectId)
@@ -548,14 +572,12 @@ export function LiteraryChat() {
   function handleProjectDelete(id: string) {
     setProjects(prev => prev.filter(p => p.id !== id))
     projectCtxRef.current.delete(id)
-    // 该项目下的对谈本地解绑（DB 端 ON DELETE SET NULL 已处理）
     setConversations(prev => prev.map(c => c.projectId === id ? { ...c, projectId: null } : c))
     deleteProjectRow(id)
   }
   function handleNewInProject(projectId: string) {
     if (!user) return
     setDrawerOpen(false)
-    // 复用唯一草稿并归到此项目；没有草稿就新建一个带项目归属的草稿（同样发首条消息才落库）
     if (draftIdRef.current) {
       const did = draftIdRef.current
       setConversations(prev => prev.map(c => c.id === did ? { ...c, projectId } : c))
@@ -573,7 +595,7 @@ export function LiteraryChat() {
   async function handleAddProjectFile(projectId: string, file: File): Promise<ProjectFile | null> {
     if (!user) return null
     try {
-      const prepared = await prepareFile(file)  // PDF 在前端已提取文字，text 字段已填好
+      const prepared = await prepareFile(file)
       const content = prepared.text ?? ""
       const saved = await insertProjectFile(user.id, projectId, prepared.name, content)
       if (saved) projectCtxRef.current.delete(projectId)
@@ -584,7 +606,7 @@ export function LiteraryChat() {
   }
   function handleDeleteProjectFile(fileId: string) {
     deleteProjectFileRow(fileId)
-    projectCtxRef.current.clear()  // 不知归属哪个项目，直接清空缓存（仅是优化缓存）
+    projectCtxRef.current.clear()
   }
 
   async function handleLoadProjectMemories(projectId: string): Promise<Memory[]> {
@@ -722,6 +744,8 @@ export function LiteraryChat() {
             <MessageList
               conversation={active}
               onRegenerate={handleRegenerate}
+              onEditUserMessage={handleEditUserMessage}
+              onRegenerateFromUser={handleRegenerateFromUser}
               isLoading={isLoading}
               onOpenArtifact={setOpenArtifactId}
               openArtifactId={openArtifactId}
@@ -755,7 +779,6 @@ export function LiteraryChat() {
   if (!authChecked) return <div className="h-dvh w-full bg-background paper-grain" />
   if (!user) return <LoginScreen />
 
-  // 当前打开的 artifact 面板数据（从消息原始全文实时拆分，流式时自动更新）
   const openMsg = openArtifactId ? active?.messages.find(m => m.id === openArtifactId) : null
   const openArt = openMsg ? parseArtifact(openMsg.content) : null
   const showArt = !!(openArt && openArt.raw !== null)
@@ -785,7 +808,6 @@ export function LiteraryChat() {
 
       <div className="flex h-dvh min-h-0 w-full overflow-hidden bg-background paper-grain md:hidden">
         <div className={cn("fixed inset-0 z-40", drawerOpen ? "pointer-events-auto" : "pointer-events-none")}>
-          {/* 半屏遮罩：露出后面的对话，点一下收起 */}
           <button
             type="button"
             aria-label="收起侧栏"
