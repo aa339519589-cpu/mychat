@@ -8,6 +8,7 @@ import { fmtDate } from "./shared"
 // 目的：切换会话时有缓存就立刻返回，后台再刷新；不要在会话列表阶段批量解析缓存，避免打开页面更慢。
 const MESSAGE_CACHE_PREFIX = "mychat_messages_"
 const MESSAGE_CACHE_LIMIT = 120
+const REMOTE_MESSAGE_LIMIT = 140
 
 function cacheKey(conversationId: string) {
   return `${MESSAGE_CACHE_PREFIX}${conversationId}`
@@ -93,15 +94,16 @@ function normalizeMessageRow(r: any): Message {
   }
 }
 
-async function fetchRemoteMessages(conversationId: string): Promise<Message[]> {
+async function fetchRemoteMessages(conversationId: string, limit = REMOTE_MESSAGE_LIMIT): Promise<Message[]> {
   const supabase = createClient()
   const { data, error } = await supabase
     .from("messages")
     .select("id, role, content, images, thinking, created_at")
     .eq("conversation_id", conversationId)
-    .order("created_at", { ascending: true })
+    .order("created_at", { ascending: false })
+    .limit(limit)
   if (error || !data) return []
-  return data.map(normalizeMessageRow)
+  return data.map(normalizeMessageRow).reverse()
 }
 
 // ───────────── 对话 ─────────────
@@ -206,13 +208,14 @@ export async function fetchMessages(conversationId: string): Promise<Message[]> 
 
   if (cached.length > 0) {
     // 有缓存时立刻返回，后台刷新本地缓存；不要让 UI 等 Supabase。
-    fetchRemoteMessages(conversationId)
+    fetchRemoteMessages(conversationId, MESSAGE_CACHE_LIMIT)
       .then(messages => { if (messages.length > 0) writeCachedMessages(conversationId, messages) })
       .catch(() => {})
     return cached
   }
 
-  const messages = await fetchRemoteMessages(conversationId)
+  // 首次打开也只取最近一屏需要的消息，不再把几百上千条旧消息一次性拉进 DOM。
+  const messages = await fetchRemoteMessages(conversationId, REMOTE_MESSAGE_LIMIT)
   if (messages.length > 0) writeCachedMessages(conversationId, messages)
   return messages
 }
