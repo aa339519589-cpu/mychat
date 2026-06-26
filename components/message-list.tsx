@@ -1,7 +1,7 @@
 "use client"
 
 import Image from "next/image"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import type { Conversation, Message } from "@/lib/chat-data"
 import { ChevronDown, ChevronRight, Brain, FileText, Globe, Copy, Check, RefreshCw, Pencil, X } from "lucide-react"
 import ReactMarkdown from "react-markdown"
@@ -16,6 +16,9 @@ import { MermaidChart } from "@/components/mermaid-chart"
 import { FunctionPlotChart } from "@/components/function-plot-chart"
 import { normalizeMathDelimiters } from "@/lib/math"
 import { cn } from "@/lib/utils"
+
+const INITIAL_RENDER_COUNT = 70
+const RENDER_STEP = 50
 
 function MdContent({ text }: { text: string }) {
   return (
@@ -163,6 +166,21 @@ export function MessageList({
   const [activeUserId, setActiveUserId] = useState<string | null>(null)
   const [editingUserId, setEditingUserId] = useState<string | null>(null)
   const [editDraft, setEditDraft] = useState("")
+  const [visibleCount, setVisibleCount] = useState(INITIAL_RENDER_COUNT)
+
+  useEffect(() => {
+    setVisibleCount(INITIAL_RENDER_COUNT)
+    setActiveUserId(null)
+    setEditingUserId(null)
+    setEditDraft("")
+  }, [conversation.id])
+
+  const visibleStart = Math.max(0, msgs.length - visibleCount)
+  const hiddenCount = visibleStart
+  const visibleEntries = useMemo(
+    () => msgs.map((m, idx) => ({ m, idx })).slice(visibleStart),
+    [msgs, visibleStart],
+  )
 
   function startEdit(m: Message) {
     if (isLoading) return
@@ -186,7 +204,18 @@ export function MessageList({
   return (
     <article className="mx-auto w-full min-w-0 max-w-[58rem] overflow-x-clip px-3 py-5 sm:px-4 md:px-8 md:py-6">
       <div className="min-w-0 space-y-6 md:space-y-8">
-        {msgs.map((m, idx) =>
+        {hiddenCount > 0 && (
+          <div className="flex justify-center">
+            <button
+              onClick={() => setVisibleCount(v => Math.min(msgs.length, v + RENDER_STEP))}
+              className="rounded-full border border-border/40 bg-muted/20 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/35 hover:text-foreground"
+            >
+              显示更早的 {Math.min(hiddenCount, RENDER_STEP)} 条
+            </button>
+          </div>
+        )}
+
+        {visibleEntries.map(({ m, idx }) =>
           m.role === "user" ? (
             <div key={m.id} className="flex flex-col items-end">
               {m.images && m.images.length > 0 && (
