@@ -95,9 +95,46 @@ export function parseArtifact(text: string): ArtifactParsed {
   return { ...EMPTY, display: trimTrailingArtifactPrelude(text) }
 }
 
+function readNumericAttr(tag: string, name: string): number | null {
+  const m = tag.match(new RegExp(`\\s${name}\\s*=\\s*["']?([0-9.]+)`, 'i'))
+  const n = m ? Number(m[1]) : NaN
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+function normalizeSvgRoot(svg: string): string {
+  const match = svg.match(/<svg\b[^>]*>/i)
+  if (!match) return svg
+
+  const original = match[0]
+  let next = original
+  const width = readNumericAttr(original, 'width')
+  const height = readNumericAttr(original, 'height')
+
+  // 很多模型会输出固定 width/height/style，手机端会被撑爆。
+  // 如果没有 viewBox，先用原 width/height 补一个，再移除固定尺寸，让前端按容器自适应。
+  if (!/\sviewBox\s*=/i.test(next) && width && height) {
+    next = next.replace(/<svg\b/i, `<svg viewBox="0 0 ${width} ${height}"`)
+  }
+
+  if (!/\sxmlns\s*=/i.test(next)) {
+    next = next.replace(/<svg\b/i, '<svg xmlns="http://www.w3.org/2000/svg"')
+  }
+
+  next = next
+    .replace(/\s(width|height)\s*=\s*"[^"]*"/gi, '')
+    .replace(/\s(width|height)\s*=\s*'[^']*'/gi, '')
+    .replace(/\s(width|height)\s*=\s*[^\s>]+/gi, '')
+    .replace(/\sstyle\s*=\s*"[^"]*"/gi, '')
+    .replace(/\sstyle\s*=\s*'[^']*'/gi, '')
+    .replace(/\sstyle\s*=\s*[^\s>]+/gi, '')
+
+  return svg.replace(original, next)
+}
+
 // 从内联内容里提取并安全清洗 SVG，直接注入对话 DOM 渲染
 // - 流式时若未闭合，临时补 </svg> 让浏览器容错渲染
 // - 去掉 script / foreignObject / on* 事件 / javascript: 协议，防 XSS
+// - 归一化根 SVG：保留 viewBox，移除固定宽高，避免手机端被大图撑爆
 export function sanitizeSvg(input: string): string | null {
   if (!input) return null
   const open = input.search(/<svg[\s>]/i)
@@ -120,7 +157,7 @@ export function sanitizeSvg(input: string): string | null {
     .replace(/(xlink:href|href)\s*=\s*"\s*javascript:[^"]*"/gi, '')
     .replace(/(xlink:href|href)\s*=\s*'\s*javascript:[^']*'/gi, '')
 
-  return svg
+  return normalizeSvgRoot(svg)
 }
 
 // 从 artifact HTML 里猜标题，给对话流卡片入口用
