@@ -15,6 +15,7 @@ const FORCE_SIMILARITY_THRESHOLD = 0.18
 const HISTORY_RETRIEVAL_HINTS = [
   '之前', '上次', '以前', '还记得', '记不记得', '我们定', '我们说', '我们聊', '刚才', '那个方案', '历史', '旧聊天', '老对话', '前面',
   '其他聊天', '别的聊天', '别的对话', '去看其他', '去看别的', '查其他', '跨聊天', '日程', '安排', '今晚', '今天晚上', '明天', '待办',
+  '午饭', '中午', '吃了什么', '吃什么', '干什么', '做什么',
   'last time', 'previously', 'earlier', 'remember', 'we discussed', 'we decided', 'other chats', 'past chats', 'schedule', 'tonight',
 ]
 
@@ -245,6 +246,18 @@ function textSearchQuery(query: string): string {
     .join(' | ')
 }
 
+function dedupeHits(hits: RetrievalHit[]): RetrievalHit[] {
+  const seen = new Set<string>()
+  const out: RetrievalHit[] = []
+  for (const hit of hits) {
+    const key = `${hit.conversation_id}:${hit.message_start_id}:${hit.message_end_id}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(hit)
+  }
+  return out
+}
+
 function renderHits(hits: RetrievalHit[]): string {
   if (!hits.length) return ''
   const parts: string[] = []
@@ -260,7 +273,7 @@ function renderHits(hits: RetrievalHit[]): string {
   }
 
   if (!parts.length) return ''
-  return `\n\n【主动检索到的历史对话片段】\n下面是系统从历史聊天中临时检索到的相关原文片段。它不是 Memory，不要把它写入长期记忆；只在本轮回答中作为参考。若片段和用户当前问题无关，请忽略。\n\n${parts.join('\n\n---\n\n')}`
+  return `\n\n【主动检索到的历史对话片段】\n下面是系统从历史聊天中临时检索到的相关原文片段。你可以使用这些片段回答用户关于“之前、其他聊天、历史记录、日程安排”的问题；不要说你看不到其他聊天。它不是 Memory，不要把它写入长期记忆。若片段和用户当前问题无关，再说明没找到相关记录。\n\n${parts.join('\n\n---\n\n')}`
 }
 
 async function retrieveByTextSearch(supabase: SupabaseServer, userId: string, projectId: string | null | undefined, query: string, force: boolean): Promise<RetrievalHit[]> {
@@ -282,6 +295,32 @@ async function retrieveByTextSearch(supabase: SupabaseServer, userId: string, pr
   return hits.slice(0, INJECT_TOP_K)
 }
 
+async function retrieveRecentChunks(supabase: SupabaseServer, userId: string, projectId: string | null | undefined, conversationId: string | null, query: string): Promise<RetrievalHit[]> {
+  let req = supabase
+    .from('conversation_chunks')
+    .select('id, conversation_id, conversation_title, project_id, message_start_id, message_end_id, content, created_at')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(RETRIEVAL_TOP_K)
+
+  if (conversationId) req = req.neq('conversation_id', conversationId)
+  if (projectId) req = req.or(`project_id.eq.${projectId},project_id.is.null`)
+
+  const { data, error } = await req
+  if (error || !data) return []
+  return (data as any[]).map((hit, index) => ({
+    id: hit.id,
+    conversation_id: hit.conversation_id,
+    conversation_title: hit.conversation_title,
+    project_id: hit.project_id,
+    message_start_id: hit.message_start_id,
+    message_end_id: hit.message_end_id,
+    content: hit.content,
+    similarity: 0.12 - index * 0.005 + keywordScore(query, hit.content),
+    created_at: hit.created_at,
+  }))
+}
+
 export async function retrieveHistoryContext(opts: {
   supabase: SupabaseServer | null
   userId: string | null
@@ -294,6 +333,7 @@ export async function retrieveHistoryContext(opts: {
 
   const force = shouldForceHistoryRetrieval(query)
   try {
+    const allHits: RetrievalHit[] = []
     const queryEmbedding = embeddingEnabled() ? await embed(query) : null
 
     if (queryEmbedding) {
@@ -305,19 +345,25 @@ export async function retrieveHistoryContext(opts: {
         similarity_threshold: force ? FORCE_SIMILARITY_THRESHOLD : DEFAULT_SIMILARITY_THRESHOLD,
       })
       if (!error && data) {
-        const hits = (data as RetrievalHit[])
-          .map(hit => ({
-            ...hit,
-            similarity: hit.similarity + keywordScore(query, hit.content) + (projectId && hit.project_id === projectId ? 0.04 : 0) + (conversationId && hit.conversation_id === conversationId ? 0.02 : 0),
-          }))
-          .sort((a, b) => b.similarity - a.similarity)
-          .slice(0, INJECT_TOP_K)
-        if (force || !hits[0] || hits[0].similarity >= DEFAULT_SIMILARITY_THRESHOLD) return renderHits(hits)
+        allHits.push(...(data as RetrievalHit[]).map(hit => ({
+          ...hit,
+          similarity: hit.similarity + keywordScore(query, hit.content) + (projectId && hit.project_id === projectId ? 0.04 : 0) + (conversationId && hit.conversation_id === conversationId ? 0.02 : 0),
+        })))
       }
     }
 
-    const textHits = await retrieveByTextSearch(supabase, userId, projectId, query, force)
-    return renderHits(textHits)
+    allHits.push(...await retrieveByTextSearch(supabase, userId, projectId, query, force))
+
+    if (force) {
+      allHits.push(...await retrieveRecentChunks(supabase, userId, projectId, conversationId, query))
+    }
+
+    const hits = dedupeHits(allHits)
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, INJECT_TOP_K)
+
+    if (!force && hits[0] && hits[0].similarity < DEFAULT_SIMILARITY_THRESHOLD) return ''
+    return renderHits(hits)
   } catch (e) {
     log.warn('activeRetrieval', 'Retrieval skipped', e)
     return ''
