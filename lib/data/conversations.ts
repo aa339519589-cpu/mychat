@@ -1,5 +1,7 @@
 import { createClient } from "@/lib/supabase/client"
 import type { Conversation, Message } from "@/lib/chat-data"
+import { parseArtifact, artifactTitle } from "@/lib/artifact"
+import { insertArtifactFromMessage } from "./artifacts"
 import { fmtDate } from "./shared"
 
 // ───────────── 本地消息缓存 ─────────────
@@ -54,6 +56,19 @@ function updateCachedMessageContent(conversationId: string, messageId: string, c
 function removeCachedMessages(conversationId: string) {
   if (typeof window === "undefined") return
   try { window.localStorage.removeItem(cacheKey(conversationId)) } catch {}
+}
+
+async function saveMessageArtifact(userId: string, conversationId: string, msg: Message) {
+  if (msg.role !== "assistant" || !msg.content) return
+  const parsed = parseArtifact(msg.content)
+  if (!parsed.raw || !parsed.done) return
+  await insertArtifactFromMessage({
+    userId,
+    conversationId,
+    messageId: msg.id,
+    title: artifactTitle(parsed.raw),
+    raw: parsed.raw,
+  })
 }
 
 function normalizeMessageRow(r: any): Message {
@@ -217,7 +232,11 @@ export async function insertMessage(userId: string, conversationId: string, msg:
     images: msg.images?.length ? { refs: msg.images, image_summary: msg.imageSummary ?? null } : null,
     thinking: msg.thinking ?? null,
   })
-  if (error) console.error("insertMessage", error)
+  if (error) {
+    console.error("insertMessage", error)
+    return
+  }
+  saveMessageArtifact(userId, conversationId, msg).catch(e => console.error("saveMessageArtifact", e))
 }
 
 export async function updateMessageContent(conversationId: string, messageId: string, content: string): Promise<void> {
