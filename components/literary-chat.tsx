@@ -56,6 +56,7 @@ export function LiteraryChat() {
   const [memoryEnabled, setMemoryEnabledState] = useState(true)
   const [searchMode, setSearchMode] = useState<SearchMode>("off")
   const [deepResearch, setDeepResearch] = useState(false)
+  const [historyRetrieval, setHistoryRetrieval] = useState(false)
   const [activeTier, setActiveTier] = useState<Tier>("绝句")
   const [openArtifactId, setOpenArtifactId] = useState<string | null>(null)
   const [headerMenuAnchor, setHeaderMenuAnchor] = useState<{ bottom: number; left: number } | null>(null)
@@ -241,11 +242,13 @@ export function LiteraryChat() {
         body: JSON.stringify({
           tier: activeTier,
           messages: history,
-          memories: memoryEnabled && memories.length > 0 ? memories : undefined,
+          memories: projectCtx ? undefined : (memoryEnabled && memories.length > 0 ? memories : undefined),
           attachments: attachments && attachments.length > 0 ? attachments : undefined,
           searchMode,
           deepResearch,
+          historyRetrieval,
           project: projectCtx,
+          conversationId: convId,
         }),
       })
 
@@ -280,7 +283,7 @@ export function LiteraryChat() {
                 ...c,
                 messages: c.messages.map(m => m.id !== msgId ? m : { ...m, memoryNotes: [...(m.memoryNotes ?? []), note] }),
               }))
-              if (mem.ok) {
+              if (mem.ok && !projectCtx) {
                 if (mem.action === "create" && mem.id) setMemories(prev => [...prev, { id: mem.id, content: mem.content ?? "", timestamp: mem.timestamp }])
                 else if (mem.action === "update" && mem.id) setMemories(prev => prev.map(x => x.id === mem.id ? { ...x, content: mem.content ?? x.content, timestamp: mem.timestamp ?? x.timestamp } : x))
                 else if (mem.action === "delete" && mem.id) setMemories(prev => prev.filter(x => x.id !== mem.id))
@@ -634,7 +637,7 @@ export function LiteraryChat() {
   }
   async function handleMemoryEdit(id: string, content: string) {
     const ts = new Date().toISOString()
-    setMemories(prev => prev.map(m => m.id === id ? { ...m, content, timestamp: ts } : m))
+    setMemories(prev => prev.map(m => m.id === id ? { ...m, content, timestamp: ts }))
     updateMemory(id, content)
   }
   async function handleMemoryDelete(id: string) {
@@ -769,6 +772,8 @@ export function LiteraryChat() {
           onSearchModeChange={setSearchMode}
           deepResearch={deepResearch}
           onDeepResearchChange={setDeepResearch}
+          historyRetrieval={historyRetrieval}
+          onHistoryRetrievalChange={setHistoryRetrieval}
           isLoading={isLoading}
           onStop={handleStop}
         />
