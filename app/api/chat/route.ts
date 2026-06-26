@@ -19,6 +19,7 @@ import { resolveAuth, getMemoryEnabled, enforceLimits } from '@/lib/api/guard'
 import { latestBeijingDateFromMessages, normalizeSearchMode } from '@/lib/search-mode'
 
 const SAFETY_ROUNDS = 9999
+const MARKDOWN_DIVIDER_GUARD = '\n【排版补充】\n当回复有两个以上语义段落、步骤、转折或结论/解释分层时，优先用 Markdown 分隔线 "---" 做清晰分割。分隔线用于增强阅读节奏，不要滥用到每一句。'
 
 // 深度研究幽灵提示词：前置注入到用户消息，前端不可见
 const DEEP_RESEARCH_PREFIX = `Absolute maximum with no shortcuts permitted. You must treat this request as a highest-effort reasoning task. Before giving the final answer, fully understand the user's question, identify the real objective, and avoid answering only the surface wording. Do not rush to produce a response. Reasoning requirements:
@@ -99,7 +100,7 @@ export async function POST(req: NextRequest) {
   // 关闭记忆时：既不挂记忆工具（上面已过滤），也不注入已存的记忆
   const effectiveMemories = memoryEnabled ? (memories as Memory[] | undefined) : undefined
   const url = chatCompletionsUrl(capability.provider.baseUrl)
-  const SYSTEM = buildSystem(effectiveMemories, { searchMode: effectiveSearchMode, latestBeijingDate, memoryEnabled, project })
+  const SYSTEM = buildSystem(effectiveMemories, { searchMode: effectiveSearchMode, latestBeijingDate, memoryEnabled, project }) + MARKDOWN_DIVIDER_GUARD
   const openaiTools = toOpenAITools(tools)
 
   const stream = new ReadableStream({
