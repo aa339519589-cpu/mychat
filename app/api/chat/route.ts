@@ -38,8 +38,8 @@ const DEEP_RESEARCH_PREFIX = `Absolute maximum with no shortcuts permitted. You 
 ---
 `
 
-// 扫描件 PDF：前端已把每页渲染成图片放进 pageImages，这里用小米 MiMo-Omni 视觉模型 OCR 成文字，
-// 替换进 text；DeepSeek 随后只看到精确文字。彻底替代之前那条走不通的 DeepSeek /v1/files 上传。
+// 扫描件 PDF：前端已把每页渲染成图片放进 pageImages，这里用小米 MiMo V2.5 OCR 成文字，
+// 替换进 text；DeepSeek 随后只看到精确文字。
 async function ocrScannedPdfs(attachments: any[]): Promise<any[]> {
   if (!attachments?.length) return attachments ?? []
   return Promise.all(attachments.map(async (f) => {
@@ -121,7 +121,11 @@ export async function POST(req: NextRequest) {
       }
 
       try {
-        const preparedMessages = await ensureImageSummaries(messages as RawMsg[], { supabase, userId, emit })
+        const rawMessages = messages as RawMsg[]
+        // 视觉模型直接看图；DeepSeek 这类纯文本模型则先由 MiMo V2.5 解析图片成摘要再继续。
+        const preparedMessages = capability.supportsImageInput
+          ? rawMessages
+          : await ensureImageSummaries(rawMessages, { supabase, userId, emit })
         const msgs: any[] = [{ role: 'system', content: SYSTEM }, ...buildModelContext(preparedMessages, capability)]
 
         // 深度研究：幽灵提示前置注入到最后一条用户消息，前端不可见
