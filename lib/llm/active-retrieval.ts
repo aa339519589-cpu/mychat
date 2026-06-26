@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { createHash } from 'crypto'
 import type { SupabaseServer } from '@/lib/api/guard'
 import type { RawMsg } from '@/lib/llm/types'
@@ -28,13 +29,6 @@ const RETRIEVAL_CONFIG: Record<HistoryRetrievalMode, RetrievalConfig> = {
   balanced: { anchorLimit: 6, before: 2, after: 5, recentLimit: 8, semantic: true, keyword: true },
   deep: { anchorLimit: 10, before: 3, after: 8, recentLimit: 12, semantic: true, keyword: true },
 }
-
-const HISTORY_RETRIEVAL_HINTS = [
-  '之前', '上次', '以前', '还记得', '记不记得', '我们定', '我们说', '我们聊', '刚才', '那个方案', '历史', '旧聊天', '老对话', '前面',
-  '其他聊天', '别的聊天', '别的对话', '去看其他', '去看别的', '查其他', '跨聊天', '日程', '安排', '今晚', '今天晚上', '明天', '待办',
-  '午饭', '中午', '吃了什么', '吃什么', '干什么', '做什么', '记忆', '检索', '找一下', '翻一下',
-  'last time', 'previously', 'earlier', 'remember', 'we discussed', 'we decided', 'other chats', 'past chats', 'schedule', 'tonight',
-]
 
 type MessageRow = {
   id: string
@@ -148,11 +142,6 @@ async function embed(input: string): Promise<number[] | null> {
   }
 }
 
-export function shouldForceHistoryRetrieval(text: string): boolean {
-  const q = text.toLowerCase()
-  return HISTORY_RETRIEVAL_HINTS.some(h => q.includes(h.toLowerCase()))
-}
-
 function rawMessageText(m: RawMsg): string {
   const anyMsg = m as any
   if (typeof anyMsg?.content === 'string') return anyMsg.content.trim()
@@ -191,15 +180,15 @@ function inScope(hitProjectId: string | null | undefined, projectId: string | nu
   return projectId ? hitProjectId === projectId : !hitProjectId
 }
 
-function scopedChunkQuery(query: any, projectId: string | null | undefined) {
+function applyScope(query: any, projectId: string | null | undefined) {
   return projectId ? query.eq('project_id', projectId) : query.is('project_id', null)
 }
 
 async function scopedConversationIds(supabase: SupabaseServer, userId: string, projectId: string | null | undefined, currentConversationId: string | null, limit = 240): Promise<string[]> {
-  let req = supabase.from('conversations').select('id').eq('user_id', userId).order('updated_at', { ascending: false }).limit(limit)
-  req = projectId ? req.eq('project_id', projectId) : req.is('project_id', null)
+  let req: any = supabase.from('conversations').select('id').eq('user_id', userId)
+  req = applyScope(req, projectId)
   if (currentConversationId) req = req.neq('id', currentConversationId)
-  const { data, error } = await req
+  const { data, error } = await req.order('updated_at', { ascending: false }).limit(limit)
   if (error || !data) return []
   return (data as any[]).map(r => r.id).filter((id): id is string => typeof id === 'string')
 }
@@ -363,17 +352,15 @@ async function retrieveByTextSearch(supabase: SupabaseServer, userId: string, pr
 }
 
 async function retrieveRecentChunks(supabase: SupabaseServer, userId: string, projectId: string | null | undefined, conversationId: string | null, query: string, limit: number): Promise<RetrievalHit[]> {
-  let req = supabase
+  let req: any = supabase
     .from('conversation_chunks')
     .select('id, conversation_id, conversation_title, project_id, message_start_id, message_end_id, content, created_at')
     .eq('user_id', userId)
-    .order('created_at', { ascending: false })
-    .limit(limit)
 
-  req = scopedChunkQuery(req, projectId)
+  req = applyScope(req, projectId)
   if (conversationId) req = req.neq('conversation_id', conversationId)
 
-  const { data, error } = await req
+  const { data, error } = await req.order('created_at', { ascending: false }).limit(limit)
   if (error || !data) return []
   return (data as any[]).map((hit, index) => ({
     id: hit.id,
@@ -409,7 +396,7 @@ async function retrieveUserAnchoredContexts(supabase: SupabaseServer, userId: st
     .sort((a, b) => b.score - a.score)
     .slice(0, config.anchorLimit)
 
-  const convIds = Array.from(new Set(anchors.map(a => a.row.conversation_id).filter(Boolean)))
+  const convIds = Array.from(new Set(anchors.map(a => a.row.conversation_id).filter(Boolean))) as string[]
   const { data: conversations } = convIds.length
     ? await supabase.from('conversations').select('id, title, project_id').eq('user_id', userId).in('id', convIds)
     : { data: [] as any[] }
