@@ -14,7 +14,8 @@ const FORCE_SIMILARITY_THRESHOLD = 0.18
 
 const HISTORY_RETRIEVAL_HINTS = [
   '之前', '上次', '以前', '还记得', '记不记得', '我们定', '我们说', '我们聊', '刚才', '那个方案', '历史', '旧聊天', '老对话', '前面',
-  'last time', 'previously', 'earlier', 'remember', 'we discussed', 'we decided',
+  '其他聊天', '别的聊天', '别的对话', '去看其他', '去看别的', '查其他', '跨聊天', '日程', '安排', '今晚', '今天晚上', '明天', '待办',
+  'last time', 'previously', 'earlier', 'remember', 'we discussed', 'we decided', 'other chats', 'past chats', 'schedule', 'tonight',
 ]
 
 type MessageRow = {
@@ -133,17 +134,38 @@ export function shouldForceHistoryRetrieval(text: string): boolean {
   return HISTORY_RETRIEVAL_HINTS.some(h => q.includes(h.toLowerCase()))
 }
 
+function rawMessageText(m: RawMsg): string {
+  const anyMsg = m as any
+  if (typeof anyMsg?.content === 'string') return anyMsg.content.trim()
+  if (Array.isArray(anyMsg?.content)) {
+    return anyMsg.content.map((x: any) => typeof x?.text === 'string' ? x.text : '').join('\n').trim()
+  }
+  return ''
+}
+
 export function latestUserQuery(messages: RawMsg[]): string {
+  let lastUser = ''
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i] as any
     if (m?.role !== 'user') continue
-    if (typeof m.content === 'string') return m.content.trim()
-    if (Array.isArray(m.content)) {
-      const text = m.content.map((x: any) => typeof x?.text === 'string' ? x.text : '').join('\n').trim()
-      if (text) return text
-    }
+    const text = rawMessageText(messages[i])
+    if (text) { lastUser = text; break }
   }
-  return ''
+
+  const recent = messages
+    .slice(-6)
+    .map((m: any) => {
+      const text = rawMessageText(m).slice(0, 800)
+      if (!text) return ''
+      return `${m.role === 'assistant' ? '模型' : '用户'}：${text}`
+    })
+    .filter(Boolean)
+    .join('\n')
+
+  return [
+    lastUser ? `【当前用户问题】${lastUser}` : '',
+    recent ? `【最近几轮上下文】\n${recent}` : '',
+  ].filter(Boolean).join('\n\n')
 }
 
 export async function ensureConversationIndexed(supabase: SupabaseServer | null, userId: string | null, conversationId: string | null): Promise<void> {
