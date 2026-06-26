@@ -2,7 +2,7 @@
 
 import { useRef, useState, useEffect } from "react"
 import { cn } from "@/lib/utils"
-import { ChevronDown, X, Loader2, Plus, Paperclip, FileText, Globe, ArrowUp, Square, Check, Microscope, Search } from "lucide-react"
+import { ChevronDown, X, Loader2, Plus, Paperclip, FileText, Globe, ArrowUp, Square, Check, Microscope } from "lucide-react"
 import { TIERS, TIER_MAP, type Tier } from "@/lib/chat-data"
 import { prepareFile, type AttachedFile } from "@/lib/file-extract"
 import type { SearchMode } from "@/lib/search-mode"
@@ -22,11 +22,14 @@ export function ChatInput({
   onSearchModeChange: (mode: SearchMode) => void
   deepResearch: boolean
   onDeepResearchChange: (on: boolean) => void
-  historyRetrieval: boolean
-  onHistoryRetrievalChange: (on: boolean) => void
+  historyRetrieval?: boolean
+  onHistoryRetrievalChange?: (on: boolean) => void
   isLoading: boolean
   onStop: () => void
 }) {
+  void historyRetrieval
+  void onHistoryRetrievalChange
+
   const [value, setValue] = useState("")
   const ref = useRef<HTMLTextAreaElement>(null)
   const [plusOpen, setPlusOpen] = useState(false)
@@ -116,7 +119,7 @@ export function ChatInput({
     }
   }
 
-  const hasActiveTools = searchMode !== "off" || deepResearch || historyRetrieval
+  const hasActiveTools = searchMode !== "off" || deepResearch
   const canSend = !isLoading && (!!value.trim() || images.length > 0 || files.length > 0)
 
   return (
@@ -183,12 +186,6 @@ export function ChatInput({
                 label="联网"
                 onClick={() => onSearchModeChange(searchMode === "web" ? "off" : "web")}
                 active={searchMode === "web"}
-              />
-              <PlusItem
-                icon={<Search className={cn("size-4 scale-x-[-1]", historyRetrieval && "text-primary")} />}
-                label="检索"
-                onClick={() => onHistoryRetrievalChange(!historyRetrieval)}
-                active={historyRetrieval}
               />
               <PlusItem
                 icon={<Globe className={cn("size-4", searchMode === "deep" && "text-primary")} />}
