@@ -3,7 +3,7 @@
 import { useRef, useState, useEffect } from "react"
 import { cn } from "@/lib/utils"
 import { ChevronDown, ChevronLeft, ChevronRight, X, Loader2, Plus, Paperclip, FileText, Globe, ArrowUp, Square, Check, Microscope, Search, Telescope, Trash2 } from "lucide-react"
-import { MODEL_SHEET_TIERS, TIER_MAP } from "@/lib/chat-data"
+import { MODEL_SHEET_TIERS, TIER_MAP, type Tier } from "@/lib/chat-data"
 import { prepareFile, type AttachedFile } from "@/lib/file-extract"
 import type { SearchMode } from "@/lib/search-mode"
 
@@ -16,6 +16,14 @@ type StoredCustomModel = {
 }
 
 const CUSTOM_MODELS_KEY = "chat_custom_models"
+
+function encodeCustomModelId(input: Omit<StoredCustomModel, "id">) {
+  const bytes = new TextEncoder().encode(JSON.stringify(input))
+  let binary = ""
+  bytes.forEach(b => { binary += String.fromCharCode(b) })
+  const payload = btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "")
+  return `custom:${encodeURIComponent(input.label)}:${payload}`
+}
 
 function readCustomModels(): StoredCustomModel[] {
   if (typeof window === "undefined") return []
@@ -50,7 +58,7 @@ export function ChatInput({
 }: {
   onSend: (text: string, images?: string[], files?: AttachedFile[]) => void
   activeTier: string
-  onTierChange: (t: string) => void
+  onTierChange: (t: Tier) => void
   mobile: boolean
   searchMode: SearchMode
   onSearchModeChange: (mode: SearchMode) => void
@@ -175,7 +183,7 @@ export function ChatInput({
   }
 
   function selectTier(id: string) {
-    onTierChange(id)
+    onTierChange(id as Tier)
     try { localStorage.setItem("chat_active_tier", id) } catch {}
     setTierMenuOpen(false)
   }
@@ -194,9 +202,9 @@ export function ChatInput({
       setCustomError("名称、模型、URL、密钥都要填。")
       return
     }
-    const nextModel: StoredCustomModel = { id: `custom:${crypto.randomUUID()}`, label, model, baseUrl, credential }
+    const nextModel: StoredCustomModel = { id: encodeCustomModelId({ label, model, baseUrl, credential }), label, model, baseUrl, credential }
     saveCustomModels([...customModels, nextModel])
-    onTierChange(nextModel.id)
+    onTierChange(nextModel.id as Tier)
     try { localStorage.setItem("chat_active_tier", nextModel.id) } catch {}
     setCustomLabel("")
     setCustomModel("")
