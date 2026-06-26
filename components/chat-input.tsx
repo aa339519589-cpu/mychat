@@ -2,7 +2,7 @@
 
 import { useRef, useState, useEffect } from "react"
 import { cn } from "@/lib/utils"
-import { ChevronDown, X, Loader2, Plus, ImageIcon, FileText, Globe, ArrowUp, Square, Camera, Check, Microscope } from "lucide-react"
+import { ChevronDown, X, Loader2, Plus, FileText, Globe, ArrowUp, Square, Check, Microscope } from "lucide-react"
 import { TIERS, TIER_MAP, type Tier } from "@/lib/chat-data"
 import { prepareFile, type AttachedFile } from "@/lib/file-extract"
 import type { SearchMode } from "@/lib/search-mode"
@@ -31,9 +31,7 @@ export function ChatInput({
   const [files, setFiles] = useState<AttachedFile[]>([])
   const [fileLoading, setFileLoading] = useState(false)
   const [fileError, setFileError] = useState("")
-  const cameraInputRef = useRef<HTMLInputElement>(null)
-  const imageInputRef = useRef<HTMLInputElement>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const addInputRef = useRef<HTMLInputElement>(null)
   const plusMenuRef = useRef<HTMLDivElement>(null)
 
   const [tierMenuOpen, setTierMenuOpen] = useState(false)
@@ -81,26 +79,30 @@ export function ChatInput({
     if (ref.current) ref.current.style.height = "auto"
   }
 
-  function readImagesAsBase64(fileList: FileList | null) {
-    if (!fileList) return
-    Array.from(fileList).forEach(file => {
-      const reader = new FileReader()
-      reader.onload = e => {
-        const result = e.target?.result as string
-        if (result) setImages(prev => [...prev, result])
-      }
-      reader.readAsDataURL(file)
-    })
-    setPlusOpen(false)
+  function addImageFile(file: File) {
+    const reader = new FileReader()
+    reader.onload = e => {
+      const result = e.target?.result as string
+      if (result) setImages(prev => [...prev, result])
+    }
+    reader.readAsDataURL(file)
   }
 
-  async function handleFiles(fileList: FileList | null) {
+  async function handleAddFiles(fileList: FileList | null) {
     if (!fileList || fileList.length === 0) return
     setPlusOpen(false)
     setFileError("")
+
+    const selected = Array.from(fileList)
+    const imageFiles = selected.filter(file => file.type.startsWith("image/"))
+    const documentFiles = selected.filter(file => !file.type.startsWith("image/"))
+
+    imageFiles.forEach(addImageFile)
+    if (documentFiles.length === 0) return
+
     setFileLoading(true)
     try {
-      for (const file of Array.from(fileList)) {
+      for (const file of documentFiles) {
         try {
           const prepared = await prepareFile(file)
           setFiles(prev => [...prev, prepared])
@@ -123,13 +125,15 @@ export function ChatInput({
         ? "bg-background px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2"
         : "max-w-[56rem] px-10 pb-8 pt-2",
     )}>
-      {/* 三类图片/文件输入：拍照=唤起相机，图片=相册，文件=文档 */}
-      <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden"
-        onChange={e => { readImagesAsBase64(e.target.files); e.currentTarget.value = "" }} />
-      <input ref={imageInputRef} type="file" accept="image/*" multiple className="hidden"
-        onChange={e => { readImagesAsBase64(e.target.files); e.currentTarget.value = "" }} />
-      <input ref={fileInputRef} type="file" accept=".pdf,.txt,.md,.csv,.json,.log,.xml,.html,.yaml,.yml,text/*,application/pdf" multiple className="hidden"
-        onChange={e => { handleFiles(e.target.files); e.currentTarget.value = "" }} />
+      {/* 统一添加入口：iOS 会弹出原生 Photo Library / Take Photo / Choose Files */}
+      <input
+        ref={addInputRef}
+        type="file"
+        accept="image/*,.pdf,.txt,.md,.csv,.json,.log,.xml,.html,.yaml,.yml,text/*,application/pdf"
+        multiple
+        className="hidden"
+        onChange={e => { handleAddFiles(e.target.files); e.currentTarget.value = "" }}
+      />
 
       {images.length > 0 && (
         <div className="mb-2 flex flex-wrap gap-2 px-1">
@@ -169,13 +173,11 @@ export function ChatInput({
       {fileError && <p className="mb-2 px-2 text-xs text-destructive">{fileError}</p>}
 
       <div className="flex min-w-0 items-end gap-2 rounded-3xl bg-secondary/50 py-2 pl-2 pr-2">
-        {/* 加号：展开 Add(拍照/照片/文件) + 联网/仓库 */}
+        {/* 加号：展开 Add + 联网/仓库 */}
         <div ref={plusMenuRef} className="relative mb-0.5 shrink-0">
           {plusOpen && (
             <div className="absolute bottom-full left-0 mb-2 w-[8rem] overflow-hidden rounded-xl border border-border/60 bg-card shadow-lg">
-              <PlusItem icon={<ImageIcon className="size-4" />} label="照片" onClick={() => { setPlusOpen(false); imageInputRef.current?.click() }} />
-              <PlusItem icon={<Camera className="size-4" />} label="拍照" onClick={() => { setPlusOpen(false); cameraInputRef.current?.click() }} />
-              <PlusItem icon={<FileText className="size-4" />} label="文件" onClick={() => { setPlusOpen(false); fileInputRef.current?.click() }} />
+              <PlusItem icon={<Plus className="size-4" />} label="添加" onClick={() => { setPlusOpen(false); addInputRef.current?.click() }} />
               <div className="border-t border-border/40" />
               <PlusItem
                 icon={<Globe className={cn("size-4", searchMode === "web" && "text-primary")} />}
