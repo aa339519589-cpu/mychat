@@ -1,9 +1,9 @@
 import { createClient } from "@/lib/supabase/client"
 import type { Conversation, Message } from "@/lib/chat-data"
-import { fmtDate, lastExcerpt } from "./shared"
+import { fmtDate } from "./shared"
 
 // ───────────── 本地消息缓存 ─────────────
-// 目的：切换会话时先显示本地快照，再后台刷新 Supabase，避免点进去后一片空白。
+// 目的：切换会话时有缓存就立刻返回，后台再刷新；不要在会话列表阶段批量解析缓存，避免打开页面更慢。
 const MESSAGE_CACHE_PREFIX = "mychat_messages_"
 const MESSAGE_CACHE_LIMIT = 120
 
@@ -68,6 +68,17 @@ function normalizeMessageRow(r: any): Message {
   }
 }
 
+async function fetchRemoteMessages(conversationId: string): Promise<Message[]> {
+  const supabase = createClient()
+  const { data, error } = await supabase
+    .from("messages")
+    .select("id, role, content, images, thinking, created_at")
+    .eq("conversation_id", conversationId)
+    .order("created_at", { ascending: true })
+  if (error || !data) return []
+  return data.map(normalizeMessageRow)
+}
+
 // ───────────── 对话 ─────────────
 
 export async function fetchConversations(): Promise<Conversation[]> {
@@ -85,31 +96,27 @@ export async function fetchConversations(): Promise<Conversation[]> {
       .select("id, title, updated_at, project_id")
       .order("updated_at", { ascending: false })
     if (!fallback) return []
-    return fallback.map(r => {
-      const cached = readCachedMessages(r.id as string)
-      return {
-        id: r.id as string,
-        title: r.title as string,
-        excerpt: cached.length ? lastExcerpt(cached) : "",
-        date: fmtDate(r.updated_at as string),
-        messages: cached,
-        projectId: (r.project_id as string) ?? null,
-        starred: false,
-        pinned: false,
-      }
-    })
+    return fallback.map(r => ({
+      id: r.id as string,
+      title: r.title as string,
+      excerpt: "",
+      date: fmtDate(r.updated_at as string),
+      messages: [],
+      projectId: (r.project_id as string) ?? null,
+      starred: false,
+      pinned: false,
+    }))
   }
 
   return data.map(r => {
-    const cached = readCachedMessages(r.id as string)
     const m = (r as any).messages
     const msgCount = Array.isArray(m) && m.length > 0 && typeof m[0]?.count === "number" ? (m[0].count as number) : undefined
     return {
       id: r.id as string,
       title: r.title as string,
-      excerpt: cached.length ? lastExcerpt(cached) : "",
+      excerpt: "",
       date: fmtDate(r.updated_at as string),
-      messages: cached,
+      messages: [],
       projectId: (r.project_id as string) ?? null,
       starred: !!r.starred,
       pinned: !!r.pinned,
@@ -170,16 +177,18 @@ export async function deleteConversationRow(id: string): Promise<void> {
 // ───────────── 消息 ─────────────
 
 export async function fetchMessages(conversationId: string): Promise<Message[]> {
-  const supabase = createClient()
   const cached = readCachedMessages(conversationId)
-  const { data, error } = await supabase
-    .from("messages")
-    .select("id, role, content, images, thinking, created_at")
-    .eq("conversation_id", conversationId)
-    .order("created_at", { ascending: true })
-  if (error || !data) return cached
-  const messages = data.map(normalizeMessageRow)
-  writeCachedMessages(conversationId, messages)
+
+  if (cached.length > 0) {
+    // 有缓存时立刻返回，后台刷新本地缓存；不要让 UI 等 Supabase。
+    fetchRemoteMessages(conversationId)
+      .then(messages => { if (messages.length > 0) writeCachedMessages(conversationId, messages) })
+      .catch(() => {})
+    return cached
+  }
+
+  const messages = await fetchRemoteMessages(conversationId)
+  if (messages.length > 0) writeCachedMessages(conversationId, messages)
   return messages
 }
 
