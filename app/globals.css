@@ -218,131 +218,13 @@
 }
 .katex-display > .katex {
   display: block !important;
-  text-align: center !important;
-  white-space: nowrap !important;
-}
-.katex .base {
-  display: inline-flex !important;
-  align-items: baseline;
 }
 
-@layer utilities {
-  /* 羊皮纸纹理：极淡的暖色斑驳 */
-  .paper-grain {
-    background-image:
-      radial-gradient(
-        oklch(0.5 0.06 50 / 0.04) 1px,
-        transparent 1px
-      ),
-      radial-gradient(
-        oklch(0.5 0.06 50 / 0.03) 1px,
-        transparent 1px
-      );
-    background-size: 22px 22px, 38px 38px;
-    background-position: 0 0, 11px 19px;
+@media (min-width: 768px) {
+  div[class*="max-w-[56rem]"]:has(> .thinking-flow) {
+    margin-left: auto !important;
+    margin-right: auto !important;
+    padding-left: 2.5rem;
+    padding-right: 2.5rem;
   }
-  /* 书页竖向折痕渐隐，用于主区两侧呼吸感 */
-  .page-vignette {
-    background:
-      linear-gradient(
-        to right,
-        oklch(0.4 0.04 50 / 0.04),
-        transparent 8%,
-        transparent 92%,
-        oklch(0.4 0.04 50 / 0.04)
-      );
-  }
-  .drop-cap::first-letter {
-    font-size: 3.1em;
-    line-height: 0.8;
-    float: left;
-    padding: 0.05em 0.12em 0 0;
-    font-weight: 500;
-    color: var(--primary);
-  }
-}
-
-/* 头像随明暗主题切换：浅色用 companion.png（米色底），深色用 companion-dark.png（深色底）。
-   跟随系统时不存在 .dark class，所以同时用 prefers-color-scheme media query 处理。 */
-.avatar-box { background-color: #FDF2E2; }
-.avatar-dark { display: none; }
-.dark .avatar-box { background-color: #1F1F1F; }
-.dark .avatar-light { display: none; }
-.dark .avatar-dark { display: block; }
-.light .avatar-box { background-color: #FDF2E2; }
-.light .avatar-light { display: block; }
-.light .avatar-dark { display: none; }
-@media (prefers-color-scheme: dark) {
-  :root:not(.light) .avatar-box { background-color: #1F1F1F; }
-  :root:not(.light) .avatar-light { display: none; }
-  :root:not(.light) .avatar-dark { display: block; }
-}
-
-/* 用户消息气泡背景：浅色沿用 secondary(70%)，深色钉成近黑 #0A0A0A，与 #1F1F1F 背景拉开区分。
-   本应用深色靠系统 prefers-color-scheme（页面无 .dark 类），所以不能用 Tailwind 的 dark: 前缀。 */
-.user-bubble-bg { background-color: color-mix(in oklab, var(--secondary) 70%, transparent); }
-.dark .user-bubble-bg { background-color: #0A0A0A; }
-@media (prefers-color-scheme: dark) {
-  :root:not(.light) .user-bubble-bg { background-color: #0A0A0A; }
-}
-
-/* 思考流光：一道高光在文字上不断流过，表示模型正在思考/落笔（明暗主题自动适配） */
-@keyframes thinkingFlow {
-  0%   { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
-}
-
-/* Code 终端思考球：GPT 同款呼吸效果（缩放 + 透明度脉冲） */
-@keyframes codeBreathe {
-  0%, 100% { transform: scale(0.7); opacity: 0.45; }
-  50%      { transform: scale(1.05); opacity: 1; }
-}
-.code-breathe { animation: codeBreathe 1.4s ease-in-out infinite; }
-@media (prefers-reduced-motion: reduce) {
-  .code-breathe { animation: none; opacity: 0.8; }
-}
-.thinking-flow {
-  background-image: linear-gradient(
-    100deg,
-    var(--muted-foreground) 0%,
-    var(--muted-foreground) 38%,
-    var(--foreground) 50%,
-    var(--muted-foreground) 62%,
-    var(--muted-foreground) 100%
-  );
-  background-size: 200% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  color: transparent;
-  animation: thinkingFlow 1.8s linear infinite;
-}
-/* 亮色下 foreground 与 muted-foreground 明度太接近，流光发闷几乎看不见。
-   单独把基底调浅、高光压成深墨（带一点赭石彩度），拉大对比，让流光在亮色下也清晰。
-   暗色（.dark 或系统暗色）保持原样不动。 */
-.light .thinking-flow {
-  background-image: linear-gradient(
-    100deg,
-    oklch(0.72 0.06 42) 0%,
-    oklch(0.72 0.06 42) 42%,
-    oklch(0.48 0.15 38) 50%,
-    oklch(0.72 0.06 42) 58%,
-    oklch(0.72 0.06 42) 100%
-  );
-}
-@media (prefers-color-scheme: light) {
-  :root:not(.dark) .thinking-flow {
-    background-image: linear-gradient(
-      100deg,
-      oklch(0.72 0.06 42) 0%,
-      oklch(0.72 0.06 42) 42%,
-      oklch(0.48 0.15 38) 50%,
-      oklch(0.72 0.06 42) 58%,
-      oklch(0.72 0.06 42) 100%
-    );
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .thinking-flow { animation: none; -webkit-text-fill-color: var(--muted-foreground); color: var(--muted-foreground); }
 }
