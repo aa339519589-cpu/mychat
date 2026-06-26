@@ -229,6 +229,27 @@
   }
 }
 
+/* 侧栏标题只保留标题本身：历史/项目/对话列表不再露出内容摘要和日期，整体压紧。 */
+.bg-sidebar button > p[class*="line-clamp-2"],
+.bg-sidebar button > p[class*="line-clamp-3"],
+.bg-sidebar button > div p[class*="line-clamp-2"],
+.bg-sidebar button > div p[class*="line-clamp-3"],
+.bg-sidebar button > div > span[class*="tracking-wider"],
+.bg-sidebar button.group.relative.flex.w-full.flex-col > div:last-child {
+  display: none !important;
+}
+
+.bg-sidebar .group.relative > button {
+  padding-top: 0.55rem !important;
+  padding-bottom: 0.55rem !important;
+}
+
+.bg-sidebar button.group.relative.flex.w-full.flex-col {
+  gap: 0 !important;
+  padding-top: 0.65rem !important;
+  padding-bottom: 0.65rem !important;
+}
+
 .avatar-box {
   position: relative;
   overflow: hidden;
