@@ -80,11 +80,11 @@ async function fetchConversationSummary(supabase: SupabaseServer | null, userId:
   try {
     const { data, error } = await supabase
       .from('conversations')
-      .select('context_summary')
+      .select('context_summary, summary_until_message_id')
       .eq('id', conversationId)
       .eq('user_id', userId)
       .maybeSingle()
-    if (error) return ''
+    if (error || !data?.summary_until_message_id) return ''
     return typeof data?.context_summary === 'string' ? data.context_summary.trim() : ''
   } catch {
     return ''
@@ -179,16 +179,30 @@ async function compactConversationContext(supabase: SupabaseServer | null, userI
     if (msgError) return
 
     const rows = (messages ?? []) as MessageRow[]
+    const markerMissing = !!conversation.summary_until_message_id && !rows.some(m => m.id === conversation.summary_until_message_id)
+    const staleSummaryWithoutMarker = !!conversation.context_summary && !conversation.summary_until_message_id
+    let summaryUntilMessageId: string | null = conversation.summary_until_message_id ?? null
+    let oldSummary = typeof conversation.context_summary === 'string' ? conversation.context_summary : ''
+
+    if (markerMissing || staleSummaryWithoutMarker) {
+      summaryUntilMessageId = null
+      oldSummary = ''
+      await supabase
+        .from('conversations')
+        .update({ context_summary: null, summary_until_message_id: null, summary_token_count: 0 })
+        .eq('id', conversationId)
+        .eq('user_id', userId)
+    }
+
     if (rows.length <= RECENT_CONTEXT_MESSAGES) return
 
-    const coveredIndex = conversation.summary_until_message_id
-      ? rows.findIndex(m => m.id === conversation.summary_until_message_id)
+    const coveredIndex = summaryUntilMessageId
+      ? rows.findIndex(m => m.id === summaryUntilMessageId)
       : -1
     const compressibleEnd = Math.max(0, rows.length - RECENT_CONTEXT_MESSAGES)
     const foldRows = rows.slice(0, compressibleEnd).slice(coveredIndex + 1)
     if (foldRows.length < SUMMARY_TRIGGER_MESSAGES) return
 
-    const oldSummary = typeof conversation.context_summary === 'string' ? conversation.context_summary : ''
     const nextSummary = await summarizeContext(oldSummary, foldRows, coveredIndex + 1)
     const summaryUntil = foldRows[foldRows.length - 1]?.id
     if (!summaryUntil) return
