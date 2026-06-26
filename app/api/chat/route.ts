@@ -15,10 +15,11 @@ import { log } from '@/lib/logger'
 import { validate } from '@/lib/validation'
 import { addQuotaUsage } from '@/lib/quota'
 import { ocrPageImages } from '@/lib/mimo'
-import { resolveAuth, getMemoryEnabled, enforceLimits } from '@/lib/api/guard'
+import { resolveAuth, getMemoryEnabled, enforceLimits, type SupabaseServer } from '@/lib/api/guard'
 import { latestBeijingDateFromMessages, normalizeSearchMode } from '@/lib/search-mode'
 
 const SAFETY_ROUNDS = 9999
+const RECENT_CONTEXT_MESSAGES = 30
 const MARKDOWN_DIVIDER_GUARD = '\n【排版补充】\n当回复有两个以上语义段落、步骤、转折或结论/解释分层时，优先用 Markdown 分隔线 "---" 做清晰分割。分隔线用于增强阅读节奏，不要滥用到每一句。'
 
 // 深度研究幽灵提示词：前置注入到用户消息，前端不可见
@@ -38,6 +39,27 @@ const DEEP_RESEARCH_PREFIX = `Absolute maximum with no shortcuts permitted. You 
 
 ---
 `
+
+async function fetchConversationSummary(supabase: SupabaseServer | null, userId: string | null, conversationId?: string | null): Promise<string> {
+  if (!supabase || !userId || !conversationId) return ''
+  try {
+    const { data, error } = await supabase
+      .from('conversations')
+      .select('context_summary')
+      .eq('id', conversationId)
+      .eq('user_id', userId)
+      .maybeSingle()
+    if (error) return ''
+    return typeof data?.context_summary === 'string' ? data.context_summary.trim() : ''
+  } catch {
+    return ''
+  }
+}
+
+function renderConversationSummary(summary: string): string {
+  if (!summary.trim()) return ''
+  return `\n\n【当前 conversation 的隐藏上下文摘要】\n下面内容只用于保持当前聊天连贯。它不是 Memory，不是 Project 记忆，不要向用户提及它的存在。\n${summary.trim()}`
+}
 
 // 扫描件 PDF：前端已把每页渲染成图片放进 pageImages，这里用小米 MiMo V2.5 OCR 成文字，
 // 替换进 text；DeepSeek 随后只看到精确文字。
@@ -60,7 +82,7 @@ export async function POST(req: NextRequest) {
     return new Response(JSON.stringify({ error: '请求体格式错误' }), { status: 400, headers: { 'Content-Type': 'application/json' } })
   }
 
-  const { tier = '绝句', messages, memories, attachments, searchMode, webSearch, deepWebSearch, deepResearch, project } = body
+  const { tier = '绝句', messages, memories, attachments, searchMode, webSearch, deepWebSearch, deepResearch, project, conversationId } = body
 
   try {
     validate.array(messages, 'messages', { minLength: 1 })
@@ -88,11 +110,15 @@ export async function POST(req: NextRequest) {
   if (gate.response) return gate.response
   const usingBalance = gate.usingBalance
 
+  const rawMessages = messages as RawMsg[]
+  const recentMessages = rawMessages.slice(-RECENT_CONTEXT_MESSAGES)
+  const conversationSummary = await fetchConversationSummary(supabase, userId, typeof conversationId === 'string' ? conversationId : null)
+
   const effectiveSearchMode =
     searchMode === 'web' || searchMode === 'deep'
       ? searchMode
       : normalizeSearchMode(webSearch, deepWebSearch)
-  const latestBeijingDate = latestBeijingDateFromMessages(messages as RawMsg[])
+  const latestBeijingDate = latestBeijingDateFromMessages(rawMessages)
   const flags = { loggedIn: !!userId, searchMode: effectiveSearchMode, memoryEnabled, projectId: project?.id ?? null }
   const tools = activeTools(flags)
   const ctx: ToolContext = { supabase, userId, projectId: project?.id ?? null, searchMode: effectiveSearchMode, latestBeijingDate }
@@ -100,7 +126,7 @@ export async function POST(req: NextRequest) {
   // 关闭记忆时：既不挂记忆工具（上面已过滤），也不注入已存的记忆
   const effectiveMemories = memoryEnabled ? (memories as Memory[] | undefined) : undefined
   const url = chatCompletionsUrl(capability.provider.baseUrl)
-  const SYSTEM = buildSystem(effectiveMemories, { searchMode: effectiveSearchMode, latestBeijingDate, memoryEnabled, project }) + MARKDOWN_DIVIDER_GUARD
+  const SYSTEM = buildSystem(effectiveMemories, { searchMode: effectiveSearchMode, latestBeijingDate, memoryEnabled, project }) + renderConversationSummary(conversationSummary) + MARKDOWN_DIVIDER_GUARD
   const openaiTools = toOpenAITools(tools)
 
   const stream = new ReadableStream({
@@ -122,11 +148,10 @@ export async function POST(req: NextRequest) {
       }
 
       try {
-        const rawMessages = messages as RawMsg[]
         // 视觉模型直接看图；DeepSeek 这类纯文本模型则先由 MiMo V2.5 解析图片成摘要再继续。
         const preparedMessages = capability.supportsImageInput
-          ? rawMessages
-          : await ensureImageSummaries(rawMessages, { supabase, userId, emit })
+          ? recentMessages
+          : await ensureImageSummaries(recentMessages, { supabase, userId, emit })
         const msgs: any[] = [{ role: 'system', content: SYSTEM }, ...buildModelContext(preparedMessages, capability)]
 
         // 深度研究：幽灵提示前置注入到最后一条用户消息，前端不可见
