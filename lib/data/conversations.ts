@@ -41,6 +41,10 @@ function writeCachedMessages(conversationId: string, messages: Message[]) {
   }
 }
 
+export function cacheConversationMessages(conversationId: string, messages: Message[]) {
+  writeCachedMessages(conversationId, messages)
+}
+
 function updateCachedMessageContent(conversationId: string, messageId: string, content: string) {
   const cached = readCachedMessages(conversationId)
   if (!cached.length) return
