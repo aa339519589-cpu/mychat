@@ -208,7 +208,7 @@ export function MessageList({
               )}
               {m.content && (
                 editingUserId === m.id ? (
-                  <div className="max-w-[84%] min-w-0 rounded-[1.05rem] border border-border/50 bg-secondary/75 px-4 py-2 text-left text-secondary-foreground shadow-sm md:max-w-[80%] dark:border-white/10 dark:bg-[#151515] dark:text-white">
+                  <div className="max-w-[84%] min-w-0 rounded-[0.78rem] border border-border/50 bg-secondary/75 px-3.5 py-1.5 text-left text-secondary-foreground shadow-sm md:max-w-[80%] dark:border-white/10 dark:bg-[#151515] dark:text-white">
                     <textarea
                       value={editDraft}
                       onChange={e => setEditDraft(e.target.value)}
@@ -227,7 +227,7 @@ export function MessageList({
                     tabIndex={0}
                     onClick={() => setActiveUserId(activeUserId === m.id ? null : m.id)}
                     onKeyDown={e => { if (e.key === "Enter") setActiveUserId(activeUserId === m.id ? null : m.id) }}
-                    className="max-w-[84%] min-w-0 cursor-pointer rounded-[1.05rem] border border-border/50 bg-secondary/75 px-4 py-2 text-left text-secondary-foreground shadow-sm md:max-w-[80%] dark:border-white/10 dark:bg-[#151515] dark:text-white"
+                    className="max-w-[84%] min-w-0 cursor-pointer rounded-[0.78rem] border border-border/50 bg-secondary/75 px-3.5 py-1.5 text-left text-secondary-foreground shadow-sm md:max-w-[80%] dark:border-white/10 dark:bg-[#151515] dark:text-white"
                   >
                     <p className="break-words font-sans text-[17px] font-[400] not-italic leading-[1.38] tracking-[0.001em] text-left text-secondary-foreground [overflow-wrap:anywhere] md:text-[18px] dark:text-white">{m.content}</p>
                   </div>
