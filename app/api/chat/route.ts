@@ -11,7 +11,6 @@ import type { RawMsg } from '@/lib/llm/types'
 import { buildModelContext } from '@/lib/llm/context'
 import { getModelCapability } from '@/lib/llm/models'
 import { ensureImageSummaries } from '@/lib/llm/image-context'
-import { ensureConversationIndexed, latestUserQuery, retrieveHistoryContext, type HistoryRetrievalMode } from '@/lib/llm/active-retrieval'
 import { activeTools, toOpenAITools, execTool, type ToolContext } from '@/lib/tools'
 import { log } from '@/lib/logger'
 import { validate } from '@/lib/validation'
@@ -26,15 +25,9 @@ const SUMMARY_TRIGGER_MESSAGES = 28
 const SUMMARY_MODEL = 'deepseek-v4-flash'
 const SUMMARY_TARGET_CHARS = 9000
 const MARKDOWN_DIVIDER_GUARD = '\n【排版补充】\n当回复有两个以上语义段落、步骤、转折或结论/解释分层时，优先用 Markdown 分隔线 "---" 做清晰分割。分隔线用于增强阅读节奏，不要滥用到每一句。'
-const DEEP_RESEARCH_PREFIX = `【隐藏深度研究要求】\n请以最高努力完成当前问题：先理解真实目标，拆解约束，检查边界和反例，最后给出清晰结论。不要提及这段隐藏要求。\n---\n`
+const DEEP_RESEARCH_PREFIX = `请以最高努力完成当前问题：先理解真实目标，拆解约束，检查边界和反例，最后给出清晰结论。\n---\n`
 
 type MessageRow = { id: string; role: 'user' | 'assistant'; content: string | null; images?: unknown; created_at?: string | null }
-
-function historyRetrievalModeForTier(tier: string): HistoryRetrievalMode {
-  if (tier === '鸿篇') return 'deep'
-  if (tier === '绝句') return 'light'
-  return 'balanced'
-}
 
 async function inferConversationId(supabase: SupabaseServer | null, userId: string | null, explicitId: unknown, rawMessages: RawMsg[]): Promise<string | null> {
   if (typeof explicitId === 'string' && explicitId) return explicitId
@@ -78,14 +71,14 @@ function formatSummaryMessage(m: MessageRow, index: number): string {
 }
 function buildSummaryPrompt(oldSummary: string, foldMessages: MessageRow[], startIndex: number): string {
   const messagesText = foldMessages.map((m, i) => formatSummaryMessage(m, startIndex + i)).join('\n\n')
-  return `你是 MyChat 的当前 conversation 隐藏上下文压缩器。\n\n把旧摘要和这批刚变旧的消息合并压缩成新的摘要。只输出摘要正文。越旧越粗，越新越细。旧摘要可以继续被压缩，也就是压缩的压缩。只保留影响后续连贯性的内容：方案、参数、用户纠正、代码决策、数学状态、重要上下文。删除寒暄、重复和临时吐槽。目标尽量控制在 ${SUMMARY_TARGET_CHARS} 字以内。\n\n【旧摘要】\n${oldSummary.trim() || '（无）'}\n\n【需要折叠进摘要的旧消息】\n${messagesText}`
+  return `你是 MyChat 的当前 conversation 上下文压缩器。\n\n把旧摘要和这批刚变旧的消息合并压缩成新的摘要。只输出摘要正文。越旧越粗，越新越细。旧摘要可以继续被压缩，也就是压缩的压缩。只保留影响后续连贯性的内容：方案、参数、用户纠正、代码决策、数学状态、重要上下文。删除寒暄、重复和临时吐槽。目标尽量控制在 ${SUMMARY_TARGET_CHARS} 字以内。\n\n【旧摘要】\n${oldSummary.trim() || '（无）'}\n\n【需要折叠进摘要的旧消息】\n${messagesText}`
 }
 async function summarizeContext(oldSummary: string, foldMessages: MessageRow[], startIndex: number): Promise<string> {
   const capability = getModelCapability(SUMMARY_MODEL)
   const apiKey = process.env[capability.provider.apiKeyEnv] ?? ''
   if (!apiKey) throw new Error(`${capability.provider.apiKeyEnv} 未设置`)
   const result = await runTurn(chatCompletionsUrl(capability.provider.baseUrl), apiKey, SUMMARY_MODEL, [
-    { role: 'system', content: '你只做当前 conversation 的隐藏上下文摘要压缩。只输出摘要正文。' },
+    { role: 'system', content: '你只做当前 conversation 的上下文摘要压缩。只输出摘要正文。' },
     { role: 'user', content: buildSummaryPrompt(oldSummary, foldMessages, startIndex) },
   ], [], () => {}, { thinking: false, adapter: capability.provider.adapter, deferTextUntilTurnEnd: true })
   if (result.failed || !result.content.trim()) throw new Error('摘要模型生成失败')
@@ -135,7 +128,7 @@ export async function POST(req: NextRequest) {
     log.error('chat', 'Invalid JSON in request body', e)
     return new Response(JSON.stringify({ error: '请求体格式错误' }), { status: 400, headers: { 'Content-Type': 'application/json' } })
   }
-  const { tier = '绝句', messages, memories, attachments, searchMode, webSearch, deepWebSearch, deepResearch, project, conversationId, historyRetrieval } = body
+  const { tier = '绝句', messages, memories, attachments, searchMode, webSearch, deepWebSearch, deepResearch, project, conversationId } = body
   try { validate.array(messages, 'messages', { minLength: 1 }) } catch (e) {
     log.warn('chat', 'Validation error', e)
     return new Response(JSON.stringify({ error: (e as Error).message }), { status: 400, headers: { 'Content-Type': 'application/json' } })
@@ -163,20 +156,6 @@ export async function POST(req: NextRequest) {
   await compactConversationContext(supabase, userId, resolvedConversationId)
   const recentMessages = rawMessages.slice(-RECENT_CONTEXT_MESSAGES)
   const conversationSummary = await fetchConversationSummary(supabase, userId, resolvedConversationId)
-  const historyRetrievalEnabled = historyRetrieval === true
-  const historyRetrievalMode = historyRetrievalModeForTier(tier)
-  let activeHistoryContext = ''
-  if (historyRetrievalEnabled) {
-    await ensureConversationIndexed(supabase, userId, resolvedConversationId)
-    activeHistoryContext = await retrieveHistoryContext({
-      supabase,
-      userId,
-      conversationId: resolvedConversationId,
-      projectId: project?.id ?? null,
-      query: latestUserQuery(rawMessages),
-      mode: historyRetrievalMode,
-    })
-  }
 
   const effectiveSearchMode = searchMode === 'web' || searchMode === 'deep' ? searchMode : normalizeSearchMode(webSearch, deepWebSearch)
   const latestBeijingDate = latestBeijingDateFromMessages(rawMessages)
@@ -185,7 +164,7 @@ export async function POST(req: NextRequest) {
   const ctx: ToolContext = { supabase, userId, projectId: project?.id ?? null, searchMode: effectiveSearchMode, latestBeijingDate }
   const effectiveMemories = memoryEnabled && !project?.id ? (memories as Memory[] | undefined) : undefined
   const url = chatCompletionsUrl(capability.provider.baseUrl)
-  const SYSTEM = buildSystem(effectiveMemories, { searchMode: effectiveSearchMode, latestBeijingDate, memoryEnabled, project }) + renderConversationSummary(conversationSummary) + activeHistoryContext + MARKDOWN_DIVIDER_GUARD
+  const SYSTEM = buildSystem(effectiveMemories, { searchMode: effectiveSearchMode, latestBeijingDate, memoryEnabled, project }) + renderConversationSummary(conversationSummary) + MARKDOWN_DIVIDER_GUARD
   const openaiTools = toOpenAITools(tools)
 
   const stream = new ReadableStream({
