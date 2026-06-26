@@ -5,7 +5,6 @@ import { cn } from "@/lib/utils"
 import { ChevronDown, X, Loader2, Plus, ImageIcon, FileText, Globe, ArrowUp, Square, Camera, Check, Microscope } from "lucide-react"
 import { TIERS, TIER_MAP, type Tier } from "@/lib/chat-data"
 import { prepareFile, type AttachedFile } from "@/lib/file-extract"
-import { modelSupportsImageInput } from "@/lib/llm/models"
 import type { SearchMode } from "@/lib/search-mode"
 
 export function ChatInput({
@@ -116,7 +115,6 @@ export function ChatInput({
 
   const hasActiveTools = searchMode !== "off" || deepResearch
   const canSend = !isLoading && (!!value.trim() || images.length > 0 || files.length > 0)
-  const currentModelSupportsImages = modelSupportsImageInput(TIER_MAP[activeTier]?.model ?? '')
 
   return (
     <div className={cn(
@@ -167,11 +165,6 @@ export function ChatInput({
             </div>
           )}
         </div>
-      )}
-      {images.length > 0 && !currentModelSupportsImages && (
-        <p aria-live="polite" className="mb-2 px-2 text-xs text-muted-foreground">
-          当前模型不直接看图，将先由视觉模型理解图片后再继续。
-        </p>
       )}
       {fileError && <p className="mb-2 px-2 text-xs text-destructive">{fileError}</p>}
 
