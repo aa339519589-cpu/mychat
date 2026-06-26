@@ -2,7 +2,7 @@
 
 import { useRef, useState, useEffect } from "react"
 import { cn } from "@/lib/utils"
-import { ChevronDown, X, Loader2, Plus, Paperclip, FileText, Globe, ArrowUp, Square, Check, Microscope, Telescope, Search } from "lucide-react"
+import { ChevronDown, X, Loader2, Plus, Paperclip, FileText, Globe, ArrowUp, Square, Check, Microscope, Search } from "lucide-react"
 import { TIERS, TIER_MAP, type Tier } from "@/lib/chat-data"
 import { prepareFile, type AttachedFile } from "@/lib/file-extract"
 import type { SearchMode } from "@/lib/search-mode"
@@ -40,7 +40,6 @@ export function ChatInput({
   const [tierMenuOpen, setTierMenuOpen] = useState(false)
   const tierMenuRef = useRef<HTMLDivElement>(null)
 
-  // 点模型菜单外部时关闭
   useEffect(() => {
     if (!tierMenuOpen) return
     function handleClickOutside(e: MouseEvent) {
@@ -52,7 +51,6 @@ export function ChatInput({
     return () => document.removeEventListener("mousedown", handleClickOutside)
   }, [tierMenuOpen])
 
-  // 点加号菜单外部时关闭
   useEffect(() => {
     if (!plusOpen) return
     function handleClickOutside(e: MouseEvent) {
@@ -128,7 +126,6 @@ export function ChatInput({
         ? "bg-background px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2"
         : "max-w-[56rem] px-10 pb-8 pt-2",
     )}>
-      {/* 统一添加入口：iOS 会弹出原生 Photo Library / Take Photo / Choose Files */}
       <input
         ref={addInputRef}
         type="file"
@@ -176,7 +173,6 @@ export function ChatInput({
       {fileError && <p className="mb-2 px-2 text-xs text-destructive">{fileError}</p>}
 
       <div className="flex min-w-0 items-end gap-2 rounded-3xl bg-secondary/50 py-2 pl-2 pr-2">
-        {/* 添加：展开 Add + 联网/检索 */}
         <div ref={plusMenuRef} className="relative mb-0.5 shrink-0">
           {plusOpen && (
             <div className="absolute bottom-full left-0 mb-2 w-[8rem] overflow-hidden rounded-xl border border-border/60 bg-card shadow-lg">
@@ -195,7 +191,7 @@ export function ChatInput({
                 active={historyRetrieval}
               />
               <PlusItem
-                icon={<Telescope className={cn("size-4", searchMode === "deep" && "text-primary")} />}
+                icon={<Globe className={cn("size-4", searchMode === "deep" && "text-primary")} />}
                 label="深度联网"
                 onClick={() => onSearchModeChange(searchMode === "deep" ? "off" : "deep")}
                 active={searchMode === "deep"}
@@ -238,7 +234,6 @@ export function ChatInput({
           )}
         />
 
-        {/* 模型选择（可展开，从上到下：视觉＞深度＞均衡＞快速） */}
         <div ref={tierMenuRef} className="relative mb-0.5 shrink-0">
           {tierMenuOpen && (
             <div className="absolute bottom-full right-0 mb-2 min-w-[6.25rem] space-y-0.5 overflow-hidden rounded-2xl border border-border/60 bg-card p-1 shadow-lg">
