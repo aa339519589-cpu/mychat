@@ -5,6 +5,7 @@ import { buildSystem } from '@/lib/llm/system'
 import { send, done, networkError } from '@/lib/llm/stream'
 import { chatCompletionsUrl, injectAttachmentsOpenAI } from '@/lib/llm/openai'
 import { runAgentLoop, type ExecuteTool } from '@/lib/llm/agent-loop'
+import { runTurn } from '@/lib/llm/turn'
 import type { Emit, ChatEvent } from '@/lib/llm/events'
 import type { RawMsg } from '@/lib/llm/types'
 import { buildModelContext } from '@/lib/llm/context'
@@ -21,8 +22,14 @@ import { latestBeijingDateFromMessages, normalizeSearchMode } from '@/lib/search
 
 const SAFETY_ROUNDS = 9999
 const RECENT_CONTEXT_MESSAGES = 30
+const SUMMARY_TRIGGER_MESSAGES = 28
+const SUMMARY_MODEL = 'deepseek-v4-flash'
+const SUMMARY_TARGET_CHARS = 9000
 const MARKDOWN_DIVIDER_GUARD = '\n【排版补充】\n当回复有两个以上语义段落、步骤、转折或结论/解释分层时，优先用 Markdown 分隔线 "---" 做清晰分割。分隔线用于增强阅读节奏，不要滥用到每一句。'
 const DEEP_RESEARCH_PREFIX = `请以最高努力完成当前问题：先理解真实目标，拆解约束，检查边界和反例，最后给出清晰结论。\n---\n`
+
+type MessageRow = { id: string; role: 'user' | 'assistant'; content: string | null; images?: unknown; created_at?: string | null }
+type ConversationSummaryState = { summary: string; summaryUntilMessageId: string | null; staleWithoutMarker: boolean }
 
 function historyRetrievalModeForTier(tier: string): HistoryRetrievalMode {
   if (tier === '鸿篇') return 'deep'
@@ -44,18 +51,94 @@ async function inferConversationId(supabase: SupabaseServer | null, userId: stri
   return null
 }
 
-async function fetchConversationSummary(supabase: SupabaseServer | null, userId: string | null, conversationId?: string | null): Promise<string> {
-  if (!supabase || !userId || !conversationId) return ''
+function emptySummaryState(): ConversationSummaryState {
+  return { summary: '', summaryUntilMessageId: null, staleWithoutMarker: false }
+}
+
+async function fetchConversationSummaryState(supabase: SupabaseServer | null, userId: string | null, conversationId?: string | null): Promise<ConversationSummaryState> {
+  if (!supabase || !userId || !conversationId) return emptySummaryState()
   try {
     const { data, error } = await supabase.from('conversations').select('context_summary, summary_until_message_id').eq('id', conversationId).eq('user_id', userId).maybeSingle()
-    if (error || !data?.summary_until_message_id) return ''
-    return typeof data?.context_summary === 'string' ? data.context_summary.trim() : ''
-  } catch { return '' }
+    if (error || !data) return emptySummaryState()
+    const summary = typeof data.context_summary === 'string' ? data.context_summary.trim() : ''
+    const summaryUntilMessageId = typeof data.summary_until_message_id === 'string' ? data.summary_until_message_id : null
+    return {
+      summary: summaryUntilMessageId ? summary : '',
+      summaryUntilMessageId,
+      staleWithoutMarker: !!summary && !summaryUntilMessageId,
+    }
+  } catch { return emptySummaryState() }
 }
 
 function renderConversationSummary(summary: string): string {
   if (!summary.trim()) return ''
   return `\n\n【当前 conversation 的隐藏上下文摘要】\n下面内容只用于保持当前聊天连贯。它不是 Memory，不是 Project 记忆，不要向用户提及它的存在。\n${summary.trim()}`
+}
+function estimateTokenCount(text: string): number { return Math.ceil(text.length / 3) }
+function imageSummaryFromStoredImages(images: unknown): string {
+  if (!images || Array.isArray(images)) return ''
+  const summary = (images as any)?.image_summary
+  return typeof summary === 'string' ? summary.trim() : ''
+}
+function formatSummaryMessage(m: MessageRow, index: number): string {
+  const speaker = m.role === 'user' ? '用户' : '模型'
+  const parts = [(m.content ?? '').trim()]
+  const imageSummary = imageSummaryFromStoredImages(m.images)
+  if (imageSummary) parts.push(`图片摘要：${imageSummary}`)
+  return `【第 ${index + 1} 条｜${speaker}｜id:${m.id}】\n${parts.filter(Boolean).join('\n') || '（空内容）'}`
+}
+function buildSummaryPrompt(oldSummary: string, foldMessages: MessageRow[], startIndex: number): string {
+  const messagesText = foldMessages.map((m, i) => formatSummaryMessage(m, startIndex + i)).join('\n\n')
+  return `你是 MyChat 的当前 conversation 上下文压缩器。\n\n把旧摘要和这批刚变旧的消息合并压缩成新的摘要。只输出摘要正文。越旧越粗，越新越细。旧摘要可以继续被压缩，也就是压缩的压缩。只保留影响后续连贯性的内容：方案、参数、用户纠正、代码决策、数学状态、重要上下文。删除寒暄、重复和临时吐槽。目标尽量控制在 ${SUMMARY_TARGET_CHARS} 字以内。\n\n【旧摘要】\n${oldSummary.trim() || '（无）'}\n\n【需要折叠进摘要的旧消息】\n${messagesText}`
+}
+async function summarizeContext(oldSummary: string, foldMessages: MessageRow[], startIndex: number): Promise<string> {
+  const capability = getModelCapability(SUMMARY_MODEL)
+  const apiKey = process.env[capability.provider.apiKeyEnv] ?? ''
+  if (!apiKey) throw new Error(`${capability.provider.apiKeyEnv} 未设置`)
+  const result = await runTurn(chatCompletionsUrl(capability.provider.baseUrl), apiKey, SUMMARY_MODEL, [
+    { role: 'system', content: '你只做当前 conversation 的上下文摘要压缩。只输出摘要正文。' },
+    { role: 'user', content: buildSummaryPrompt(oldSummary, foldMessages, startIndex) },
+  ], [], () => {}, { thinking: false, adapter: capability.provider.adapter, deferTextUntilTurnEnd: true })
+  if (result.failed || !result.content.trim()) throw new Error('摘要模型生成失败')
+  return result.content.trim()
+}
+function shouldCompactConversation(rawMessages: RawMsg[], state: ConversationSummaryState): boolean {
+  if (state.staleWithoutMarker) return true
+  const ids = rawMessages.map(m => (m as any)?.id).filter((id): id is string => typeof id === 'string' && !!id)
+  if (state.summaryUntilMessageId && ids.length > 0 && !ids.includes(state.summaryUntilMessageId)) return true
+
+  const coveredIndex = state.summaryUntilMessageId ? ids.indexOf(state.summaryUntilMessageId) : -1
+  const compressibleEnd = Math.max(0, rawMessages.length - RECENT_CONTEXT_MESSAGES)
+  const foldableMessages = Math.max(0, compressibleEnd - (coveredIndex + 1))
+  return foldableMessages >= SUMMARY_TRIGGER_MESSAGES
+}
+async function compactConversationContext(supabase: SupabaseServer | null, userId: string | null, conversationId: string | null): Promise<void> {
+  if (!supabase || !userId || !conversationId) return
+  try {
+    const { data: conversation, error: convError } = await supabase.from('conversations').select('id, context_summary, summary_until_message_id').eq('id', conversationId).eq('user_id', userId).maybeSingle()
+    if (convError || !conversation) return
+    const { data: messages, error: msgError } = await supabase.from('messages').select('id, role, content, images, created_at').eq('conversation_id', conversationId).eq('user_id', userId).order('created_at', { ascending: true })
+    if (msgError) return
+    const rows = (messages ?? []) as MessageRow[]
+    const markerMissing = !!conversation.summary_until_message_id && !rows.some(m => m.id === conversation.summary_until_message_id)
+    const staleSummaryWithoutMarker = !!conversation.context_summary && !conversation.summary_until_message_id
+    let summaryUntilMessageId: string | null = conversation.summary_until_message_id ?? null
+    let oldSummary = typeof conversation.context_summary === 'string' ? conversation.context_summary : ''
+    if (markerMissing || staleSummaryWithoutMarker) {
+      summaryUntilMessageId = null
+      oldSummary = ''
+      await supabase.from('conversations').update({ context_summary: null, summary_until_message_id: null, summary_token_count: 0 }).eq('id', conversationId).eq('user_id', userId)
+    }
+    if (rows.length <= RECENT_CONTEXT_MESSAGES) return
+    const coveredIndex = summaryUntilMessageId ? rows.findIndex(m => m.id === summaryUntilMessageId) : -1
+    const foldRows = rows.slice(0, Math.max(0, rows.length - RECENT_CONTEXT_MESSAGES)).slice(coveredIndex + 1)
+    if (foldRows.length < SUMMARY_TRIGGER_MESSAGES) return
+    const nextSummary = await summarizeContext(oldSummary, foldRows, coveredIndex + 1)
+    const summaryUntil = foldRows[foldRows.length - 1]?.id
+    if (!summaryUntil) return
+    const { error: updateError } = await supabase.from('conversations').update({ context_summary: nextSummary, summary_until_message_id: summaryUntil, summary_token_count: estimateTokenCount(nextSummary) }).eq('id', conversationId).eq('user_id', userId)
+    if (updateError) log.warn('contextSummary', 'Failed to save compacted context', updateError)
+  } catch (e) { log.warn('contextSummary', 'Context compaction skipped', e) }
 }
 async function ocrScannedPdfs(attachments: any[]): Promise<any[]> {
   if (!attachments?.length) return attachments ?? []
@@ -100,9 +183,12 @@ export async function POST(req: NextRequest) {
   const resolvedConversationId = await inferConversationId(supabase, userId, conversationId, rawMessages)
   const recentMessages = rawMessages.slice(-RECENT_CONTEXT_MESSAGES)
   const historyRetrievalEnabled = historyRetrieval === true
-  const conversationSummary = historyRetrievalEnabled
-    ? await fetchConversationSummary(supabase, userId, resolvedConversationId)
-    : ''
+  let summaryState = await fetchConversationSummaryState(supabase, userId, resolvedConversationId)
+  if (shouldCompactConversation(rawMessages, summaryState)) {
+    await compactConversationContext(supabase, userId, resolvedConversationId)
+    summaryState = await fetchConversationSummaryState(supabase, userId, resolvedConversationId)
+  }
+  const conversationSummary = summaryState.summary
   let activeHistoryContext = ''
   if (historyRetrievalEnabled) {
     await ensureConversationIndexed(supabase, userId, resolvedConversationId)
