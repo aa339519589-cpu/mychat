@@ -1,46 +1,51 @@
-/* 思考中的白光流动：文字常驻可见，只让亮光扫过，不做忽明忽暗。 */
+/* 思考中的白光流动：文字本身常驻，只叠一束白光扫过。 */
 .thinking-flow {
+  position: relative;
   display: inline-block;
-  color: rgba(255, 255, 255, 0.78);
-  background-image: linear-gradient(
-    100deg,
-    rgba(255, 255, 255, 0.78) 0%,
-    rgba(255, 255, 255, 0.78) 36%,
-    #ffffff 48%,
-    rgba(255, 255, 255, 0.78) 60%,
-    rgba(255, 255, 255, 0.78) 100%
-  );
-  background-size: 260% 100%;
-  background-position: 130% 0;
-  background-repeat: no-repeat;
-  background-clip: text;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  animation: thinking-flow-sweep 1.45s linear infinite;
+  overflow: hidden;
+  color: currentColor;
+  -webkit-text-fill-color: currentColor;
   transform: translateZ(0);
-  will-change: background-position;
 }
 
-:root:not(.dark) .thinking-flow {
-  color: color-mix(in srgb, currentColor 82%, black 18%);
-  background-image: linear-gradient(
+.thinking-flow::after {
+  content: "";
+  position: absolute;
+  inset: -18% auto -18% -55%;
+  width: 48%;
+  pointer-events: none;
+  background: linear-gradient(
     100deg,
-    color-mix(in srgb, currentColor 82%, black 18%) 0%,
-    color-mix(in srgb, currentColor 82%, black 18%) 36%,
-    #ffffff 48%,
-    color-mix(in srgb, currentColor 82%, black 18%) 60%,
-    color-mix(in srgb, currentColor 82%, black 18%) 100%
+    transparent 0%,
+    rgba(255, 255, 255, 0) 18%,
+    rgba(255, 255, 255, 0.72) 48%,
+    rgba(255, 255, 255, 0) 78%,
+    transparent 100%
+  );
+  filter: blur(0.2px);
+  animation: thinking-flow-sweep 1.6s linear infinite;
+  will-change: transform;
+}
+
+:root:not(.dark) .thinking-flow::after {
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0) 18%,
+    rgba(255, 255, 255, 0.9) 48%,
+    rgba(255, 255, 255, 0) 78%,
+    transparent 100%
   );
 }
 
 @keyframes thinking-flow-sweep {
-  from { background-position: 130% 0; }
-  to { background-position: -130% 0; }
+  from { transform: translateX(0); }
+  to { transform: translateX(335%); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .thinking-flow {
+  .thinking-flow::after {
     animation: none;
-    background-position: 50% 0;
+    opacity: 0;
   }
 }
