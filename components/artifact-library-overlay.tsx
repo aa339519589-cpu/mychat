@@ -6,6 +6,49 @@ import { Shapes, X, Trash2, ExternalLink, Loader2, Search } from "lucide-react"
 import type { ArtifactLibraryItem } from "@/lib/artifact-data"
 import { fetchArtifacts, deleteArtifactRow } from "@/lib/data"
 
+const UI_FIX_STYLE_ID = "mychat-ui-fixes"
+const UI_FIX_CSS = `
+.dark [class*="dark:bg-\\[\\#151515\\]"],
+.dark [role="button"][class*="bg-secondary\\/75"],
+.dark div[class*="bg-secondary\\/75"]:has(textarea) {
+  background-color: #2F2F2F !important;
+  border-color: rgba(255, 255, 255, 0.16) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 10px 26px rgba(0, 0, 0, 0.16) !important;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) [role="button"][class*="bg-secondary\\/75"],
+  :root:not(.light) div[class*="bg-secondary\\/75"]:has(textarea) {
+    background-color: #2F2F2F !important;
+    border-color: rgba(255, 255, 255, 0.16) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 10px 26px rgba(0, 0, 0, 0.16) !important;
+  }
+}
+.thinking-flow {
+  display: inline-block;
+  background-image: linear-gradient(90deg, rgba(86, 68, 45, 0.35), rgba(86, 68, 45, 0.95), rgba(86, 68, 45, 0.35));
+  background-size: 220% 100%;
+  background-position: 0% 50%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent !important;
+  -webkit-text-fill-color: transparent;
+  animation: mychat-thinking-flow 1.45s ease-in-out infinite;
+}
+.dark .thinking-flow {
+  background-image: linear-gradient(90deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.35));
+}
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) .thinking-flow {
+    background-image: linear-gradient(90deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.35));
+  }
+}
+@keyframes mychat-thinking-flow {
+  0% { background-position: 200% 50%; opacity: 0.55; }
+  45% { opacity: 1; }
+  100% { background-position: -20% 50%; opacity: 0.55; }
+}
+`
+
 function patchBrandName() {
   const nodes = Array.from(document.querySelectorAll("span.font-heading.text-base.tracking-wide"))
   for (const node of nodes) {
@@ -27,6 +70,15 @@ export function ArtifactLibraryOverlay() {
   const [items, setItems] = useState<ArtifactLibraryItem[]>([])
   const [loading, setLoading] = useState(false)
   const [query, setQuery] = useState("")
+
+  useEffect(() => {
+    if (!document.getElementById(UI_FIX_STYLE_ID)) {
+      const style = document.createElement("style")
+      style.id = UI_FIX_STYLE_ID
+      style.textContent = UI_FIX_CSS
+      document.head.appendChild(style)
+    }
+  }, [])
 
   useEffect(() => {
     patchBrandName()
