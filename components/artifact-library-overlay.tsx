@@ -101,10 +101,7 @@ export function ArtifactLibraryOverlay() {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     if (!q) return items
-    return items.filter(item =>
-      item.title.toLowerCase().includes(q) ||
-      item.raw.toLowerCase().includes(q)
-    )
+    return items.filter(item => item.title.toLowerCase().includes(q))
   }, [items, query])
 
   async function remove(id: string) {
@@ -115,18 +112,14 @@ export function ArtifactLibraryOverlay() {
   if (!open || typeof document === "undefined") return null
 
   return createPortal(
-    <div className="fixed inset-0 z-[90] bg-black/35 backdrop-blur-[2px]" onClick={() => setOpen(false)}>
-      <aside
-        onClick={e => e.stopPropagation()}
-        className="absolute inset-y-0 left-0 flex w-full max-w-[24rem] flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground shadow-2xl md:left-[20rem] md:max-w-[28rem]"
-      >
+    <div className="fixed inset-0 z-[90] bg-sidebar text-sidebar-foreground">
+      <div className="flex h-full flex-col overflow-hidden">
         <div className="flex shrink-0 items-center gap-3 px-5 pb-4 pt-[max(1rem,env(safe-area-inset-top))]">
           <button onClick={() => setOpen(false)} className="-ml-1 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground" aria-label="关闭作品库">
             <X className="size-5" />
           </button>
           <div className="min-w-0 flex-1">
             <h3 className="truncate text-[17px] font-semibold tracking-tight">作品</h3>
-            <p className="text-[12px] text-muted-foreground">只保存完整 Artifact，不收现场 SVG / 公式快捷渲染</p>
           </div>
         </div>
 
@@ -144,42 +137,35 @@ export function ArtifactLibraryOverlay() {
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
           {loading ? (
-            <div className="flex h-36 items-center justify-center text-muted-foreground">
+            <div className="flex h-28 items-center justify-center text-muted-foreground">
               <Loader2 className="size-5 animate-spin" />
             </div>
           ) : filtered.length === 0 ? (
             <div className="mx-auto mt-10 flex max-w-xs flex-col items-center text-center">
-              <div className="mb-4 flex size-16 items-center justify-center rounded-full bg-sidebar-accent/60 text-sidebar-primary">
-                <Shapes className="size-7" />
+              <div className="mb-4 flex size-14 items-center justify-center rounded-full bg-sidebar-accent/60 text-sidebar-primary">
+                <Shapes className="size-6" />
               </div>
               <p className="font-heading text-base tracking-wide text-foreground">还没有作品</p>
-              <p className="mt-2 text-[13px] leading-relaxed text-muted-foreground">只有模型输出的完整 &lt;artifact&gt; 会自动进入这里。</p>
             </div>
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               {filtered.map(item => (
-                <div key={item.id} className="group rounded-2xl border border-sidebar-accent/60 bg-sidebar-accent/35 px-4 py-3 transition-colors hover:bg-sidebar-accent/50">
-                  <button onClick={() => openArtifactPreview(item)} className="block w-full text-left">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate font-heading text-[14px] tracking-wide text-foreground">{item.title}</p>
-                        <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-muted-foreground">{item.raw.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 120) || "完整 Artifact 作品"}</p>
-                      </div>
-                      <ExternalLink className="mt-0.5 size-4 shrink-0 text-muted-foreground/55" />
-                    </div>
-                    <p className="mt-2 text-[11px] text-muted-foreground">{item.date}</p>
+                <div key={item.id} className="group flex items-center gap-2 rounded-2xl border border-sidebar-accent/55 bg-sidebar-accent/28 px-3 py-2 transition-colors hover:bg-sidebar-accent/45">
+                  <button onClick={() => openArtifactPreview(item)} className="min-w-0 flex-1 text-left">
+                    <p className="truncate font-heading text-[14px] tracking-wide text-foreground">{item.title}</p>
                   </button>
-                  <div className="mt-2 flex justify-end border-t border-sidebar-border/40 pt-2 opacity-0 transition-opacity group-hover:opacity-100">
-                    <button onClick={() => remove(item.id)} className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-destructive" aria-label="删除作品">
-                      <Trash2 className="size-3.5" />
-                    </button>
-                  </div>
+                  <button onClick={() => openArtifactPreview(item)} className="rounded-lg p-1.5 text-muted-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-foreground" aria-label="打开作品">
+                    <ExternalLink className="size-4" />
+                  </button>
+                  <button onClick={() => remove(item.id)} className="rounded-lg p-1.5 text-muted-foreground/45 transition-colors hover:bg-sidebar-accent hover:text-destructive" aria-label="删除作品">
+                    <Trash2 className="size-3.5" />
+                  </button>
                 </div>
               ))}
             </div>
           )}
         </div>
-      </aside>
+      </div>
     </div>,
     document.body,
   )
