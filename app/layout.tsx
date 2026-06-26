@@ -2,6 +2,7 @@ import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import { Libre_Baskerville, Noto_Sans_SC } from 'next/font/google'
 import './globals.css'
+import './thinking-flow.css'
 import 'katex/dist/katex.min.css'
 
 const libreBaskerville = Libre_Baskerville({
