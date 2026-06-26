@@ -30,17 +30,35 @@ const DEEP_RESEARCH_PREFIX = `请以最高努力完成当前问题：先理解�
 
 type MessageRow = { id: string; role: 'user' | 'assistant'; content: string | null; images?: unknown; created_at?: string | null }
 type ConversationSummaryState = { summary: string; summaryUntilMessageId: string | null; staleWithoutMarker: boolean }
-type ExternalModel = { label: string; model: string; baseUrl: string; token: string }
+type ExternalModel = { label: string; model: string; baseUrl: string; token: string; supportsVision: boolean }
 
 function normalizeExternalModel(input: unknown): ExternalModel | null {
   if (!input || typeof input !== 'object') return null
   const raw = input as Record<string, unknown>
   const model = typeof raw.model === 'string' ? raw.model.trim() : ''
   const baseUrl = typeof raw.baseUrl === 'string' ? raw.baseUrl.trim() : ''
-  const token = typeof raw.token === 'string' ? raw.token.trim() : ''
+  const token = typeof raw.token === 'string' ? raw.token.trim()
+    : typeof raw.credential === 'string' ? raw.credential.trim()
+    : ''
   const label = typeof raw.label === 'string' && raw.label.trim() ? raw.label.trim() : model
+  const supportsVision = raw.supportsVision === true
   if (!model || !baseUrl || !token) return null
-  return { label, model, baseUrl, token }
+  return { label, model, baseUrl, token, supportsVision }
+}
+
+function decodeCustomModelTier(tier: unknown): ExternalModel | null {
+  if (typeof tier !== 'string' || !tier.startsWith('custom:')) return null
+  const payload = tier.split(':').slice(2).join(':')
+  if (!payload) return null
+  try {
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/')
+    const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4)
+    const binary = atob(padded)
+    const bytes = Uint8Array.from(binary, c => c.charCodeAt(0))
+    return normalizeExternalModel(JSON.parse(new TextDecoder().decode(bytes)))
+  } catch {
+    return null
+  }
 }
 
 function historyRetrievalModeForTier(tier: string): HistoryRetrievalMode {
@@ -174,7 +192,7 @@ export async function POST(req: NextRequest) {
     return new Response(JSON.stringify({ error: (e as Error).message }), { status: 400, headers: { 'Content-Type': 'application/json' } })
   }
 
-  const extraModel = normalizeExternalModel(externalModel)
+  const extraModel = normalizeExternalModel(externalModel) ?? decodeCustomModelTier(tier)
   const usingExternalModel = !!extraModel && !deepResearch
   const tierCfg = TIER_MAP[tier as keyof typeof TIER_MAP] ?? TIER_MAP['绝句']
   const model = deepResearch ? 'deepseek-v4-pro' : (usingExternalModel ? extraModel.model : tierCfg.model)
@@ -184,8 +202,8 @@ export async function POST(req: NextRequest) {
     ? {
         ...baseCapability,
         id: model,
-        supportsVision: false,
-        supportsImageInput: false,
+        supportsVision: extraModel.supportsVision,
+        supportsImageInput: extraModel.supportsVision,
         provider: { ...baseCapability.provider, adapter: 'openai-compatible' as const, baseUrl: extraModel.baseUrl },
       }
     : getModelCapability(model)
