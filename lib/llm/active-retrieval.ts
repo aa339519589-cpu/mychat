@@ -7,15 +7,15 @@ const CHUNK_MESSAGE_COUNT = 8
 const CHUNK_OVERLAP = 2
 const MAX_CHUNK_CHARS = 4200
 const RETRIEVAL_TOP_K = 12
-const INJECT_TOP_K = 6
-const INJECT_CHAR_BUDGET = 12_000
-const DEFAULT_SIMILARITY_THRESHOLD = 0.28
-const FORCE_SIMILARITY_THRESHOLD = 0.18
+const INJECT_TOP_K = 8
+const INJECT_CHAR_BUDGET = 18_000
+const DEFAULT_SIMILARITY_THRESHOLD = 0.24
+const FORCE_SIMILARITY_THRESHOLD = 0.08
 
 const HISTORY_RETRIEVAL_HINTS = [
   '之前', '上次', '以前', '还记得', '记不记得', '我们定', '我们说', '我们聊', '刚才', '那个方案', '历史', '旧聊天', '老对话', '前面',
   '其他聊天', '别的聊天', '别的对话', '去看其他', '去看别的', '查其他', '跨聊天', '日程', '安排', '今晚', '今天晚上', '明天', '待办',
-  '午饭', '中午', '吃了什么', '吃什么', '干什么', '做什么',
+  '午饭', '中午', '吃了什么', '吃什么', '干什么', '做什么', '记忆', '检索', '找一下', '翻一下',
   'last time', 'previously', 'earlier', 'remember', 'we discussed', 'we decided', 'other chats', 'past chats', 'schedule', 'tonight',
 ]
 
@@ -25,13 +25,14 @@ type MessageRow = {
   content: string | null
   images?: unknown
   created_at?: string | null
+  conversation_id?: string | null
 }
 
 type ConversationRow = {
   id: string
   title: string | null
   project_id: string | null
-  updated_at: string | null
+  updated_at?: string | null
 }
 
 type RetrievalHit = {
@@ -154,9 +155,9 @@ export function latestUserQuery(messages: RawMsg[]): string {
   }
 
   const recent = messages
-    .slice(-6)
+    .slice(-8)
     .map((m: any) => {
-      const text = rawMessageText(m).slice(0, 800)
+      const text = rawMessageText(m).slice(0, 900)
       if (!text) return ''
       return `${m.role === 'assistant' ? '模型' : '用户'}：${text}`
     })
@@ -194,6 +195,7 @@ export async function ensureConversationIndexed(supabase: SupabaseServer | null,
     const rowsToInsert = []
     for (const chunk of pending) {
       const vector = embeddingEnabled() ? await embed(chunk.content) : null
+      if (!vector && embeddingEnabled()) continue
       rowsToInsert.push({
         user_id: userId,
         conversation_id: conversationId,
@@ -230,16 +232,16 @@ export async function backfillUserConversationIndex(supabase: SupabaseServer | n
 }
 
 function keywordScore(query: string, content: string): number {
-  const words = query.toLowerCase().split(/[\s,，。.!?！？、/\\|]+/).map(w => w.trim()).filter(w => w.length >= 2).slice(0, 16)
+  const words = query.toLowerCase().split(/[\s,，。.!?！？、/\\|]+/).map(w => w.trim()).filter(w => w.length >= 2).slice(0, 20)
   if (!words.length) return 0
   const lower = content.toLowerCase()
-  return words.reduce((acc, w) => acc + (lower.includes(w) ? 0.04 : 0), 0)
+  return words.reduce((acc, w) => acc + (lower.includes(w) ? 0.05 : 0), 0)
 }
 
 function textSearchQuery(query: string): string {
   return query
-    .replace(/[()&|!:*'"<>]/g, ' ')
-    .split(/[\s,，。.!?！？、/\\|]+/)
+    .replace(/[()&|!:*'"<>【】\[\]{}]/g, ' ')
+    .split(/[\s,，。.!?！？、/\\|：:]+/)
     .map(w => w.trim())
     .filter(w => w.length >= 2)
     .slice(0, 12)
@@ -273,7 +275,26 @@ function renderHits(hits: RetrievalHit[]): string {
   }
 
   if (!parts.length) return ''
-  return `\n\n【主动检索到的历史对话片段】\n下面是系统从历史聊天中临时检索到的相关原文片段。你可以使用这些片段回答用户关于“之前、其他聊天、历史记录、日程安排”的问题；不要说你看不到其他聊天。它不是 Memory，不要把它写入长期记忆。若片段和用户当前问题无关，再说明没找到相关记录。\n\n${parts.join('\n\n---\n\n')}`
+  return `\n\n【主动检索到的历史对话片段】\n下面是系统从历史聊天中临时检索到的相关原文片段。必须先阅读这些片段，再回答用户关于“之前、其他聊天、历史记录、日程安排、吃了什么、做了什么”的问题；不要说你看不到其他聊天。它不是长期 Memory，不要写入记忆。若片段仍不足以确定答案，再说没有找到明确记录。\n\n${parts.join('\n\n---\n\n')}`
+}
+
+async function retrieveBySemanticChunks(supabase: SupabaseServer, userId: string, projectId: string | null | undefined, conversationId: string | null, query: string, force: boolean): Promise<RetrievalHit[]> {
+  const queryEmbedding = embeddingEnabled() ? await embed(query) : null
+  if (!queryEmbedding) return []
+
+  const { data, error } = await supabase.rpc('match_conversation_chunks', {
+    query_embedding: queryEmbedding,
+    match_user_id: userId,
+    match_project_id: null,
+    match_count: RETRIEVAL_TOP_K,
+    similarity_threshold: force ? FORCE_SIMILARITY_THRESHOLD : DEFAULT_SIMILARITY_THRESHOLD,
+  })
+  if (error || !data) return []
+
+  return (data as RetrievalHit[]).map(hit => ({
+    ...hit,
+    similarity: hit.similarity + keywordScore(query, hit.content) + (projectId && hit.project_id === projectId ? 0.04 : 0) + (conversationId && hit.conversation_id === conversationId ? 0.01 : 0),
+  }))
 }
 
 async function retrieveByTextSearch(supabase: SupabaseServer, userId: string, projectId: string | null | undefined, query: string, force: boolean): Promise<RetrievalHit[]> {
@@ -282,7 +303,7 @@ async function retrieveByTextSearch(supabase: SupabaseServer, userId: string, pr
   const { data, error } = await supabase.rpc('match_conversation_chunks_text', {
     query_text: fts,
     match_user_id: userId,
-    match_project_id: projectId ?? null,
+    match_project_id: null,
     match_count: RETRIEVAL_TOP_K,
   })
   if (error || !data) return []
@@ -304,7 +325,6 @@ async function retrieveRecentChunks(supabase: SupabaseServer, userId: string, pr
     .limit(RETRIEVAL_TOP_K)
 
   if (conversationId) req = req.neq('conversation_id', conversationId)
-  if (projectId) req = req.or(`project_id.eq.${projectId},project_id.is.null`)
 
   const { data, error } = await req
   if (error || !data) return []
@@ -316,9 +336,62 @@ async function retrieveRecentChunks(supabase: SupabaseServer, userId: string, pr
     message_start_id: hit.message_start_id,
     message_end_id: hit.message_end_id,
     content: hit.content,
-    similarity: 0.12 - index * 0.005 + keywordScore(query, hit.content),
+    similarity: 0.16 - index * 0.004 + keywordScore(query, hit.content) + (projectId && hit.project_id === projectId ? 0.04 : 0),
     created_at: hit.created_at,
   }))
+}
+
+async function retrieveRecentMessages(supabase: SupabaseServer, userId: string, projectId: string | null | undefined, conversationId: string | null, query: string): Promise<RetrievalHit[]> {
+  let req = supabase
+    .from('messages')
+    .select('id, role, content, images, created_at, conversation_id')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(96)
+
+  if (conversationId) req = req.neq('conversation_id', conversationId)
+
+  const { data: messageRows, error } = await req
+  if (error || !messageRows?.length) return []
+
+  const convIds = Array.from(new Set((messageRows as any[]).map(m => m.conversation_id).filter(Boolean)))
+  const { data: conversations } = convIds.length
+    ? await supabase.from('conversations').select('id, title, project_id').eq('user_id', userId).in('id', convIds)
+    : { data: [] as any[] }
+  const convMap = new Map((conversations ?? []).map((c: any) => [c.id, c as ConversationRow]))
+
+  const groups = new Map<string, MessageRow[]>()
+  for (const row of messageRows as MessageRow[]) {
+    const cid = row.conversation_id
+    const content = (row.content ?? '').trim()
+    if (!cid || !content) continue
+    const arr = groups.get(cid) ?? []
+    if (arr.length < 10) arr.push(row)
+    groups.set(cid, arr)
+  }
+
+  const hits: RetrievalHit[] = []
+  let index = 0
+  for (const [cid, rows] of groups) {
+    const conv = convMap.get(cid)
+    const ordered = [...rows].sort((a, b) => String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')))
+    const content = ordered.map(normalizeMessage).join('\n\n').trim()
+    if (!content) continue
+    hits.push({
+      id: `raw-${cid}-${ordered[0]?.id ?? index}`,
+      conversation_id: cid,
+      conversation_title: conv?.title ?? null,
+      project_id: conv?.project_id ?? null,
+      message_start_id: ordered[0]?.id ?? null,
+      message_end_id: ordered[ordered.length - 1]?.id ?? null,
+      content,
+      similarity: 0.18 - index * 0.004 + keywordScore(query, content) + (projectId && conv?.project_id === projectId ? 0.04 : 0),
+      created_at: ordered[ordered.length - 1]?.created_at ?? null,
+    })
+    index++
+  }
+
+  return hits.sort((a, b) => b.similarity - a.similarity).slice(0, INJECT_TOP_K)
 }
 
 export async function retrieveHistoryContext(opts: {
@@ -334,35 +407,20 @@ export async function retrieveHistoryContext(opts: {
   const force = shouldForceHistoryRetrieval(query)
   try {
     const allHits: RetrievalHit[] = []
-    const queryEmbedding = embeddingEnabled() ? await embed(query) : null
 
-    if (queryEmbedding) {
-      const { data, error } = await supabase.rpc('match_conversation_chunks', {
-        query_embedding: queryEmbedding,
-        match_user_id: userId,
-        match_project_id: projectId ?? null,
-        match_count: RETRIEVAL_TOP_K,
-        similarity_threshold: force ? FORCE_SIMILARITY_THRESHOLD : DEFAULT_SIMILARITY_THRESHOLD,
-      })
-      if (!error && data) {
-        allHits.push(...(data as RetrievalHit[]).map(hit => ({
-          ...hit,
-          similarity: hit.similarity + keywordScore(query, hit.content) + (projectId && hit.project_id === projectId ? 0.04 : 0) + (conversationId && hit.conversation_id === conversationId ? 0.02 : 0),
-        })))
-      }
-    }
-
+    allHits.push(...await retrieveBySemanticChunks(supabase, userId, projectId, conversationId, query, force))
     allHits.push(...await retrieveByTextSearch(supabase, userId, projectId, query, force))
 
-    if (force) {
+    if (force || allHits.length === 0) {
       allHits.push(...await retrieveRecentChunks(supabase, userId, projectId, conversationId, query))
+      allHits.push(...await retrieveRecentMessages(supabase, userId, projectId, conversationId, query))
     }
 
     const hits = dedupeHits(allHits)
       .sort((a, b) => b.similarity - a.similarity)
       .slice(0, INJECT_TOP_K)
 
-    if (!force && hits[0] && hits[0].similarity < DEFAULT_SIMILARITY_THRESHOLD) return ''
+    if (!force && (!hits[0] || hits[0].similarity < DEFAULT_SIMILARITY_THRESHOLD)) return ''
     return renderHits(hits)
   } catch (e) {
     log.warn('activeRetrieval', 'Retrieval skipped', e)
