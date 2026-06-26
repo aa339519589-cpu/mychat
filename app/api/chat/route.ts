@@ -25,11 +25,23 @@ const RECENT_CONTEXT_MESSAGES = 30
 const SUMMARY_TRIGGER_MESSAGES = 28
 const SUMMARY_MODEL = 'deepseek-v4-flash'
 const SUMMARY_TARGET_CHARS = 9000
-const MARKDOWN_DIVIDER_GUARD = '\n【排版补充】\n当回复有两个以上语义段落、步骤、转折或结论/解释分层时，优先用 Markdown 分隔线 "---" 做清晰分割。分隔线用于增强阅读节奏，不要滥用到每一句。'
+const MARKDOWN_DIVIDER_GUARD = '\n【排版补充】\n当回复有两个以上语义段落、步骤、转折或结论/解释分层时，优先用 Markdown 分隔线 "---" 做清晰分层。分隔线用于增强阅读节奏，不要滥用到每一句。'
 const DEEP_RESEARCH_PREFIX = `请以最高努力完成当前问题：先理解真实目标，拆解约束，检查边界和反例，最后给出清晰结论。\n---\n`
 
 type MessageRow = { id: string; role: 'user' | 'assistant'; content: string | null; images?: unknown; created_at?: string | null }
 type ConversationSummaryState = { summary: string; summaryUntilMessageId: string | null; staleWithoutMarker: boolean }
+type ExternalModel = { label: string; model: string; baseUrl: string; token: string }
+
+function normalizeExternalModel(input: unknown): ExternalModel | null {
+  if (!input || typeof input !== 'object') return null
+  const raw = input as Record<string, unknown>
+  const model = typeof raw.model === 'string' ? raw.model.trim() : ''
+  const baseUrl = typeof raw.baseUrl === 'string' ? raw.baseUrl.trim() : ''
+  const token = typeof raw.token === 'string' ? raw.token.trim() : ''
+  const label = typeof raw.label === 'string' && raw.label.trim() ? raw.label.trim() : model
+  if (!model || !baseUrl || !token) return null
+  return { label, model, baseUrl, token }
+}
 
 function historyRetrievalModeForTier(tier: string): HistoryRetrievalMode {
   if (tier === '鸿篇') return 'deep'
@@ -156,20 +168,31 @@ export async function POST(req: NextRequest) {
     log.error('chat', 'Invalid JSON in request body', e)
     return new Response(JSON.stringify({ error: '请求体格式错误' }), { status: 400, headers: { 'Content-Type': 'application/json' } })
   }
-  const { tier = '绝句', messages, memories, attachments, searchMode, webSearch, deepWebSearch, deepResearch, project, conversationId, historyRetrieval } = body
+  const { tier = '绝句', messages, memories, attachments, searchMode, webSearch, deepWebSearch, deepResearch, project, conversationId, historyRetrieval, externalModel } = body
   try { validate.array(messages, 'messages', { minLength: 1 }) } catch (e) {
     log.warn('chat', 'Validation error', e)
     return new Response(JSON.stringify({ error: (e as Error).message }), { status: 400, headers: { 'Content-Type': 'application/json' } })
   }
 
+  const extraModel = normalizeExternalModel(externalModel)
+  const usingExternalModel = !!extraModel && !deepResearch
   const tierCfg = TIER_MAP[tier as keyof typeof TIER_MAP] ?? TIER_MAP['绝句']
-  const model = deepResearch ? 'deepseek-v4-pro' : tierCfg.model
-  const thinking = deepResearch ? true : tierCfg.thinking
-  const capability = getModelCapability(model)
-  const apiKey = process.env[capability.provider.apiKeyEnv] ?? ''
+  const model = deepResearch ? 'deepseek-v4-pro' : (usingExternalModel ? extraModel.model : tierCfg.model)
+  const thinking = usingExternalModel ? false : (deepResearch ? true : tierCfg.thinking)
+  const baseCapability = getModelCapability('deepseek-v4-flash')
+  const capability = usingExternalModel
+    ? {
+        ...baseCapability,
+        id: model,
+        supportsVision: false,
+        supportsImageInput: false,
+        provider: { ...baseCapability.provider, adapter: 'openai-compatible' as const, baseUrl: extraModel.baseUrl },
+      }
+    : getModelCapability(model)
+  const apiKey = usingExternalModel ? extraModel.token : (process.env[capability.provider.apiKeyEnv] ?? '')
   if (!apiKey) {
-    log.error('chat', `${capability.provider.apiKeyEnv} not configured`)
-    return new Response(JSON.stringify({ error: `服务未配置（${capability.provider.apiKeyEnv} 未设置）` }), { status: 500 })
+    log.error('chat', usingExternalModel ? 'External model token missing' : `${capability.provider.apiKeyEnv} not configured`)
+    return new Response(JSON.stringify({ error: usingExternalModel ? '自定义模型未填写密钥' : `服务未配置（${capability.provider.apiKeyEnv} 未设置）` }), { status: 500 })
   }
 
   const auth = await resolveAuth()
@@ -210,7 +233,7 @@ export async function POST(req: NextRequest) {
   const effectiveMemories = memoryEnabled && !project?.id ? (memories as Memory[] | undefined) : undefined
   const url = chatCompletionsUrl(capability.provider.baseUrl)
   const SYSTEM = buildSystem(effectiveMemories, { searchMode: effectiveSearchMode, latestBeijingDate, memoryEnabled, project }) + renderConversationSummary(conversationSummary) + activeHistoryContext + MARKDOWN_DIVIDER_GUARD
-  const openaiTools = toOpenAITools(tools)
+  const openaiTools = usingExternalModel ? [] : toOpenAITools(tools)
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -251,7 +274,7 @@ export async function POST(req: NextRequest) {
           url, apiKey, model, adapter: capability.provider.adapter, thinking,
           messages: msgs, tools: openaiTools, emit, executeTool,
           maxRounds: SAFETY_ROUNDS,
-          leakedRetry: true,
+          leakedRetry: !usingExternalModel,
           autoContinue: {},
           onTurn: ({ phase, round, turn }) => log.info('chat', `Turn ${phase}`, { round, finishReason: turn.finishReason, leaked: turn.leaked, toolCalls: turn.toolCalls.length, contentLen: turn.content.length, truncated: turn.truncated }),
         })
