@@ -1,0 +1,9 @@
+.dark {
+  --background: #222221;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --background: #222221;
+  }
+}
