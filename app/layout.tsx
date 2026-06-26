@@ -18,8 +18,8 @@ const notoSansSC = Noto_Sans_SC({
 })
 
 export const metadata: Metadata = {
-  title: '简 · 文字对谈',
-  description: '一个像翻阅书页、书写日记般的 AI 对谈空间',
+  title: 'My Chat',
+  description: 'My Chat AI 对谈空间',
   generator: 'v0.app',
   icons: {
     icon: [
