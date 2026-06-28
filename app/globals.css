@@ -5,15 +5,14 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  /* 内容衬线：AI 对话正文、内容标题——阅读型、有质感 */
-  --font-heading: var(--font-spectral), var(--font-noto-serif-sc), serif;
-  --font-serif: var(--font-spectral), var(--font-noto-serif-sc), 'Songti SC',
-    'STSong', 'SimSun', serif;
-  /* UI 无衬线：导航/侧栏/按钮/输入——功能性、工具感、更稳定。
-     与正文衬线形成明确分层，iOS 上落到 PingFang SC，非常干净。 */
-  --font-sans: -apple-system, BlinkMacSystemFont, 'PingFang SC',
+  /* 全站字体：靠近 iOS / Claude 的系统无衬线观感。
+     中文优先 PingFang SC，英文数字走 SF Pro 系统栈；非苹果设备回落到 Noto Sans SC / 微软雅黑。 */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text',
+    'SF Pro Display', 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans SC',
     'Noto Sans CJK SC', 'Microsoft YaHei', system-ui, sans-serif;
-  --font-mono: var(--font-noto-serif-sc), serif;
+  --font-heading: var(--font-sans);
+  --font-serif: var(--font-sans);
+  --font-mono: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -182,9 +181,12 @@
     -webkit-font-smoothing: antialiased;
     overflow: hidden;
     touch-action: pan-y;
+    font-family: var(--font-sans);
+    font-weight: 450;
   }
   html {
     @apply font-sans;
+    font-family: var(--font-sans);
   }
   html,
   body {
@@ -218,63 +220,4 @@
 }
 .katex-display > .katex {
   display: block !important;
-}
-
-@media (min-width: 768px) {
-  div[class*="max-w-[56rem]"]:has(> .thinking-flow) {
-    margin-left: auto !important;
-    margin-right: auto !important;
-    padding-left: 2.5rem;
-    padding-right: 2.5rem;
-  }
-}
-
-/* 侧栏标题只保留标题本身：历史/项目/对话列表不再露出内容摘要和日期，整体压紧。 */
-.bg-sidebar button > p[class*="line-clamp-2"],
-.bg-sidebar button > p[class*="line-clamp-3"],
-.bg-sidebar button > div p[class*="line-clamp-2"],
-.bg-sidebar button > div p[class*="line-clamp-3"],
-.bg-sidebar button > div > span[class*="tracking-wider"],
-.bg-sidebar button.group.relative.flex.w-full.flex-col > div:last-child {
-  display: none !important;
-}
-
-.bg-sidebar .group.relative > button {
-  padding-top: 0.55rem !important;
-  padding-bottom: 0.55rem !important;
-}
-
-.bg-sidebar button.group.relative.flex.w-full.flex-col {
-  gap: 0 !important;
-  padding-top: 0.65rem !important;
-  padding-bottom: 0.65rem !important;
-}
-
-.avatar-box {
-  position: relative;
-  overflow: hidden;
-}
-.avatar-box .avatar-light,
-.avatar-box .avatar-dark {
-  position: absolute;
-  inset: 0;
-  display: block;
-}
-.avatar-box .avatar-dark {
-  display: none;
-}
-.dark .avatar-box .avatar-light {
-  display: none;
-}
-.dark .avatar-box .avatar-dark {
-  display: block;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not(.light) .avatar-box .avatar-light {
-    display: none;
-  }
-  :root:not(.light) .avatar-box .avatar-dark {
-    display: block;
-  }
 }
