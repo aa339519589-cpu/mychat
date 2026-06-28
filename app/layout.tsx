@@ -1,23 +1,9 @@
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
-import { Libre_Baskerville, Noto_Sans_SC } from 'next/font/google'
 import './globals.css'
 import './dark-background.css'
 import './thinking-flow.css'
 import 'katex/dist/katex.min.css'
-
-const libreBaskerville = Libre_Baskerville({
-  variable: '--font-spectral',
-  subsets: ['latin'],
-  weight: ['400', '700'],
-  style: ['normal', 'italic'],
-})
-
-const notoSansSC = Noto_Sans_SC({
-  variable: '--font-noto-serif-sc',
-  subsets: ['latin'],
-  weight: ['300', '400', '500', '600', '700', '800', '900'],
-})
 
 export const metadata: Metadata = {
   title: 'My Chat',
@@ -59,10 +45,7 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html
-      lang="zh-CN"
-      className={`${libreBaskerville.variable} ${notoSansSC.variable} bg-background`}
-    >
+    <html lang="zh-CN" className="bg-background">
       <head>
         <link rel="preload" href="/companion.png" as="image" />
       </head>
