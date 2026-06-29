@@ -199,6 +199,45 @@
   }
 }
 
+/* 头像只保留一个渲染源：跟随系统暗色，也兼容手动 .dark / .light。 */
+.companion-avatar {
+  align-items: center;
+  justify-content: center;
+}
+.companion-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.companion-avatar-light {
+  display: block;
+}
+.companion-avatar-dark {
+  display: none;
+}
+.dark .companion-avatar-light {
+  display: none;
+}
+.dark .companion-avatar-dark {
+  display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) .companion-avatar-light {
+    display: none;
+  }
+  :root:not(.light) .companion-avatar-dark {
+    display: block;
+  }
+}
+
+.light .companion-avatar-light {
+  display: block;
+}
+.light .companion-avatar-dark {
+  display: none;
+}
+
 /* KaTeX 公式保护：防止 Tailwind reset 破坏数学字体和布局 */
 .katex {
   font-size: 1.1em !important;
