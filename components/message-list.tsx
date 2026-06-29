@@ -1,6 +1,5 @@
 "use client"
 
-import Image from "next/image"
 import { useState, useEffect, useMemo } from "react"
 import type { Conversation, Message } from "@/lib/chat-data"
 import { ChevronDown, ChevronRight, Brain, FileText, Globe, Copy, Check, RefreshCw, Pencil, X } from "lucide-react"
@@ -14,6 +13,7 @@ import { InlineArtifact } from "@/components/inline-artifact"
 import { VegaChart } from "@/components/vega-chart"
 import { MermaidChart } from "@/components/mermaid-chart"
 import { FunctionPlotChart } from "@/components/function-plot-chart"
+import { CompanionAvatar } from "@/components/companion-avatar"
 import { normalizeMathDelimiters } from "@/lib/math"
 import { cn } from "@/lib/utils"
 
@@ -290,10 +290,7 @@ export function MessageList({
           ) : (
             <div key={m.id} className="group min-w-0 pl-[6px] md:grid md:grid-cols-[3rem_minmax(0,1fr)] md:items-start md:gap-2.5 md:pl-0">
               <div className="flex items-center gap-2 md:contents">
-                <div className="avatar-box h-7 w-7 flex-shrink-0 self-start overflow-hidden md:mb-0 md:mt-0.5 md:h-11 md:w-11">
-                  <Image src="/companion.png" alt="" width={44} height={44} priority className="avatar-light block size-7 select-none md:size-11 dark:hidden" />
-                  <Image src="/companion-dark.png" alt="" width={44} height={44} priority className="avatar-dark hidden size-7 select-none md:size-11 dark:block" />
-                </div>
+                <CompanionAvatar size={44} eager className="h-7 w-7 flex-shrink-0 self-start md:mb-0 md:mt-0.5 md:h-11 md:w-11" />
                 <div className="min-w-0 md:hidden">
                   {m.thinking && <ThinkingBlock thinking={m.thinking} active={!!isLoading && idx === lastAiIdx && !m.content?.trim()} className="mb-0" />}
                 </div>
