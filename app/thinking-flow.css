@@ -46,7 +46,7 @@ code * {
 .thinking-flow {
   display: inline-block;
   font-family: var(--mychat-base-font) !important;
-  font-size: 12px;
+  font-size: 10px;
   font-style: normal;
   font-weight: 500;
   line-height: 1.5;
@@ -75,7 +75,7 @@ code * {
 
 @media (min-width: 768px) {
   .thinking-flow {
-    font-size: 13px;
+    font-size: 11px;
   }
 }
 
