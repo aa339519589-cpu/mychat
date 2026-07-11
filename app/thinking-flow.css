@@ -1,67 +1,78 @@
 :root {
   --mychat-ui-font: "Noto Serif SC", "Songti SC", SimSun, ui-serif, Georgia, serif;
+  --thinking-base: rgba(38, 38, 38, 0.46);
+  --thinking-shine: rgba(0, 0, 0, 0.96);
   --font-sans: var(--mychat-ui-font);
   --font-heading: var(--mychat-ui-font);
   --font-serif: var(--mychat-ui-font);
   --font-mono: var(--mychat-ui-font);
 }
 
+.dark {
+  --thinking-base: rgba(255, 255, 255, 0.42);
+  --thinking-shine: rgba(255, 255, 255, 0.98);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --thinking-base: rgba(255, 255, 255, 0.42);
+    --thinking-shine: rgba(255, 255, 255, 0.98);
+  }
+}
+
+/* Force the requested UI serif stack over Tailwind's generated font utilities. */
 html,
 body,
-button,
-input,
-textarea,
-select {
+body * {
   font-family: var(--mychat-ui-font) !important;
 }
 
+/* Keep code and formulas legible while the rest of the UI uses the serif stack. */
+pre,
+code,
+pre *,
+code * {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace !important;
+}
+
+.katex,
+.katex * {
+  font-family: KaTeX_Main, "Times New Roman", serif !important;
+}
+
+/* Active reasoning state: plain ChatGPT-style Thinking text with a light sweep. */
 .thinking-flow {
   display: inline-block;
-  color: rgba(0, 0, 0, 0.44);
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
   background-image: linear-gradient(
     100deg,
-    rgba(0, 0, 0, 0.44) 0%,
-    rgba(0, 0, 0, 0.44) 42%,
-    rgba(0, 0, 0, 0.95) 50%,
-    rgba(0, 0, 0, 0.44) 58%,
-    rgba(0, 0, 0, 0.44) 100%
-  );
-  background-size: 220% 100%;
-  background-position: 120% 0;
-  background-repeat: no-repeat;
-  background-clip: text;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  animation: thinking-text-flow 1.45s linear infinite;
+    var(--thinking-base) 0%,
+    var(--thinking-base) 34%,
+    var(--thinking-shine) 48%,
+    var(--thinking-base) 62%,
+    var(--thinking-base) 100%
+  ) !important;
+  background-size: 260% 100% !important;
+  background-position: 140% 0;
+  background-repeat: no-repeat !important;
+  background-clip: text !important;
+  -webkit-background-clip: text !important;
+  animation: thinking-text-flow 1.35s linear infinite !important;
   text-transform: capitalize;
   transform: translateZ(0);
   will-change: background-position;
 }
 
-.dark .thinking-flow {
-  color: rgba(255, 255, 255, 0.44);
-  background-image: linear-gradient(
-    100deg,
-    rgba(255, 255, 255, 0.44) 0%,
-    rgba(255, 255, 255, 0.44) 42%,
-    rgba(255, 255, 255, 0.95) 50%,
-    rgba(255, 255, 255, 0.44) 58%,
-    rgba(255, 255, 255, 0.44) 100%
-  );
+/* While actively thinking, remove the old disclosure arrow and button treatment. */
+button:has(> .thinking-flow) {
+  gap: 0 !important;
+  pointer-events: none;
+  cursor: default;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not(.light) .thinking-flow {
-    color: rgba(255, 255, 255, 0.44);
-    background-image: linear-gradient(
-      100deg,
-      rgba(255, 255, 255, 0.44) 0%,
-      rgba(255, 255, 255, 0.44) 42%,
-      rgba(255, 255, 255, 0.95) 50%,
-      rgba(255, 255, 255, 0.44) 58%,
-      rgba(255, 255, 255, 0.44) 100%
-    );
-  }
+button:has(> .thinking-flow) > svg {
+  display: none !important;
 }
 
 /* Remove the assistant mascot from every chat message in both themes. */
@@ -97,13 +108,6 @@ article .group:has(.companion-avatar) > .mt-2 {
 }
 
 @keyframes thinking-text-flow {
-  from { background-position: 120% 0; }
-  to { background-position: -120% 0; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .thinking-flow {
-    animation: none;
-    background-position: 50% 0;
-  }
+  from { background-position: 140% 0; }
+  to { background-position: -140% 0; }
 }
