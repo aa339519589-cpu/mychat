@@ -5,11 +5,7 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  /* 全站字体：靠近 iOS / Claude 的系统无衬线观感。
-     中文优先 PingFang SC，英文数字走 SF Pro 系统栈；非苹果设备回落到 Noto Sans SC / 微软雅黑。 */
-  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text',
-    'SF Pro Display', 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans SC',
-    'Noto Sans CJK SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-sans: var(--mychat-base-font);
   --font-heading: var(--font-sans);
   --font-serif: var(--font-sans);
   --font-mono: var(--font-sans);
@@ -55,32 +51,28 @@
 
 :root {
   color-scheme: light;
-  /* 与小克背景一致 rgb(252,241,222) */
-  --background: #FDF2E2;
-  /* Code 终端/提示灯强调色：亮色橙，暗色蓝 */
-  --code-accent: oklch(0.62 0.15 38);
+  --background: #F5EFE3;
+  --code-accent: #CC7D5E;
   --foreground: oklch(0.305 0.022 52);
   /* 信笺卡片，略浅于背景 */
   --card: oklch(0.972 0.015 86);
   --card-foreground: oklch(0.305 0.022 52);
   --popover: oklch(0.972 0.015 86);
   --popover-foreground: oklch(0.305 0.022 52);
-  /* 主色：墨褐/赭石 */
-  --primary: oklch(0.435 0.06 48);
-  --primary-foreground: oklch(0.965 0.018 86);
+  --primary: #CC7D5E;
+  --primary-foreground: #FFFFFF;
   --secondary: oklch(0.915 0.022 82);
   --secondary-foreground: oklch(0.355 0.03 50);
   --muted: oklch(0.915 0.02 82);
   /* 次要文字（时间戳/提示/占位/摘要）：亮色下原 0.52 偏浅，叠 /40~/50 透明后在米黄底上糊掉；调深保证可读 */
   --muted-foreground: oklch(0.44 0.03 56);
-  /* 点缀：暗红印泥 */
-  --accent: oklch(0.905 0.025 70);
-  --accent-foreground: oklch(0.44 0.11 38);
+  --accent: #CC7D5E;
+  --accent-foreground: #FFFFFF;
   --destructive: oklch(0.505 0.15 32);
   --border: oklch(0.86 0.025 76);
   --input: oklch(0.86 0.025 76);
-  --ring: oklch(0.5 0.05 52);
-  --chart-1: oklch(0.44 0.11 38);
+  --ring: #CC7D5E;
+  --chart-1: #CC7D5E;
   --chart-2: oklch(0.55 0.06 70);
   --chart-3: oklch(0.435 0.06 48);
   --chart-4: oklch(0.62 0.05 90);
@@ -88,85 +80,85 @@
   --radius: 1.1rem;
   --sidebar: oklch(0.918 0.024 80);
   --sidebar-foreground: oklch(0.34 0.024 52);
-  --sidebar-primary: oklch(0.435 0.06 48);
-  --sidebar-primary-foreground: oklch(0.965 0.018 86);
+  --sidebar-primary: #CC7D5E;
+  --sidebar-primary-foreground: #FFFFFF;
   --sidebar-accent: oklch(0.885 0.03 74);
   --sidebar-accent-foreground: oklch(0.355 0.03 50);
   --sidebar-border: oklch(0.85 0.028 74);
-  --sidebar-ring: oklch(0.5 0.05 52);
+  --sidebar-ring: #CC7D5E;
 }
 
 .dark {
   color-scheme: dark;
   --background: #1F1F1F;
-  --code-accent: oklch(0.52 0.12 256);
+  --code-accent: #CC7D5E;
   --foreground: #FFFFFF;
   --card: oklch(0.205 0 0);
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
+  --primary: #CC7D5E;
+  --primary-foreground: #FFFFFF;
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.269 0 0);
   --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
+  --accent: #CC7D5E;
+  --accent-foreground: #FFFFFF;
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
+  --ring: #CC7D5E;
+  --chart-1: #CC7D5E;
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(1 0 0);
-  --sidebar-primary-foreground: oklch(0.205 0 0);
+  --sidebar-primary: #CC7D5E;
+  --sidebar-primary-foreground: #FFFFFF;
   --sidebar-accent: oklch(0.269 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --sidebar-ring: #CC7D5E;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not(.light) {
     color-scheme: dark;
     --background: #1F1F1F;
-    --code-accent: oklch(0.52 0.12 256);
+    --code-accent: #CC7D5E;
     --foreground: oklch(1 0 0);
     --card: oklch(0.205 0 0);
     --card-foreground: oklch(0.985 0 0);
     --popover: oklch(0.205 0 0);
     --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
+    --primary: #CC7D5E;
+    --primary-foreground: #FFFFFF;
     --secondary: oklch(0.269 0 0);
     --secondary-foreground: oklch(0.985 0 0);
     --muted: oklch(0.269 0 0);
     --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
+    --accent: #CC7D5E;
+    --accent-foreground: #FFFFFF;
     --destructive: oklch(0.704 0.191 22.216);
     --border: oklch(1 0 0 / 10%);
     --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.87 0 0);
+    --ring: #CC7D5E;
+    --chart-1: #CC7D5E;
     --chart-2: oklch(0.556 0 0);
     --chart-3: oklch(0.439 0 0);
     --chart-4: oklch(0.371 0 0);
     --chart-5: oklch(0.269 0 0);
     --sidebar: oklch(0.205 0 0);
     --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(1 0 0);
-    --sidebar-primary-foreground: oklch(0.205 0 0);
+    --sidebar-primary: #CC7D5E;
+    --sidebar-primary-foreground: #FFFFFF;
     --sidebar-accent: oklch(0.269 0 0);
     --sidebar-accent-foreground: oklch(0.985 0 0);
     --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+    --sidebar-ring: #CC7D5E;
   }
 }
 
