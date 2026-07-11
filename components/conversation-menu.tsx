@@ -54,7 +54,7 @@ export function ConversationMenu({
       >
         {picker ? (
           <>
-            <button onClick={() => setPicker(false)} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-[13px] text-muted-foreground hover:bg-secondary/60">
+            <button onClick={() => setPicker(false)} className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-[11px] text-muted-foreground hover:bg-secondary/60">
               <ChevronLeft className="size-4" />加入项目
             </button>
             <div className="max-h-[44vh] overflow-y-auto">
@@ -81,7 +81,7 @@ export function ConversationMenu({
 
 function MenuRow({ icon, label, onClick, danger = false }: { icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean }) {
   return (
-    <button onClick={onClick} className={cn("flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] active:scale-[0.98]", danger ? "text-destructive hover:bg-destructive/10" : "text-foreground hover:bg-secondary/60")}>
+    <button onClick={onClick} className={cn("flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] active:scale-[0.98]", danger ? "text-destructive hover:bg-destructive/10" : "text-foreground hover:bg-secondary/60")}>
       <span className={danger ? "text-destructive" : "text-muted-foreground"}>{icon}</span>
       <span className="truncate">{label}</span>
     </button>
