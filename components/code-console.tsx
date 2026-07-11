@@ -85,7 +85,7 @@ function ThinkingTimer() {
     return () => clearInterval(t)
   }, [])
   const fmt = sec < 60 ? `${sec}秒` : `${Math.floor(sec / 60)}分钟${sec % 60 ? `${sec % 60}秒` : ""}`
-  return <span className="text-[13px] text-muted-foreground" style={{ fontFamily: MONO }}>({fmt} thinking)</span>
+  return <span className="text-[11px] text-muted-foreground" style={{ fontFamily: MONO }}>({fmt} thinking)</span>
 }
 
 // 单个计划动作的展示（含 diff）
@@ -100,7 +100,7 @@ function PlanActionView({ a, login }: { a: PlanAction; login: string }) {
   const isNew = !a.oldContent
   return (
     <div className="overflow-hidden rounded-lg border border-border min-w-0">
-      <div className="flex items-center gap-2 bg-secondary/60 px-3 py-1.5 text-[11px] text-muted-foreground min-w-0">
+      <div className="flex items-center gap-2 bg-secondary/60 px-3 py-1.5 text-[9px] text-muted-foreground min-w-0">
         {isNew ? <FilePlus2 className="size-3.5 shrink-0" /> : <FileEdit className="size-3.5 shrink-0" />}
         <span className="truncate font-medium text-foreground/80">{a.path}</span>
         <span className="opacity-70 shrink-0">{isNew ? "新建" : "修改"}</span>
@@ -112,7 +112,7 @@ function PlanActionView({ a, login }: { a: PlanAction; login: string }) {
 
 function Row({ icon, label }: { icon: React.ReactNode; label: string }) {
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[12px] text-foreground/85 min-w-0">
+    <div className="flex items-center gap-2 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[10px] text-foreground/85 min-w-0">
       <span className="shrink-0" style={{ color: ACCENT }}>{icon}</span>
       <span className="truncate">{label}</span>
     </div>
@@ -619,7 +619,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-5 md:px-8" style={{ fontFamily: MONO }}>
         <div className="mx-auto max-w-3xl min-w-0 space-y-4">
           {messages.length === 0 && (
-            <p className="text-[12px] text-muted-foreground">
+            <p className="text-[10px] text-muted-foreground">
               {repo ? "描述问题或想做的改动，我会自己浏览仓库、定位、动手。" : "告诉我你想做什么（比如「做个番茄钟」），我会新建仓库、写代码、上线。"} 输入 / 看命令。
             </p>
           )}
@@ -627,7 +627,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
             <MessageView key={m.id} m={m} login={login} />
           ))}
           {(streaming || applying) && (
-            <div className="flex items-center gap-2 text-[13px] text-muted-foreground" aria-live="polite">
+            <div className="flex items-center gap-2 text-[11px] text-muted-foreground" aria-live="polite">
               <WorkingDots className="shrink-0" style={{ color: ACCENT }} />
               <ThinkingTimer />
             </div>
@@ -639,12 +639,12 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       {currentTaskId && repo && (workspaceDirty || publishPending) && (
         <div className="border-t border-border bg-secondary/40 px-4 py-3 md:px-8">
           <div className="mx-auto max-w-3xl">
-            {applyError && <p className="mb-2 text-[12px] leading-relaxed text-destructive">{applyError}</p>}
+            {applyError && <p className="mb-2 text-[10px] leading-relaxed text-destructive">{applyError}</p>}
             <div className="flex items-center gap-3">
-            <span className="text-[12px] text-foreground" style={{ fontFamily: MONO }}>改动完成，等待确认发布</span>
+            <span className="text-[10px] text-foreground" style={{ fontFamily: MONO }}>改动完成，等待确认发布</span>
             <div className="ml-auto flex gap-2">
               <button onClick={publishWorkspacePR} disabled={applying}
-                className="flex items-center gap-1 rounded-lg px-3.5 py-1.5 text-[12px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+                className="flex items-center gap-1 rounded-lg px-3.5 py-1.5 text-[10px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
                 style={{ background: ACCENT }}>
                 <GitBranch className="size-3.5" />
                 {applying ? "发布中…" : "确认发布"}
@@ -659,16 +659,16 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
       {pendingPlan.length > 0 && !currentTaskId && !workspaceDirty && !auto && (
         <div className="border-t border-border bg-secondary/40 px-4 py-3 md:px-8">
           <div className="mx-auto max-w-3xl">
-            {applyError && <p className="mb-2 text-[12px] leading-relaxed text-destructive">{applyError}</p>}
+            {applyError && <p className="mb-2 text-[10px] leading-relaxed text-destructive">{applyError}</p>}
             <div className="flex items-center gap-3">
-            <span className="text-[12px] text-foreground" style={{ fontFamily: MONO }}>{planSummary(pendingPlan)}</span>
+            <span className="text-[10px] text-foreground" style={{ fontFamily: MONO }}>{planSummary(pendingPlan)}</span>
             <div className="ml-auto flex gap-2">
               <button onClick={() => { setPendingPlan([]); setApplyError(null) }} disabled={applying}
-                className="flex items-center gap-1 rounded-lg border border-border px-3 py-1.5 text-[12px] text-muted-foreground transition-colors hover:bg-secondary">
+                className="flex items-center gap-1 rounded-lg border border-border px-3 py-1.5 text-[10px] text-muted-foreground transition-colors hover:bg-secondary">
                 <X className="size-3.5" />放弃
               </button>
               <button onClick={() => applyPlan(pendingPlan, [...messages].reverse().find(m => m.role === "assistant")?.id ?? "")} disabled={applying}
-                className="flex items-center gap-1 rounded-lg px-3.5 py-1.5 text-[12px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+                className="flex items-center gap-1 rounded-lg px-3.5 py-1.5 text-[10px] font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
                 style={{ background: ACCENT }}>
                 <Check className="size-3.5" />
                 {applying ? "执行中…" : "确认并执行"}
@@ -685,8 +685,8 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
             {matchedCmds.map(c => (
               <button key={c.cmd} onClick={() => { if (c.cmd === "/new") { setInput(""); startNewSession() } else { setInput(""); setOverlay(c.cmd.slice(1) as Overlay) } }}
                 className="flex w-full items-center gap-3 rounded-md px-2 py-1 text-left transition-colors hover:bg-secondary/60">
-                <span className="text-[12px] font-medium" style={{ color: ACCENT, fontFamily: MONO }}>{c.cmd}</span>
-                <span className="text-[11px] text-muted-foreground">{c.desc}</span>
+                <span className="text-[10px] font-medium" style={{ color: ACCENT, fontFamily: MONO }}>{c.cmd}</span>
+                <span className="text-[9px] text-muted-foreground">{c.desc}</span>
               </button>
             ))}
           </div>
@@ -713,7 +713,7 @@ export function CodeConsole({ userId, onExit }: { userId: string; onExit: () => 
           ) : (
             <button onClick={onSubmit} disabled={!canSend} aria-label="发送"
               title="Enter 发送"
-              className={cn("flex h-7 items-center gap-1 rounded-lg border px-2.5 text-[12px] font-medium transition-all", canSend ? "border-transparent text-white" : "border-border text-muted-foreground/40")}
+              className={cn("flex h-7 items-center gap-1 rounded-lg border px-2.5 text-[10px] font-medium transition-all", canSend ? "border-transparent text-white" : "border-border text-muted-foreground/40")}
               style={canSend ? { background: ACCENT } : undefined}>
               <CornerDownLeft className="size-3.5" />
             </button>
@@ -769,39 +769,39 @@ function Shell({ children, onExit, repo, login, onSwitchRepo, onGhMenu, ghMenu, 
   return (
     <div className="fixed inset-0 z-[60] flex flex-col bg-background paper-grain overflow-hidden">
       <div className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-2.5 md:px-8">
-        <button onClick={onExit} className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[12px] text-muted-foreground transition-colors hover:bg-secondary" style={{ fontFamily: MONO }}>
+        <button onClick={onExit} className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[10px] text-muted-foreground transition-colors hover:bg-secondary" style={{ fontFamily: MONO }}>
           <ChevronLeft className="size-4" />退出
         </button>
-        <span className="text-[12px] tracking-[0.25em]" style={{ color: ACCENT, fontFamily: MONO }}>CODE</span>
+        <span className="text-[10px] tracking-[0.25em]" style={{ color: ACCENT, fontFamily: MONO }}>CODE</span>
 
         <div className="ml-auto flex items-center gap-2">
           {onToggleAuto && (
-            <button onClick={onToggleAuto} title="自主模式" className="rounded-md border border-border px-2 py-1 text-[11px] transition-colors hover:bg-secondary" style={{ fontFamily: MONO, color: auto ? ACCENT : undefined, borderColor: auto ? ACCENT : undefined }}>
+            <button onClick={onToggleAuto} title="自主模式" className="rounded-md border border-border px-2 py-1 text-[9px] transition-colors hover:bg-secondary" style={{ fontFamily: MONO, color: auto ? ACCENT : undefined, borderColor: auto ? ACCENT : undefined }}>
               {auto ? "自动" : "确认"}
             </button>
           )}
           {repo !== undefined && repo && (
-            <button onClick={onSwitchRepo} className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12px] text-foreground/80 transition-colors hover:bg-secondary" style={{ fontFamily: MONO }}>
+            <button onClick={onSwitchRepo} className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[10px] text-foreground/80 transition-colors hover:bg-secondary" style={{ fontFamily: MONO }}>
               <GitBranch className="size-3.5" style={{ color: ACCENT }} />{repo}
             </button>
           )}
           {repo !== undefined && !repo && login !== undefined && (
-            <span className="rounded-md px-2 py-1 text-[12px] text-muted-foreground" style={{ fontFamily: MONO }}>新项目</span>
+            <span className="rounded-md px-2 py-1 text-[10px] text-muted-foreground" style={{ fontFamily: MONO }}>新项目</span>
           )}
           {/* GitHub 账号入口 */}
           {login !== undefined && (
             <div className="relative">
-              <button onClick={onGhMenu} className="flex items-center gap-1 rounded-md px-2 py-1 text-[12px] text-muted-foreground transition-colors hover:bg-secondary" style={{ fontFamily: MONO }}>
+              <button onClick={onGhMenu} className="flex items-center gap-1 rounded-md px-2 py-1 text-[10px] text-muted-foreground transition-colors hover:bg-secondary" style={{ fontFamily: MONO }}>
                 {login ? `@${login}` : "GitHub"}<ChevronDown className="size-3" />
               </button>
               {ghMenu && (
                 <>
                   <button className="fixed inset-0 z-10 cursor-default" aria-label="关闭" onClick={onCloseGh} />
                   <div className="absolute right-0 z-20 mt-1 w-44 overflow-hidden rounded-xl border border-border bg-card shadow-lg">
-                    <a href="https://github.com/settings/applications" target="_blank" rel="noreferrer" className="flex items-center gap-2 px-3 py-2.5 text-[12px] text-foreground transition-colors hover:bg-secondary">
+                    <a href="https://github.com/settings/applications" target="_blank" rel="noreferrer" className="flex items-center gap-2 px-3 py-2.5 text-[10px] text-foreground transition-colors hover:bg-secondary">
                       <ExternalLink className="size-3.5" />管理授权
                     </a>
-                    <button onClick={onDisconnect} className="flex w-full items-center gap-2 border-t border-border/60 px-3 py-2.5 text-[12px] text-destructive transition-colors hover:bg-destructive/10">
+                    <button onClick={onDisconnect} className="flex w-full items-center gap-2 border-t border-border/60 px-3 py-2.5 text-[10px] text-destructive transition-colors hover:bg-destructive/10">
                       <X className="size-3.5" />断开 GitHub
                     </button>
                   </div>
@@ -844,25 +844,25 @@ function MessageView({ m, login }: { m: CodeMessage; login: string }) {
               em: ({ children }) => <em className="italic">{children}</em>,
               code: ({ className, children, ...props }) => {
                 const isInline = !className
-                if (isInline) return <code className="rounded bg-secondary/60 px-1 py-0.5 text-[12px] break-all" {...props}>{children}</code>
-                return <code className="block overflow-x-auto rounded bg-secondary/40 px-3 py-2 text-[12px] leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere]" {...props}>{children}</code>
+                if (isInline) return <code className="rounded bg-secondary/60 px-1 py-0.5 text-[10px] break-all" {...props}>{children}</code>
+                return <code className="block overflow-x-auto rounded bg-secondary/40 px-3 py-2 text-[10px] leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere]" {...props}>{children}</code>
               },
-              pre: ({ children }) => <pre className="max-w-full overflow-x-auto overscroll-x-contain rounded bg-secondary/40 p-3 mb-2 text-[12px] border border-border/30">{children}</pre>,
+              pre: ({ children }) => <pre className="max-w-full overflow-x-auto overscroll-x-contain rounded bg-secondary/40 p-3 mb-2 text-[10px] border border-border/30">{children}</pre>,
               ul: ({ children }) => <ul className="list-disc pl-5 mb-2 space-y-0.5">{children}</ul>,
               ol: ({ children }) => <ol className="list-decimal pl-5 mb-2 space-y-0.5">{children}</ol>,
               li: ({ children }) => <li className="mb-0.5">{children}</li>,
               blockquote: ({ children }) => <blockquote className="border-l-2 pl-3 mb-2 italic opacity-80" style={{ borderColor: ACCENT }}>{children}</blockquote>,
               table: ({ children }) => (
                 <div className="overflow-x-auto mb-3 rounded-lg border border-border/50">
-                  <table className="min-w-full border-collapse text-[12px]">{children}</table>
+                  <table className="min-w-full border-collapse text-[10px]">{children}</table>
                 </div>
               ),
               thead: ({ children }) => <thead className="border-b border-border/50 bg-secondary/30">{children}</thead>,
               th: ({ children }) => <th className="border-r border-border/30 px-3 py-2 text-left font-semibold last:border-r-0">{children}</th>,
               tbody: ({ children }) => <tbody className="[&_tr:nth-child(even)]:bg-secondary/20">{children}</tbody>,
               td: ({ children }) => <td className="border-r border-border/20 px-3 py-1.5 last:border-r-0">{children}</td>,
-              h1: ({ children }) => <h1 className="text-[15px] font-bold mb-2 mt-3">{children}</h1>,
-              h2: ({ children }) => <h2 className="text-[14px] font-semibold mb-1.5 mt-2.5">{children}</h2>,
+              h1: ({ children }) => <h1 className="text-[13px] font-bold mb-2 mt-3">{children}</h1>,
+              h2: ({ children }) => <h2 className="text-[12px] font-semibold mb-1.5 mt-2.5">{children}</h2>,
               h3: ({ children }) => <h3 className="text-[13.5px] font-semibold mb-1 mt-2">{children}</h3>,
               hr: () => <hr className="my-3 border-border/40" />,
             }}
@@ -879,7 +879,7 @@ function MessageView({ m, login }: { m: CodeMessage; login: string }) {
         <div className="mt-1">
           <button
             onClick={() => setStepsOpen(v => !v)}
-            className="flex items-center gap-1.5 text-[11px] text-muted-foreground/70 transition-colors hover:text-muted-foreground max-w-full min-w-0"
+            className="flex items-center gap-1.5 text-[9px] text-muted-foreground/70 transition-colors hover:text-muted-foreground max-w-full min-w-0"
             style={{ fontFamily: MONO }}
           >
             <ChevronDown className={cn("size-3 shrink-0 transition-transform", stepsOpen && "rotate-180")} />
@@ -891,7 +891,7 @@ function MessageView({ m, login }: { m: CodeMessage; login: string }) {
           {stepsOpen && (
             <div className="mt-1 space-y-0.5 pl-5 min-w-0">
               {steps.map((s, i) => (
-                <div key={i} className="flex items-center gap-1.5 text-[11px] text-muted-foreground/60 min-w-0">
+                <div key={i} className="flex items-center gap-1.5 text-[9px] text-muted-foreground/60 min-w-0">
                   <span className="shrink-0" style={{ color: s.kind === "edit" || s.kind === "repo" || s.kind === "deploy" ? ACCENT : "var(--muted-foreground)", opacity: 0.5 }}>·</span>
                   <span className="truncate">{s.label}</span>
                 </div>
@@ -911,7 +911,7 @@ function ResultCard({ r }: { r: ApplyResult }) {
   if (isPR) {
     const title = r.pagesStatus === "ready" ? "网页已经发布" : r.merged ? "Pull Request 已合并" : "已创建 Pull Request"
     return (
-      <div className="mt-1 space-y-1.5 rounded-lg border px-3 py-2.5 text-[12px] min-w-0" style={{ borderColor: "#3fb950", background: "color-mix(in oklab, #3fb950 8%, transparent)" }}>
+      <div className="mt-1 space-y-1.5 rounded-lg border px-3 py-2.5 text-[10px] min-w-0" style={{ borderColor: "#3fb950", background: "color-mix(in oklab, #3fb950 8%, transparent)" }}>
         <div className="flex items-center gap-2 font-medium text-foreground">
           <Check className="size-3.5 shrink-0" style={{ color: "#3fb950" }} />
           <span className="min-w-0 break-all">{title}</span>
@@ -931,7 +931,7 @@ function ResultCard({ r }: { r: ApplyResult }) {
     )
   }
   return (
-    <div className="mt-1 space-y-1 rounded-lg border px-3 py-2.5 text-[12px] min-w-0" style={{ borderColor: ACCENT, background: "color-mix(in oklab, " + ACCENT + " 8%, transparent)" }}>
+    <div className="mt-1 space-y-1 rounded-lg border px-3 py-2.5 text-[10px] min-w-0" style={{ borderColor: ACCENT, background: "color-mix(in oklab, " + ACCENT + " 8%, transparent)" }}>
       <div className="flex items-center gap-2 font-medium text-foreground min-w-0">
         <Check className="size-3.5 shrink-0" style={{ color: ACCENT }} />
         <span className="min-w-0 break-all">已提交并推送（mode: {r.mode || "direct_push"}）{r.created ? "（新仓库已创建）" : ""}</span>
@@ -955,22 +955,22 @@ function RepoPicker({ repos, hidden, onLoad, onPick, onHide, onReset }: { repos:
       <div className="mx-auto max-w-2xl space-y-2">
         <button onClick={() => onPick(null)} className="flex w-full items-center gap-3 rounded-lg border px-4 py-3 text-left transition-colors hover:bg-secondary/50" style={{ borderColor: ACCENT }}>
           <Plus className="size-4 shrink-0" style={{ color: ACCENT }} />
-          <span className="text-[13px] font-medium text-foreground" style={{ fontFamily: MONO }}>从零做个新项目（我来建仓库）</span>
+          <span className="text-[11px] font-medium text-foreground" style={{ fontFamily: MONO }}>从零做个新项目（我来建仓库）</span>
         </button>
-        <p className="px-1 pt-2 text-[12px] text-muted-foreground" style={{ fontFamily: MONO }}>或选一个已有仓库改：</p>
+        <p className="px-1 pt-2 text-[10px] text-muted-foreground" style={{ fontFamily: MONO }}>或选一个已有仓库改：</p>
         {visible === null ? (
           <div className="flex justify-center py-10 text-muted-foreground"><Loader2 className="size-5 animate-spin" /></div>
         ) : visible.length === 0 ? (
-          <p className="py-6 text-center text-[13px] text-muted-foreground">没有可显示的仓库</p>
+          <p className="py-6 text-center text-[11px] text-muted-foreground">没有可显示的仓库</p>
         ) : visible.map(r => (
           <div key={r.full_name} className="group flex w-full items-center gap-2 rounded-lg border border-border px-4 py-2.5 transition-colors hover:bg-secondary/50">
             <button onClick={() => onPick(r.full_name)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
               <GitBranch className="size-4 shrink-0" style={{ color: ACCENT }} />
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-[13px] text-foreground" style={{ fontFamily: MONO }}>{r.full_name}</span>
-                {r.description && <span className="block truncate text-[11px] text-muted-foreground">{r.description}</span>}
+                <span className="block truncate text-[11px] text-foreground" style={{ fontFamily: MONO }}>{r.full_name}</span>
+                {r.description && <span className="block truncate text-[9px] text-muted-foreground">{r.description}</span>}
               </span>
-              {r.private && <span className="shrink-0 rounded bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground">私有</span>}
+              {r.private && <span className="shrink-0 rounded bg-secondary px-1.5 py-0.5 text-[8px] text-muted-foreground">私有</span>}
             </button>
             <button onClick={() => onHide(r.full_name)} aria-label="从列表移除" title="从列表移除（不会删除 GitHub 上的真实仓库）"
               className="shrink-0 rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity hover:bg-secondary hover:text-destructive group-hover:opacity-100">
@@ -979,7 +979,7 @@ function RepoPicker({ repos, hidden, onLoad, onPick, onHide, onReset }: { repos:
           </div>
         ))}
         {hiddenCount > 0 && (
-          <button onClick={onReset} className="w-full pt-2 text-center text-[11px] text-muted-foreground transition-colors hover:text-foreground" style={{ fontFamily: MONO }}>
+          <button onClick={onReset} className="w-full pt-2 text-center text-[9px] text-muted-foreground transition-colors hover:text-foreground" style={{ fontFamily: MONO }}>
             已隐藏 {hiddenCount} 个 · 点此恢复全部
           </button>
         )}
@@ -996,7 +996,7 @@ function OverlayShell({ title, onClose, children }: { title: string; onClose: ()
       <div className="absolute inset-0 bg-black/50" />
       <div onClick={e => e.stopPropagation()} className="relative w-full max-w-md rounded-t-2xl border border-border bg-card p-4 sm:rounded-2xl">
         <div className="mb-3 flex items-center justify-between">
-          <span className="text-[13px] font-medium text-foreground" style={{ fontFamily: MONO }}>{title}</span>
+          <span className="text-[11px] font-medium text-foreground" style={{ fontFamily: MONO }}>{title}</span>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="size-4" /></button>
         </div>
         {children}
@@ -1007,7 +1007,7 @@ function OverlayShell({ title, onClose, children }: { title: string; onClose: ()
 }
 
 function SimpleOverlay({ title, text, onClose }: { title: string; text: string; onClose: () => void }) {
-  return <OverlayShell title={title} onClose={onClose}><p className="text-[12px] text-muted-foreground">{text}</p></OverlayShell>
+  return <OverlayShell title={title} onClose={onClose}><p className="text-[10px] text-muted-foreground">{text}</p></OverlayShell>
 }
 
 function ModelOverlay({ tier, onPick, onClose }: { tier: Tier; onPick: (t: Tier) => void; onClose: () => void }) {
@@ -1017,8 +1017,8 @@ function ModelOverlay({ tier, onPick, onClose }: { tier: Tier; onPick: (t: Tier)
         {CODE_TIERS.map(t => (
           <button key={t.id} onClick={() => onPick(t.id)} className="flex w-full items-center gap-3 rounded-lg border px-4 py-2.5 text-left transition-colors hover:bg-secondary/60"
             style={{ borderColor: tier === t.id ? ACCENT : "var(--border)" }}>
-            <span className="flex-1 text-[13px] text-foreground" style={{ fontFamily: MONO }}>{t.label}</span>
-            <span className="text-[11px] text-muted-foreground">{t.desc}</span>
+            <span className="flex-1 text-[11px] text-foreground" style={{ fontFamily: MONO }}>{t.label}</span>
+            <span className="text-[9px] text-muted-foreground">{t.desc}</span>
             {tier === t.id && <Check className="size-4" style={{ color: ACCENT }} />}
           </button>
         ))}
@@ -1035,20 +1035,20 @@ function MemoryOverlay({ repo, userId, onClose }: { repo: string; userId: string
   async function del(id: string) { setMems(prev => (prev ?? []).filter(m => m.id !== id)); deleteCodeMemory(id) }
   return (
     <OverlayShell title={`本仓库记忆 · ${repo}`} onClose={onClose}>
-      <p className="mb-2 text-[11px] text-muted-foreground">只属于这个仓库，与系统记忆、其它仓库相互隔离。</p>
+      <p className="mb-2 text-[9px] text-muted-foreground">只属于这个仓库，与系统记忆、其它仓库相互隔离。</p>
       <div className="max-h-[40vh] space-y-1.5 overflow-y-auto">
         {mems === null ? <div className="flex justify-center py-4 text-muted-foreground"><Loader2 className="size-4 animate-spin" /></div>
-          : mems.length === 0 ? <p className="py-3 text-center text-[12px] text-muted-foreground">还没有记忆</p>
+          : mems.length === 0 ? <p className="py-3 text-center text-[10px] text-muted-foreground">还没有记忆</p>
           : mems.map(m => (
             <div key={m.id} className="flex items-start gap-2 rounded-lg bg-secondary/50 px-3 py-2">
-              <span className="flex-1 text-[12px] leading-relaxed text-foreground/90">{m.content}</span>
+              <span className="flex-1 text-[10px] leading-relaxed text-foreground/90">{m.content}</span>
               <button onClick={() => del(m.id)} className="text-muted-foreground hover:text-destructive"><Trash2 className="size-3.5" /></button>
             </div>
           ))}
       </div>
       <div className="mt-2 flex gap-2">
         <input value={adding} onChange={e => setAdding(e.target.value)} onKeyDown={e => { if (e.key === "Enter") add() }} placeholder="手动添加一条记忆…"
-          className="flex-1 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[12px] text-foreground outline-none" />
+          className="flex-1 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-[10px] text-foreground outline-none" />
         <button onClick={add} className="rounded-lg px-3 py-2 text-white" style={{ background: ACCENT }}><Plus className="size-4" /></button>
       </div>
     </OverlayShell>
@@ -1063,10 +1063,10 @@ function ContextOverlay({ messages, onClose }: { messages: CodeMessage[]; onClos
   return (
     <OverlayShell title="上下文用量" onClose={onClose}>
       <div className="space-y-3" style={{ fontFamily: MONO }}>
-        <div className="flex justify-between text-[12px]"><span className="text-muted-foreground">消息条数</span><span className="text-foreground">{messages.length}</span></div>
-        <div className="flex justify-between text-[12px]"><span className="text-muted-foreground">约 token</span><span className="text-foreground">{approx.toLocaleString()} / {max.toLocaleString()}</span></div>
+        <div className="flex justify-between text-[10px]"><span className="text-muted-foreground">消息条数</span><span className="text-foreground">{messages.length}</span></div>
+        <div className="flex justify-between text-[10px]"><span className="text-muted-foreground">约 token</span><span className="text-foreground">{approx.toLocaleString()} / {max.toLocaleString()}</span></div>
         <div className="h-1.5 overflow-hidden rounded-full bg-secondary"><div className="h-full rounded-full" style={{ width: `${pct}%`, background: ACCENT }} /></div>
-        <p className="text-[11px] text-muted-foreground">估算值（按字符粗略折算），仅供参考。</p>
+        <p className="text-[9px] text-muted-foreground">估算值（按字符粗略折算），仅供参考。</p>
       </div>
     </OverlayShell>
   )
@@ -1079,11 +1079,11 @@ function ResumeOverlay({ repo, onPick, onClose }: { repo: string; onPick: (s: Co
     <OverlayShell title={`历史排查 · ${repo}`} onClose={onClose}>
       <div className="max-h-[50vh] space-y-1.5 overflow-y-auto">
         {sessions === null ? <div className="flex justify-center py-4 text-muted-foreground"><Loader2 className="size-4 animate-spin" /></div>
-          : sessions.length === 0 ? <p className="py-3 text-center text-[12px] text-muted-foreground">还没有历史会话</p>
+          : sessions.length === 0 ? <p className="py-3 text-center text-[10px] text-muted-foreground">还没有历史会话</p>
           : sessions.map(s => (
             <button key={s.id} onClick={() => onPick(s)} className="flex w-full items-center gap-3 rounded-lg border border-border px-3 py-2.5 text-left transition-colors hover:bg-secondary/60">
-              <span className="min-w-0 flex-1 truncate text-[13px] text-foreground" style={{ fontFamily: MONO }}>{s.title}</span>
-              <span className="shrink-0 text-[11px] text-muted-foreground">{s.date}</span>
+              <span className="min-w-0 flex-1 truncate text-[11px] text-foreground" style={{ fontFamily: MONO }}>{s.title}</span>
+              <span className="shrink-0 text-[9px] text-muted-foreground">{s.date}</span>
             </button>
           ))}
       </div>
