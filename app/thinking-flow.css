@@ -1,11 +1,15 @@
 :root {
-  --mychat-ui-font: "Noto Serif SC", "Songti SC", SimSun, ui-serif, Georgia, serif;
+  --mychat-zh-font: "Noto Serif SC", "Songti SC", SimSun, ui-serif, Georgia, serif;
+  /* Anthropic's editorial English voice is a high-contrast text serif.
+     Source Serif 4 is the web-safe equivalent of its proprietary Tiempos family. */
+  --mychat-en-font: "Source Serif 4", "Iowan Old Style", "Times New Roman", serif;
+  --mychat-base-font: var(--mychat-en-font), var(--mychat-zh-font);
   --thinking-base: rgba(30, 30, 30, 0.42);
   --thinking-shine: rgba(0, 0, 0, 0.96);
-  --font-sans: var(--mychat-ui-font);
-  --font-heading: var(--mychat-ui-font);
-  --font-serif: var(--mychat-ui-font);
-  --font-mono: var(--mychat-ui-font);
+  --font-sans: var(--mychat-base-font);
+  --font-heading: var(--mychat-base-font);
+  --font-serif: var(--mychat-base-font);
+  --font-mono: var(--mychat-base-font);
 }
 
 .dark {
@@ -23,7 +27,7 @@
 html,
 body,
 body * {
-  font-family: var(--mychat-ui-font) !important;
+  font-family: var(--mychat-base-font) !important;
 }
 
 pre,
@@ -41,7 +45,7 @@ code * {
 /* Fixed word; only the highlight moves inside the glyphs. */
 .thinking-flow {
   display: inline-block;
-  font-family: var(--mychat-ui-font) !important;
+  font-family: var(--mychat-base-font) !important;
   font-size: 12px;
   font-style: normal;
   font-weight: 500;
