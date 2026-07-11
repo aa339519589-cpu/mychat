@@ -3,10 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "patch:seedream": "node scripts/patch-seedream-image-size.mjs",
+    "postinstall": "npm run patch:seedream",
+    "predev": "npm run patch:seedream",
     "dev": "next dev",
+    "prebuild": "npm run patch:seedream",
     "build": "next build",
     "start": "next start",
+    "precheck": "npm run patch:seedream",
     "check": "tsc --noEmit --incremental false --noUnusedLocals --noUnusedParameters",
+    "pretest": "npm run patch:seedream",
     "test": "tsx --test tests/**/*.test.ts",
     "verify": "npm run check && npm test && npm run build"
   },
