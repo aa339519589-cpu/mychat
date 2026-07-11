@@ -24,14 +24,15 @@ export type ModelOutputKind = "chat" | "image" | "video"
 const MODEL_TOKEN_START = "(?:^|[-_.\\/:])"
 const MODEL_TOKEN_END = "(?=$|[-_.\\/:]|\\d)"
 const IMAGE_MODEL = new RegExp(
-  `${MODEL_TOKEN_START}(?:image|images|imagen|dall[-_.]?e|gpt[-_.]?image|flux|stable[-_.]?diffusion|sdxl)${MODEL_TOKEN_END}`,
+  `${MODEL_TOKEN_START}(?:image|images|imagen|dall[-_.]?e|gpt[-_.]?image|flux|stable[-_.]?diffusion|sdxl|seedream|seededit)${MODEL_TOKEN_END}`,
   "i",
 )
 const VIDEO_MODEL = new RegExp(
-  `${MODEL_TOKEN_START}(?:video|sora|veo|kling|wan)${MODEL_TOKEN_END}`,
+  `${MODEL_TOKEN_START}(?:video|sora|veo|kling|wan|seedance)${MODEL_TOKEN_END}`,
   "i",
 )
 const NON_CHAT_MODEL = /(?:^|[-_.\/])(embedding|embed|rerank|moderation|whisper|transcri|speech|tts)(?:$|[-_.\/])/i
+const KNOWN_TEXT_ONLY_MODEL = /(?:^|[-_.\/])(?:doubao[-_.](?:pro|lite|embedding)|mistral|embedding|embed|rerank|moderation|whisper|transcri|speech|tts)(?=$|[-_.\/]|\d)/i
 
 /** Classify the primary output expected from a model ID. Unknown IDs are chat. */
 export function modelOutputKind(modelId: string): ModelOutputKind {
@@ -50,6 +51,12 @@ export function isModelOutputKind(value: unknown): value is ModelOutputKind {
 export function isLikelyChatModel(modelId: string): boolean {
   const normalized = modelId.trim()
   return modelOutputKind(normalized) === "chat" && !NON_CHAT_MODEL.test(normalized)
+}
+
+/** Reject only model families whose names unambiguously describe text-only workloads. */
+export function isKnownTextOnlyModel(modelId: string): boolean {
+  const normalized = modelId.trim()
+  return modelOutputKind(normalized) === "chat" && KNOWN_TEXT_ONLY_MODEL.test(normalized)
 }
 
 export function isSafeModelId(value: string, apiKey?: string): boolean {
