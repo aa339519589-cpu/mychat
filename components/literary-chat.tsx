@@ -751,6 +751,11 @@ export function LiteraryChat() {
           ) : (
             <EmptyState endpointName={activeName} />
           )}
+          {isLoading && (
+            <div className="mx-auto max-w-[56rem] px-5 pb-4 md:ml-0 md:mr-auto md:px-10" role="status" aria-live="polite">
+              <span className="thinking-flow">Thinking</span>
+            </div>
+          )}
         </div>
 
         <ChatInput
@@ -845,7 +850,7 @@ export function LiteraryChat() {
 function EmptyState({ endpointName }: { endpointName?: string }) {
   return (
     <div className="mx-auto flex h-full max-w-[40rem] flex-col items-center justify-center px-8 text-center">
-      <p className="text-[15px] italic text-muted-foreground/60">
+      <p className="text-[13px] italic text-muted-foreground/60">
         {endpointName && endpointName !== "笔友" ? `与 ${endpointName} 对谈` : "说点什么开始对谈"}
       </p>
     </div>
