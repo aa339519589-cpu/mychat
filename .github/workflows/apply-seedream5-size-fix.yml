@@ -1,0 +1,113 @@
+name: Apply Seedream 5 image size fix
+
+on:
+  push:
+    branches:
+      - fix/seedream5-image-size
+    paths:
+      - .github/workflows/apply-seedream5-size-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/seedream5-image-size
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Patch Seedream 5 image size and add regression tests
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          path = Path("lib/llm/media-generation.ts")
+          text = path.read_text()
+
+          marker = '''function mediaEndpoint(baseUrl: string, suffix: string): string {
+            const normalized = normalizeOpenAIBaseUrl(baseUrl)
+            return `${normalized}${new URL(normalized).pathname === "/" ? "/v1" : ""}${suffix}`
+          }
+          '''
+          replacement = marker + '''
+          /**
+           * Seedream 5 Pro rejects the historical OpenAI-compatible 1024 square
+           * default. Its minimum accepted area is 3,686,400 pixels, so use a
+           * provider-safe 2K square while preserving the legacy default for
+           * other OpenAI-compatible image models.
+           */
+          export function imageGenerationSizeForModel(model: string): string {
+            const normalized = model.trim().toLowerCase()
+            return /(?:^|[-_.\\/])seedream[-_.]?5(?=$|[-_.\\/\\d])/.test(normalized)
+              ? "2048x2048"
+              : "1024x1024"
+          }
+          '''
+          if marker not in text:
+              raise SystemExit("mediaEndpoint marker not found")
+          text = text.replace(marker, replacement, 1)
+
+          old = 'body: JSON.stringify({ model: options.model.trim(), prompt: options.prompt.trim(), n: 1, size: "1024x1024" }),' 
+          new = 'body: JSON.stringify({ model: options.model.trim(), prompt: options.prompt.trim(), n: 1, size: imageGenerationSizeForModel(options.model) }),' 
+          if old not in text:
+              raise SystemExit("image generation request body not found")
+          path.write_text(text.replace(old, new, 1))
+
+          Path("tests/seedream5-image-size.test.ts").write_text('''import test from "node:test"
+          import assert from "node:assert/strict"
+          import {
+            generateOpenAICompatibleImage,
+            imageGenerationSizeForModel,
+            type ModelEndpointFetcher,
+          } from "../lib/llm/media-generation"
+
+          test("uses a provider-safe 2K size for Seedream 5 models", async () => {
+            let body: any
+            const fetcher: ModelEndpointFetcher = async (_input, init) => {
+              body = JSON.parse(String(init?.body))
+              return Response.json({ data: [{ b64_json: "cG5n" }] })
+            }
+
+            await generateOpenAICompatibleImage({
+              baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+              authType: "none",
+              model: "doubao-seedream-5-0-pro",
+              outputKind: "image",
+              prompt: "city",
+              fetcher,
+            })
+
+            assert.equal(body.size, "2048x2048")
+            assert.equal(2048 * 2048 >= 3_686_400, true)
+          })
+
+          test("keeps the OpenAI-compatible default for other image models", () => {
+            assert.equal(imageGenerationSizeForModel("gpt-image-1"), "1024x1024")
+            assert.equal(imageGenerationSizeForModel("doubao-seedream-5.0-pro"), "2048x2048")
+          })
+          '''.replace("          ", ""))
+          PY
+
+      - run: npm run check
+      - run: npm test
+
+      - name: Commit generated fix
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib/llm/media-generation.ts tests/seedream5-image-size.test.ts
+          git commit -m "Fix Seedream 5 image generation size"
+          git push origin HEAD:fix/seedream5-image-size
