@@ -81,7 +81,7 @@ export function ArtifactPanel({
           </div>
         ) : (
           <div className="h-full overflow-auto bg-muted/20">
-            <pre className="min-w-full p-4 text-[10px] leading-relaxed">
+            <pre className="min-w-full p-4 text-[11px] leading-relaxed">
               <code className="whitespace-pre font-mono text-foreground/80">{raw}</code>
             </pre>
           </div>
