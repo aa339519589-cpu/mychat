@@ -211,7 +211,7 @@ export function LiteraryChat() {
     if (!user) { setIsLoading(false); return "" }
 
     const history = messages
-    let fullReply = "", fullThinking = "", hadError = false
+    let fullReply = "", hadError = false
     let renderScheduled = false
     let rafId: number | null = null
 
@@ -223,7 +223,6 @@ export function LiteraryChat() {
         messages: c.messages.map(m => m.id !== msgId ? m : {
           ...m,
           content: fullReply,
-          thinking: fullThinking || undefined,
         }),
       }))
     }
@@ -317,10 +316,6 @@ export function LiteraryChat() {
               fullReply += data.text
               scheduleStreamMessage()
             }
-            if (data.thinking) {
-              fullThinking += data.thinking
-              scheduleStreamMessage()
-            }
           } catch {}
         }
       }
@@ -331,7 +326,7 @@ export function LiteraryChat() {
       }
 
       if (!hadError && fullReply) {
-        insertMessage(user.id, convId, { id: msgId, role: "assistant", content: fullReply, thinking: fullThinking || undefined, time: "" })
+        insertMessage(user.id, convId, { id: msgId, role: "assistant", content: fullReply, time: "" })
         touchConversation(convId)
         setConversations(prev => prev.map(c => c.id === convId ? { ...c, excerpt: conversationExcerpt(fullReply), date: "今日" } : c))
       }
@@ -361,7 +356,7 @@ export function LiteraryChat() {
 
     const userMsg: Message = { id: crypto.randomUUID(), role: "user", content: text, time: "此刻", ts: new Date().toISOString(), images: images?.length ? images : undefined, files: files?.map(f => f.name) }
     const msgId = crypto.randomUUID()
-    const assistantMsg: Message = { id: msgId, role: "assistant", content: "", thinking: "", time: "此刻" }
+    const assistantMsg: Message = { id: msgId, role: "assistant", content: "", time: "此刻" }
     const isFirstExchange = active.messages.length === 0
     const wasDraft = !!active.draft
     const draftId = active.id
@@ -423,7 +418,7 @@ export function LiteraryChat() {
       ...c,
       messages: [
         ...msgs.slice(0, lastAiIdx),
-        { id: newMsgId, role: "assistant" as const, content: "", thinking: "", time: "此刻" },
+        { id: newMsgId, role: "assistant" as const, content: "", time: "此刻" },
       ],
     }))
     deleteMessageRow(lastAiMsg.id)
@@ -454,7 +449,7 @@ export function LiteraryChat() {
     const nextUser: Message = { ...sourceUser, content: nextContent, ts: sourceUser.ts ?? new Date().toISOString() }
     const removed = msgs.slice(userIdx + 1)
     const newMsgId = crypto.randomUUID()
-    const assistantMsg: Message = { id: newMsgId, role: "assistant", content: "", thinking: "", time: "此刻" }
+    const assistantMsg: Message = { id: newMsgId, role: "assistant", content: "", time: "此刻" }
 
     setConversations(prev => prev.map(c => c.id !== convId ? c : {
       ...c,
@@ -755,11 +750,6 @@ export function LiteraryChat() {
             />
           ) : (
             <EmptyState endpointName={activeName} />
-          )}
-          {isLoading && (
-            <div className="mx-auto max-w-[56rem] px-5 pb-4 text-sm italic md:ml-0 md:mr-auto md:px-10">
-              <span className="thinking-flow">正在{activeName}思考……</span>
-            </div>
           )}
         </div>
 
