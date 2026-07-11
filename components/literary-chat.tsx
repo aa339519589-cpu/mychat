@@ -932,11 +932,6 @@ export function LiteraryChat() {
           ) : (
             <EmptyState />
           )}
-          {isLoading && (
-            <div className="mx-auto min-w-0 max-w-[56rem] px-5 pb-4 md:ml-0 md:mr-auto md:px-10" role="status" aria-live="polite">
-              <span className="thinking-flow max-w-full" data-text="Thinking">Thinking</span>
-            </div>
-          )}
         </div>
 
         <ChatInput

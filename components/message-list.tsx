@@ -289,6 +289,11 @@ export function MessageList({
                     ))}
                   </div>
                 )}
+                {idx === lastAiIdx && isLoading && !m.content && !m.media?.length && !m.isError && (
+                  <div role="status" aria-live="polite">
+                    <span className="thinking-flow" data-text="Thinking">Thinking</span>
+                  </div>
+                )}
                 {(() => {
                   const { display, raw, done, inlineRaw, inlineDone, vegaRaw, vegaDone, mermaidRaw, mermaidDone, fnPlotRaw, fnPlotDone } = parseArtifact(stripToolMarkup(m.content ?? ''))
                   return (
