@@ -67,7 +67,6 @@ export async function runTurn(
     if (!choice) return
     if (choice.finish_reason) finishReason = choice.finish_reason
     const delta = choice.delta ?? choice.message ?? {}
-    if (delta.reasoning_content) emit({ thinking: delta.reasoning_content })
     if (delta.content) {
       rawContent += String(delta.content)
       const safe = filter.feed(String(delta.content))
