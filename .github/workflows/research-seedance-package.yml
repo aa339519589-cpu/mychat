@@ -1,0 +1,72 @@
+name: Research Seedance package price
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch official docs and purchase page
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p research
+          python - <<'PY'
+          import json, re, urllib.request
+          from pathlib import Path
+
+          def fetch(url, referer=None):
+              req = urllib.request.Request(url, headers={
+                  'User-Agent':'Mozilla/5.0',
+                  'Accept':'application/json,text/html,*/*',
+                  'Referer': referer or 'https://www.volcengine.com/'
+              })
+              with urllib.request.urlopen(req, timeout=40) as r:
+                  return r.geturl(), dict(r.headers), r.read()
+
+          urls = {
+            'rules_doc': 'https://www.volcengine.com/api/doc/getDocDetail?LibraryID=82379&DocumentID=2191775&newapi=1',
+            'tutorial_doc': 'https://www.volcengine.com/api/doc/getDocDetail?LibraryID=82379&DocumentID=2291680&newapi=1',
+            'purchase': 'https://console.volcengine.com/common-buy/fast/ark_bd%7C%7Cd682ppeeq1mp7kd5q0e0',
+          }
+          for name,url in urls.items():
+              try:
+                  final,headers,body=fetch(url, url if 'docs' in url else None)
+                  Path(f'research/{name}.body').write_bytes(body)
+                  Path(f'research/{name}.meta.txt').write_text('FINAL='+final+'\n'+ '\n'.join(f'{k}: {v}' for k,v in headers.items()),encoding='utf-8')
+              except Exception as e:
+                  Path(f'research/{name}.error.txt').write_text(repr(e),encoding='utf-8')
+
+          # Extract readable text from docs JSON.
+          for name in ('rules_doc','tutorial_doc'):
+              p=Path(f'research/{name}.body')
+              if not p.exists(): continue
+              try:
+                  obj=json.loads(p.read_text('utf-8'))
+                  content=obj.get('Result',{}).get('Content') or obj.get('Result',{}).get('content') or ''
+                  Path(f'research/{name}.content.json').write_text(content if isinstance(content,str) else json.dumps(content,ensure_ascii=False),encoding='utf-8')
+                  text=content if isinstance(content,str) else json.dumps(content,ensure_ascii=False)
+                  # collect strings around money/package terms
+                  needles=['元','价格','售价','资源包','额度','token','Token','200','购买','规格','有效期']
+                  snippets=[]
+                  for n in needles:
+                      for m in re.finditer(re.escape(n), text):
+                          snippets.append(text[max(0,m.start()-500):min(len(text),m.end()+800)])
+                  Path(f'research/{name}.snippets.txt').write_text('\n\n=====\n\n'.join(snippets),encoding='utf-8')
+              except Exception as e:
+                  Path(f'research/{name}.parse-error.txt').write_text(repr(e),encoding='utf-8')
+          PY
+      - name: Inspect purchase redirect and page assets
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -sSIL 'https://console.volcengine.com/common-buy/fast/ark_bd%7C%7Cd682ppeeq1mp7kd5q0e0' > research/purchase.headers.txt || true
+          grep -RInaE '([0-9]+(\.[0-9]+)?[[:space:]]*元|价格|售价|资源包|额度|d682ppeeq1mp7kd5q0e0|Seedance)' research > research/grep.txt || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: seedance-package-price-research
+          path: research
+          retention-days: 1
