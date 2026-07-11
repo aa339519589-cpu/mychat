@@ -57,10 +57,6 @@ function MdContent({ text }: { text: string }) {
   )
 }
 
-function ThinkingBlock() {
-  return <div className="mb-3" role="status" aria-live="polite"><span className="thinking-flow">Thinking</span></div>
-}
-
 function SearchBlock({ searches, replying }: { searches: { query: string; results: { title: string; url: string }[] }[]; replying: boolean }) {
   const [open, setOpen] = useState(true)
   useEffect(() => { if (replying) setOpen(false) }, [replying])
@@ -70,14 +66,14 @@ function SearchBlock({ searches, replying }: { searches: { query: string; result
     <div className="mb-2.5">
       <button
         onClick={() => setOpen(v => !v)}
-        className="flex items-center gap-1.5 text-xs font-[400] italic text-muted-foreground/70 transition-colors hover:text-muted-foreground md:text-[13px]"
+        className="flex items-center gap-1.5 text-xs font-[400] italic text-muted-foreground/70 transition-colors hover:text-muted-foreground md:text-[11px]"
       >
         {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
         <Globe className="size-3.5" />
         <span>搜索了 {total} 个来源</span>
       </button>
       {open && (
-        <div className="mt-2 space-y-2 rounded-xl border border-border/30 bg-muted/15 px-4 py-2.5 text-xs md:text-[13px]">
+        <div className="mt-2 space-y-2 rounded-xl border border-border/30 bg-muted/15 px-4 py-2.5 text-xs md:text-[11px]">
           {searches.map((s, i) => (
             <div key={i} className="space-y-1">
               <div className="text-xs font-[400] italic text-muted-foreground">搜索：{s.query}</div>
@@ -229,7 +225,7 @@ export function MessageList({
                       }}
                       autoFocus
                       rows={Math.min(6, Math.max(2, editDraft.split("\n").length))}
-                      className="w-full min-w-0 resize-none bg-transparent font-sans text-[17px] font-[400] leading-[1.38] tracking-[0.001em] text-secondary-foreground outline-none [overflow-wrap:anywhere] md:text-[18px] dark:text-white"
+                      className="w-full min-w-0 resize-none bg-transparent font-sans text-[15px] font-[400] leading-[1.38] tracking-[0.001em] text-secondary-foreground outline-none [overflow-wrap:anywhere] md:text-[16px] dark:text-white"
                     />
                   </div>
                 ) : (
@@ -240,7 +236,7 @@ export function MessageList({
                     onKeyDown={e => { if (e.key === "Enter") setActiveUserId(activeUserId === m.id ? null : m.id) }}
                     className="max-w-[84%] min-w-0 cursor-pointer rounded-[0.78rem] border border-border/50 bg-secondary/75 px-3.5 py-1.5 text-left text-secondary-foreground shadow-sm md:max-w-[80%] dark:border-white/10 dark:bg-[#151515] dark:text-white"
                   >
-                    <p className="break-words font-sans text-[17px] font-[400] not-italic leading-[1.38] tracking-[0.001em] text-left text-secondary-foreground [overflow-wrap:anywhere] md:text-[18px] dark:text-white">{m.content}</p>
+                    <p className="break-words font-sans text-[15px] font-[400] not-italic leading-[1.38] tracking-[0.001em] text-left text-secondary-foreground [overflow-wrap:anywhere] md:text-[16px] dark:text-white">{m.content}</p>
                   </div>
                 )
               )}
@@ -272,12 +268,11 @@ export function MessageList({
           ) : (
             <div key={m.id} className="group min-w-0 pl-[6px] md:pl-0">
               <div className="min-w-0">
-                {!!isLoading && idx === lastAiIdx && !m.content?.trim() && <ThinkingBlock />}
                 {m.searchNotes && m.searchNotes.length > 0 && <SearchBlock searches={m.searchNotes} replying={!!m.content} />}
                 {m.memoryNotes && m.memoryNotes.length > 0 && (
                   <div className="mb-2.5 space-y-1">
                     {m.memoryNotes.map((note, i) => (
-                      <div key={i} className="flex items-center gap-1.5 text-xs font-[400] italic text-muted-foreground/75 md:text-[13px]">
+                      <div key={i} className="flex items-center gap-1.5 text-xs font-[400] italic text-muted-foreground/75 md:text-[11px]">
                         <Brain className="size-3.5 shrink-0" />
                         <span className="[overflow-wrap:anywhere]">{note}</span>
                       </div>
@@ -290,12 +285,12 @@ export function MessageList({
                     <div className="min-w-0 space-y-2.5">
                       {m.isError ? (
                         <div>
-                          <p className="break-words whitespace-pre-wrap text-sm font-[400] italic leading-relaxed text-muted-foreground [overflow-wrap:anywhere] md:text-[15px]">{m.content}</p>
+                          <p className="break-words whitespace-pre-wrap text-sm font-[400] italic leading-relaxed text-muted-foreground [overflow-wrap:anywhere] md:text-[13px]">{m.content}</p>
                         </div>
                       ) : (
                         <>
                           {display && (
-                            <div className="text-[17px] font-[400] text-foreground md:text-[18px]">
+                            <div className="text-[15px] font-[400] text-foreground md:text-[16px]">
                               <MdContent text={display} />
                             </div>
                           )}
