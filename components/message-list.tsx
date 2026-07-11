@@ -27,27 +27,27 @@ function MdContent({ text }: { text: string }) {
       components={{
         p: ({ children }) => <p className="mb-2.5 break-words leading-[26px] tracking-[0.001em] [overflow-wrap:anywhere]">{children}</p>,
         a: ({ children, href }) => <a href={href} className="break-all underline underline-offset-4 text-primary hover:text-primary/80">{children}</a>,
-        strong: ({ children }) => <strong className="font-[600]">{children}</strong>,
+        strong: ({ children }) => <strong className="font-[750]">{children}</strong>,
         em: ({ children }) => <em className="italic">{children}</em>,
         del: ({ children }) => <del className="line-through text-muted-foreground/60">{children}</del>,
-        code: ({ children }) => <code className="break-all rounded bg-muted/40 px-1.5 py-0.5 font-mono text-[0.84em] font-[400]">{children}</code>,
-        pre: ({ children }) => <pre className="mb-3 max-w-full overflow-x-auto rounded-lg border border-border/30 bg-muted/30 p-4 text-sm font-[400]">{children}</pre>,
-        h1: ({ children }) => <h1 className="mb-3 mt-7 text-[clamp(26px,1.6em,30px)] font-[600] leading-[1.18] tracking-[-0.014em]">{children}</h1>,
-        h2: ({ children }) => <h2 className="mb-2.5 mt-6 text-[clamp(23px,1.38em,26px)] font-[550] leading-[1.22] tracking-[-0.012em]">{children}</h2>,
-        h3: ({ children }) => <h3 className="mb-2 mt-5 text-[clamp(20px,1.18em,23px)] font-[500] leading-[1.28] tracking-[-0.01em]">{children}</h3>,
-        h4: ({ children }) => <h4 className="mb-2 mt-4 text-[clamp(18px,1.06em,20px)] font-[500] leading-[1.34] tracking-[-0.008em]">{children}</h4>,
-        h5: ({ children }) => <h5 className="mb-1.5 mt-4 text-[0.98em] font-[500] tracking-[-0.006em]">{children}</h5>,
-        h6: ({ children }) => <h6 className="mb-1 mt-3 text-[0.92em] font-[400] text-muted-foreground">{children}</h6>,
+        code: ({ children }) => <code className="break-all rounded bg-muted/40 px-1.5 py-0.5 font-mono text-[0.84em] font-[500]">{children}</code>,
+        pre: ({ children }) => <pre className="mb-3 max-w-full overflow-x-auto rounded-lg border border-border/30 bg-muted/30 p-4 text-sm font-[500]">{children}</pre>,
+        h1: ({ children }) => <h1 className="mb-3 mt-7 text-[clamp(26px,1.6em,30px)] font-[750] leading-[1.18] tracking-[-0.014em]">{children}</h1>,
+        h2: ({ children }) => <h2 className="mb-2.5 mt-6 text-[clamp(23px,1.38em,26px)] font-[688] leading-[1.22] tracking-[-0.012em]">{children}</h2>,
+        h3: ({ children }) => <h3 className="mb-2 mt-5 text-[clamp(20px,1.18em,23px)] font-[625] leading-[1.28] tracking-[-0.01em]">{children}</h3>,
+        h4: ({ children }) => <h4 className="mb-2 mt-4 text-[clamp(18px,1.06em,20px)] font-[625] leading-[1.34] tracking-[-0.008em]">{children}</h4>,
+        h5: ({ children }) => <h5 className="mb-1.5 mt-4 text-[0.98em] font-[625] tracking-[-0.006em]">{children}</h5>,
+        h6: ({ children }) => <h6 className="mb-1 mt-3 text-[0.92em] font-[500] text-muted-foreground">{children}</h6>,
         ul: ({ children }) => <ul className="mb-3 list-inside list-disc space-y-1.5 pl-2">{children}</ul>,
         ol: ({ children }) => <ol className="mb-3 list-inside list-decimal space-y-1.5 pl-2">{children}</ol>,
         li: ({ children }) => <li className="break-words [overflow-wrap:anywhere]">{children}</li>,
-        blockquote: ({ children }) => <blockquote className="my-3 rounded-r border-l-4 border-primary/40 bg-muted/15 py-2 pl-4 pr-3 font-[400] italic text-muted-foreground">{children}</blockquote>,
+        blockquote: ({ children }) => <blockquote className="my-3 rounded-r border-l-4 border-primary/40 bg-muted/15 py-2 pl-4 pr-3 font-[500] italic text-muted-foreground">{children}</blockquote>,
         hr: () => <hr className="my-6 h-px border-0 bg-foreground/25 opacity-85" />,
         table: ({ children }) => <div className="my-3 overflow-x-auto"><table className="w-full overflow-hidden rounded-lg border border-collapse border-border/30">{children}</table></div>,
-        thead: ({ children }) => <thead className="bg-muted/40 font-[500]">{children}</thead>,
+        thead: ({ children }) => <thead className="bg-muted/40 font-[625]">{children}</thead>,
         tbody: ({ children }) => <tbody>{children}</tbody>,
         tr: ({ children }) => <tr className="border-b border-border/20 last:border-b-0">{children}</tr>,
-        th: ({ children }) => <th className="border-r border-border/20 px-3 py-2 text-left text-sm font-[500] last:border-r-0">{children}</th>,
+        th: ({ children }) => <th className="border-r border-border/20 px-3 py-2 text-left text-sm font-[625] last:border-r-0">{children}</th>,
         td: ({ children }) => <td className="break-words border-r border-border/20 px-3 py-2 text-sm last:border-r-0 [overflow-wrap:anywhere]">{children}</td>,
         img: ({ src, alt }) => <img src={src} alt={alt} className="my-3 h-auto max-w-full rounded-lg border border-border/20" />,
       }}
@@ -66,19 +66,19 @@ function SearchBlock({ searches, replying }: { searches: { query: string; result
     <div className="mb-2.5">
       <button
         onClick={() => setOpen(v => !v)}
-        className="flex items-center gap-1.5 text-xs font-[400] italic text-muted-foreground/70 transition-colors hover:text-muted-foreground md:text-[11px]"
+        className="flex items-center gap-1.5 text-xs font-[500] italic text-muted-foreground/70 transition-colors hover:text-muted-foreground md:text-[12px]"
       >
         {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
         <Globe className="size-3.5" />
         <span>搜索了 {total} 个来源</span>
       </button>
       {open && (
-        <div className="mt-2 space-y-2 rounded-xl border border-border/30 bg-muted/15 px-4 py-2.5 text-xs md:text-[11px]">
+        <div className="mt-2 space-y-2 rounded-xl border border-border/30 bg-muted/15 px-4 py-2.5 text-xs md:text-[12px]">
           {searches.map((s, i) => (
             <div key={i} className="space-y-1">
-              <div className="text-xs font-[400] italic text-muted-foreground">搜索：{s.query}</div>
+              <div className="text-xs font-[500] italic text-muted-foreground">搜索：{s.query}</div>
               {s.results.map((r, j) => (
-                <a key={j} href={r.url} target="_blank" rel="noreferrer" className="block truncate text-xs font-[400] text-primary/80 underline underline-offset-2 hover:text-primary">
+                <a key={j} href={r.url} target="_blank" rel="noreferrer" className="block truncate text-xs font-[500] text-primary/80 underline underline-offset-2 hover:text-primary">
                   {r.title || r.url}
                 </a>
               ))}
@@ -225,7 +225,7 @@ export function MessageList({
                       }}
                       autoFocus
                       rows={Math.min(6, Math.max(2, editDraft.split("\n").length))}
-                      className="w-full min-w-0 resize-none bg-transparent font-sans text-[15px] font-[400] leading-[1.38] tracking-[0.001em] text-secondary-foreground outline-none [overflow-wrap:anywhere] md:text-[16px] dark:text-white"
+                      className="w-full min-w-0 resize-none bg-transparent font-sans text-[16px] font-[500] leading-[1.38] tracking-[0.001em] text-secondary-foreground outline-none [overflow-wrap:anywhere] md:text-[17px] dark:text-white"
                     />
                   </div>
                 ) : (
@@ -236,7 +236,7 @@ export function MessageList({
                     onKeyDown={e => { if (e.key === "Enter") setActiveUserId(activeUserId === m.id ? null : m.id) }}
                     className="max-w-[84%] min-w-0 cursor-pointer rounded-[0.78rem] border border-border/50 bg-secondary/75 px-3.5 py-1.5 text-left text-secondary-foreground shadow-sm md:max-w-[80%] dark:border-white/10 dark:bg-[#151515] dark:text-white"
                   >
-                    <p className="break-words font-sans text-[15px] font-[400] not-italic leading-[1.38] tracking-[0.001em] text-left text-secondary-foreground [overflow-wrap:anywhere] md:text-[16px] dark:text-white">{m.content}</p>
+                    <p className="break-words font-sans text-[16px] font-[500] not-italic leading-[1.38] tracking-[0.001em] text-left text-secondary-foreground [overflow-wrap:anywhere] md:text-[17px] dark:text-white">{m.content}</p>
                   </div>
                 )
               )}
@@ -272,7 +272,7 @@ export function MessageList({
                 {m.memoryNotes && m.memoryNotes.length > 0 && (
                   <div className="mb-2.5 space-y-1">
                     {m.memoryNotes.map((note, i) => (
-                      <div key={i} className="flex items-center gap-1.5 text-xs font-[400] italic text-muted-foreground/75 md:text-[11px]">
+                      <div key={i} className="flex items-center gap-1.5 text-xs font-[500] italic text-muted-foreground/75 md:text-[12px]">
                         <Brain className="size-3.5 shrink-0" />
                         <span className="[overflow-wrap:anywhere]">{note}</span>
                       </div>
@@ -285,12 +285,12 @@ export function MessageList({
                     <div className="min-w-0 space-y-2.5">
                       {m.isError ? (
                         <div>
-                          <p className="break-words whitespace-pre-wrap text-sm font-[400] italic leading-relaxed text-muted-foreground [overflow-wrap:anywhere] md:text-[13px]">{m.content}</p>
+                          <p className="break-words whitespace-pre-wrap text-sm font-[500] italic leading-relaxed text-muted-foreground [overflow-wrap:anywhere] md:text-[14px]">{m.content}</p>
                         </div>
                       ) : (
                         <>
                           {display && (
-                            <div className="text-[15px] font-[400] text-foreground md:text-[16px]">
+                            <div className="text-[16px] font-[500] text-foreground md:text-[17px]">
                               <MdContent text={display} />
                             </div>
                           )}
