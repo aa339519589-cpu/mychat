@@ -285,8 +285,8 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
           <button onClick={() => { setSelected(null); setDetail(null) }} className="text-muted-foreground hover:text-foreground">
             <ChevronLeft className="size-4" />
           </button>
-          <span className="text-[12px] font-medium text-foreground truncate flex-1">{detail.goal.slice(0, 60)}</span>
-          <span className={cn("text-[11px]", STATUS_COLOR[detail.status] ?? "text-muted-foreground")}>
+          <span className="text-[10px] font-medium text-foreground truncate flex-1">{detail.goal.slice(0, 60)}</span>
+          <span className={cn("text-[9px]", STATUS_COLOR[detail.status] ?? "text-muted-foreground")}>
             {STATUS_LABEL[detail.status] ?? detail.status}
           </span>
         </div>
@@ -295,10 +295,10 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
           {/* Steps */}
           {detail.steps.length > 0 && (
             <div>
-              <p className="text-[11px] text-muted-foreground mb-1.5">执行步骤</p>
+              <p className="text-[9px] text-muted-foreground mb-1.5">执行步骤</p>
               <div className="space-y-0.5">
                 {detail.steps.map(s => (
-                  <div key={s.id} className="flex items-start gap-2 text-[11px]">
+                  <div key={s.id} className="flex items-start gap-2 text-[9px]">
                     <span className={cn("shrink-0 mt-0.5", STATUS_COLOR[s.kind === "error" ? "failed" : "completed"])}>·</span>
                     <span className="text-muted-foreground">{s.label || s.kind}</span>
                   </div>
@@ -310,10 +310,10 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
           {/* Tool calls */}
           {detail.toolCalls.length > 0 && (
             <div>
-              <p className="text-[11px] text-muted-foreground mb-1.5">工具调用</p>
+              <p className="text-[9px] text-muted-foreground mb-1.5">工具调用</p>
               <div className="space-y-1">
                 {detail.toolCalls.map(tc => (
-                  <div key={tc.id} className="flex items-center gap-2 text-[11px] rounded bg-secondary/30 px-2 py-1">
+                  <div key={tc.id} className="flex items-center gap-2 text-[9px] rounded bg-secondary/30 px-2 py-1">
                     <span className={cn("shrink-0", STATUS_COLOR[tc.status === "success" ? "completed" : tc.status === "error" ? "failed" : "running"])}>·</span>
                     <span className="font-medium text-foreground/80">{tc.toolName}</span>
                     {tc.durationMs != null && <span className="text-muted-foreground/60 ml-auto">{tc.durationMs}ms</span>}
@@ -327,15 +327,15 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
           {/* Confirmation card */}
           {pendingConf && (
             <div className="rounded-lg border border-yellow-400/30 bg-yellow-400/5 p-2.5">
-              <div className="flex items-center gap-1.5 text-[11px] font-medium text-yellow-400 mb-1">
+              <div className="flex items-center gap-1.5 text-[9px] font-medium text-yellow-400 mb-1">
                 <AlertTriangle className="size-3.5" />
                 <span>需要确认</span>
-                <span className="ml-auto text-[10px] px-1 py-0.5 rounded bg-yellow-400/10">{pendingConf.riskLevel}</span>
+                <span className="ml-auto text-[8px] px-1 py-0.5 rounded bg-yellow-400/10">{pendingConf.riskLevel}</span>
               </div>
-              <p className="text-[11px] text-foreground/80 mb-1">{pendingConf.title}</p>
-              <p className="text-[10px] text-muted-foreground mb-2">{pendingConf.reason}</p>
+              <p className="text-[9px] text-foreground/80 mb-1">{pendingConf.title}</p>
+              <p className="text-[8px] text-muted-foreground mb-2">{pendingConf.reason}</p>
               {pendingConf.files.length > 0 && (
-                <div className="text-[10px] text-muted-foreground mb-2 max-h-20 overflow-y-auto">
+                <div className="text-[8px] text-muted-foreground mb-2 max-h-20 overflow-y-auto">
                   {pendingConf.files.map((f, i) => <div key={i} className="truncate">{f}</div>)}
                 </div>
               )}
@@ -343,7 +343,7 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
                 <button
                   onClick={() => handleConfirm(selected!, pendingConf.id)}
                   disabled={confirming}
-                  className="flex items-center gap-1 text-[11px] rounded px-2.5 py-1 bg-yellow-400/20 hover:bg-yellow-400/30 transition-colors text-yellow-400 font-medium"
+                  className="flex items-center gap-1 text-[9px] rounded px-2.5 py-1 bg-yellow-400/20 hover:bg-yellow-400/30 transition-colors text-yellow-400 font-medium"
                 >
                   <Shield className="size-3" />
                   确认继续
@@ -351,7 +351,7 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
                 <button
                   onClick={() => handleReject(selected!, pendingConf.id)}
                   disabled={confirming}
-                  className="flex items-center gap-1 text-[11px] rounded px-2.5 py-1 bg-secondary/50 hover:bg-secondary transition-colors text-muted-foreground"
+                  className="flex items-center gap-1 text-[9px] rounded px-2.5 py-1 bg-secondary/50 hover:bg-secondary transition-colors text-muted-foreground"
                 >
                   <XCircle className="size-3" />
                   拒绝
@@ -363,8 +363,8 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
           {/* Workspace */}
           {detail.workspace && (
             <div>
-              <p className="text-[11px] text-muted-foreground mb-1.5">Workspace</p>
-              <div className="text-[11px] rounded bg-secondary/30 px-2 py-1 text-muted-foreground mb-2">
+              <p className="text-[9px] text-muted-foreground mb-1.5">Workspace</p>
+              <div className="text-[9px] rounded bg-secondary/30 px-2 py-1 text-muted-foreground mb-2">
                 {detail.workspace.repo} @ {detail.workspace.branch}
                 {detail.workspace.status === "ready" && (
                   <span className="ml-2 text-green-400">· ready</span>
@@ -375,7 +375,7 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
               </div>
 
               {/* Snapshot 信息 */}
-              <div className="text-[11px] text-muted-foreground mb-2 flex items-center gap-2">
+              <div className="text-[9px] text-muted-foreground mb-2 flex items-center gap-2">
                 <span>Snapshots: {snapshotCount}</span>
                 {lastSnapshotId && (
                   <span className="text-muted-foreground/60 truncate max-w-[120px]" title={lastSnapshotId}>
@@ -390,7 +390,7 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
                   <button
                     onClick={() => { fetchDiff(selected!); setShowDiff(v => !v) }}
                     disabled={diffLoading}
-                    className="flex items-center gap-1 text-[11px] rounded px-2 py-1 bg-secondary/50 hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+                    className="flex items-center gap-1 text-[9px] rounded px-2 py-1 bg-secondary/50 hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
                   >
                     <FileDiff className="size-3" />
                     {diffLoading ? "加载中…" : showDiff ? "隐藏 Diff" : "查看 Diff"}
@@ -398,7 +398,7 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
                   <button
                     onClick={() => handleRestore(selected!)}
                     disabled={restoring}
-                    className="flex items-center gap-1 text-[11px] rounded px-2 py-1 bg-secondary/50 hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+                    className="flex items-center gap-1 text-[9px] rounded px-2 py-1 bg-secondary/50 hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
                   >
                     <RotateCcw className={cn("size-3", restoring && "animate-spin")} />
                     {restoring ? "恢复中…" : "恢复上次 Snapshot"}
@@ -408,7 +408,7 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
 
               {/* Restore 结果 */}
               {restoreResult && (
-                <div className="text-[10px] rounded bg-green-400/10 px-2 py-1 mb-2">
+                <div className="text-[8px] rounded bg-green-400/10 px-2 py-1 mb-2">
                   <span className="text-green-400">
                     恢复完成：{restoreResult.restoredFiles ?? "?"} 个文件
                     {restoreResult.failedFiles ? `（${restoreResult.failedFiles} 失败）` : ""}
@@ -420,7 +420,7 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
               {/* Git status + Publish */}
               {gitStatus && gitStatus.ok && (
                 <div className="mb-2 p-1.5 rounded bg-secondary/20">
-                  <div className="flex items-center gap-1 text-[10px] text-muted-foreground mb-1">
+                  <div className="flex items-center gap-1 text-[8px] text-muted-foreground mb-1">
                     <GitBranch className="size-3" />
                     <span>{gitStatus.currentBranch}</span>
                     {gitStatus.commitSha && (
@@ -429,27 +429,27 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
                   </div>
                   {gitStatus.hasChanges ? (
                     <div className="space-y-1">
-                      <div className="text-[10px] text-yellow-400">
+                      <div className="text-[8px] text-yellow-400">
                         {gitStatus.changedFiles?.length ?? 0} 个文件待提交
                       </div>
                       <button
                         onClick={() => handlePublish(selected!)}
                         disabled={publishing}
-                        className="flex items-center gap-1 text-[11px] rounded px-2 py-1 bg-primary/20 hover:bg-primary/30 transition-colors text-primary"
+                        className="flex items-center gap-1 text-[9px] rounded px-2 py-1 bg-primary/20 hover:bg-primary/30 transition-colors text-primary"
                       >
                         <Send className={cn("size-3", publishing && "animate-pulse")} />
                         {publishing ? "发布中…" : "发布为 Pull Request"}
                       </button>
                     </div>
                   ) : (
-                    <span className="text-[10px] text-muted-foreground/50">无改动</span>
+                    <span className="text-[8px] text-muted-foreground/50">无改动</span>
                   )}
                 </div>
               )}
 
               {/* Publish 结果 */}
               {publishResult && (
-                <div className={cn("text-[10px] rounded px-2 py-1 mb-2", publishResult.ok ? "bg-green-400/10" : "bg-red-400/10")}>
+                <div className={cn("text-[8px] rounded px-2 py-1 mb-2", publishResult.ok ? "bg-green-400/10" : "bg-red-400/10")}>
                   {publishResult.ok ? (
                     <span className="text-green-400">
                       已创建 PR！
@@ -473,7 +473,7 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
                   <div className="flex gap-1.5">
                     <button
                       onClick={() => { fetchCommands(selected!); setShowVerify(v => !v) }}
-                      className="flex items-center gap-1 text-[11px] rounded px-2 py-1 bg-secondary/50 hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+                      className="flex items-center gap-1 text-[9px] rounded px-2 py-1 bg-secondary/50 hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
                     >
                       <Wrench className="size-3" />
                       {showVerify ? "隐藏验证" : "项目检测 & 验证"}
@@ -481,7 +481,7 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
                     <button
                       onClick={() => handleVerify(selected!)}
                       disabled={verifyLoading}
-                      className="flex items-center gap-1 text-[11px] rounded px-2 py-1 bg-secondary/50 hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
+                      className="flex items-center gap-1 text-[9px] rounded px-2 py-1 bg-secondary/50 hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
                     >
                       {verifyLoading ? <Loader2 className="size-3 animate-spin" /> : <CheckCircle className="size-3" />}
                       {verifyLoading ? "验证中" : "运行验证"}
@@ -490,7 +490,7 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
 
                   {/* Detected commands */}
                   {showVerify && detectedCmds && (
-                    <div className="text-[10px] rounded bg-secondary/20 px-2 py-1 text-muted-foreground">
+                    <div className="text-[8px] rounded bg-secondary/20 px-2 py-1 text-muted-foreground">
                       <div className="flex items-center gap-2">
                         <span>{detectedCmds.packageManager}</span>
                         <span>{detectedCmds.framework}</span>
@@ -505,7 +505,7 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
 
                   {/* Verify result */}
                   {verifyResult && (
-                    <div className={cn("text-[10px] rounded px-2 py-1", verifyResult.ok ? "bg-green-400/10 text-green-400" : "bg-red-400/10 text-red-400")}>
+                    <div className={cn("text-[8px] rounded px-2 py-1", verifyResult.ok ? "bg-green-400/10 text-green-400" : "bg-red-400/10 text-red-400")}>
                       <div className="flex items-center gap-1">
                         {verifyResult.ok ? <CheckCircle className="size-3" /> : <XCircle className="size-3" />}
                         <span>{verifyResult.ok ? "全部通过" : `${verifyResult.failedStep ?? "?"} 失败`}</span>
@@ -522,7 +522,7 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
 
               {/* PR link from task */}
               {detail.pullRequestUrl && (
-                <div className="text-[10px] rounded bg-green-400/10 px-2 py-1 mb-2">
+                <div className="text-[8px] rounded bg-green-400/10 px-2 py-1 mb-2">
                   <a href={detail.pullRequestUrl} target="_blank" rel="noreferrer" className="text-green-400 underline flex items-center gap-1">
                     <ExternalLink className="size-3" />
                     PR #{detail.pullRequestNumber ?? "?"}
@@ -536,14 +536,14 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
                   {wsDiff.hasChanges ? (
                     <>
                       {/* 变更摘要 */}
-                      <div className="text-[10px] text-muted-foreground/70">
+                      <div className="text-[8px] text-muted-foreground/70">
                         变更：+{wsDiff.summary.added} ~{wsDiff.summary.modified} -{wsDiff.summary.deleted}
                       </div>
                       {/* 变更文件列表 */}
                       {wsDiff.changedFiles.length > 0 && (
                         <div className="space-y-0.5">
                           {wsDiff.changedFiles.map((f, i) => (
-                            <div key={i} className="text-[10px] rounded bg-secondary/20 px-1.5 py-0.5 text-muted-foreground flex items-center gap-1">
+                            <div key={i} className="text-[8px] rounded bg-secondary/20 px-1.5 py-0.5 text-muted-foreground flex items-center gap-1">
                               <span className={cn(
                                 "shrink-0",
                                 f.status === "added" && "text-green-400",
@@ -558,13 +558,13 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
                         </div>
                       )}
                       {/* Diff 内容 */}
-                      <pre className="text-[10px] rounded bg-secondary/20 px-2 py-1.5 text-muted-foreground max-h-64 overflow-y-auto overflow-x-auto whitespace-pre select-all">
+                      <pre className="text-[8px] rounded bg-secondary/20 px-2 py-1.5 text-muted-foreground max-h-64 overflow-y-auto overflow-x-auto whitespace-pre select-all">
                         {wsDiff.diff.slice(0, 8000)}
                         {wsDiff.diff.length > 8000 && "\n\n... (截断)"}
                       </pre>
                     </>
                   ) : (
-                    <p className="text-[11px] text-muted-foreground/60">暂无代码变更</p>
+                    <p className="text-[9px] text-muted-foreground/60">暂无代码变更</p>
                   )}
                 </div>
               )}
@@ -574,10 +574,10 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
           {/* Artifacts */}
           {detail.artifacts.length > 0 && (
             <div>
-              <p className="text-[11px] text-muted-foreground mb-1.5">产物</p>
+              <p className="text-[9px] text-muted-foreground mb-1.5">产物</p>
               <div className="space-y-1">
                 {detail.artifacts.map(a => (
-                  <div key={a.id} className="text-[11px] rounded bg-secondary/30 px-2 py-1 text-muted-foreground">
+                  <div key={a.id} className="text-[9px] rounded bg-secondary/30 px-2 py-1 text-muted-foreground">
                     [{a.kind}] {a.title || a.id}
                     {a.url && <a href={a.url} target="_blank" rel="noreferrer" className="ml-2 underline" style={{ color: ACCENT }}>打开</a>}
                   </div>
@@ -594,7 +594,7 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
   return (
     <div className="flex flex-col h-full" style={{ fontFamily: MONO }}>
       <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border">
-        <span className="text-[12px] font-medium text-foreground">Agent Tasks</span>
+        <span className="text-[10px] font-medium text-foreground">Agent Tasks</span>
         <button onClick={fetchList} className="ml-auto text-muted-foreground hover:text-foreground">
           <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
         </button>
@@ -606,10 +606,10 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
           <div className="flex justify-center py-10 text-muted-foreground"><Loader2 className="size-4 animate-spin" /></div>
         )}
         {error && (
-          <p className="px-4 py-3 text-[12px] text-red-400">{error}</p>
+          <p className="px-4 py-3 text-[10px] text-red-400">{error}</p>
         )}
         {tasks && tasks.length === 0 && (
-          <p className="px-4 py-8 text-center text-[12px] text-muted-foreground">暂无 Agent 任务</p>
+          <p className="px-4 py-8 text-center text-[10px] text-muted-foreground">暂无 Agent 任务</p>
         )}
         {tasks?.map(t => (
           <button
@@ -618,16 +618,16 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
             className="w-full text-left px-4 py-2.5 border-b border-border/30 transition-colors hover:bg-secondary/40"
           >
             <div className="flex items-center gap-2">
-              <span className={cn("shrink-0 text-[10px]", STATUS_COLOR[t.status])}>
+              <span className={cn("shrink-0 text-[8px]", STATUS_COLOR[t.status])}>
                 {STATUS_LABEL[t.status] ?? t.status}
               </span>
-              {t.repo && <span className="text-[10px] text-muted-foreground/70">{t.repo}</span>}
-              <span className="text-[10px] text-muted-foreground/50 ml-auto">
+              {t.repo && <span className="text-[8px] text-muted-foreground/70">{t.repo}</span>}
+              <span className="text-[8px] text-muted-foreground/50 ml-auto">
                 {new Date(t.createdAt).toLocaleDateString("zh-CN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
               </span>
             </div>
-            <p className="text-[12px] text-foreground/80 truncate mt-0.5">{t.goal}</p>
-            {t.error && <p className="text-[11px] text-red-400/80 truncate mt-0.5">{t.error}</p>}
+            <p className="text-[10px] text-foreground/80 truncate mt-0.5">{t.goal}</p>
+            {t.error && <p className="text-[9px] text-red-400/80 truncate mt-0.5">{t.error}</p>}
           </button>
         ))}
       </div>
