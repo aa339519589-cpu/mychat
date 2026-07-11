@@ -9,7 +9,7 @@ import {
   type EndpointAuthSelection,
   type ModelEndpointRow,
 } from "@/lib/model-endpoint-server"
-import { isModelOutputKind, isSafeModelId, modelDisplayName, type EndpointAuthType } from "@/lib/model-endpoints"
+import { isKnownTextOnlyModel, isModelOutputKind, isSafeModelId, modelDisplayName, type EndpointAuthType } from "@/lib/model-endpoints"
 import { modelEndpointEncryptionConfigured, sealModelEndpointKey } from "@/lib/model-endpoint-secret"
 
 const AUTH_TYPES = new Set<EndpointAuthSelection>(["auto", "bearer", "x-api-key", "api-key", "none"])
@@ -56,6 +56,9 @@ export async function POST(req: NextRequest) {
     const model = typeof body.model === "string" ? body.model.replace(/[\u0000-\u001f\u007f]/g, "").trim() : ""
     if (!isModelOutputKind(body.outputKind)) return Response.json({ error: "请选择模型用途" }, { status: 400 })
     const outputKind = body.outputKind
+    if (outputKind !== "chat" && isKnownTextOnlyModel(model)) {
+      return Response.json({ error: "当前模型是文本/对话模型，不能保存为图片或视频用途" }, { status: 400 })
+    }
     if (body.authType !== undefined && (typeof body.authType !== "string" || !AUTH_TYPES.has(body.authType as EndpointAuthSelection))) {
       return Response.json({ error: "鉴权方式无效" }, { status: 400 })
     }
