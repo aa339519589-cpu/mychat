@@ -132,11 +132,11 @@ export function AppSidebar({
       </nav>
 
       <div className="mx-7 my-3 border-t border-sidebar-border/60" />
-      <p className="px-7 pb-2 text-[9px] tracking-[0.2em] text-muted-foreground/70">近期</p>
+      <p className="px-7 pb-2 text-[10px] tracking-[0.2em] text-muted-foreground/70">近期</p>
 
       <div className="flex-1 space-y-1 overflow-y-auto px-3 pb-3">
         {rootConversations.length === 0 ? (
-          <p className="px-4 py-6 text-center text-[11px] italic text-muted-foreground/60">还没有对谈</p>
+          <p className="px-4 py-6 text-center text-[12px] italic text-muted-foreground/60">还没有对谈</p>
         ) : rootConversations.map(c => (
           <ConversationRow
             key={c.id}
@@ -329,7 +329,7 @@ function ScreenPanel({ style, title, onBack, action, children }: {
         </button>
         <div className="min-w-0 flex-1">
           {typeof title === "string"
-            ? <h3 className="truncate text-[15px] font-semibold tracking-tight">{title}</h3>
+            ? <h3 className="truncate text-[16px] font-semibold tracking-tight">{title}</h3>
             : title}
         </div>
         {action}
@@ -352,7 +352,7 @@ function ComingSoon({ icon, title, desc }: { icon: React.ReactNode; title: strin
     <div className="mx-auto flex h-full max-w-xs flex-col items-center justify-center px-6 text-center">
       <div className="mb-4 flex size-16 items-center justify-center rounded-full bg-sidebar-accent/60 text-sidebar-primary">{icon}</div>
       <p className="font-heading text-base tracking-wide text-foreground">{title}</p>
-      <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">{desc}</p>
+      <p className="mt-2 text-[12px] leading-relaxed text-muted-foreground">{desc}</p>
     </div>
   )
 }
@@ -399,7 +399,7 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
         <Brain className="mt-0.5 size-5 shrink-0 text-sidebar-primary" />
         <div className="min-w-0 flex-1">
           <p className="text-sm text-foreground">开启记忆</p>
-          <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
+          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
             开启后，小克会在对谈中记住你透露的信息，并在需要时调用。关闭后，它既不会读取也不会写入任何记忆。
           </p>
         </div>
@@ -408,7 +408,7 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
 
       <div className={cn("mt-4 transition-opacity", !enabled && "opacity-40")}>
         <div className="mb-2 flex items-center justify-between px-1">
-          <span className="text-[10px] tracking-[0.15em] text-muted-foreground">已记住 {memories.length} 条</span>
+          <span className="text-[11px] tracking-[0.15em] text-muted-foreground">已记住 {memories.length} 条</span>
         </div>
 
         {/* 统一记忆卡片：空态/列表/添加表单都在一个有边界的容器内 */}
@@ -416,7 +416,7 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
           {/* 滚动区域 */}
           <div className="max-h-[340px] overflow-y-auto">
             {memories.length === 0 && !adding && (
-              <p className="px-4 py-8 text-center text-[11px] italic text-muted-foreground/60">还没有记忆</p>
+              <p className="px-4 py-8 text-center text-[12px] italic text-muted-foreground/60">还没有记忆</p>
             )}
             {memories.length > 0 && (
               <div className="space-y-0 divide-y divide-sidebar-border/40">
@@ -429,17 +429,17 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
                           value={editValue}
                           onChange={e => setEditValue(e.target.value)}
                           onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveEdit() } if (e.key === "Escape") setEditingId(null) }}
-                          className="w-full resize-none rounded-xl bg-sidebar-accent/60 border border-sidebar-accent/70 px-3 py-2 text-[11px] outline-none focus:bg-sidebar-accent/80"
+                          className="w-full resize-none rounded-xl bg-sidebar-accent/60 border border-sidebar-accent/70 px-3 py-2 text-[12px] outline-none focus:bg-sidebar-accent/80"
                           rows={2}
                         />
                         <div className="flex gap-2">
-                          <button onClick={saveEdit} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-primary py-1.5 text-[11px] text-sidebar-primary-foreground"><Check className="size-3.5" />保存</button>
-                          <button onClick={() => setEditingId(null)} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-accent/60 py-1.5 text-[11px] text-muted-foreground"><X className="size-3.5" />取消</button>
+                          <button onClick={saveEdit} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-primary py-1.5 text-[12px] text-sidebar-primary-foreground"><Check className="size-3.5" />保存</button>
+                          <button onClick={() => setEditingId(null)} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-accent/60 py-1.5 text-[12px] text-muted-foreground"><X className="size-3.5" />取消</button>
                         </div>
                       </div>
                     ) : (
                       <div className="flex items-start gap-2">
-                        <p className="flex-1 text-[11px] leading-relaxed text-foreground/85">{m.content}</p>
+                        <p className="flex-1 text-[12px] leading-relaxed text-foreground/85">{m.content}</p>
                         <div className="flex shrink-0 gap-0.5">
                           <button onClick={() => startEdit(m)} className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground" aria-label="编辑"><Pencil className="size-3.5" /></button>
                           <button onClick={() => onDelete(m.id)} className="rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-destructive" aria-label="删除"><Trash2 className="size-3.5" /></button>
@@ -458,19 +458,19 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
                   onChange={e => setNewValue(e.target.value)}
                   onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addMemory() } if (e.key === "Escape") setAdding(false) }}
                   placeholder="输入要记住的内容……"
-                  className="w-full resize-none rounded-xl bg-sidebar-accent/60 border border-sidebar-accent/70 px-3 py-2 text-[11px] outline-none placeholder:text-muted-foreground/40 focus:bg-sidebar-accent/80"
+                  className="w-full resize-none rounded-xl bg-sidebar-accent/60 border border-sidebar-accent/70 px-3 py-2 text-[12px] outline-none placeholder:text-muted-foreground/40 focus:bg-sidebar-accent/80"
                   rows={2}
                 />
                 <div className="flex gap-2">
-                  <button onClick={addMemory} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-primary py-1.5 text-[11px] text-sidebar-primary-foreground"><Check className="size-3.5" />添加</button>
-                  <button onClick={() => setAdding(false)} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-accent/60 py-1.5 text-[11px] text-muted-foreground"><X className="size-3.5" />取消</button>
+                  <button onClick={addMemory} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-primary py-1.5 text-[12px] text-sidebar-primary-foreground"><Check className="size-3.5" />添加</button>
+                  <button onClick={() => setAdding(false)} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-accent/60 py-1.5 text-[12px] text-muted-foreground"><X className="size-3.5" />取消</button>
                 </div>
               </div>
             )}
           </div>
           {/* 添加按钮固定在卡片底部 */}
           {!adding && (
-            <button onClick={() => setAdding(true)} className="flex w-full items-center justify-center gap-1.5 border-t border-sidebar-border/40 py-2.5 text-[11px] text-muted-foreground transition-colors hover:bg-sidebar-accent/40 hover:text-foreground">
+            <button onClick={() => setAdding(true)} className="flex w-full items-center justify-center gap-1.5 border-t border-sidebar-border/40 py-2.5 text-[12px] text-muted-foreground transition-colors hover:bg-sidebar-accent/40 hover:text-foreground">
               <Plus className="size-4" />添加记忆
             </button>
           )}
@@ -515,7 +515,7 @@ function ProjectsScreen({ projects, conversations, onCreate, onOpen, onDelete }:
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="搜索项目……"
-            className="w-full rounded-xl bg-sidebar-accent/40 py-2 pl-10 pr-3 text-[11px] outline-none placeholder:text-muted-foreground/50 transition-colors border border-sidebar-primary/40 focus:bg-sidebar-accent/60 focus:border-sidebar-primary/70"
+            className="w-full rounded-xl bg-sidebar-accent/40 py-2 pl-10 pr-3 text-[12px] outline-none placeholder:text-muted-foreground/50 transition-colors border border-sidebar-primary/40 focus:bg-sidebar-accent/60 focus:border-sidebar-primary/70"
           />
         </div>
         {!adding && (
@@ -532,20 +532,20 @@ function ProjectsScreen({ projects, conversations, onCreate, onOpen, onDelete }:
             onChange={e => setName(e.target.value)}
             onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); create() } if (e.key === "Escape") { setAdding(false); setName("") } }}
             placeholder="项目名称……"
-            className="w-full rounded-xl bg-sidebar-accent/40 px-3 py-2 text-[11px] outline-none placeholder:text-muted-foreground/40 focus:bg-sidebar-accent/60 border border-sidebar-primary/40"
+            className="w-full rounded-xl bg-sidebar-accent/40 px-3 py-2 text-[12px] outline-none placeholder:text-muted-foreground/40 focus:bg-sidebar-accent/60 border border-sidebar-primary/40"
           />
           <div className="flex gap-2">
-            <button onClick={create} disabled={busy} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-primary py-1.5 text-[11px] text-sidebar-primary-foreground disabled:opacity-50">
+            <button onClick={create} disabled={busy} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-primary py-1.5 text-[12px] text-sidebar-primary-foreground disabled:opacity-50">
               {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}新建
             </button>
-            <button onClick={() => { setAdding(false); setName("") }} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-accent/40 py-1.5 text-[11px] text-muted-foreground"><X className="size-3.5" />取消</button>
+            <button onClick={() => { setAdding(false); setName("") }} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-accent/40 py-1.5 text-[12px] text-muted-foreground"><X className="size-3.5" />取消</button>
           </div>
         </div>
       )}
 
       <div className="flex-1 overflow-y-auto space-y-2">
         {filtered.length === 0 ? (
-          <p className="rounded-2xl bg-sidebar-accent/20 px-4 py-8 text-center text-[11px] italic text-muted-foreground/70">没有项目</p>
+          <p className="rounded-2xl bg-sidebar-accent/20 px-4 py-8 text-center text-[12px] italic text-muted-foreground/70">没有项目</p>
         ) : (
           filtered.map(p => {
             const n = countFor(p.id)
@@ -557,9 +557,9 @@ function ProjectsScreen({ projects, conversations, onCreate, onOpen, onDelete }:
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
-                    <div className="font-heading text-[12px] tracking-wide text-foreground">{p.name}</div>
+                    <div className="font-heading text-[13px] tracking-wide text-foreground">{p.name}</div>
                     {p.instructions && (
-                      <p className="mt-1 line-clamp-2 text-[10px] leading-relaxed text-muted-foreground">{p.instructions}</p>
+                      <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">{p.instructions}</p>
                     )}
                   </div>
                   <button
@@ -569,7 +569,7 @@ function ProjectsScreen({ projects, conversations, onCreate, onOpen, onDelete }:
                     <Trash2 className="size-3.5" />
                   </button>
                 </div>
-                <div className="text-[9px] text-muted-foreground">{n > 0 ? `${n} 段对谈 · ` : ""}{p.date}</div>
+                <div className="text-[10px] text-muted-foreground">{n > 0 ? `${n} 段对谈 · ` : ""}{p.date}</div>
               </button>
             )
           })
@@ -618,9 +618,9 @@ function ProjectDetailScreen({
 
       {/* 对谈列表 */}
       <section>
-        <p className="mb-2 px-1 text-[9px] tracking-[0.18em] text-muted-foreground/70">本项目对谈{chats.length > 0 ? ` · ${chats.length}` : ""}</p>
+        <p className="mb-2 px-1 text-[10px] tracking-[0.18em] text-muted-foreground/70">本项目对谈{chats.length > 0 ? ` · ${chats.length}` : ""}</p>
         {chats.length === 0 ? (
-          <p className="rounded-2xl bg-sidebar-accent/25 px-4 py-6 text-center text-[11px] italic text-muted-foreground/70">还没有对谈，从上方开始第一段</p>
+          <p className="rounded-2xl bg-sidebar-accent/25 px-4 py-6 text-center text-[12px] italic text-muted-foreground/70">还没有对谈，从上方开始第一段</p>
         ) : (
           <div className="space-y-1">
             {chats.map(c => (
@@ -677,7 +677,7 @@ function ProjectTitleEditor({ name, onSave, onCancel }: { name: string; onSave: 
         if (n && n !== name) onSave(n)
         else onCancel()
       }}
-      className="w-full rounded-lg border border-sidebar-border bg-background/50 px-2.5 py-1 text-[14px] font-semibold outline-none focus:border-sidebar-primary/50"
+      className="w-full rounded-lg border border-sidebar-border bg-background/50 px-2.5 py-1 text-[15px] font-semibold outline-none focus:border-sidebar-primary/50"
     />
   )
 }
@@ -727,18 +727,18 @@ function ProjectMemorySection({ projectId, onLoad, onAdd, onEdit, onDelete }: {
     <div className="p-4">
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-medium text-foreground">记忆</span>
-        <span className="flex items-center gap-1 rounded-full bg-sidebar-accent/60 px-2 py-0.5 text-[9px] text-muted-foreground">
+        <span className="flex items-center gap-1 rounded-full bg-sidebar-accent/60 px-2 py-0.5 text-[10px] text-muted-foreground">
           <Lock className="size-3" />仅你可见
         </span>
       </div>
-      <p className="mt-1 mb-2.5 text-[10px] leading-relaxed text-muted-foreground">本项目中积累的重要信息，对话时自动注入，与全局记忆分隔。</p>
+      <p className="mt-1 mb-2.5 text-[11px] leading-relaxed text-muted-foreground">本项目中积累的重要信息，对话时自动注入，与全局记忆分隔。</p>
 
       {loading ? (
-        <p className="text-[10px] italic text-muted-foreground/60">载入中……</p>
+        <p className="text-[11px] italic text-muted-foreground/60">载入中……</p>
       ) : (
         <div className="space-y-1.5">
           {memories.length === 0 && !adding && (
-            <p className="text-center text-[10px] italic text-muted-foreground/60 py-1">还没有记忆</p>
+            <p className="text-center text-[11px] italic text-muted-foreground/60 py-1">还没有记忆</p>
           )}
 
           {memories.length > 0 && (
@@ -752,17 +752,17 @@ function ProjectMemorySection({ projectId, onLoad, onAdd, onEdit, onDelete }: {
                         value={editValue}
                         onChange={e => setEditValue(e.target.value)}
                         onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveEdit() } if (e.key === "Escape") setEditingId(null) }}
-                        className="w-full resize-none rounded-xl bg-sidebar-accent/60 border border-sidebar-accent/70 px-2 py-1.5 text-[10px] outline-none focus:bg-sidebar-accent/80"
+                        className="w-full resize-none rounded-xl bg-sidebar-accent/60 border border-sidebar-accent/70 px-2 py-1.5 text-[11px] outline-none focus:bg-sidebar-accent/80"
                         rows={2}
                       />
                       <div className="flex gap-1.5">
-                        <button onClick={saveEdit} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-primary py-1 text-[10px] text-sidebar-primary-foreground"><Check className="size-3" />保存</button>
-                        <button onClick={() => setEditingId(null)} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-accent/60 py-1 text-[10px] text-muted-foreground"><X className="size-3" />取消</button>
+                        <button onClick={saveEdit} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-primary py-1 text-[11px] text-sidebar-primary-foreground"><Check className="size-3" />保存</button>
+                        <button onClick={() => setEditingId(null)} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-accent/60 py-1 text-[11px] text-muted-foreground"><X className="size-3" />取消</button>
                       </div>
                     </div>
                   ) : (
                     <div className="flex items-start gap-2">
-                      <p className="flex-1 text-[10px] leading-relaxed text-foreground/85">{m.content}</p>
+                      <p className="flex-1 text-[11px] leading-relaxed text-foreground/85">{m.content}</p>
                       <div className="flex shrink-0 gap-0.5">
                         <button onClick={() => startEdit(m)} className="rounded-lg p-1 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground" aria-label="编辑"><Pencil className="size-3" /></button>
                         <button onClick={() => removeMemory(m.id)} className="rounded-lg p-1 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-destructive" aria-label="删除"><Trash2 className="size-3" /></button>
@@ -782,16 +782,16 @@ function ProjectMemorySection({ projectId, onLoad, onAdd, onEdit, onDelete }: {
                 onChange={e => setNewValue(e.target.value)}
                 onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); addMemory() } if (e.key === "Escape") setAdding(false) }}
                 placeholder="输入要记住的内容……"
-                className="w-full resize-none rounded-xl bg-sidebar-accent/60 border border-sidebar-accent/70 px-2 py-1.5 text-[10px] outline-none placeholder:text-muted-foreground/40 focus:bg-sidebar-accent/80"
+                className="w-full resize-none rounded-xl bg-sidebar-accent/60 border border-sidebar-accent/70 px-2 py-1.5 text-[11px] outline-none placeholder:text-muted-foreground/40 focus:bg-sidebar-accent/80"
                 rows={2}
               />
               <div className="flex gap-1.5">
-                <button onClick={addMemory} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-primary py-1 text-[10px] text-sidebar-primary-foreground"><Check className="size-3" />添加</button>
-                <button onClick={() => setAdding(false)} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-accent/60 py-1 text-[10px] text-muted-foreground"><X className="size-3" />取消</button>
+                <button onClick={addMemory} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-primary py-1 text-[11px] text-sidebar-primary-foreground"><Check className="size-3" />添加</button>
+                <button onClick={() => setAdding(false)} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-accent/60 py-1 text-[11px] text-muted-foreground"><X className="size-3" />取消</button>
               </div>
             </div>
           ) : (
-            <button onClick={() => setAdding(true)} className="flex w-full items-center justify-center gap-1 py-1 text-[10px] text-muted-foreground transition-colors hover:text-foreground">
+            <button onClick={() => setAdding(true)} className="flex w-full items-center justify-center gap-1 py-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground">
               <Plus className="size-3.5" />手动添加记忆
             </button>
           )}
@@ -815,12 +815,12 @@ function ProjectInstructionsSection({ value, onSave }: { value: string; onSave: 
         <textarea
           autoFocus value={draft} onChange={e => setDraft(e.target.value)}
           placeholder="例如：你是我的英语学习教练，回答时多结合本项目里的资料……"
-          className="w-full resize-none rounded-xl border border-sidebar-border bg-background/40 px-3 py-2 text-[11px] leading-relaxed outline-none placeholder:text-muted-foreground/45 focus:border-sidebar-primary/50"
+          className="w-full resize-none rounded-xl border border-sidebar-border bg-background/40 px-3 py-2 text-[12px] leading-relaxed outline-none placeholder:text-muted-foreground/45 focus:border-sidebar-primary/50"
           rows={4}
         />
         <div className="flex gap-2">
-          <button onClick={() => { onSave(draft.trim()); setEditing(false) }} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-primary py-1.5 text-[11px] text-sidebar-primary-foreground"><Check className="size-3.5" />保存</button>
-          <button onClick={() => { setDraft(value); setEditing(false) }} className="flex flex-1 items-center justify-center gap-1 rounded-xl border border-sidebar-border py-1.5 text-[11px] text-muted-foreground"><X className="size-3.5" />取消</button>
+          <button onClick={() => { onSave(draft.trim()); setEditing(false) }} className="flex flex-1 items-center justify-center gap-1 rounded-xl bg-sidebar-primary py-1.5 text-[12px] text-sidebar-primary-foreground"><Check className="size-3.5" />保存</button>
+          <button onClick={() => { setDraft(value); setEditing(false) }} className="flex flex-1 items-center justify-center gap-1 rounded-xl border border-sidebar-border py-1.5 text-[12px] text-muted-foreground"><X className="size-3.5" />取消</button>
         </div>
       </div>
     )
@@ -833,7 +833,7 @@ function ProjectInstructionsSection({ value, onSave }: { value: string; onSave: 
           <span className="text-sm font-medium text-foreground">项目指令</span>
           <Pencil className="size-3.5 shrink-0 text-muted-foreground/60" />
         </span>
-        <span className={cn("mt-1 block text-[10px] leading-relaxed", has ? "text-muted-foreground line-clamp-3" : "text-muted-foreground/70")}>
+        <span className={cn("mt-1 block text-[11px] leading-relaxed", has ? "text-muted-foreground line-clamp-3" : "text-muted-foreground/70")}>
           {has ? value : "添加指令，定制小克在本项目中的回答与人设。"}
         </span>
       </span>
@@ -891,20 +891,20 @@ function ProjectFilesSection({ project, onLoadFiles, onAddFile, onDeleteFile }: 
           {uploading ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
         </button>
       </div>
-      {err && <p className="mt-1 text-[10px] text-destructive">{err}</p>}
+      {err && <p className="mt-1 text-[11px] text-destructive">{err}</p>}
 
       {loading ? (
-        <p className="mt-2 text-[11px] italic text-muted-foreground/60">载入中……</p>
+        <p className="mt-2 text-[12px] italic text-muted-foreground/60">载入中……</p>
       ) : files.length === 0 ? (
-        <p className="mt-1.5 text-[10px] leading-relaxed text-muted-foreground">上传 PDF 或文本，本项目的对谈会以它为参考。</p>
+        <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">上传 PDF 或文本，本项目的对谈会以它为参考。</p>
       ) : (
         <div className="mt-2.5 space-y-1.5">
           {files.map(f => (
             <div key={f.id} className="group flex items-center gap-3 rounded-xl bg-sidebar-accent/30 px-3 py-2">
               <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary/10 text-sidebar-primary"><FileText className="size-4" /></span>
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-[11px] text-foreground">{f.name}</span>
-                <span className="block text-[9px] text-muted-foreground">{f.content ? `约 ${f.content.length} 字` : "未提取到文字"}</span>
+                <span className="block truncate text-[12px] text-foreground">{f.name}</span>
+                <span className="block text-[10px] text-muted-foreground">{f.content ? `约 ${f.content.length} 字` : "未提取到文字"}</span>
               </span>
               <button onClick={() => remove(f.id)} className="shrink-0 rounded-full p-1.5 text-muted-foreground/50 transition-colors hover:bg-sidebar-accent hover:text-destructive" aria-label="删除资料">
                 <Trash2 className="size-3.5" />
@@ -952,12 +952,12 @@ function ConversationRow({ c, isActive, renaming, onSelect, onOpenMenu, onCommit
           <span className="flex min-w-0 items-center gap-1.5">
             {c.pinned && <Pin className="size-3 shrink-0 rotate-45 fill-current text-sidebar-primary/70" />}
             {c.projectId && <Folder className="size-3 shrink-0 text-sidebar-primary/60" />}
-            <span className={cn("truncate text-[12px] font-medium leading-snug", isActive ? "text-sidebar-primary" : "text-sidebar-foreground")}>{c.title}</span>
+            <span className={cn("truncate text-[13px] font-medium leading-snug", isActive ? "text-sidebar-primary" : "text-sidebar-foreground")}>{c.title}</span>
             {c.starred && <Star className="size-3 shrink-0 fill-current text-sidebar-primary/70" />}
           </span>
-          <span className="shrink-0 text-[9px] tracking-wider text-muted-foreground">{c.date}</span>
+          <span className="shrink-0 text-[10px] tracking-wider text-muted-foreground">{c.date}</span>
         </div>
-        {excerpt && <p className="mt-1.5 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">{excerpt}</p>}
+        {excerpt && <p className="mt-1.5 line-clamp-2 text-[12px] leading-relaxed text-muted-foreground">{excerpt}</p>}
       </button>
       <button
         onClick={e => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); onOpenMenu(c.id, { top: r.top, bottom: r.bottom, right: r.right }) }}
@@ -972,7 +972,7 @@ function ConversationRow({ c, isActive, renaming, onSelect, onOpenMenu, onCommit
 
 function ActionRow({ icon, label, onClick, danger }: { icon: React.ReactNode; label: string; onClick: () => void; danger?: boolean }) {
   return (
-    <button onClick={onClick} className={cn("flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] transition-colors active:scale-[0.98]", danger ? "text-destructive hover:bg-destructive/10" : "text-foreground hover:bg-sidebar-accent/60")}>
+    <button onClick={onClick} className={cn("flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] transition-colors active:scale-[0.98]", danger ? "text-destructive hover:bg-destructive/10" : "text-foreground hover:bg-sidebar-accent/60")}>
       <span className={cn("shrink-0", danger ? "text-destructive" : "text-muted-foreground")}>{icon}</span>
       <span className="truncate">{label}</span>
     </button>
@@ -1120,20 +1120,20 @@ function QuotaScreen() {
 
       {/* 账户余额 */}
       <div className="rounded-2xl bg-sidebar-primary/15 px-4 py-3 border border-sidebar-primary/30">
-        <div className="text-[10px] text-muted-foreground">账户余额</div>
-        <div className="mt-1.5 text-[20px] font-semibold text-foreground">{fmtNum(quota?.balance ?? 0)}</div>
-        <div className="mt-0.5 text-[9px] text-muted-foreground">token（不受时间窗口限制）</div>
+        <div className="text-[11px] text-muted-foreground">账户余额</div>
+        <div className="mt-1.5 text-[21px] font-semibold text-foreground">{fmtNum(quota?.balance ?? 0)}</div>
+        <div className="mt-0.5 text-[10px] text-muted-foreground">token（不受时间窗口限制）</div>
       </div>
 
       <div className="space-y-2.5 rounded-2xl bg-sidebar-accent/55 p-4 border border-sidebar-border">
         <div className="flex items-baseline justify-between">
-          <span className="text-[11px] font-medium text-foreground">5 小时用量</span>
-          <span className="text-[9px] text-muted-foreground">{fmtRemaining(w5h, 5 * 3600 * 1000)}</span>
+          <span className="text-[12px] font-medium text-foreground">5 小时用量</span>
+          <span className="text-[10px] text-muted-foreground">{fmtRemaining(w5h, 5 * 3600 * 1000)}</span>
         </div>
         <div className="h-1.5 overflow-hidden rounded-full bg-sidebar-accent/70">
           <div className="h-full rounded-full bg-sidebar-primary transition-all" style={{ width: `${pct(t5h, max5h)}%` }} />
         </div>
-        <div className="flex justify-between text-[9px] text-muted-foreground">
+        <div className="flex justify-between text-[10px] text-muted-foreground">
           <span>{fmtNum(t5h)}</span>
           <span>{fmtNum(max5h)}</span>
         </div>
@@ -1141,13 +1141,13 @@ function QuotaScreen() {
 
       <div className="space-y-2.5 rounded-2xl bg-sidebar-accent/55 p-4 border border-sidebar-border">
         <div className="flex items-baseline justify-between">
-          <span className="text-[11px] font-medium text-foreground">7 天用量</span>
-          <span className="text-[9px] text-muted-foreground">{fmtRemaining(w7d, 7 * 86400 * 1000)}</span>
+          <span className="text-[12px] font-medium text-foreground">7 天用量</span>
+          <span className="text-[10px] text-muted-foreground">{fmtRemaining(w7d, 7 * 86400 * 1000)}</span>
         </div>
         <div className="h-1.5 overflow-hidden rounded-full bg-sidebar-accent/70">
           <div className="h-full rounded-full bg-sidebar-primary transition-all" style={{ width: `${pct(t7d, max7d)}%` }} />
         </div>
-        <div className="flex justify-between text-[9px] text-muted-foreground">
+        <div className="flex justify-between text-[10px] text-muted-foreground">
           <span>{fmtNum(t7d)}</span>
           <span>{fmtNum(max7d)}</span>
         </div>
@@ -1155,8 +1155,8 @@ function QuotaScreen() {
 
       {/* 计费倍率简介 */}
       <div className="rounded-2xl bg-sidebar-accent/55 px-4 py-3 border border-sidebar-border">
-        <div className="text-[10px] font-medium text-foreground">按模型计费倍率</div>
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[9px] text-muted-foreground">
+        <div className="text-[11px] font-medium text-foreground">按模型计费倍率</div>
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
           <span>快速 <span className="font-medium text-foreground">×0.8</span></span>
           <span className="text-sidebar-border">·</span>
           <span>均衡 <span className="font-medium text-foreground">×1</span></span>
@@ -1167,7 +1167,7 @@ function QuotaScreen() {
 
       {/* 购买额度 */}
       <div className="space-y-2.5 pt-1">
-        <div className="text-[11px] font-medium text-foreground">购买额度</div>
+        <div className="text-[12px] font-medium text-foreground">购买额度</div>
         <div className="grid grid-cols-2 gap-2.5">
           {plans.map((p) => (
             <button
@@ -1176,27 +1176,27 @@ function QuotaScreen() {
               className={`relative flex flex-col items-center gap-1 rounded-2xl px-3 py-4 border transition-transform active:scale-[0.98] ${p.popular ? 'bg-sidebar-primary/10 border-sidebar-primary/40' : 'bg-sidebar-accent/55 border-sidebar-border'}`}
             >
               {p.popular && (
-                <span className="absolute -top-2 rounded-full bg-sidebar-primary px-2 py-0.5 text-[8px] font-medium text-sidebar-primary-foreground">最划算</span>
+                <span className="absolute -top-2 rounded-full bg-sidebar-primary px-2 py-0.5 text-[9px] font-medium text-sidebar-primary-foreground">最划算</span>
               )}
-              <span className="text-[13px] font-semibold text-foreground">{p.tokens}</span>
-              <span className="text-[9px] text-muted-foreground">token 额度</span>
-              <span className="mt-1 text-[13px] font-semibold text-sidebar-primary">¥{p.price}</span>
+              <span className="text-[14px] font-semibold text-foreground">{p.tokens}</span>
+              <span className="text-[10px] text-muted-foreground">token 额度</span>
+              <span className="mt-1 text-[14px] font-semibold text-sidebar-primary">¥{p.price}</span>
             </button>
           ))}
           <button
             type="button"
             className="flex flex-col items-center justify-center gap-1 rounded-2xl px-3 py-4 border border-sidebar-border bg-sidebar-accent/55 transition-transform active:scale-[0.98]"
           >
-            <span className="text-[13px] font-semibold text-foreground">自定义</span>
-            <span className="text-[9px] text-muted-foreground">按需购买</span>
+            <span className="text-[14px] font-semibold text-foreground">自定义</span>
+            <span className="text-[10px] text-muted-foreground">按需购买</span>
           </button>
         </div>
-        <p className="px-1 text-[9px] text-muted-foreground">购买功能即将开放</p>
+        <p className="px-1 text-[10px] text-muted-foreground">购买功能即将开放</p>
       </div>
 
       {/* 邀请码兑换 */}
       <div className="space-y-2">
-        <div className="text-[11px] font-medium text-foreground">邀请码兑换</div>
+        <div className="text-[12px] font-medium text-foreground">邀请码兑换</div>
         <div className="flex gap-2">
           <input
             type="text"
@@ -1216,7 +1216,7 @@ function QuotaScreen() {
           </button>
         </div>
         {codeMsg && (
-          <p className={cn('text-[10px]', codeMsg.startsWith('✓') ? 'text-green-600' : 'text-destructive')}>
+          <p className={cn('text-[11px]', codeMsg.startsWith('✓') ? 'text-green-600' : 'text-destructive')}>
             {codeMsg}
           </p>
         )}
@@ -1239,7 +1239,7 @@ function SettingsScreen({ memories, memoryEnabled, onMemoryEnabledChange, onMemo
   const [tab, setTab] = useState<'general' | 'quota'>('general')
 
   const pill = (active: boolean) =>
-    cn("rounded-full px-3.5 py-1.5 text-[11px] transition-colors", active ? "bg-sidebar-accent text-foreground" : "text-muted-foreground hover:text-foreground")
+    cn("rounded-full px-3.5 py-1.5 text-[12px] transition-colors", active ? "bg-sidebar-accent text-foreground" : "text-muted-foreground hover:text-foreground")
 
   return (
     <div>
