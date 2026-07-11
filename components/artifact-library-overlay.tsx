@@ -82,7 +82,7 @@ export function ArtifactLibraryOverlay() {
             <X className="size-5" />
           </button>
           <div className="min-w-0 flex-1">
-            <h3 className="truncate text-[15px] font-semibold tracking-tight">作品</h3>
+            <h3 className="truncate text-[16px] font-semibold tracking-tight">作品</h3>
           </div>
         </div>
 
@@ -93,7 +93,7 @@ export function ArtifactLibraryOverlay() {
               value={query}
               onChange={e => setQuery(e.target.value)}
               placeholder="搜索作品……"
-              className="w-full rounded-xl border border-sidebar-primary/35 bg-sidebar-accent/40 py-2 pl-10 pr-3 text-[11px] outline-none placeholder:text-muted-foreground/50 transition-colors focus:border-sidebar-primary/70 focus:bg-sidebar-accent/60"
+              className="w-full rounded-xl border border-sidebar-primary/35 bg-sidebar-accent/40 py-2 pl-10 pr-3 text-[12px] outline-none placeholder:text-muted-foreground/50 transition-colors focus:border-sidebar-primary/70 focus:bg-sidebar-accent/60"
             />
           </div>
         </div>
@@ -115,7 +115,7 @@ export function ArtifactLibraryOverlay() {
               {filtered.map(item => (
                 <div key={item.id} className="group flex items-center gap-2 rounded-2xl border border-sidebar-accent/55 bg-sidebar-accent/28 px-3 py-2 transition-colors hover:bg-sidebar-accent/45">
                   <button onClick={() => openArtifactPreview(item)} className="min-w-0 flex-1 text-left">
-                    <p className="truncate font-heading text-[12px] tracking-wide text-foreground">{item.title}</p>
+                    <p className="truncate font-heading text-[13px] tracking-wide text-foreground">{item.title}</p>
                   </button>
                   <button onClick={() => openArtifactPreview(item)} className="rounded-lg p-1.5 text-muted-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-foreground" aria-label="打开作品">
                     <ExternalLink className="size-4" />
