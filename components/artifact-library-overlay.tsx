@@ -6,49 +6,6 @@ import { Shapes, X, Trash2, ExternalLink, Loader2, Search } from "lucide-react"
 import type { ArtifactLibraryItem } from "@/lib/artifact-data"
 import { fetchArtifacts, deleteArtifactRow } from "@/lib/data"
 
-const THINKING_STYLE_ID = "mychat-thinking-flow-style"
-const THINKING_CSS = `
-.thinking-flow {
-  display: inline-block;
-  background-image: linear-gradient(90deg, rgba(86, 68, 45, 0.35), rgba(86, 68, 45, 0.95), rgba(86, 68, 45, 0.35));
-  background-size: 220% 100%;
-  background-position: 0% 50%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent !important;
-  -webkit-text-fill-color: transparent;
-  animation: mychat-thinking-flow 1.45s ease-in-out infinite;
-}
-.dark .thinking-flow {
-  background-image: linear-gradient(90deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.35));
-}
-@media (prefers-color-scheme: dark) {
-  :root:not(.light) .thinking-flow {
-    background-image: linear-gradient(90deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.35));
-  }
-  :root:not(.light) article [role="button"][class*="bg-secondary\\/75"] {
-    background-color: #151515 !important;
-    border-color: rgba(255, 255, 255, 0.1) !important;
-    color: #fff !important;
-  }
-  :root:not(.light) article div[class*="bg-secondary\\/75"]:has(textarea) {
-    background-color: #151515 !important;
-    border-color: rgba(255, 255, 255, 0.1) !important;
-    color: #fff !important;
-  }
-  :root:not(.light) article [role="button"][class*="bg-secondary\\/75"] p,
-  :root:not(.light) article div[class*="bg-secondary\\/75"] textarea {
-    color: #fff !important;
-    -webkit-text-fill-color: #fff !important;
-  }
-}
-@keyframes mychat-thinking-flow {
-  0% { background-position: 200% 50%; opacity: 0.55; }
-  45% { opacity: 1; }
-  100% { background-position: -20% 50%; opacity: 0.55; }
-}
-`
-
 function patchBrandName() {
   const nodes = Array.from(document.querySelectorAll("span.font-heading.text-base.tracking-wide"))
   for (const node of nodes) {
@@ -70,15 +27,6 @@ export function ArtifactLibraryOverlay() {
   const [items, setItems] = useState<ArtifactLibraryItem[]>([])
   const [loading, setLoading] = useState(false)
   const [query, setQuery] = useState("")
-
-  useEffect(() => {
-    if (!document.getElementById(THINKING_STYLE_ID)) {
-      const style = document.createElement("style")
-      style.id = THINKING_STYLE_ID
-      style.textContent = THINKING_CSS
-      document.head.appendChild(style)
-    }
-  }, [])
 
   useEffect(() => {
     patchBrandName()
@@ -134,7 +82,7 @@ export function ArtifactLibraryOverlay() {
             <X className="size-5" />
           </button>
           <div className="min-w-0 flex-1">
-            <h3 className="truncate text-[17px] font-semibold tracking-tight">作品</h3>
+            <h3 className="truncate text-[15px] font-semibold tracking-tight">作品</h3>
           </div>
         </div>
 
@@ -145,7 +93,7 @@ export function ArtifactLibraryOverlay() {
               value={query}
               onChange={e => setQuery(e.target.value)}
               placeholder="搜索作品……"
-              className="w-full rounded-xl border border-sidebar-primary/35 bg-sidebar-accent/40 py-2 pl-10 pr-3 text-[13px] outline-none placeholder:text-muted-foreground/50 transition-colors focus:border-sidebar-primary/70 focus:bg-sidebar-accent/60"
+              className="w-full rounded-xl border border-sidebar-primary/35 bg-sidebar-accent/40 py-2 pl-10 pr-3 text-[11px] outline-none placeholder:text-muted-foreground/50 transition-colors focus:border-sidebar-primary/70 focus:bg-sidebar-accent/60"
             />
           </div>
         </div>
@@ -167,7 +115,7 @@ export function ArtifactLibraryOverlay() {
               {filtered.map(item => (
                 <div key={item.id} className="group flex items-center gap-2 rounded-2xl border border-sidebar-accent/55 bg-sidebar-accent/28 px-3 py-2 transition-colors hover:bg-sidebar-accent/45">
                   <button onClick={() => openArtifactPreview(item)} className="min-w-0 flex-1 text-left">
-                    <p className="truncate font-heading text-[14px] tracking-wide text-foreground">{item.title}</p>
+                    <p className="truncate font-heading text-[12px] tracking-wide text-foreground">{item.title}</p>
                   </button>
                   <button onClick={() => openArtifactPreview(item)} className="rounded-lg p-1.5 text-muted-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-foreground" aria-label="打开作品">
                     <ExternalLink className="size-4" />
