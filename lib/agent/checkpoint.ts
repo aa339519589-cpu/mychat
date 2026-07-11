@@ -2,6 +2,7 @@ import { createHash } from "crypto"
 import { execFileSync, execSync } from "child_process"
 import { gzipSync, gunzipSync } from "zlib"
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { mergeTaskMeta } from "./meta"
 import { workspacePath } from "./workspace"
 import { redactSensitive } from "./path-security"
 
@@ -58,27 +59,16 @@ export async function saveWorkspaceCheckpoint(
   const compressed = gzipSync(Buffer.from(diff, "utf8"))
   if (compressed.byteLength > MAX_COMPRESSED_BYTES) return { ok: false, error: "压缩后的检查点超过 1MB" }
 
-  const { data } = await supabase
-    .from("agent_tasks")
-    .select("meta")
-    .eq("id", taskId)
-    .eq("user_id", userId)
-    .single()
-  const meta = (data?.meta ?? {}) as Record<string, unknown>
-  const { error } = await supabase.from("agent_tasks").update({
-    meta: {
-      ...meta,
-      workspaceCheckpoint: {
-        encoding: "gzip-base64",
-        content: compressed.toString("base64"),
-        sha256: digest(diff),
-        bytes: Buffer.byteLength(diff),
-        updatedAt: new Date().toISOString(),
-      },
+  const updated = await mergeTaskMeta(supabase, userId, taskId, {
+    workspaceCheckpoint: {
+      encoding: "gzip-base64",
+      content: compressed.toString("base64"),
+      sha256: digest(diff),
+      bytes: Buffer.byteLength(diff),
+      updatedAt: new Date().toISOString(),
     },
-    updated_at: new Date().toISOString(),
-  }).eq("id", taskId).eq("user_id", userId)
-  if (error) return { ok: false, error: error.message }
+  })
+  if (!updated) return { ok: false, error: "保存后台检查点失败" }
   return { ok: true }
 }
 

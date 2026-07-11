@@ -5,256 +5,213 @@ import { buildSystem } from '@/lib/llm/system'
 import { send, done, networkError } from '@/lib/llm/stream'
 import { chatCompletionsUrl, injectAttachmentsOpenAI } from '@/lib/llm/openai'
 import { runAgentLoop, type ExecuteTool } from '@/lib/llm/agent-loop'
-import { runTurn } from '@/lib/llm/turn'
 import type { Emit, ChatEvent } from '@/lib/llm/events'
 import type { RawMsg } from '@/lib/llm/types'
 import { buildModelContext } from '@/lib/llm/context'
-import { getModelCapability } from '@/lib/llm/models'
+import { customModelCapability, getModelCapability, type ModelCapability } from '@/lib/llm/models'
 import { ensureImageSummaries } from '@/lib/llm/image-context'
 import { ensureConversationIndexed, latestUserQuery, retrieveHistoryContext, type HistoryRetrievalMode } from '@/lib/llm/active-retrieval'
 import { activeTools, toOpenAITools, execTool, type ToolContext } from '@/lib/tools'
 import { log } from '@/lib/logger'
-import { validate } from '@/lib/validation'
+import { readJson, requestErrorResponse } from '@/lib/api/request'
+import { validateChatRequest } from '@/lib/llm/chat-request'
 import { addQuotaUsage } from '@/lib/quota'
 import { ocrPageImages } from '@/lib/mimo'
-import { resolveAuth, getMemoryEnabled, enforceLimits, type SupabaseServer } from '@/lib/api/guard'
+import { resolveAuth, getMemoryEnabled, enforceLimits } from '@/lib/api/guard'
 import { latestBeijingDateFromMessages, normalizeSearchMode } from '@/lib/search-mode'
+import { prepareConversationSummary, RECENT_CONTEXT_MESSAGES } from '@/lib/llm/conversation-summary'
+import { endpointAuthType, getOwnedModelEndpoint, resolveModelEndpointKey } from '@/lib/model-endpoint-server'
+import { ModelEndpointError, validateModelEndpointNetwork } from '@/lib/llm/openai-compatible'
+import { isModelOutputKind, type EndpointAuthType, type ModelOutputKind } from '@/lib/model-endpoints'
+import { combineMediaGenerationSignals, generateOpenAICompatibleMedia, MediaGenerationError } from '@/lib/llm/media-generation'
 
-const SAFETY_ROUNDS = 9999
-const RECENT_CONTEXT_MESSAGES = 30
-const SUMMARY_TRIGGER_MESSAGES = 28
-const SUMMARY_MODEL = 'deepseek-v4-flash'
-const SUMMARY_TARGET_CHARS = 9000
+const SAFETY_ROUNDS = 16
 const MARKDOWN_DIVIDER_GUARD = '\n【排版补充】\n当回复有两个以上语义段落、步骤、转折或结论/解释分层时，优先用 Markdown 分隔线 "---" 做清晰分层。分隔线用于增强阅读节奏，不要滥用到每一句。'
 const DEEP_RESEARCH_PREFIX = `请以最高努力完成当前问题：先理解真实目标，拆解约束，检查边界和反例，最后给出清晰结论。\n---\n`
-
-type MessageRow = { id: string; role: 'user' | 'assistant'; content: string | null; images?: unknown; created_at?: string | null }
-type ConversationSummaryState = { summary: string; summaryUntilMessageId: string | null; staleWithoutMarker: boolean }
-type ExternalModel = { label: string; model: string; baseUrl: string; token: string; supportsVision: boolean }
-
-function normalizeExternalModel(input: unknown): ExternalModel | null {
-  if (!input || typeof input !== 'object') return null
-  const raw = input as Record<string, unknown>
-  const model = typeof raw.model === 'string' ? raw.model.trim() : ''
-  const baseUrl = typeof raw.baseUrl === 'string' ? raw.baseUrl.trim() : ''
-  const token = typeof raw.token === 'string' ? raw.token.trim()
-    : typeof raw.credential === 'string' ? raw.credential.trim()
-    : ''
-  const label = typeof raw.label === 'string' && raw.label.trim() ? raw.label.trim() : model
-  const supportsVision = raw.supportsVision === true
-  if (!model || !baseUrl || !token) return null
-  return { label, model, baseUrl, token, supportsVision }
-}
-
-function decodeCustomModelTier(tier: unknown): ExternalModel | null {
-  if (typeof tier !== 'string' || !tier.startsWith('custom:')) return null
-  const payload = tier.split(':').slice(2).join(':')
-  if (!payload) return null
-  try {
-    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/')
-    const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4)
-    const binary = atob(padded)
-    const bytes = Uint8Array.from(binary, c => c.charCodeAt(0))
-    return normalizeExternalModel(JSON.parse(new TextDecoder().decode(bytes)))
-  } catch {
-    return null
-  }
-}
-
 function historyRetrievalModeForTier(tier: string): HistoryRetrievalMode {
   if (tier === '鸿篇') return 'deep'
   if (tier === '绝句') return 'light'
   return 'balanced'
 }
 
-async function inferConversationId(supabase: SupabaseServer | null, userId: string | null, explicitId: unknown, rawMessages: RawMsg[]): Promise<string | null> {
-  if (typeof explicitId === 'string' && explicitId) return explicitId
-  if (!supabase || !userId) return null
-  const ids = [...rawMessages].reverse().map(m => (m as any)?.id).filter((id): id is string => typeof id === 'string' && !!id).slice(0, 6)
-  for (const id of ids) {
-    try {
-      const { data } = await supabase.from('messages').select('conversation_id').eq('id', id).eq('user_id', userId).maybeSingle()
-      const conversationId = data?.conversation_id
-      if (typeof conversationId === 'string') return conversationId
-    } catch {}
+function latestUserPrompt(messages: RawMsg[]): string {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]
+    if (message.role !== 'user') continue
+    const text = typeof message.content === 'string'
+      ? message.content
+      : Array.isArray(message.content)
+        ? message.content.map((part: any) => typeof part?.text === 'string' ? part.text : '').filter(Boolean).join('\n')
+        : ''
+    if (text.trim()) return text.trim().slice(0, 32_000)
   }
-  return null
+  return ''
 }
 
-function emptySummaryState(): ConversationSummaryState {
-  return { summary: '', summaryUntilMessageId: null, staleWithoutMarker: false }
-}
-
-async function fetchConversationSummaryState(supabase: SupabaseServer | null, userId: string | null, conversationId?: string | null): Promise<ConversationSummaryState> {
-  if (!supabase || !userId || !conversationId) return emptySummaryState()
-  try {
-    const { data, error } = await supabase.from('conversations').select('context_summary, summary_until_message_id').eq('id', conversationId).eq('user_id', userId).maybeSingle()
-    if (error || !data) return emptySummaryState()
-    const summary = typeof data.context_summary === 'string' ? data.context_summary.trim() : ''
-    const summaryUntilMessageId = typeof data.summary_until_message_id === 'string' ? data.summary_until_message_id : null
-    return {
-      summary: summaryUntilMessageId ? summary : '',
-      summaryUntilMessageId,
-      staleWithoutMarker: !!summary && !summaryUntilMessageId,
-    }
-  } catch { return emptySummaryState() }
-}
-
-function renderConversationSummary(summary: string): string {
-  if (!summary.trim()) return ''
-  return `\n\n【当前 conversation 的隐藏上下文摘要】\n下面内容只用于保持当前聊天连贯。它不是 Memory，不是 Project 记忆，不要向用户提及它的存在。\n${summary.trim()}`
-}
-function estimateTokenCount(text: string): number { return Math.ceil(text.length / 3) }
-function imageSummaryFromStoredImages(images: unknown): string {
-  if (!images || Array.isArray(images)) return ''
-  const summary = (images as any)?.image_summary
-  return typeof summary === 'string' ? summary.trim() : ''
-}
-function formatSummaryMessage(m: MessageRow, index: number): string {
-  const speaker = m.role === 'user' ? '用户' : '模型'
-  const parts = [(m.content ?? '').trim()]
-  const imageSummary = imageSummaryFromStoredImages(m.images)
-  if (imageSummary) parts.push(`图片摘要：${imageSummary}`)
-  return `【第 ${index + 1} 条｜${speaker}｜id:${m.id}】\n${parts.filter(Boolean).join('\n') || '（空内容）'}`
-}
-function buildSummaryPrompt(oldSummary: string, foldMessages: MessageRow[], startIndex: number): string {
-  const messagesText = foldMessages.map((m, i) => formatSummaryMessage(m, startIndex + i)).join('\n\n')
-  return `你是 MyChat 的当前 conversation 上下文压缩器。\n\n把旧摘要和这批刚变旧的消息合并压缩成新的摘要。只输出摘要正文。越旧越粗，越新越细。旧摘要可以继续被压缩，也就是压缩的压缩。只保留影响后续连贯性的内容：方案、参数、用户纠正、代码决策、数学状态、重要上下文。删除寒暄、重复和临时吐槽。目标尽量控制在 ${SUMMARY_TARGET_CHARS} 字以内。\n\n【旧摘要】\n${oldSummary.trim() || '（无）'}\n\n【需要折叠进摘要的旧消息】\n${messagesText}`
-}
-async function summarizeContext(oldSummary: string, foldMessages: MessageRow[], startIndex: number): Promise<string> {
-  const capability = getModelCapability(SUMMARY_MODEL)
-  const apiKey = process.env[capability.provider.apiKeyEnv] ?? ''
-  if (!apiKey) throw new Error(`${capability.provider.apiKeyEnv} 未设置`)
-  const result = await runTurn(chatCompletionsUrl(capability.provider.baseUrl), apiKey, SUMMARY_MODEL, [
-    { role: 'system', content: '你只做当前 conversation 的上下文摘要压缩。只输出摘要正文。' },
-    { role: 'user', content: buildSummaryPrompt(oldSummary, foldMessages, startIndex) },
-  ], [], () => {}, { thinking: false, adapter: capability.provider.adapter, deferTextUntilTurnEnd: true })
-  if (result.failed || !result.content.trim()) throw new Error('摘要模型生成失败')
-  return result.content.trim()
-}
-function shouldCompactConversation(rawMessages: RawMsg[], state: ConversationSummaryState): boolean {
-  if (state.staleWithoutMarker) return true
-  const ids = rawMessages.map(m => (m as any)?.id).filter((id): id is string => typeof id === 'string' && !!id)
-  if (state.summaryUntilMessageId && ids.length > 0 && !ids.includes(state.summaryUntilMessageId)) return true
-
-  const coveredIndex = state.summaryUntilMessageId ? ids.indexOf(state.summaryUntilMessageId) : -1
-  const compressibleEnd = Math.max(0, rawMessages.length - RECENT_CONTEXT_MESSAGES)
-  const foldableMessages = Math.max(0, compressibleEnd - (coveredIndex + 1))
-  return foldableMessages >= SUMMARY_TRIGGER_MESSAGES
-}
-async function compactConversationContext(supabase: SupabaseServer | null, userId: string | null, conversationId: string | null): Promise<void> {
-  if (!supabase || !userId || !conversationId) return
-  try {
-    const { data: conversation, error: convError } = await supabase.from('conversations').select('id, context_summary, summary_until_message_id').eq('id', conversationId).eq('user_id', userId).maybeSingle()
-    if (convError || !conversation) return
-    const { data: messages, error: msgError } = await supabase.from('messages').select('id, role, content, images, created_at').eq('conversation_id', conversationId).eq('user_id', userId).order('created_at', { ascending: true })
-    if (msgError) return
-    const rows = (messages ?? []) as MessageRow[]
-    const markerMissing = !!conversation.summary_until_message_id && !rows.some(m => m.id === conversation.summary_until_message_id)
-    const staleSummaryWithoutMarker = !!conversation.context_summary && !conversation.summary_until_message_id
-    let summaryUntilMessageId: string | null = conversation.summary_until_message_id ?? null
-    let oldSummary = typeof conversation.context_summary === 'string' ? conversation.context_summary : ''
-    if (markerMissing || staleSummaryWithoutMarker) {
-      summaryUntilMessageId = null
-      oldSummary = ''
-      await supabase.from('conversations').update({ context_summary: null, summary_until_message_id: null, summary_token_count: 0 }).eq('id', conversationId).eq('user_id', userId)
-    }
-    if (rows.length <= RECENT_CONTEXT_MESSAGES) return
-    const coveredIndex = summaryUntilMessageId ? rows.findIndex(m => m.id === summaryUntilMessageId) : -1
-    const foldRows = rows.slice(0, Math.max(0, rows.length - RECENT_CONTEXT_MESSAGES)).slice(coveredIndex + 1)
-    if (foldRows.length < SUMMARY_TRIGGER_MESSAGES) return
-    const nextSummary = await summarizeContext(oldSummary, foldRows, coveredIndex + 1)
-    const summaryUntil = foldRows[foldRows.length - 1]?.id
-    if (!summaryUntil) return
-    const { error: updateError } = await supabase.from('conversations').update({ context_summary: nextSummary, summary_until_message_id: summaryUntil, summary_token_count: estimateTokenCount(nextSummary) }).eq('id', conversationId).eq('user_id', userId)
-    if (updateError) log.warn('contextSummary', 'Failed to save compacted context', updateError)
-  } catch (e) { log.warn('contextSummary', 'Context compaction skipped', e) }
-}
-async function ocrScannedPdfs(attachments: any[]): Promise<any[]> {
+async function ocrScannedPdfs(attachments?: any[], signal?: AbortSignal): Promise<any[]> {
   if (!attachments?.length) return attachments ?? []
   return Promise.all(attachments.map(async (f) => {
     if (!Array.isArray(f.pageImages) || !f.pageImages.length) return f
-    const text = await ocrPageImages(f.pageImages)
+    const text = await ocrPageImages(f.pageImages, signal)
     log.info('ocrPdf', 'Scanned PDF OCR done', { name: f.name, pages: f.pageImages.length, textLen: text.length })
     return { ...f, text: text || '（扫描件识别失败，请重试或换一份更清晰的文件）', pageImages: undefined }
   }))
 }
 
 export async function POST(req: NextRequest) {
-  let body: any = {}
-  try { body = await req.json() } catch (e) {
-    log.error('chat', 'Invalid JSON in request body', e)
-    return new Response(JSON.stringify({ error: '请求体格式错误' }), { status: 400, headers: { 'Content-Type': 'application/json' } })
-  }
-  const { tier = '绝句', messages, memories, attachments, searchMode, webSearch, deepWebSearch, deepResearch, project, conversationId, historyRetrieval, externalModel } = body
-  try { validate.array(messages, 'messages', { minLength: 1 }) } catch (e) {
-    log.warn('chat', 'Validation error', e)
-    return new Response(JSON.stringify({ error: (e as Error).message }), { status: 400, headers: { 'Content-Type': 'application/json' } })
-  }
-
-  const external = deepResearch ? null : (normalizeExternalModel(externalModel) ?? decodeCustomModelTier(tier))
-  const tierCfg = TIER_MAP[tier as keyof typeof TIER_MAP] ?? TIER_MAP['绝句']
-  const model = deepResearch ? 'deepseek-v4-pro' : (external ? external.model : tierCfg.model)
-  const thinking = external ? false : (deepResearch ? true : tierCfg.thinking)
-  const baseCapability = getModelCapability('deepseek-v4-flash')
-  const capability = external
-    ? {
-        ...baseCapability,
-        id: model,
-        supportsVision: external.supportsVision,
-        supportsImageInput: external.supportsVision,
-        provider: { ...baseCapability.provider, adapter: 'openai-compatible' as const, baseUrl: external.baseUrl },
-      }
-    : getModelCapability(model)
-  const apiKey = external ? external.token : (process.env[capability.provider.apiKeyEnv] ?? '')
-  if (!apiKey) {
-    log.error('chat', external ? 'External model token missing' : `${capability.provider.apiKeyEnv} not configured`)
-    return new Response(JSON.stringify({ error: external ? '自定义模型未填写密钥' : `服务未配置（${capability.provider.apiKeyEnv} 未设置）` }), { status: 500 })
-  }
+  let body
+  try { body = validateChatRequest(await readJson(req, { maxBytes: 48 * 1024 * 1024 })) }
+  catch (e) { return requestErrorResponse(e) }
+  const { tier = '绝句', messages, memories, attachments, searchMode, webSearch, deepWebSearch, deepResearch, project, conversationId, historyRetrieval, endpointId } = body
 
   const auth = await resolveAuth()
   const { supabase, userId } = auth
+  const customEndpoint = typeof endpointId === 'string'
+  let model: string
+  let thinking: boolean
+  let capability: ModelCapability
+  let apiKey: string
+  let authType: EndpointAuthType | undefined
+  let outputKind: ModelOutputKind = 'chat'
+
+  if (customEndpoint) {
+    if (!supabase || !userId) return Response.json({ error: '请先登录后使用自定义模型' }, { status: 401 })
+    try {
+      const endpoint = await getOwnedModelEndpoint(supabase, userId, endpointId)
+      if (!endpoint) return Response.json({ error: '自定义模型不存在或无权访问' }, { status: 404 })
+      if (!isModelOutputKind(endpoint.output_kind)) {
+        return Response.json({ error: '自定义模型用途无效，请在设置中重新连接' }, { status: 409 })
+      }
+      outputKind = endpoint.output_kind
+      apiKey = resolveModelEndpointKey(endpoint, userId)
+      const baseUrl = await validateModelEndpointNetwork(endpoint.base_url)
+      model = endpoint.model
+      thinking = false
+      authType = endpointAuthType(endpoint.auth_type)
+      capability = customModelCapability(model, baseUrl)
+    } catch (error) {
+      if (error instanceof ModelEndpointError) {
+        return Response.json({ error: error.message, stage: error.stage, code: error.code }, { status: error.status })
+      }
+      return Response.json({ error: error instanceof Error ? error.message : '自定义模型配置不可用' }, { status: 409 })
+    }
+  } else {
+    const tierCfg = TIER_MAP[tier as keyof typeof TIER_MAP] ?? TIER_MAP['绝句']
+    model = deepResearch ? 'deepseek-v4-pro' : tierCfg.model
+    thinking = deepResearch ? true : tierCfg.thinking
+    capability = getModelCapability(model)
+    const apiKeyEnv = capability.provider.apiKeyEnv
+    apiKey = apiKeyEnv ? process.env[apiKeyEnv] ?? '' : ''
+    if (!apiKey) {
+      log.error('chat', `${apiKeyEnv ?? 'model key'} not configured`)
+      return new Response(JSON.stringify({ error: `服务未配置（${apiKeyEnv ?? '模型 API Key'} 未设置）` }), { status: 500 })
+    }
+  }
+
   const memoryEnabled = await getMemoryEnabled(auth)
-  const gate = await enforceLimits(auth)
+  const gate = await enforceLimits(auth, req, { quota: !customEndpoint })
   if (gate.response) return gate.response
   const usingBalance = gate.usingBalance
 
   const rawMessages = messages as RawMsg[]
-  const resolvedConversationId = await inferConversationId(supabase, userId, conversationId, rawMessages)
+  const requestedSearchMode = searchMode === 'web' || searchMode === 'deep' ? searchMode : normalizeSearchMode(webSearch, deepWebSearch)
+  const hasScannedAttachment = Array.isArray(attachments) && attachments.some((attachment: any) => Array.isArray(attachment?.pageImages) && attachment.pageImages.length > 0)
+  if (customEndpoint && requestedSearchMode !== 'off') {
+    return Response.json({ error: '自定义模型不会使用平台的联网搜索额度，请关闭联网搜索后重试' }, { status: 400 })
+  }
+  if (customEndpoint && hasScannedAttachment) {
+    return Response.json({ error: '自定义模型不会使用平台 OCR，请上传带文字层的 PDF 或文本文件' }, { status: 400 })
+  }
+  if (customEndpoint && outputKind !== 'chat') {
+    const prompt = latestUserPrompt(rawMessages)
+    if (!prompt) return Response.json({ error: '请输入图片或视频生成提示词' }, { status: 400 })
+
+    let clientConnected = true
+    const mediaAbort = new AbortController()
+    const mediaSignal = combineMediaGenerationSignals(req.signal, mediaAbort.signal)
+    const mediaStream = new ReadableStream({
+      async start(controller) {
+        const safeSend = (event: ChatEvent | { heartbeat: true }) => {
+          if (!clientConnected) return
+          try { send(controller, event) } catch {
+            clientConnected = false
+            mediaAbort.abort(new DOMException('Media stream closed', 'AbortError'))
+          }
+        }
+        const heartbeat = setInterval(() => safeSend({ heartbeat: true }), 8_000)
+        try {
+          safeSend({ thinking: outputKind === 'image' ? '正在生成图片……' : '正在生成视频，这可能需要几分钟……' })
+          const media = await generateOpenAICompatibleMedia({
+            baseUrl: capability.provider.baseUrl,
+            apiKey,
+            authType: authType ?? 'bearer',
+            model,
+            outputKind,
+            prompt,
+            signal: mediaSignal,
+          })
+          safeSend({ media })
+          safeSend({ text: outputKind === 'image' ? '图片已生成。' : '视频已生成。' })
+        } catch (error) {
+          const message = error instanceof MediaGenerationError
+            ? error.message
+            : networkError(error, '媒体生成服务', [apiKey])
+          safeSend({ error: message })
+        } finally {
+          clearInterval(heartbeat)
+          if (clientConnected) {
+            try { done(controller) } catch { clientConnected = false }
+          }
+        }
+      },
+      cancel() {
+        clientConnected = false
+        mediaAbort.abort(new DOMException('Media stream cancelled', 'AbortError'))
+      },
+    })
+    return new Response(mediaStream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } })
+  }
+  const summary = await prepareConversationSummary({
+    supabase,
+    userId,
+    explicitConversationId: conversationId,
+    messages: rawMessages,
+    signal: req.signal,
+    allowCompaction: !customEndpoint,
+  })
+  const resolvedConversationId = summary.conversationId
   const recentMessages = rawMessages.slice(-RECENT_CONTEXT_MESSAGES)
   const historyRetrievalEnabled = historyRetrieval === true
-  let summaryState = await fetchConversationSummaryState(supabase, userId, resolvedConversationId)
-  if (shouldCompactConversation(rawMessages, summaryState)) {
-    await compactConversationContext(supabase, userId, resolvedConversationId)
-    summaryState = await fetchConversationSummaryState(supabase, userId, resolvedConversationId)
-  }
-  const conversationSummary = summaryState.summary
   let activeHistoryContext = ''
   if (historyRetrievalEnabled) {
-    await ensureConversationIndexed(supabase, userId, resolvedConversationId)
+    if (!customEndpoint) await ensureConversationIndexed(supabase, userId, resolvedConversationId, req.signal)
     activeHistoryContext = await retrieveHistoryContext({
       supabase,
       userId,
       conversationId: resolvedConversationId,
       projectId: project?.id ?? null,
       query: latestUserQuery(rawMessages),
-      mode: historyRetrievalModeForTier(String(tier)),
+      mode: customEndpoint ? 'light' : historyRetrievalModeForTier(String(tier)),
+      signal: req.signal,
     })
   }
 
-  const effectiveSearchMode = searchMode === 'web' || searchMode === 'deep' ? searchMode : normalizeSearchMode(webSearch, deepWebSearch)
+  const effectiveSearchMode = requestedSearchMode
   const latestBeijingDate = latestBeijingDateFromMessages(rawMessages)
   const flags = { loggedIn: !!userId, searchMode: effectiveSearchMode, memoryEnabled, projectId: project?.id ?? null }
   const tools = activeTools(flags)
-  const ctx: ToolContext = { supabase, userId, projectId: project?.id ?? null, searchMode: effectiveSearchMode, latestBeijingDate }
+  const ctx: ToolContext = { supabase, userId, projectId: project?.id ?? null, searchMode: effectiveSearchMode, latestBeijingDate, signal: req.signal }
   const effectiveMemories = memoryEnabled && !project?.id ? (memories as Memory[] | undefined) : undefined
   const url = chatCompletionsUrl(capability.provider.baseUrl)
-  const SYSTEM = buildSystem(effectiveMemories, { searchMode: effectiveSearchMode, latestBeijingDate, memoryEnabled, project }) + renderConversationSummary(conversationSummary) + activeHistoryContext + MARKDOWN_DIVIDER_GUARD
-  const openaiTools = external ? [] : toOpenAITools(tools)
+  const SYSTEM = buildSystem(effectiveMemories, { searchMode: effectiveSearchMode, latestBeijingDate, memoryEnabled, project })
+    + summary.renderedSummary
+    + activeHistoryContext
+    + MARKDOWN_DIVIDER_GUARD
+  const openaiTools = toOpenAITools(tools)
 
+  let clientConnected = true
   const stream = new ReadableStream({
     async start(controller) {
-      let clientConnected = true
       const safeSend = (event: ChatEvent | { heartbeat: true }) => {
         if (!clientConnected) return
         try { send(controller, event) } catch { clientConnected = false }
@@ -268,42 +225,48 @@ export async function POST(req: NextRequest) {
         return result
       }
       try {
-        const preparedMessages = capability.supportsImageInput ? recentMessages : await ensureImageSummaries(recentMessages, { supabase, userId, emit })
+        const preparedMessages = customEndpoint || capability.supportsImageInput
+          ? recentMessages
+          : await ensureImageSummaries(recentMessages, { supabase, userId, emit, signal: req.signal })
         const msgs: any[] = [{ role: 'system', content: SYSTEM }, ...buildModelContext(preparedMessages, capability)]
         if (deepResearch) {
           for (let i = msgs.length - 1; i >= 0; i--) {
-            if (msgs[i].role === 'user') {
-              const m = msgs[i]
-              if (typeof m.content === 'string') m.content = DEEP_RESEARCH_PREFIX + m.content
-              else if (Array.isArray(m.content)) {
-                const textItem = m.content.find((c: any) => c.type === 'text')
-                if (textItem) textItem.text = DEEP_RESEARCH_PREFIX + textItem.text
-              }
-              break
+            if (msgs[i].role !== 'user') continue
+            const message = msgs[i]
+            if (typeof message.content === 'string') {
+              message.content = DEEP_RESEARCH_PREFIX + message.content
+            } else if (Array.isArray(message.content)) {
+              const textPart = message.content.find((part: any) => part.type === 'text')
+              if (textPart) textPart.text = DEEP_RESEARCH_PREFIX + textPart.text
             }
+            break
           }
         }
-        const hasScanned = Array.isArray(attachments) && attachments.some((a: any) => a?.pageImages?.length)
+        const hasScanned = !customEndpoint && hasScannedAttachment
         if (hasScanned) emit({ thinking: '正在识别扫描件内容，请稍候……' })
-        const processedAttachments = await ocrScannedPdfs(attachments)
+        const processedAttachments = await ocrScannedPdfs(attachments, req.signal)
         await injectAttachmentsOpenAI(msgs, processedAttachments)
-        const { totalTokens } = await runAgentLoop({
+        await runAgentLoop({
           url, apiKey, model, adapter: capability.provider.adapter, thinking,
           messages: msgs, tools: openaiTools, emit, executeTool,
           maxRounds: SAFETY_ROUNDS,
-          leakedRetry: !external,
-          autoContinue: {},
+          leakedRetry: true,
+          autoContinue: { maxContinuations: 4 },
+          onUsage: total => { totalTokensUsed = total },
+          turnOptions: { signal: req.signal, timeoutMs: 120_000, authType },
           onTurn: ({ phase, round, turn }) => log.info('chat', `Turn ${phase}`, { round, finishReason: turn.finishReason, leaked: turn.leaked, toolCalls: turn.toolCalls.length, contentLen: turn.content.length, truncated: turn.truncated }),
         })
-        totalTokensUsed += totalTokens
       } catch (error) {
-        emit({ error: networkError(error) })
+        emit({ error: networkError(error, '模型服务', [apiKey]) })
       } finally {
         clearInterval(heartbeat)
-        if (userId && supabase) await addQuotaUsage(supabase, userId, totalTokensUsed, model, thinking, usingBalance)
-        done(controller)
+        if (!customEndpoint && userId && supabase) await addQuotaUsage(supabase, userId, totalTokensUsed, model, thinking, usingBalance)
+        if (clientConnected) {
+          try { done(controller) } catch { clientConnected = false }
+        }
       }
     },
+    cancel() { clientConnected = false },
   })
   return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } })
 }

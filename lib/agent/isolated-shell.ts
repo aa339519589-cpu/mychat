@@ -10,6 +10,7 @@ import { listWorkspaceFiles, workspacePath } from "./workspace"
 import { redactSensitive, validatePath } from "./path-security"
 import { sanitizeCommandOutput } from "./command-security"
 import type { ShellOptions, ShellResult } from "./shell"
+import { mergeTaskMeta } from "./meta"
 
 const REMOTE_ROOT = "/home/user/workspace"
 const SANDBOX_TIMEOUT = 30 * 60_000
@@ -44,13 +45,7 @@ export async function cleanupIsolatedWorkspace(
   const sandboxId = typeof meta.e2bSandboxId === "string" ? meta.e2bSandboxId : null
   if (!sandboxId) return
   try { await Sandbox.kill(sandboxId) } catch { /* already expired */ }
-  delete meta.e2bSandboxId
-  delete meta.executionBackend
-  await supabase
-    .from("agent_tasks")
-    .update({ meta, updated_at: new Date().toISOString() })
-    .eq("id", taskId)
-    .eq("user_id", userId)
+  await mergeTaskMeta(supabase, userId, taskId, {}, ["e2bSandboxId", "executionBackend"])
 }
 
 async function getSandbox(supabase: SupabaseClient, userId: string, taskId: string): Promise<Sandbox> {
@@ -70,14 +65,7 @@ async function getSandbox(supabase: SupabaseClient, userId: string, taskId: stri
     ? await Sandbox.create(template, options)
     : await Sandbox.create(options)
 
-  await supabase
-    .from("agent_tasks")
-    .update({
-      meta: { ...meta, e2bSandboxId: sandbox.sandboxId, executionBackend: "e2b" },
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", taskId)
-    .eq("user_id", userId)
+  await mergeTaskMeta(supabase, userId, taskId, { e2bSandboxId: sandbox.sandboxId, executionBackend: "e2b" })
 
   return sandbox
 }
@@ -107,11 +95,7 @@ export async function startAgentRecoveryWatchdog(
     envs: { AGENT_RECOVERY_URL: recoveryUrl, AGENT_RECOVERY_TOKEN: recoveryToken },
   })
 
-  const latest = await taskMeta(supabase, userId, taskId)
-  await supabase.from("agent_tasks").update({
-    meta: { ...latest, agentWatchdogTokenHash: tokenHash },
-    updated_at: new Date().toISOString(),
-  }).eq("id", taskId).eq("user_id", userId)
+  await mergeTaskMeta(supabase, userId, taskId, { agentWatchdogTokenHash: tokenHash })
 }
 
 function localFiles(userId: string, taskId: string) {

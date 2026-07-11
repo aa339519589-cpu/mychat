@@ -4,5 +4,6 @@ export async function POST() {
   const headers = new Headers({ 'Content-Type': 'application/json' })
   headers.append('Set-Cookie', `gh_access_token=; ${clear}`)
   headers.append('Set-Cookie', `gh_login=; ${clear}`)
+  headers.append('Set-Cookie', `gh_user_id=; ${clear}`)
   return new Response(JSON.stringify({ ok: true }), { headers })
 }

@@ -4,10 +4,11 @@
 
 import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, unlinkSync, rmSync } from "fs"
 import { join } from "path"
-import { execSync } from "child_process"
+import { execFileSync, execSync } from "child_process"
 import type { SupabaseClient } from "@supabase/supabase-js"
+import { gzipSync, gunzipSync } from "zlib"
 import { workspaceRoot } from "./workspace"
-import { redactSensitive } from "./path-security"
+import { redactSensitive, validatePath } from "./path-security"
 import type { SnapshotRecord, RestoreResult } from "./types"
 
 const SNAPSHOT_ROOT = "/tmp/mychat-agent-snapshots"
@@ -96,12 +97,18 @@ async function persistSnapshotArtifact(
   try {
     // content: 保存摘要 + 打码 patch（不超过 50KB）
     const safePatch = redactSensitive(patchContent)
+    const containsSensitiveContent = safePatch !== patchContent
     const truncated = safePatch.length > 50000
     const contentPatch = truncated ? safePatch.slice(0, 50000) : safePatch
+    const compressed = containsSensitiveContent ? null : gzipSync(Buffer.from(patchContent, "utf-8"))
+    const canPersistPatch = !!compressed && compressed.byteLength <= 1024 * 1024
     const content = JSON.stringify({
       ...snapshot,
       patchPreview: contentPatch,
       patchTruncated: truncated,
+      patchEncoding: canPersistPatch ? "gzip-base64" : null,
+      patchData: canPersistPatch ? compressed.toString("base64") : null,
+      containsSensitiveContent,
     })
 
     const { error } = await supabase.from("agent_artifacts").insert({
@@ -120,7 +127,7 @@ async function persistSnapshotArtifact(
         createdFiles: snapshot.createdFiles.slice(0, 50),
         modifiedFiles: snapshot.modifiedFiles.slice(0, 50),
         deletedFiles: snapshot.deletedFiles.slice(0, 50),
-        restorable: snapshot.restorable,
+        restorable: canPersistPatch,
         storage: snapshot.storage,
         workspaceId: snapshot.workspaceId,
         truncated,
@@ -170,10 +177,14 @@ async function fetchSnapshotFromArtifact(
         createdAt: parsed.createdAt ?? artifact.created_at ?? "",
         diffSize: parsed.diffSize ?? 0,
         storage: "artifact",
-        restorable: !!(parsed.patchPreview),
+        restorable: parsed.patchEncoding === "gzip-base64"
+          ? typeof parsed.patchData === "string"
+          : parsed.patchTruncated !== true && typeof parsed.patchPreview === "string",
         workspaceId: parsed.workspaceId ?? null,
       }
-      patchContent = parsed.patchPreview ?? ""
+      patchContent = parsed.patchEncoding === "gzip-base64" && typeof parsed.patchData === "string"
+        ? gunzipSync(Buffer.from(parsed.patchData, "base64")).toString("utf-8")
+        : parsed.patchPreview ?? ""
     } catch {
       return { ok: false, error: "Artifact 内容解析失败" }
     }
@@ -249,18 +260,27 @@ export async function createWorkspaceSnapshot(
     return { ok: false, error: `Workspace 不存在：${root}` }
   }
 
-  // 检查是否有变更
+  // 干净状态同样必须可恢复；它是“第一次修改之前”的有效撤销点。
   if (!hasWorkspaceChanges(root)) {
-    return {
-      ok: true,
-      snapshot: {
-        snapshotId: "",
-        taskId, userId, reason,
-        changedFiles: [], createdFiles: [], modifiedFiles: [], deletedFiles: [],
-        createdAt: new Date().toISOString(), diffSize: 0,
-        storage: "local", restorable: false, workspaceId: null,
-      },
+    const snapshotId = crypto.randomUUID()
+    const record: SnapshotRecord = {
+      snapshotId, taskId, userId, reason,
+      changedFiles: [], createdFiles: [], modifiedFiles: [], deletedFiles: [],
+      createdAt: new Date().toISOString(), diffSize: 0,
+      storage: "local", restorable: true, workspaceId: null,
     }
+    let localOk = false
+    try {
+      const dir = snapshotDir(taskId, userId)
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(join(dir, `${snapshotId}.patch`), "", "utf-8")
+      writeFileSync(join(dir, `${snapshotId}.json`), JSON.stringify(record), "utf-8")
+      localOk = true
+    } catch {}
+    const artifactOk = supabase ? await persistSnapshotArtifact(supabase, record, "") : false
+    if (!localOk && !artifactOk) return { ok: false, error: "Snapshot 本地写入和持久化均失败" }
+    record.storage = localOk && artifactOk ? "both" : localOk ? "local" : "artifact"
+    return { ok: true, snapshot: record }
   }
 
   const snapshotId = crypto.randomUUID()
@@ -281,7 +301,9 @@ export async function createWorkspaceSnapshot(
     if (untracked) {
       for (const f of untracked.split("\n").filter(Boolean)) {
         try {
-          const content = readFileSync(join(root, f), "utf-8")
+          const checked = validatePath(root, f)
+          if (!checked.ok) continue
+          const content = readFileSync(checked.absolute!, "utf-8")
           const lines = content.split("\n")
           diff += `\ndiff --git a/${f} b/${f}\nnew file mode 100644\nindex 0000000..0000000\n--- /dev/null\n+++ b/${f}\n@@ -0,0 +1,${lines.length} @@\n${lines.map(l => `+${l}`).join("\n")}\n`
         } catch { /* skip binary */ }
@@ -311,7 +333,11 @@ export async function createWorkspaceSnapshot(
     const snapDir = snapshotDir(taskId, userId)
     mkdirSync(snapDir, { recursive: true })
     writeFileSync(join(snapDir, `${snapshotId}.patch`), diff, "utf-8")
-    const meta = { snapshotId, taskId, userId, reason, createdAt, fileCount: changedFiles.length }
+    const meta = {
+      snapshotId, taskId, userId, reason, createdAt,
+      changedFiles, createdFiles, modifiedFiles, deletedFiles,
+      diffSize: diff.length, fileCount: changedFiles.length,
+    }
     writeFileSync(join(snapDir, `${snapshotId}.json`), JSON.stringify(meta), "utf-8")
     localOk = true
   } catch {
@@ -377,7 +403,7 @@ export async function restoreWorkspaceSnapshot(
   }
 
   // ── Tier 2：artifact patch ──
-  if (!patch && supabase) {
+  if (patch === null && supabase) {
     const fetched = await fetchSnapshotFromArtifact(supabase, userId, taskId, snapshotId)
     if (fetched.ok) {
       patch = fetched.patchContent
@@ -386,7 +412,7 @@ export async function restoreWorkspaceSnapshot(
   }
 
   // ── Tier 3：git fallback ──
-  if (!patch) {
+  if (patch === null) {
     // 尝试读取本地 metadata 获取文件列表
     let fileList: string[] = []
     // 尝试从 artifact meta 获取文件列表
@@ -401,12 +427,12 @@ export async function restoreWorkspaceSnapshot(
       let restored = 0
       for (const f of fileList) {
         try {
-          execSync(`git checkout HEAD -- "${f}"`, { cwd: root, timeout: 10_000, encoding: "utf-8" })
+          execFileSync("git", ["checkout", "HEAD", "--", f], { cwd: root, timeout: 10_000, encoding: "utf-8" })
           restored++
         } catch {
-          const abs = join(root, f)
-          if (existsSync(abs)) {
-            try { unlinkSync(abs); restored++ } catch { failedFiles++ }
+          const checked = validatePath(root, f)
+          if (checked.ok && existsSync(checked.absolute!)) {
+            try { unlinkSync(checked.absolute!); restored++ } catch { failedFiles++ }
           }
         }
       }
@@ -420,35 +446,34 @@ export async function restoreWorkspaceSnapshot(
   // ── 应用 patch 恢复 ──
   let restoredFiles = 0
   try {
-    // 先 dry-reverse check
-    try {
-      const stat = execSync("git apply -R --stat", {
-        cwd: root, timeout: 30_000, maxBuffer: 512 * 1024, encoding: "utf-8", input: patch!,
-      })
-      restoredFiles = stat.trim().split("\n").filter(Boolean).length
-    } catch {
-      // stat 失败没关系，直接 apply
-    }
-
-    execSync("git apply -R", {
-      cwd: root, timeout: 60_000, maxBuffer: 4 * 1024 * 1024, encoding: "utf-8", input: patch!,
+    // Snapshot 保存的是“该时刻相对 HEAD 的完整状态”。恢复时先回到 HEAD，
+    // 再正向应用 snapshot；反向应用会错误撤销 snapshot 之前的累计改动。
+    execFileSync("git", ["reset", "--hard", "HEAD"], {
+      cwd: root, timeout: 30_000, maxBuffer: 4 * 1024 * 1024, encoding: "utf-8",
     })
+    execFileSync("git", ["clean", "-fd"], {
+      cwd: root, timeout: 30_000, maxBuffer: 4 * 1024 * 1024, encoding: "utf-8",
+    })
+
+    if (patch.trim()) {
+      try {
+        const stat = execSync("git apply --stat", {
+          cwd: root, timeout: 30_000, maxBuffer: 512 * 1024, encoding: "utf-8", input: patch,
+        })
+        restoredFiles = stat.trim().split("\n").filter(Boolean).length
+      } catch {
+        // stat 失败没关系，直接 apply
+      }
+      execSync("git apply", {
+        cwd: root, timeout: 60_000, maxBuffer: 4 * 1024 * 1024, encoding: "utf-8", input: patch,
+      })
+    }
 
     if (!restoredFiles) restoredFiles = (patch!.match(/^diff --git/gm) ?? []).length
 
-    // 清理新文件（patch 中的 "new file" 用 git apply -R 无法自动删除）
-    const newFilePattern = /^diff --git a\/(.+?) b\/\1\nnew file mode/mg
-    let m
-    while ((m = newFilePattern.exec(patch!)) !== null) {
-      const abs = join(root, m[1])
-      if (existsSync(abs)) {
-        try { unlinkSync(abs) } catch {}
-      }
-    }
-
     return { ok: true, snapshotId, restoredFiles, failedFiles, usedSource: source }
   } catch (err: any) {
-    // git apply -R 失败，尝试逐个文件恢复
+    // git apply 失败，尝试逐个文件恢复
     const files = new Set<string>()
     const filePattern = /^[-]{3} a\/(.+?)$/gm
     let m
@@ -459,12 +484,12 @@ export async function restoreWorkspaceSnapshot(
     let manualRestored = 0
     for (const f of files) {
       try {
-        execSync(`git checkout HEAD -- "${f}"`, { cwd: root, timeout: 10_000, encoding: "utf-8" })
+        execFileSync("git", ["checkout", "HEAD", "--", f], { cwd: root, timeout: 10_000, encoding: "utf-8" })
         manualRestored++
       } catch {
-        const abs = join(root, f)
-        if (existsSync(abs)) {
-          try { unlinkSync(abs); manualRestored++ } catch { failedFiles++ }
+        const checked = validatePath(root, f)
+        if (checked.ok && existsSync(checked.absolute!)) {
+          try { unlinkSync(checked.absolute!); manualRestored++ } catch { failedFiles++ }
         }
       }
     }
@@ -555,9 +580,7 @@ export async function revertLastWorkspaceChange(
   if (!list.snapshots.length) return { ok: false, restoredFiles: 0, failedFiles: 0, usedSource: "none", error: "没有可用的 snapshot" }
 
   const last = list.snapshots[0]
-  if (last.changedFiles.length === 0) {
-    return { ok: false, restoredFiles: 0, failedFiles: 0, usedSource: "none", error: "最近一次 snapshot 没有文件变更" }
-  }
+  if (!last.restorable) return { ok: false, restoredFiles: 0, failedFiles: 0, usedSource: "none", error: "最近一次 snapshot 不可恢复" }
 
   return restoreWorkspaceSnapshot(taskId, userId, last.snapshotId, supabase)
 }

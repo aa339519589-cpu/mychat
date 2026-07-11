@@ -1,4 +1,6 @@
-export type ProviderAdapterId = 'deepseek-openai' | 'mimo-openai' | 'openai-compatible'
+import type { EndpointAuthType } from '@/lib/model-endpoints'
+
+export type ProviderAdapterId = 'deepseek-openai' | 'mimo-openai' | 'generic-openai'
 
 type RequestOptions = {
   model: string
@@ -6,6 +8,7 @@ type RequestOptions = {
   tools: any[]
   thinking: boolean
   apiKey: string
+  authType?: EndpointAuthType
 }
 
 export function buildProviderRequest(adapter: ProviderAdapterId, opts: RequestOptions) {
@@ -13,26 +16,26 @@ export function buildProviderRequest(adapter: ProviderAdapterId, opts: RequestOp
     model: opts.model,
     messages: opts.messages,
     stream: true,
-    stream_options: { include_usage: true },
   }
 
-  if (adapter !== 'openai-compatible') {
+  if (adapter !== 'generic-openai') {
     body.thinking = { type: opts.thinking ? 'enabled' : 'disabled' }
+    body.stream_options = { include_usage: true }
+    if (adapter === 'mimo-openai') body.max_completion_tokens = 65_536
+    else body.max_tokens = 65_536
   }
 
-  if (adapter === 'mimo-openai') body.max_completion_tokens = 65_536
-  else body.max_tokens = 65_536
-
-  if (opts.tools.length && adapter !== 'openai-compatible') {
+  if (opts.tools.length) {
     body.tools = opts.tools
     body.tool_choice = 'auto'
   }
 
-  return {
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${opts.apiKey}`,
-    },
-    body,
-  }
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  const apiKey = opts.apiKey.trim()
+  const authType = opts.authType ?? 'bearer'
+  if (apiKey && authType === 'bearer') headers.Authorization = `Bearer ${apiKey}`
+  else if (apiKey && authType === 'x-api-key') headers['x-api-key'] = apiKey
+  else if (apiKey && authType === 'api-key') headers['api-key'] = apiKey
+
+  return { headers, body }
 }

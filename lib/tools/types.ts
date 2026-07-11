@@ -10,6 +10,7 @@ export type ToolContext = {
   projectId?: string | null  // 有值 = 当前在项目内，记忆写 project_memories 表
   searchMode?: SearchMode
   latestBeijingDate?: string | null
+  signal?: AbortSignal
 }
 
 // 工具执行结果：result 回灌给模型；event 可选，推给前端展示（如 memory / search）

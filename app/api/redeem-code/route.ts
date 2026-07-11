@@ -2,18 +2,20 @@ import { NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { log } from '@/lib/logger'
 import { validate } from '@/lib/validation'
+import { readJson, requestErrorResponse } from '@/lib/api/request'
+import { checkRateLimit } from '@/lib/rate-limit'
 
 export async function POST(req: NextRequest) {
   let body: any = {}
   try {
-    body = await req.json()
+    body = await readJson(req, { maxBytes: 16 * 1024 })
   } catch (e) {
     log.error('redeemCode', 'Invalid JSON in request body', e)
-    return new Response(JSON.stringify({ error: '请求体格式错误' }), { status: 400, headers: { 'Content-Type': 'application/json' } })
+    return requestErrorResponse(e)
   }
 
   try {
-    const code = validate.string(body.code, 'code', { minLength: 1 })
+    const code = validate.string(body.code, 'code', { minLength: 8, maxLength: 128 })
     log.info('redeemCode', 'Attempting to redeem code', { code: code.substring(0, 6) + '...' })
 
     const supabase = await createClient()
@@ -22,55 +24,25 @@ export async function POST(req: NextRequest) {
       log.warn('redeemCode', 'Not logged in')
       return new Response(JSON.stringify({ error: '未登录' }), { status: 401, headers: { 'Content-Type': 'application/json' } })
     }
-
-    // 查找邀请码
-    const { data: codeRecord, error: selectErr } = await supabase
-      .from('invitation_codes')
-      .select('id, tokens, used_by')
-      .eq('code', code.trim())
-      .maybeSingle()
-
-    if (selectErr || !codeRecord) {
-      log.warn('redeemCode', 'Code not found or invalid', { error: selectErr })
-      return new Response(JSON.stringify({ error: '邀请码无效' }), { status: 404, headers: { 'Content-Type': 'application/json' } })
+    const rate = checkRateLimit(`redeem:${user.user.id}`, { max: 10, windowMs: 60 * 60_000 })
+    if (!rate.allowed) {
+      return Response.json({ error: '兑换尝试过于频繁，请稍后再试' }, {
+        status: 429,
+        headers: { 'Retry-After': String(rate.retryAfterSeconds) },
+      })
     }
 
-    if (codeRecord.used_by) {
-      log.warn('redeemCode', 'Code already used', { codeId: codeRecord.id, usedBy: codeRecord.used_by })
-      return new Response(JSON.stringify({ error: '邀请码已被使用' }), { status: 400, headers: { 'Content-Type': 'application/json' } })
+    const { data, error } = await supabase.rpc('redeem_invitation_code', { input_code: code.trim() })
+    const result = Array.isArray(data) ? data[0] : data
+    if (error || !result) {
+      const invalid = error?.message?.includes('invalid_or_used')
+      log.warn('redeemCode', 'Atomic redemption rejected', { userId: user.user.id, invalid, code: error?.code })
+      return Response.json({ error: invalid ? '邀请码无效或已被使用' : '兑换失败' }, { status: invalid ? 400 : 500 })
     }
-
-    // 标记邀请码为已使用
-    const { error: updateCodeErr } = await supabase
-      .from('invitation_codes')
-      .update({ used_by: user.user.id, used_at: new Date().toISOString() })
-      .eq('id', codeRecord.id)
-
-    if (updateCodeErr) {
-      log.error('redeemCode', 'Failed to mark code as used', updateCodeErr)
-      return new Response(JSON.stringify({ error: '兑换失败' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
-    }
-
-    // 增加用户余额
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('balance')
-      .eq('user_id', user.user.id)
-      .maybeSingle()
-
-    const newBalance = ((profile?.balance as number) ?? 0) + codeRecord.tokens
-
-    const { error: updateBalanceErr } = await supabase
-      .from('profiles')
-      .upsert({ user_id: user.user.id, balance: newBalance }, { onConflict: 'user_id' })
-
-    if (updateBalanceErr) {
-      log.error('redeemCode', 'Failed to update balance', updateBalanceErr)
-      return new Response(JSON.stringify({ error: '余额更新失败' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
-    }
-
-    log.info('redeemCode', 'Code redeemed successfully', { userId: user.user.id, tokens: codeRecord.tokens, newBalance })
-    return new Response(JSON.stringify({ success: true, tokensAdded: codeRecord.tokens, newBalance }), { headers: { 'Content-Type': 'application/json' } })
+    const tokensAdded = Number(result.tokens_added ?? 0)
+    const newBalance = Number(result.new_balance ?? 0)
+    log.info('redeemCode', 'Code redeemed successfully', { userId: user.user.id, tokens: tokensAdded, newBalance })
+    return Response.json({ success: true, tokensAdded, newBalance })
   } catch (e) {
     log.error('redeemCode', 'Exception during code redemption', e)
     return new Response(JSON.stringify({ error: '服务错误' }), { status: 500, headers: { 'Content-Type': 'application/json' } })

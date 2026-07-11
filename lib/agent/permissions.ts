@@ -5,6 +5,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type { RiskAssessment } from "./risk"
 import { addStep, addArtifact, updateTaskStatus } from "./data"
+import type { AgentTaskStatus } from "./types"
+import { mergeTaskMeta } from "./meta"
 
 // ─── 确认请求类型 ───
 
@@ -17,7 +19,7 @@ export type ConfirmationRequest = {
   files: string[]
   createdAt: string
   status: "pending" | "confirmed" | "rejected"
-  taskStatusAfterConfirm?: string   // 确认后恢复到什么状态
+  taskStatusAfterConfirm?: AgentTaskStatus
 }
 
 // ─── 创建确认请求 ───
@@ -27,7 +29,7 @@ export async function createConfirmationRequest(
   userId: string,
   taskId: string,
   risk: RiskAssessment,
-  taskStatusAfterConfirm?: string,
+  taskStatusAfterConfirm?: AgentTaskStatus,
 ): Promise<ConfirmationRequest> {
   const request: ConfirmationRequest = {
     id: crypto.randomUUID(),
@@ -41,23 +43,7 @@ export async function createConfirmationRequest(
     taskStatusAfterConfirm,
   }
 
-  // 写 meta
-  const { data } = await supabase
-    .from("agent_tasks")
-    .select("meta")
-    .eq("id", taskId)
-    .eq("user_id", userId)
-    .single()
-
-  const existingMeta = (data?.meta ?? {}) as Record<string, unknown>
-  await supabase
-    .from("agent_tasks")
-    .update({
-      meta: { ...existingMeta, pendingConfirmation: request },
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", taskId)
-    .eq("user_id", userId)
+  await mergeTaskMeta(supabase, userId, taskId, { pendingConfirmation: request })
 
   // 更新 task status
   await updateTaskStatus(supabase, userId, taskId, "waiting_for_user")
@@ -111,6 +97,21 @@ export async function getPendingConfirmation(
   return null
 }
 
+export async function getConfirmation(
+  supabase: SupabaseClient,
+  userId: string,
+  taskId: string,
+): Promise<ConfirmationRequest | null> {
+  const { data } = await supabase
+    .from("agent_tasks")
+    .select("meta")
+    .eq("id", taskId)
+    .eq("user_id", userId)
+    .single()
+  const meta = data?.meta as Record<string, unknown> | null
+  return (meta?.pendingConfirmation as ConfirmationRequest | undefined) ?? null
+}
+
 type ResolutionResult = { ok: boolean; error?: string; request?: ConfirmationRequest }
 
 async function resolveConfirmation(
@@ -125,22 +126,8 @@ async function resolveConfirmation(
   if (!pending) return { ok: false, error: "没有待确认的操作" }
   if (pending.id !== confirmationId) return { ok: false, error: "确认 ID 不匹配" }
 
-  const { data } = await supabase
-    .from("agent_tasks")
-    .select("meta")
-    .eq("id", taskId)
-    .eq("user_id", userId)
-    .single()
-
-  const meta = (data?.meta ?? {}) as Record<string, unknown>
   const request: ConfirmationRequest = { ...pending, status }
-  meta.pendingConfirmation = request
-
-  await supabase
-    .from("agent_tasks")
-    .update({ meta, updated_at: new Date().toISOString() })
-    .eq("id", taskId)
-    .eq("user_id", userId)
+  await mergeTaskMeta(supabase, userId, taskId, { pendingConfirmation: request })
 
   const confirmed = status === "confirmed"
   await Promise.all([
@@ -181,20 +168,5 @@ export async function clearConfirmation(
   userId: string,
   taskId: string,
 ): Promise<void> {
-  const { data } = await supabase
-    .from("agent_tasks")
-    .select("meta")
-    .eq("id", taskId)
-    .eq("user_id", userId)
-    .single()
-
-  const meta = (data?.meta ?? {}) as Record<string, unknown>
-  if (meta.pendingConfirmation) {
-    delete meta.pendingConfirmation
-    await supabase
-      .from("agent_tasks")
-      .update({ meta, updated_at: new Date().toISOString() })
-      .eq("id", taskId)
-      .eq("user_id", userId)
-  }
+  await mergeTaskMeta(supabase, userId, taskId, {}, ["pendingConfirmation"])
 }

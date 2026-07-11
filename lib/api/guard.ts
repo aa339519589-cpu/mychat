@@ -4,9 +4,10 @@ import { createClient } from '@/lib/supabase/server'
 import { checkRateLimit } from '@/lib/rate-limit'
 import { checkQuotaExceeded } from '@/lib/quota'
 import { log } from '@/lib/logger'
+import { clientAddress } from '@/lib/api/request'
 
 export type SupabaseServer = Awaited<ReturnType<typeof createClient>>
-export type AuthCtx = { supabase: SupabaseServer | null; userId: string | null }
+export type AuthCtx = { supabase: SupabaseServer | null; userId: string | null; isAnonymous: boolean }
 
 function json(obj: unknown, status: number): Response {
   return new Response(JSON.stringify(obj), { status, headers: { 'Content-Type': 'application/json' } })
@@ -17,9 +18,13 @@ export async function resolveAuth(): Promise<AuthCtx> {
   try {
     const supabase = await createClient()
     const { data } = await supabase.auth.getUser()
-    return { supabase, userId: data.user?.id ?? null }
+    return {
+      supabase,
+      userId: data.user?.id ?? null,
+      isAnonymous: data.user?.is_anonymous === true,
+    }
   } catch {
-    return { supabase: null, userId: null }
+    return { supabase: null, userId: null, isAnonymous: true }
   }
 }
 
@@ -40,20 +45,29 @@ export type LimitGate =
   | { response?: undefined; usingBalance: boolean }
 
 // 限流 + 额度闸门：通过返回 { usingBalance }，未通过返回 { response }（429，调用方直接 return）。
-export async function enforceLimits(auth: AuthCtx): Promise<LimitGate> {
-  const { supabase, userId } = auth
+export async function enforceLimits(
+  auth: AuthCtx,
+  request?: Request,
+  options: { quota?: boolean } = {},
+): Promise<LimitGate> {
+  const { supabase, userId, isAnonymous } = auth
 
-  if (userId) {
-    const { allowed, remaining } = checkRateLimit(userId)
-    if (!allowed) {
-      log.warn('rateLimit', 'Rate limit exceeded', { userId })
-      return { response: json({ error: '请求过于频繁，请稍后再试' }, 429) }
-    }
-    log.info('rateLimit', 'Rate limit check passed', { userId, remaining })
+  const address = request ? clientAddress(request) : 'unknown'
+  const rateKey = userId && !isAnonymous ? `user:${userId}` : `anonymous:${address}`
+  const { allowed, remaining, retryAfterSeconds } = checkRateLimit(rateKey, {
+    max: userId && !isAnonymous ? 30 : 10,
+    windowMs: 60_000,
+  })
+  if (!allowed) {
+    log.warn('rateLimit', 'Rate limit exceeded', { userId, isAnonymous, address })
+    const response = json({ error: '请求过于频繁，请稍后再试' }, 429)
+    response.headers.set('Retry-After', String(retryAfterSeconds))
+    return { response }
   }
+  log.info('rateLimit', 'Rate limit check passed', { userId, isAnonymous, remaining })
 
   let usingBalance = false
-  if (userId && supabase) {
+  if (options.quota !== false && userId && supabase) {
     const q = await checkQuotaExceeded(supabase, userId)
     if (q.exceeded) {
       const window = q.which === '5h' ? '5 小时' : '7 天'

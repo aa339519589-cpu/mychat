@@ -187,7 +187,7 @@ export function ArtifactFrame({
     <iframe
       ref={iframeRef}
       srcDoc={srcDoc}
-      sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+      sandbox="allow-scripts"
       title="渲染"
       scrolling={inline ? "no" : "auto"}
       className="w-full border-0"

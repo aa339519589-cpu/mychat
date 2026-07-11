@@ -15,6 +15,8 @@ import {
 } from "lucide-react"
 import { conversationExcerpt, fetchQuota, type QuotaSnapshot } from "@/lib/data"
 import { ConversationMenu, ConversationRename } from "@/components/conversation-menu"
+import { ModelEndpointSettings } from "@/components/model-endpoint-settings"
+import type { ModelEndpointSummary } from "@/lib/model-endpoints"
 
 // 二级页面：除根视图（侧栏主体）外的可滑入全屏页面。设置＝真正的二级滑入页（带返回头）。
 type Screen = "settings" | "projects" | "artifacts" | "project-detail"
@@ -62,6 +64,12 @@ export type AppSidebarProps = {
   userEmail: string
   onLogout: () => void
   onOpenCode: () => void
+  modelEndpoints: ModelEndpointSummary[]
+  activeEndpointId: string | null
+  onEndpointSelect: (id: string) => void
+  onEndpointCreated: (endpoint: ModelEndpointSummary) => void
+  onEndpointUpdated: (endpoint: ModelEndpointSummary) => void
+  onEndpointDeleted: (id: string) => void
 }
 
 // mobile：一级侧栏只占半屏（露出后面的对话），二级页面铺满整屏
@@ -191,6 +199,12 @@ export function AppSidebar({
           onMemoryAdd={props.onMemoryAdd}
           onMemoryEdit={props.onMemoryEdit}
           onMemoryDelete={props.onMemoryDelete}
+          modelEndpoints={props.modelEndpoints}
+          activeEndpointId={props.activeEndpointId}
+          onEndpointSelect={props.onEndpointSelect}
+          onEndpointCreated={props.onEndpointCreated}
+          onEndpointUpdated={props.onEndpointUpdated}
+          onEndpointDeleted={props.onEndpointDeleted}
         />
       </ScreenPanel>
 
@@ -1228,15 +1242,24 @@ function QuotaScreen() {
 
 // ── 设置（二级全屏页内容）：两个板块 —— 「基础与记忆」｜「使用额度」──
 // 装在 ScreenPanel 里（顶部统一返回头由外壳提供），标签切换两块内容，不再逐层滑入碎片子页。
-function SettingsScreen({ memories, memoryEnabled, onMemoryEnabledChange, onMemoryAdd, onMemoryEdit, onMemoryDelete }: {
+function SettingsScreen({
+  memories, memoryEnabled, onMemoryEnabledChange, onMemoryAdd, onMemoryEdit, onMemoryDelete,
+  modelEndpoints, activeEndpointId, onEndpointSelect, onEndpointCreated, onEndpointUpdated, onEndpointDeleted,
+}: {
   memories: Memory[]
   memoryEnabled: boolean
   onMemoryEnabledChange: (v: boolean) => void
   onMemoryAdd: (content: string) => void
   onMemoryEdit: (id: string, content: string) => void
   onMemoryDelete: (id: string) => void
+  modelEndpoints: ModelEndpointSummary[]
+  activeEndpointId: string | null
+  onEndpointSelect: (id: string) => void
+  onEndpointCreated: (endpoint: ModelEndpointSummary) => void
+  onEndpointUpdated: (endpoint: ModelEndpointSummary) => void
+  onEndpointDeleted: (id: string) => void
 }) {
-  const [tab, setTab] = useState<'general' | 'quota'>('general')
+  const [tab, setTab] = useState<'general' | 'models' | 'quota'>('general')
 
   const pill = (active: boolean) =>
     cn("rounded-full px-3.5 py-1.5 text-[12px] transition-colors", active ? "bg-sidebar-accent text-foreground" : "text-muted-foreground hover:text-foreground")
@@ -1245,6 +1268,7 @@ function SettingsScreen({ memories, memoryEnabled, onMemoryEnabledChange, onMemo
     <div>
       <div className="mb-1 flex gap-1.5 px-4">
         <button onClick={() => setTab('general')} className={pill(tab === 'general')}>记忆</button>
+        <button onClick={() => setTab('models')} className={pill(tab === 'models')}>模型</button>
         <button onClick={() => setTab('quota')} className={pill(tab === 'quota')}>使用额度</button>
       </div>
 
@@ -1257,6 +1281,17 @@ function SettingsScreen({ memories, memoryEnabled, onMemoryEnabledChange, onMemo
             onAdd={onMemoryAdd}
             onEdit={onMemoryEdit}
             onDelete={onMemoryDelete}
+          />
+        </div>
+      ) : tab === 'models' ? (
+        <div className="pt-2">
+          <ModelEndpointSettings
+            endpoints={modelEndpoints}
+            activeEndpointId={activeEndpointId}
+            onSelect={onEndpointSelect}
+            onCreated={onEndpointCreated}
+            onUpdated={onEndpointUpdated}
+            onDeleted={onEndpointDeleted}
           />
         </div>
       ) : (

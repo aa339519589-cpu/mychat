@@ -3,15 +3,21 @@
 
 // ───────────── 任务 ─────────────
 
-type AgentTaskMode = "auto" | "confirm" | "plan"
+export type AgentTaskMode = "auto" | "confirm" | "plan" | "pr"
 
-type AgentTaskStatus =
+export type AgentTaskStatus =
   | "queued"
   | "planning"
+  | "indexing"
+  | "reading"
   | "editing"
   | "running"
+  | "testing"
+  | "fixing"
+  | "reviewing"
   | "waiting_for_user"
   | "creating_pr"
+  | "deploying"
   | "completed"
   | "failed"
   | "cancelled"
@@ -38,7 +44,7 @@ export type AgentTask = {
 
 // ───────────── 步骤 ─────────────
 
-type StepKind = "info" | "thinking" | "plan" | "tool_call" | "confirm" | "error" | "done"
+export type StepKind = "info" | "thinking" | "plan" | "tool_call" | "confirm" | "error" | "done"
 
 export type AgentTaskStep = {
   id: string
@@ -53,7 +59,7 @@ export type AgentTaskStep = {
 
 // ───────────── 工具调用 ─────────────
 
-type ToolCallStatus = "pending" | "running" | "success" | "error" | "cancelled"
+export type ToolCallStatus = "pending" | "running" | "success" | "error" | "cancelled"
 
 export type AgentToolCall = {
   id: string
@@ -74,7 +80,7 @@ export type AgentToolCall = {
 
 // ───────────── Workspace ─────────────
 
-type WorkspaceStatus = "created" | "cloning" | "ready" | "dirty" | "failed" | "cleaned"
+export type WorkspaceStatus = "created" | "cloning" | "ready" | "dirty" | "failed" | "cleaned"
 
 export type AgentWorkspace = {
   id: string

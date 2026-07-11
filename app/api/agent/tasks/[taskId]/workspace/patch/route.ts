@@ -6,14 +6,15 @@ import { addStep, addArtifact } from "@/lib/agent/data"
 import { requireWorkspace } from "@/lib/agent/workspace-route"
 import { dryRunWorkspacePatch, applyWorkspacePatch } from "@/lib/agent/patch"
 import { getChangedFiles } from "@/lib/agent/workspace"
+import { readJson, requestErrorResponse } from "@/lib/api/request"
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
   const { taskId } = await params
   const ctx = await requireWorkspace(taskId)
   if ("error" in ctx) return ctx.error
 
-  let body: any = {}
-  try { body = await req.json() } catch { return json({ error: "请求体格式错误" }, 400) }
+  let body: any
+  try { body = await readJson(req, { maxBytes: 4 * 1024 * 1024 + 4096 }) } catch (error) { return requestErrorResponse(error) }
 
   const { patch, dryRun = false } = body
   if (!patch || typeof patch !== "string") return json({ error: "缺少 patch 内容" }, 400)

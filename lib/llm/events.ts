@@ -1,3 +1,5 @@
+import type { GeneratedMedia } from "@/lib/generated-media"
+
 // SSE 事件契约：服务端 emit 与前端解析共用的唯一真源。
 // 服务端每次只发一个单键事件对象；前端按键名分支处理。新增事件类型只改这里。
 
@@ -34,6 +36,7 @@ export type ChatEvent =
   | { memory: MemoryEvent }
   | { search: SearchEvent }
   | { imageSummary: ImageSummaryEvent }
+  | { media: GeneratedMedia }
   | { step: StepEvent }
   | { plan: CodePlan }
 

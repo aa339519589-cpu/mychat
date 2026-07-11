@@ -5,6 +5,7 @@ import { NextRequest } from "next/server"
 import { resolveAuth } from "@/lib/api/guard"
 import { json } from "@/lib/api/response"
 import { confirmAgentOperation, rejectAgentOperation, getPendingConfirmation } from "@/lib/agent/permissions"
+import { readJson, requestErrorResponse } from "@/lib/api/request"
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
   const auth = await resolveAuth()
@@ -13,9 +14,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tas
   if (!supabase || !userId) return json({ error: "未登录" }, 401)
 
   const { taskId } = await params
-  const body = await req.json().catch(() => ({}))
+  let body: any
+  try { body = await readJson(req, { maxBytes: 16 * 1024 }) } catch (error) { return requestErrorResponse(error) }
   const action = body?.action === "reject" ? "reject" : "confirm"
-  const reason = typeof body?.reason === "string" ? body.reason : undefined
+  const reason = typeof body?.reason === "string" ? body.reason.slice(0, 2000) : undefined
 
   if (action === "reject") {
     const result = await rejectAgentOperation(supabase, userId, taskId, body?.confirmationId ?? "", reason)

@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/client"
 import type { Conversation, Message } from "@/lib/chat-data"
 import { parseArtifact, artifactTitle } from "@/lib/artifact"
+import { hasInlineGeneratedMedia, normalizeGeneratedMediaList } from "@/lib/generated-media"
 import { insertArtifactFromMessage } from "./artifacts"
 import { fmtDate } from "./shared"
 
@@ -28,6 +29,7 @@ function normalizeCachedMessage(value: any): Message | null {
   if (!value || typeof value.id !== "string") return null
   if (value.role !== "user" && value.role !== "assistant") return null
   if (typeof value.content !== "string") return null
+  const media = normalizeGeneratedMediaList(value.media)
   return {
     id: value.id,
     role: value.role,
@@ -38,6 +40,7 @@ function normalizeCachedMessage(value: any): Message | null {
     thinking: typeof value.thinking === "string" && value.thinking ? value.thinking : undefined,
     images: Array.isArray(value.images) ? value.images.filter((x: unknown): x is string => typeof x === "string") : undefined,
     imageSummary: typeof value.imageSummary === "string" ? value.imageSummary : undefined,
+    media: media.length ? media : undefined,
     memoryNotes: Array.isArray(value.memoryNotes) ? value.memoryNotes.filter((x: unknown): x is string => typeof x === "string") : undefined,
     files: Array.isArray(value.files) ? value.files.filter((x: unknown): x is string => typeof x === "string") : undefined,
     searchNotes: Array.isArray(value.searchNotes) ? value.searchNotes : undefined,
@@ -66,8 +69,12 @@ function readLocalCachedMessages(conversationId: string): Message[] {
     const raw = window.localStorage.getItem(cacheKey(conversationId))
     if (!raw) return []
     const parsed = JSON.parse(raw)
-    const messages = Array.isArray(parsed) ? parsed : parsed?.messages
-    return normalizeCachedMessages(messages)
+    const messages = normalizeCachedMessages(Array.isArray(parsed) ? parsed : parsed?.messages)
+    if (messages.some(message => hasInlineGeneratedMedia(message.media))) {
+      window.localStorage.removeItem(cacheKey(conversationId))
+      return []
+    }
+    return messages
   } catch {
     return []
   }
@@ -75,6 +82,10 @@ function readLocalCachedMessages(conversationId: string): Message[] {
 
 function writeLocalCachedMessages(conversationId: string, messages: Message[]) {
   if (typeof window === "undefined") return
+  if (messages.some(message => hasInlineGeneratedMedia(message.media))) {
+    try { window.localStorage.removeItem(cacheKey(conversationId)) } catch {}
+    return
+  }
   const write = (count: number, limit: number) => {
     const payload = {
       version: 2,
@@ -239,6 +250,7 @@ function normalizeMessageRow(r: any): Message {
   const imageSummary = !Array.isArray(stored) && typeof (stored as any)?.image_summary === "string"
     ? (stored as any).image_summary as string
     : undefined
+  const media = !Array.isArray(stored) ? normalizeGeneratedMediaList((stored as any)?.generated_media) : []
   return {
     id: r.id as string,
     role: r.role as "user" | "assistant",
@@ -246,6 +258,7 @@ function normalizeMessageRow(r: any): Message {
     thinking: (r.thinking as string) || undefined,
     images: images?.length ? images : undefined,
     imageSummary,
+    media: media.length ? media : undefined,
     time: "",
     ts: (r.created_at as string) || undefined,
   }
@@ -382,36 +395,60 @@ export async function fetchMessages(conversationId: string): Promise<Message[]> 
 }
 
 export async function insertMessage(userId: string, conversationId: string, msg: Message): Promise<void> {
+  const generatedMedia = normalizeGeneratedMediaList(msg.media)
+  const safeMessage: Message = {
+    ...msg,
+    media: generatedMedia.length ? generatedMedia : undefined,
+  }
   const cached = await readCachedMessages(conversationId)
-  const next = [...cached.filter(m => m.id !== msg.id), msg]
-  writeCachedMessages(conversationId, next)
+  const next = [...cached.filter(m => m.id !== msg.id), safeMessage]
 
   const supabase = createClient()
+  const mediaPayload = msg.images?.length || msg.imageSummary || generatedMedia.length
+    ? {
+      refs: msg.images ?? [],
+      image_summary: msg.imageSummary ?? null,
+      generated_media: generatedMedia,
+    }
+    : null
   const { error } = await supabase.from("messages").insert({
     id: msg.id,
     conversation_id: conversationId,
     user_id: userId,
     role: msg.role,
     content: msg.content,
-    images: msg.images?.length ? { refs: msg.images, image_summary: msg.imageSummary ?? null } : null,
+    images: mediaPayload,
     thinking: msg.thinking ?? null,
   })
   if (error) {
     console.error("insertMessage", error)
-    return
+    throw new Error("消息保存失败，请检查网络后重试。")
   }
-  saveMessageArtifact(userId, conversationId, msg).catch(e => console.error("saveMessageArtifact", e))
+  writeCachedMessages(conversationId, next)
+  saveMessageArtifact(userId, conversationId, safeMessage).catch(e => console.error("saveMessageArtifact", e))
 }
 
 export async function updateMessageContent(conversationId: string, messageId: string, content: string): Promise<void> {
-  updateCachedMessageContent(conversationId, messageId, content).catch(() => {})
   const supabase = createClient()
   const { error } = await supabase.from("messages").update({ content }).eq("id", messageId)
-  if (error) console.error("updateMessageContent", error)
+  if (error) {
+    console.error("updateMessageContent", error)
+    throw new Error("消息修改失败，请检查网络后重试。")
+  }
+  await updateCachedMessageContent(conversationId, messageId, content)
 }
 
 export async function deleteMessageRow(id: string): Promise<void> {
+  await deleteMessageRows([id])
+}
+
+export async function deleteMessageRows(ids: string[]): Promise<void> {
+  const uniqueIds = [...new Set(ids.filter(Boolean))]
+  if (uniqueIds.length === 0) return
   const supabase = createClient()
-  const { error } = await supabase.from("messages").delete().eq("id", id)
-  if (error) console.error("deleteMessageRow", error)
+  const { error } = await supabase.from("messages").delete().in("id", uniqueIds)
+  if (error) {
+    console.error("deleteMessageRows", error)
+    throw new Error("旧回复删除失败，未开始重新生成。")
+  }
 }

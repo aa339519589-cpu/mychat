@@ -27,6 +27,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ task
     .from("agent_task_steps")
     .select("id, kind, label, seq, created_at")
     .eq("task_id", taskId)
+    .eq("user_id", auth.userId)
     .order("seq", { ascending: false })
     .limit(20)
 
@@ -39,6 +40,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ task
     .from("agent_tool_calls")
     .select("id, tool_name, status, error, started_at, finished_at, duration_ms, seq")
     .eq("task_id", taskId)
+    .eq("user_id", auth.userId)
     .order("seq", { ascending: false })
     .limit(10)
 

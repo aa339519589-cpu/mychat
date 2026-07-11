@@ -1,3 +1,5 @@
+import type { GeneratedMedia } from "@/lib/generated-media"
+
 export type Tier = "绝句" | "正构" | "鸿篇" | "观照"
 
 export type TierConfig = { id: Tier; label: string; desc: string; model: string; thinking: boolean }
@@ -24,9 +26,11 @@ export type Message = {
   time: string
   ts?: string   // ISO 8601 发送时间（系统元数据，传给模型用于时间感知；缺失视为未知时间）
   isError?: boolean
+  outputWarning?: string
   thinking?: string
   images?: string[]
   imageSummary?: string
+  media?: GeneratedMedia[]
   memoryNotes?: string[]
   files?: string[]
   searchNotes?: { query: string; results: { title: string; url: string }[] }[]

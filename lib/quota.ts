@@ -59,6 +59,19 @@ export async function addQuotaUsage(supabase: any, userId: string, rawTokens: nu
   if (!supabase || !userId || rawTokens <= 0) return
   const weighted = Math.round(rawTokens * tokenMultiplier(model, isThinking))
   log.info('quota', 'Adding quota usage', { userId, rawTokens, weighted, model, isThinking, usingBalance })
+  try {
+    const { error } = await supabase.rpc('record_quota_usage', {
+      weighted_tokens: weighted,
+      use_balance: usingBalance,
+    })
+    if (!error) {
+      log.info('quota', 'Quota usage recorded atomically', { userId, weighted })
+      return
+    }
+    log.warn('quota', 'Atomic quota RPC unavailable; using compatibility fallback', { code: error.code })
+  } catch (error) {
+    log.warn('quota', 'Atomic quota RPC failed; using compatibility fallback', error)
+  }
   for (let retry = 0; retry < 3; retry++) {
     try {
       const { data, error: selErr } = await supabase

@@ -1,7 +1,7 @@
 // Git workspace 操作：clone、branch 创建、checkout。
 // 所有 Git 操作通过 child_process.exec 执行，超时保护，token 不进命令参数。
 
-import { exec } from "child_process"
+import { execFile } from "child_process"
 import { promisify } from "util"
 import { mkdir, rm } from "fs/promises"
 import { existsSync } from "fs"
@@ -9,7 +9,7 @@ import { join } from "path"
 import { log } from "@/lib/logger"
 import { WORKSPACE_ROOT as ROOT } from "./workspace"
 
-const execAsync = promisify(exec)
+const execFileAsync = promisify(execFile)
 
 const CLONE_TIMEOUT_MS = 120_000  // clone 可能较慢（大仓库），给 2 分钟
 const GIT_TIMEOUT_MS = 30_000    // 其他 git 操作 30 秒
@@ -41,21 +41,20 @@ function agentBranch(taskGoal: string, fallback?: string): string {
 
 // clone 时 token 通过环境变量注入，绝不出现在命令字符串中。
 // 用 GIT_ASKPASS 空字符串禁用密码弹窗。
-function gitEnv(): NodeJS.ProcessEnv {
-  return {
+function gitEnv(token?: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     GIT_ASKPASS: "echo",
     GIT_TERMINAL_PROMPT: "0",
     GCM_INTERACTIVE: "never",
   }
-}
-
-// 用 token 构造带认证的 URL
-function authUrl(repo: string, token: string): string {
-  // 只取 token 前 8 位用于验证，完整 token 不暴露
-  const safe = token.slice(0, 8)
-  log.info("gitWorkspace", `Cloning ${repo}`, { tokenPrefix: `${safe}...` })
-  return `https://x-access-token:${token}@github.com/${repo}.git`
+  if (token) {
+    const credentials = Buffer.from(`x-access-token:${token}`).toString("base64")
+    env.GIT_CONFIG_COUNT = "1"
+    env.GIT_CONFIG_KEY_0 = "http.extraHeader"
+    env.GIT_CONFIG_VALUE_0 = `Authorization: Basic ${credentials}`
+  }
+  return env
 }
 
 // ── 克隆仓库 ──
@@ -73,6 +72,9 @@ export async function cloneWorkspace(
   userId: string, taskId: string,
   repo: string, token: string, goal: string, baseBranch = "main",
 ): Promise<CloneResult> {
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) {
+    return { error: "GitHub 仓库格式无效" }
+  }
   const base = join(ROOT, userId, taskId)
   const branch = agentBranch(goal)
 
@@ -90,10 +92,10 @@ export async function cloneWorkspace(
     log.info("gitWorkspace", "Workspace 已存在，跳过 clone", { base })
     // 尝试创建 agent branch
     try {
-      await execAsync(`git checkout -b "${branch}"`, { cwd: base, timeout: GIT_TIMEOUT_MS, env: gitEnv() })
+      await execFileAsync("git", ["checkout", "-b", branch], { cwd: base, timeout: GIT_TIMEOUT_MS, env: gitEnv() })
     } catch {
       // branch 可能已存在，尝试切换
-      try { await execAsync(`git checkout "${branch}"`, { cwd: base, timeout: GIT_TIMEOUT_MS, env: gitEnv() }) }
+      try { await execFileAsync("git", ["checkout", branch], { cwd: base, timeout: GIT_TIMEOUT_MS, env: gitEnv() }) }
       catch { /* 保持当前分支 */ }
     }
     return { path: base, repo, branch: baseBranch, agentBranch: branch }
@@ -104,14 +106,12 @@ export async function cloneWorkspace(
   try { await mkdir(base, { recursive: true }) } catch {}
 
   // Clone
-  const url = authUrl(repo, token)
+  const url = `https://github.com/${repo}.git`
   try {
-    const cmd = `git clone --single-branch --branch "${baseBranch}" "${url}" "${base}" 2>&1`
-    // 不记录完整命令（含 token URL），只记录 repo 名
     log.info("gitWorkspace", `Executing git clone for ${repo}`, { branch: baseBranch })
-    const { stderr } = await execAsync(cmd, {
+    const { stderr } = await execFileAsync("git", ["clone", "--single-branch", "--branch", baseBranch, url, base], {
       timeout: CLONE_TIMEOUT_MS,
-      env: gitEnv(),
+      env: gitEnv(token),
     })
     // git clone 的输出通常在 stderr
     const out = stderr.trim()
@@ -128,7 +128,7 @@ export async function cloneWorkspace(
 
   // 创建 agent branch
   try {
-    await execAsync(`git checkout -b "${branch}"`, {
+    await execFileAsync("git", ["checkout", "-b", branch], {
       cwd: base, timeout: GIT_TIMEOUT_MS, env: gitEnv(),
     })
     log.info("gitWorkspace", `Created agent branch ${branch}`, { repo })
@@ -136,7 +136,7 @@ export async function cloneWorkspace(
     const msg = e?.stderr?.trim() || e?.message || String(e)
     log.warn("gitWorkspace", `Agent branch creation failed: ${msg.slice(0, 200)}`)
     // branch 已存在则切换
-    try { await execAsync(`git checkout "${branch}"`, { cwd: base, timeout: GIT_TIMEOUT_MS, env: gitEnv() }) }
+    try { await execFileAsync("git", ["checkout", branch], { cwd: base, timeout: GIT_TIMEOUT_MS, env: gitEnv() }) }
     catch { /* 保持 default branch */ }
   }
 
@@ -148,9 +148,9 @@ export async function cloneWorkspace(
 export async function getGitInfo(path: string): Promise<{ branch: string; commit: string; remote: string } | { error: string }> {
   try {
     const [br, co, rem] = await Promise.all([
-      execAsync("git branch --show-current", { cwd: path, timeout: GIT_TIMEOUT_MS, env: gitEnv() }),
-      execAsync("git rev-parse HEAD", { cwd: path, timeout: GIT_TIMEOUT_MS, env: gitEnv() }),
-      execAsync("git remote get-url origin", { cwd: path, timeout: GIT_TIMEOUT_MS, env: gitEnv() }),
+      execFileAsync("git", ["branch", "--show-current"], { cwd: path, timeout: GIT_TIMEOUT_MS, env: gitEnv() }),
+      execFileAsync("git", ["rev-parse", "HEAD"], { cwd: path, timeout: GIT_TIMEOUT_MS, env: gitEnv() }),
+      execFileAsync("git", ["remote", "get-url", "origin"], { cwd: path, timeout: GIT_TIMEOUT_MS, env: gitEnv() }),
     ])
     return {
       branch: br.stdout.trim(),

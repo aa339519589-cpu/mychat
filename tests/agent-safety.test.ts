@@ -3,6 +3,8 @@ import assert from "node:assert/strict"
 import { classifyFileRisk, classifyPublishRisk, isProtectedBranch } from "../lib/agent/risk"
 import { checkCommand } from "../lib/agent/command-security"
 import { isolatedShellConfigured } from "../lib/agent/isolated-shell"
+import { validatePath } from "../lib/agent/path-security"
+import { mkdirSync, rmSync, symlinkSync } from "node:fs"
 
 test("protected branches can never be published", () => {
   for (const branch of ["main", "master", "production", "prod", "release"]) {
@@ -32,4 +34,14 @@ test("isolated shell activates only when its own key is configured", { concurren
   assert.equal(isolatedShellConfigured(), false)
   process.env.E2B_API_KEY = "test-key"
   assert.equal(isolatedShellConfigured(), true)
+})
+
+test("workspace paths reject symlinks that escape the workspace", t => {
+  const root = `/tmp/mychat-path-test-${Date.now()}`
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  mkdirSync(root, { recursive: true })
+  symlinkSync("/tmp", `${root}/escape`)
+  const result = validatePath(root, "escape/outside.txt")
+  assert.equal(result.ok, false)
+  assert.match(result.error ?? "", /符号链接/)
 })

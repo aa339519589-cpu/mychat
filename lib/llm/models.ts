@@ -6,10 +6,10 @@ export type ModelCapability = {
   supportsImageInput: boolean
   maxContext: number
   provider: {
-    id: 'deepseek' | 'xiaomi-mimo'
+    id: 'deepseek' | 'xiaomi-mimo' | 'custom'
     adapter: ProviderAdapterId
     baseUrl: string
-    apiKeyEnv: 'DEEPSEEK_API_KEY' | 'MIMO_API_KEY'
+    apiKeyEnv?: 'DEEPSEEK_API_KEY' | 'MIMO_API_KEY'
   }
 }
 
@@ -56,6 +56,16 @@ export function getModelCapability(model: string): ModelCapability {
   return MODEL_REGISTRY[model as keyof typeof MODEL_REGISTRY] ?? MODEL_REGISTRY['deepseek-v4-flash']
 }
 
-export function modelSupportsImageInput(model: string): boolean {
-  return getModelCapability(model).supportsImageInput
+export function customModelCapability(model: string, baseUrl: string): ModelCapability {
+  return {
+    id: model,
+    supportsVision: true,
+    supportsImageInput: true,
+    maxContext: 128_000,
+    provider: {
+      id: 'custom',
+      adapter: 'generic-openai',
+      baseUrl,
+    },
+  }
 }

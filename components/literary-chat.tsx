@@ -1,18 +1,19 @@
 "use client"
 
 import { useMemo, useRef, useState, useEffect } from "react"
-import { type Conversation, type Message, type Tier, TIERS, TIER_MAP } from "@/lib/chat-data"
+import { type Conversation, type Message, type Tier, TIERS } from "@/lib/chat-data"
 import { type Memory } from "@/lib/memory-data"
 import {
   fetchMemories, insertMemory, updateMemory, deleteMemoryRow,
   fetchConversations, insertConversation, updateConversationTitle, touchConversation, deleteConversationRow,
   setConversationStarred, setConversationPinned, setConversationProject,
   fetchMessages, insertMessage, updateMessageContent, lastExcerpt, conversationExcerpt,
-  deleteMessageRow,
+  cacheConversationMessages, deleteMessageRow, deleteMessageRows,
   fetchProfile, ensureProfile, setMemoryEnabled,
   fetchProjects, insertProject, updateProject, deleteProjectRow,
   fetchProjectFiles, insertProjectFile, deleteProjectFileRow, fetchProjectContext,
   fetchProjectMemories, insertProjectMemory, updateProjectMemory, deleteProjectMemoryRow,
+  fetchModelEndpoints,
 } from "@/lib/data"
 import { type AttachedFile, prepareFile } from "@/lib/file-extract"
 import type { Project, ProjectFile, ProjectContext } from "@/lib/project-data"
@@ -29,6 +30,9 @@ import { parseArtifact, artifactTitle } from "@/lib/artifact"
 import { ArtifactPanel } from "@/components/artifact-panel"
 import { ConversationMenu, ConversationRename } from "@/components/conversation-menu"
 import type { SearchMode } from "@/lib/search-mode"
+import type { ModelEndpointSummary } from "@/lib/model-endpoints"
+import { MAX_GENERATED_MEDIA_ITEMS, normalizeGeneratedMedia, type GeneratedMedia } from "@/lib/generated-media"
+import { planChatStreamFinalization } from "@/lib/chat-stream-finalization"
 
 type HistoryMsg = { id?: string; role: string; content: string; images?: string[]; imageSummary?: string; ts?: string }
 
@@ -58,6 +62,8 @@ export function LiteraryChat() {
   const [deepResearch, setDeepResearch] = useState(false)
   const [historyRetrieval, setHistoryRetrieval] = useState(false)
   const [activeTier, setActiveTier] = useState<Tier>("绝句")
+  const [modelEndpoints, setModelEndpoints] = useState<ModelEndpointSummary[]>([])
+  const [activeEndpointId, setActiveEndpointId] = useState<string | null>(null)
   const [openArtifactId, setOpenArtifactId] = useState<string | null>(null)
   const [headerMenuAnchor, setHeaderMenuAnchor] = useState<{ bottom: number; left: number } | null>(null)
   const [headerRenaming, setHeaderRenaming] = useState(false)
@@ -95,6 +101,8 @@ export function LiteraryChat() {
       setMemoryEnabledState(true)
       setActiveId("")
       setProjects([])
+      setModelEndpoints([])
+      setActiveEndpointId(null)
       projectCtxRef.current.clear()
       draftIdRef.current = null
       loadedRef.current = new Set()
@@ -103,14 +111,24 @@ export function LiteraryChat() {
     let cancelled = false
     ;(async () => {
       ensureProfile(user.id)
-      const [convs, mems, prof, projs] = await Promise.all([fetchConversations(), fetchMemories(), fetchProfile(), fetchProjects()])
+      const [convs, mems, prof, projs, endpoints] = await Promise.all([
+        fetchConversations(), fetchMemories(), fetchProfile(), fetchProjects(), fetchModelEndpoints().catch(() => []),
+      ])
       if (cancelled) return
       setMemories(mems)
       setMemoryEnabledState(prof.memoryEnabled)
       setProjects(projs)
+      setModelEndpoints(endpoints)
       try {
+        const selection = JSON.parse(localStorage.getItem("chat_model_selection") ?? "null") as { kind?: string; id?: string; tier?: Tier } | null
+        if (selection?.kind === "custom" && endpoints.some(endpoint => endpoint.id === selection.id && !endpoint.needsReconnect)) {
+          setActiveEndpointId(selection.id ?? null)
+        } else {
+          setActiveEndpointId(null)
+        }
         const saved = localStorage.getItem("chat_active_tier") as Tier | null
-        if (saved && TIERS.some(t => t.id === saved)) setActiveTier(saved)
+        const selectedTier = selection?.kind === "builtin" ? selection.tier : saved
+        if (selectedTier && TIERS.some(t => t.id === selectedTier)) setActiveTier(selectedTier)
       } catch {}
       for (const c of convs) if (c.msgCount === 0) deleteConversationRow(c.id)
       const real = convs.filter(c => c.msgCount !== 0)
@@ -133,10 +151,48 @@ export function LiteraryChat() {
 
   function handleTierChange(t: Tier) {
     setActiveTier(t)
-    try { localStorage.setItem("chat_active_tier", t) } catch {}
+    setActiveEndpointId(null)
+    try {
+      localStorage.setItem("chat_active_tier", t)
+      localStorage.setItem("chat_model_selection", JSON.stringify({ kind: "builtin", tier: t }))
+    } catch {}
   }
 
-  const activeName = TIER_MAP[activeTier]?.label ?? activeTier
+  function activateEndpoint(endpoint: ModelEndpointSummary) {
+    setActiveEndpointId(endpoint.id)
+    setSearchMode("off")
+    if (endpoint.outputKind !== "chat") {
+      setDeepResearch(false)
+      setHistoryRetrieval(false)
+    }
+    try { localStorage.setItem("chat_model_selection", JSON.stringify({ kind: "custom", id: endpoint.id })) } catch {}
+  }
+
+  function handleEndpointSelect(id: string) {
+    const endpoint = modelEndpoints.find(item => item.id === id && !item.needsReconnect)
+    if (!endpoint) return
+    activateEndpoint(endpoint)
+  }
+
+  function handleEndpointCreated(endpoint: ModelEndpointSummary) {
+    setModelEndpoints(prev => [endpoint, ...prev.filter(item => item.id !== endpoint.id)])
+    activateEndpoint(endpoint)
+  }
+
+  function handleEndpointUpdated(endpoint: ModelEndpointSummary) {
+    setModelEndpoints(prev => prev.map(item => item.id === endpoint.id ? endpoint : item))
+    activateEndpoint(endpoint)
+  }
+
+  function handleEndpointDeleted(id: string) {
+    setModelEndpoints(prev => prev.filter(item => item.id !== id))
+    if (activeEndpointId === id) handleTierChange(activeTier)
+  }
+
+  const activeEndpoint = useMemo(
+    () => modelEndpoints.find(endpoint => endpoint.id === activeEndpointId && !endpoint.needsReconnect) ?? null,
+    [modelEndpoints, activeEndpointId],
+  )
 
   const active = useMemo(
     () => conversations.find(c => c.id === activeId),
@@ -172,7 +228,7 @@ export function LiteraryChat() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          tier: "绝句",
+          ...(activeEndpoint ? { endpointId: activeEndpoint.id } : { tier: "绝句" }),
           messages: [{ role: "user", content: `根据下面这段对话，给出一个10字以内的标题，只输出标题本身，不要引号和标点：\n用户：${userText.slice(0, 80)}\nAI：${aiText.slice(0, 80)}` }],
         }),
       })
@@ -211,11 +267,20 @@ export function LiteraryChat() {
     if (!user) { setIsLoading(false); return "" }
 
     const history = messages
-    let fullReply = "", hadError = false
+    let fullReply = "", fullThinking = ""
+    let terminalError: string | null = null
+    let aborted = false
+    const fullMedia: GeneratedMedia[] = []
     let renderScheduled = false
     let rafId: number | null = null
 
-    const flushStreamMessage = () => {
+    const cancelScheduledRender = () => {
+      if (rafId !== null) cancelAnimationFrame(rafId)
+      renderScheduled = false
+      rafId = null
+    }
+
+    const flushStreamMessage = (outputWarning?: string) => {
       renderScheduled = false
       rafId = null
       setConversations(prev => prev.map(c => c.id !== convId ? c : {
@@ -223,14 +288,18 @@ export function LiteraryChat() {
         messages: c.messages.map(m => m.id !== msgId ? m : {
           ...m,
           content: fullReply,
+          thinking: fullThinking || undefined,
+          media: fullMedia.length ? [...fullMedia] : undefined,
+          isError: undefined,
+          outputWarning,
         }),
       }))
     }
 
     const scheduleStreamMessage = () => {
-      if (hadError || renderScheduled) return
+      if (terminalError || aborted || renderScheduled) return
       renderScheduled = true
-      rafId = requestAnimationFrame(flushStreamMessage)
+      rafId = requestAnimationFrame(() => flushStreamMessage())
     }
 
     try {
@@ -240,6 +309,7 @@ export function LiteraryChat() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           tier: activeTier,
+          ...(activeEndpoint ? { endpointId: activeEndpoint.id } : {}),
           messages: history,
           memories: projectCtx ? undefined : (memoryEnabled && memories.length > 0 ? memories : undefined),
           attachments: attachments && attachments.length > 0 ? attachments : undefined,
@@ -261,7 +331,7 @@ export function LiteraryChat() {
       const dec = new TextDecoder()
       let buf = ""
 
-      while (true) {
+      streamLoop: while (true) {
         const { done, value } = await reader.read()
         if (done) break
         buf += dec.decode(value, { stream: true })
@@ -304,44 +374,80 @@ export function LiteraryChat() {
               }))
               continue
             }
-            if (data.error) {
-              hadError = true
-              setConversations(prev => prev.map(c => c.id !== convId ? c : {
-                ...c,
-                messages: c.messages.map(m => m.id !== msgId ? m : { ...m, content: data.error, isError: true }),
-              }))
+            if (data.media) {
+              const media = normalizeGeneratedMedia(data.media)
+              if (media
+                && fullMedia.length < MAX_GENERATED_MEDIA_ITEMS
+                && !fullMedia.some(item => item.type === media.type && item.url === media.url)) {
+                fullMedia.push(media)
+                scheduleStreamMessage()
+              }
               continue
+            }
+            if (data.error) {
+              terminalError = typeof data.error === "string" ? data.error : "模型生成失败"
+              cancelScheduledRender()
+              await reader.cancel().catch(() => undefined)
+              break streamLoop
             }
             if (data.text) {
               fullReply += data.text
               scheduleStreamMessage()
             }
+            if (data.thinking) {
+              fullThinking += data.thinking
+              scheduleStreamMessage()
+            }
           } catch {}
         }
       }
-
-      if (!hadError) {
-        if (rafId !== null) cancelAnimationFrame(rafId)
-        flushStreamMessage()
-      }
-
-      if (!hadError && fullReply) {
-        insertMessage(user.id, convId, { id: msgId, role: "assistant", content: fullReply, time: "" })
-        touchConversation(convId)
-        setConversations(prev => prev.map(c => c.id === convId ? { ...c, excerpt: conversationExcerpt(fullReply), date: "今日" } : c))
-      }
     } catch (e: any) {
-      if (e?.name === "AbortError") return fullReply
-      setConversations(prev => prev.map(c => c.id !== convId ? c : {
-        ...c,
-        messages: c.messages.map((m, i, arr) =>
-          i === arr.length - 1 && m.role === "assistant"
-            ? { ...m, content: e?.message ?? String(e), isError: true }
-            : m
-        ),
-      }))
+      if (e?.name === "AbortError" || controller.signal.aborted) aborted = true
+      else terminalError = e?.message ?? String(e)
     } finally {
-      if (rafId !== null) cancelAnimationFrame(rafId)
+      cancelScheduledRender()
+      const hasOutput = !!fullReply || fullMedia.length > 0
+      const finalization = planChatStreamFinalization({ hasOutput, aborted, terminalError })
+
+      if (finalization.kind === "persist") {
+        const streamWarning = finalization.warning
+        flushStreamMessage(streamWarning)
+        try {
+          await insertMessage(user.id, convId, {
+            id: msgId,
+            role: "assistant",
+            content: fullReply,
+            thinking: fullThinking || undefined,
+            media: fullMedia.length ? fullMedia : undefined,
+            time: "",
+          })
+          await touchConversation(convId)
+          setConversations(prev => prev.map(c => c.id === convId ? { ...c, excerpt: conversationExcerpt(fullReply), date: "今日" } : c))
+        } catch {
+          const warning = streamWarning
+            ? `${streamWarning} 部分结果未能保存，请先下载媒体或复制内容后重试。`
+            : "结果已生成，但未能保存。请先下载媒体或复制内容，然后检查网络后重试。"
+          flushStreamMessage(warning)
+        }
+      } else if (finalization.kind === "remove") {
+        setConversations(prev => prev.map(c => c.id !== convId ? c : {
+          ...c,
+          messages: c.messages.filter(message => message.id !== msgId),
+        }))
+      } else {
+        setConversations(prev => prev.map(c => c.id !== convId ? c : {
+          ...c,
+          messages: c.messages.map(item => item.id !== msgId ? item : {
+            ...item,
+            content: finalization.message,
+            thinking: fullThinking || undefined,
+            isError: true,
+            outputWarning: undefined,
+          }),
+        }))
+      }
+
+      if (abortRef.current === controller) abortRef.current = null
       setIsLoading(false)
     }
     return fullReply
@@ -356,7 +462,7 @@ export function LiteraryChat() {
 
     const userMsg: Message = { id: crypto.randomUUID(), role: "user", content: text, time: "此刻", ts: new Date().toISOString(), images: images?.length ? images : undefined, files: files?.map(f => f.name) }
     const msgId = crypto.randomUUID()
-    const assistantMsg: Message = { id: msgId, role: "assistant", content: "", time: "此刻" }
+    const assistantMsg: Message = { id: msgId, role: "assistant", content: "", thinking: "", time: "此刻" }
     const isFirstExchange = active.messages.length === 0
     const wasDraft = !!active.draft
     const draftId = active.id
@@ -394,7 +500,15 @@ export function LiteraryChat() {
       abortRef.current = controller
       const fullReply = await runAiStream(history, msgId, convId, controller, files?.length ? files : undefined, projectCtx)
 
-      if (isFirstExchange && fullReply) generateTitle(convId, text, fullReply)
+      if (isFirstExchange && fullReply) {
+        if (activeEndpoint && activeEndpoint.outputKind !== "chat") {
+          const title = text.trim().replace(/\s+/g, " ").slice(0, 14) || "媒体生成"
+          setConversations(prev => prev.map(conversation => conversation.id === convId ? { ...conversation, title } : conversation))
+          updateConversationTitle(convId, title)
+        } else {
+          generateTitle(convId, text, fullReply)
+        }
+      }
     } catch (e) {
       console.error("handleSend failed", e)
       setIsLoading(false)
@@ -414,24 +528,50 @@ export function LiteraryChat() {
 
     const historyBeforeAi = msgs.slice(0, lastAiIdx).map(toHistoryMsg)
     const newMsgId = crypto.randomUUID()
-    setConversations(prev => prev.map(c => c.id !== activeId ? c : {
-      ...c,
-      messages: [
-        ...msgs.slice(0, lastAiIdx),
-        { id: newMsgId, role: "assistant" as const, content: "", time: "此刻" },
-      ],
-    }))
-    deleteMessageRow(lastAiMsg.id)
-
+    let oldReplyDeleted = false
     setIsLoading(true)
     try {
       const projectCtx = await getProjectContext(active.projectId)
+      await deleteMessageRow(lastAiMsg.id)
+      oldReplyDeleted = true
+      const retainedMessages = msgs.slice(0, lastAiIdx)
+      cacheConversationMessages(activeId, retainedMessages)
+      setConversations(prev => prev.map(c => c.id !== activeId ? c : {
+        ...c,
+        messages: [
+          ...retainedMessages,
+          { id: newMsgId, role: "assistant" as const, content: "", thinking: "", time: "此刻" },
+        ],
+      }))
       const controller = new AbortController()
       abortRef.current = controller
       await runAiStream(historyBeforeAi, newMsgId, activeId, controller, undefined, projectCtx)
     } catch (e) {
       console.error("handleRegenerate failed", e)
+      let restored = !oldReplyDeleted
+      if (oldReplyDeleted) {
+        try {
+          await insertMessage(user.id, activeId, lastAiMsg)
+          cacheConversationMessages(activeId, msgs)
+          restored = true
+        } catch {
+          restored = false
+        }
+      }
       setIsLoading(false)
+      setConversations(prev => prev.map(c => c.id !== activeId ? c : {
+        ...c,
+        messages: restored
+          ? msgs.map(message => message.id === lastAiMsg.id ? {
+            ...message,
+            outputWarning: "无法开始重新生成，原回复已保留。请检查网络后重试。",
+          } : message)
+          : c.messages.map(message => message.id === newMsgId ? {
+            ...message,
+            content: "重新生成失败，且原回复未能恢复。请刷新页面检查历史记录。",
+            isError: true,
+          } : message),
+      }))
     }
   }
 
@@ -449,29 +589,64 @@ export function LiteraryChat() {
     const nextUser: Message = { ...sourceUser, content: nextContent, ts: sourceUser.ts ?? new Date().toISOString() }
     const removed = msgs.slice(userIdx + 1)
     const newMsgId = crypto.randomUUID()
-    const assistantMsg: Message = { id: newMsgId, role: "assistant", content: "", time: "此刻" }
-
-    setConversations(prev => prev.map(c => c.id !== convId ? c : {
-      ...c,
-      messages: [...msgs.slice(0, userIdx), nextUser, assistantMsg],
-    }))
-
-    if (nextContent !== sourceUser.content.trim()) updateMessageContent(convId, sourceUser.id, nextContent)
-    removed.forEach(m => deleteMessageRow(m.id))
-
+    const assistantMsg: Message = { id: newMsgId, role: "assistant", content: "", thinking: "", time: "此刻" }
+    const contentChanged = nextContent !== sourceUser.content.trim()
+    let contentUpdated = false
+    let branchDeleted = false
     setIsLoading(true)
     try {
-      const history = [...msgs.slice(0, userIdx), nextUser].map(toHistoryMsg)
       const projectCtx = await getProjectContext(active.projectId)
+      if (contentChanged) {
+        await updateMessageContent(convId, sourceUser.id, nextContent)
+        contentUpdated = true
+      }
+      await deleteMessageRows(removed.map(message => message.id))
+      branchDeleted = true
+      const retainedMessages = [...msgs.slice(0, userIdx), nextUser]
+      cacheConversationMessages(convId, retainedMessages)
+      setConversations(prev => prev.map(c => c.id !== convId ? c : {
+        ...c,
+        messages: [...retainedMessages, assistantMsg],
+      }))
+      const history = retainedMessages.map(toHistoryMsg)
       const controller = new AbortController()
       abortRef.current = controller
       await runAiStream(history, newMsgId, convId, controller, undefined, projectCtx)
     } catch (e) {
       console.error("regenerateFromUserMessage failed", e)
+      let restored = !branchDeleted
+      if (branchDeleted) {
+        try {
+          if (contentUpdated) await updateMessageContent(convId, sourceUser.id, sourceUser.content)
+          for (const message of removed) await insertMessage(user.id, convId, message)
+          cacheConversationMessages(convId, msgs)
+          restored = true
+        } catch {
+          restored = false
+        }
+      }
       setIsLoading(false)
       setConversations(prev => prev.map(c => c.id !== convId ? c : {
         ...c,
-        messages: c.messages.map(m => m.id === newMsgId ? { ...m, content: "重新回复失败，请重试", isError: true } : m),
+        messages: restored ? (() => {
+          const warningTarget = [...removed].reverse().find(message => message.role === "assistant")?.id
+          const restoredMessages = msgs.map(message => message.id === sourceUser.id && contentUpdated && !branchDeleted
+            ? { ...message, content: nextContent }
+            : message.id === warningTarget
+              ? { ...message, outputWarning: "无法开始重新回复，原有内容已保留。请检查网络后重试。" }
+              : message)
+          return warningTarget ? restoredMessages : [...restoredMessages, {
+            id: newMsgId,
+            role: "assistant" as const,
+            content: "无法开始重新回复，请检查网络后重试。",
+            time: "此刻",
+            isError: true,
+          }]
+        })() : c.messages.map(message => message.id === newMsgId ? {
+          ...message,
+          content: "重新回复失败，且原有分支未能恢复。请刷新页面检查历史记录。",
+          isError: true,
+        } : message),
       }))
     }
   }
@@ -682,6 +857,12 @@ export function LiteraryChat() {
     userEmail: user?.email ?? "",
     onLogout: handleLogout,
     onOpenCode: () => { setDrawerOpen(false); setCodeOpen(true) },
+    modelEndpoints,
+    activeEndpointId,
+    onEndpointSelect: handleEndpointSelect,
+    onEndpointCreated: handleEndpointCreated,
+    onEndpointUpdated: handleEndpointUpdated,
+    onEndpointDeleted: handleEndpointDeleted,
   }
 
   function renderChatPane(mobile: boolean) {
@@ -749,11 +930,11 @@ export function LiteraryChat() {
               openArtifactId={openArtifactId}
             />
           ) : (
-            <EmptyState endpointName={activeName} />
+            <EmptyState />
           )}
           {isLoading && (
-            <div className="mx-auto max-w-[56rem] px-5 pb-4 md:ml-0 md:mr-auto md:px-10" role="status" aria-live="polite">
-              <span className="thinking-flow" data-text="Thinking">Thinking</span>
+            <div className="mx-auto min-w-0 max-w-[56rem] px-5 pb-4 md:ml-0 md:mr-auto md:px-10" role="status" aria-live="polite">
+              <span className="thinking-flow max-w-full" data-text="Thinking">Thinking</span>
             </div>
           )}
         </div>
@@ -762,6 +943,9 @@ export function LiteraryChat() {
           onSend={handleSend}
           activeTier={activeTier}
           onTierChange={handleTierChange}
+          customEndpoints={modelEndpoints}
+          activeEndpointId={activeEndpointId}
+          onEndpointChange={handleEndpointSelect}
           mobile={mobile}
           searchMode={searchMode}
           onSearchModeChange={setSearchMode}
@@ -847,12 +1031,10 @@ export function LiteraryChat() {
   )
 }
 
-function EmptyState({ endpointName }: { endpointName?: string }) {
+function EmptyState() {
   return (
     <div className="mx-auto flex h-full max-w-[40rem] flex-col items-center justify-center px-8 text-center">
-      <p className="text-[14px] italic text-muted-foreground/60">
-        {endpointName && endpointName !== "笔友" ? `与 ${endpointName} 对谈` : "说点什么开始对谈"}
-      </p>
+      <p className="text-[14px] italic text-muted-foreground/60">说点什么开始对谈</p>
     </div>
   )
 }

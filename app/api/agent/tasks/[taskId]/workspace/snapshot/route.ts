@@ -6,6 +6,7 @@ import { json } from "@/lib/api/response"
 import { addStep, addArtifact } from "@/lib/agent/data"
 import { requireWorkspace } from "@/lib/agent/workspace-route"
 import { createWorkspaceSnapshot, listWorkspaceSnapshots } from "@/lib/agent/snapshot"
+import { readJson, requestErrorResponse } from "@/lib/api/request"
 
 // ─── POST：创建 snapshot ───
 export async function POST(req: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
@@ -13,9 +14,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tas
   const ctx = await requireWorkspace(taskId)
   if ("error" in ctx) return ctx.error
 
-  let body: any = {}
-  try { body = await req.json() } catch { /* optional */ }
-  const reason = typeof body.reason === "string" ? body.reason : "手动 snapshot"
+  let body: Record<string, unknown> = {}
+  try {
+    body = await readJson(req, { maxBytes: 8 * 1024 })
+  } catch (error) {
+    if (req.headers.get("content-length") === "0" || !req.body) body = {}
+    else return requestErrorResponse(error)
+  }
+  const reason = typeof body.reason === "string"
+    ? body.reason.trim().slice(0, 300) || "手动 snapshot"
+    : "手动 snapshot"
 
   const result = await createWorkspaceSnapshot(taskId, ctx.userId, reason, ctx.supabase)
 
@@ -45,6 +53,6 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tas
   const ctx = await requireWorkspace(taskId)
   if ("error" in ctx) return ctx.error
 
-  const result = listWorkspaceSnapshots(taskId, ctx.userId)
+  const result = await listWorkspaceSnapshots(taskId, ctx.userId, ctx.supabase)
   return json(result)
 }

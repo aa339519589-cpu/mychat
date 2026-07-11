@@ -114,7 +114,7 @@ function chunkMessages(messages: MessageRow[]) {
   return chunks
 }
 
-async function embed(input: string): Promise<number[] | null> {
+async function embed(input: string, parentSignal?: AbortSignal): Promise<number[] | null> {
   const cfg = embeddingConfig()
   if (!cfg.apiKey) return null
 
@@ -122,10 +122,12 @@ async function embed(input: string): Promise<number[] | null> {
     const body: Record<string, unknown> = { model: cfg.model, input }
     if (Number.isFinite(cfg.dimensions)) body.dimensions = cfg.dimensions
 
+    const signals = [parentSignal, AbortSignal.timeout(30_000)].filter(Boolean) as AbortSignal[]
     const res = await fetch(`${cfg.baseUrl}/embeddings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
       body: JSON.stringify(body),
+      signal: signals.length === 1 ? signals[0] : AbortSignal.any(signals),
     })
     if (!res.ok) {
       log.warn('activeRetrieval', 'Embedding request failed', { status: res.status, body: await res.text().catch(() => '') })
@@ -135,6 +137,7 @@ async function embed(input: string): Promise<number[] | null> {
     const vector = json?.data?.[0]?.embedding
     return Array.isArray(vector) ? vector : null
   } catch (e) {
+    if (parentSignal?.aborted) throw e
     log.warn('activeRetrieval', 'Embedding skipped', e)
     return null
   }
@@ -191,7 +194,7 @@ async function scopedConversationIds(supabase: SupabaseServer, userId: string, p
   return (data as any[]).map(r => r.id).filter((id): id is string => typeof id === 'string')
 }
 
-export async function ensureConversationIndexed(supabase: SupabaseServer | null, userId: string | null, conversationId: string | null): Promise<void> {
+export async function ensureConversationIndexed(supabase: SupabaseServer | null, userId: string | null, conversationId: string | null, signal?: AbortSignal): Promise<void> {
   if (!supabase || !userId || !conversationId) return
 
   try {
@@ -213,11 +216,13 @@ export async function ensureConversationIndexed(supabase: SupabaseServer | null,
     if (!pending.length) return
 
     const conv = conversation as ConversationRow
-    const rowsToInsert = []
-    for (const chunk of pending) {
-      const vector = embeddingEnabled() ? await embed(chunk.content) : null
-      if (!vector && embeddingEnabled()) continue
-      rowsToInsert.push({
+    const rowsToInsert: Record<string, unknown>[] = []
+    let cursor = 0
+    const workers = Array.from({ length: Math.min(4, pending.length) }, async () => {
+      while (cursor < pending.length) {
+        const chunk = pending[cursor++]
+        const vector = embeddingEnabled() ? await embed(chunk.content, signal) : null
+        rowsToInsert.push({
         user_id: userId,
         conversation_id: conversationId,
         project_id: conv.project_id ?? null,
@@ -228,28 +233,18 @@ export async function ensureConversationIndexed(supabase: SupabaseServer | null,
         content_hash: hash(chunk.content),
         token_count: estimateTokens(chunk.content),
         embedding: vector,
-      })
-    }
+        })
+      }
+    })
+    await Promise.all(workers)
 
     if (!rowsToInsert.length) return
-    const { error } = await supabase.from('conversation_chunks').upsert(rowsToInsert, { onConflict: 'user_id,content_hash' })
+    const { error } = await supabase.from('conversation_chunks').upsert(rowsToInsert, { onConflict: 'conversation_id,content_hash' })
     if (error) log.warn('activeRetrieval', 'Failed to save chunks', error)
   } catch (e) {
+    if (signal?.aborted) throw e
     log.warn('activeRetrieval', 'Indexing skipped', e)
   }
-}
-
-export async function backfillUserConversationIndex(supabase: SupabaseServer | null, userId: string | null, limit = 40): Promise<{ indexed: number; embeddingEnabled: boolean }> {
-  if (!supabase || !userId) return { indexed: 0, embeddingEnabled: embeddingEnabled() }
-
-  const { data } = await supabase.from('conversations').select('id').eq('user_id', userId).order('updated_at', { ascending: false }).limit(limit)
-
-  let indexed = 0
-  for (const c of data ?? []) {
-    await ensureConversationIndexed(supabase, userId, (c as any).id)
-    indexed++
-  }
-  return { indexed, embeddingEnabled: embeddingEnabled() }
 }
 
 function queryTerms(query: string): string[] {
@@ -399,8 +394,8 @@ async function retrieveAnchorsFromChunkHits(supabase: SupabaseServer, userId: st
   return out
 }
 
-async function retrieveBySemanticChunks(supabase: SupabaseServer, userId: string, projectId: string | null | undefined, conversationId: string | null, query: string, mode: HistoryRetrievalMode, config: RetrievalConfig): Promise<RetrievalHit[]> {
-  const queryEmbedding = embeddingEnabled() ? await embed(query) : null
+async function retrieveBySemanticChunks(supabase: SupabaseServer, userId: string, projectId: string | null | undefined, conversationId: string | null, query: string, mode: HistoryRetrievalMode, config: RetrievalConfig, signal?: AbortSignal): Promise<RetrievalHit[]> {
+  const queryEmbedding = embeddingEnabled() ? await embed(query, signal) : null
   if (!queryEmbedding) return []
 
   const { data, error } = await supabase.rpc('match_conversation_chunks', {
@@ -457,7 +452,9 @@ async function retrieveUserAnchoredContexts(supabase: SupabaseServer, userId: st
 
   const anchors = (anchorsRaw as MessageRow[])
     .filter(m => !!m.conversation_id && !!(m.content ?? '').trim())
-    .map((m, index) => ({ row: m, score: 1.2 + keywordScore(query, m.content ?? '') - index * 0.002 }))
+    .map((m, index) => ({ row: m, relevance: keywordScore(query, m.content ?? ''), index }))
+    .filter(item => item.relevance > 0)
+    .map(item => ({ row: item.row, score: item.relevance - item.index * 0.002 }))
     .sort((a, b) => b.score - a.score)
     .slice(0, config.anchorLimit)
 
@@ -507,8 +504,9 @@ export async function retrieveHistoryContext(opts: {
   projectId?: string | null
   query: string
   mode: HistoryRetrievalMode
+  signal?: AbortSignal
 }): Promise<string> {
-  const { supabase, userId, conversationId, projectId, query, mode } = opts
+  const { supabase, userId, conversationId, projectId, query, mode, signal } = opts
   if (!supabase || !userId || !query.trim()) return ''
 
   const config = RETRIEVAL_CONFIG[mode] ?? RETRIEVAL_CONFIG.balanced
@@ -517,7 +515,7 @@ export async function retrieveHistoryContext(opts: {
 
     allHits.push(...await retrieveUserAnchoredContexts(supabase, userId, projectId, conversationId, query, config))
 
-    if (config.semantic) allHits.push(...await retrieveBySemanticChunks(supabase, userId, projectId, conversationId, query, mode, config))
+    if (config.semantic) allHits.push(...await retrieveBySemanticChunks(supabase, userId, projectId, conversationId, query, mode, config, signal))
     if (config.keyword) allHits.push(...await retrieveByTextSearch(supabase, userId, projectId, conversationId, query, mode, config))
 
     const hits = dedupeHits(allHits)
@@ -527,6 +525,7 @@ export async function retrieveHistoryContext(opts: {
 
     return renderHits(hits, projectId, mode)
   } catch (e) {
+    if (signal?.aborted) throw e
     log.warn('activeRetrieval', 'Retrieval skipped', e)
     return ''
   }

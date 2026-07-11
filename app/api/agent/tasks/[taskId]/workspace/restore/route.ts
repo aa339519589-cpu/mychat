@@ -10,16 +10,25 @@ import {
   revertLastWorkspaceChange,
 } from "@/lib/agent/snapshot"
 import { getWorkspaceDiff, getChangedFiles } from "@/lib/agent/workspace"
+import { readJson, requestErrorResponse } from "@/lib/api/request"
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
   const { taskId } = await params
   const ctx = await requireWorkspace(taskId)
   if ("error" in ctx) return ctx.error
 
-  let body: any = {}
-  try { body = await req.json() } catch { /* optional */ }
+  let body: Record<string, unknown> = {}
+  try {
+    body = await readJson(req, { maxBytes: 8 * 1024 })
+  } catch (error) {
+    if (req.headers.get("content-length") === "0" || !req.body) body = {}
+    else return requestErrorResponse(error)
+  }
 
-  const snapshotId = typeof body.snapshotId === "string" ? body.snapshotId : null
+  const snapshotId = typeof body.snapshotId === "string" && /^[0-9a-f-]{36}$/i.test(body.snapshotId)
+    ? body.snapshotId
+    : null
+  if (typeof body.snapshotId === "string" && !snapshotId) return json({ error: "snapshotId 格式错误" }, 400)
   const useLast = body.useLast === true || !snapshotId
 
   let result: RestoreResult

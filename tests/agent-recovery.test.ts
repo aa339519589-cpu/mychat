@@ -6,7 +6,7 @@ import { saveWorkspaceCheckpoint, restoreLatestWorkspaceCheckpoint } from "../li
 import { getChangedFiles, workspaceRoot } from "../lib/agent/workspace"
 import { compactRunMessages } from "../lib/agent/run-state"
 import { openRecoveryToken, sealRecoveryToken } from "../lib/agent/recovery-token"
-import { createWorkspaceSnapshot } from "../lib/agent/snapshot"
+import { createWorkspaceSnapshot, restoreWorkspaceSnapshot } from "../lib/agent/snapshot"
 import { detectProjectCommands } from "../lib/agent/project-detect"
 
 test("recovery tokens are encrypted, authenticated, and expire", { concurrency: false }, t => {
@@ -112,4 +112,30 @@ test("workspace status keeps the first filename intact and npm install does not 
   assert.equal(changed.ok, true)
   if (changed.ok) assert.equal(changed.data.files[0]?.path, "README.md")
   assert.equal(detectProjectCommands(taskId, userId).installCommand, "npm install --no-package-lock")
+})
+
+test("a clean pre-change snapshot can undo the first workspace edit", async t => {
+  const taskId = `clean-snapshot-${Date.now()}`
+  const userId = "test-user"
+  const root = workspaceRoot(taskId, userId)
+  const snapshotRoot = `/tmp/mychat-agent-snapshots/${userId}/${taskId}`
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  t.after(() => rmSync(snapshotRoot, { recursive: true, force: true }))
+  mkdirSync(root, { recursive: true })
+  execFileSync("git", ["init", "-q"], { cwd: root })
+  execFileSync("git", ["config", "user.name", "test"], { cwd: root })
+  execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: root })
+  writeFileSync(`${root}/README.md`, "base\n")
+  execFileSync("git", ["add", "README.md"], { cwd: root })
+  execFileSync("git", ["commit", "-qm", "base"], { cwd: root })
+
+  const snapshot = await createWorkspaceSnapshot(taskId, userId, "before first edit")
+  assert.equal(snapshot.ok, true)
+  if (!snapshot.ok) return
+  writeFileSync(`${root}/README.md`, "changed\n")
+  writeFileSync(`${root}/new.txt`, "new\n")
+  const restored = await restoreWorkspaceSnapshot(taskId, userId, snapshot.snapshot.snapshotId)
+  assert.equal(restored.ok, true)
+  assert.equal(readFileSync(`${root}/README.md`, "utf8"), "base\n")
+  assert.equal(existsSync(`${root}/new.txt`), false)
 })

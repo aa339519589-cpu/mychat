@@ -2,7 +2,7 @@
 // 安全原则：禁止推 main，禁止 force push，禁止 token 泄露
 
 import { existsSync } from "fs"
-import { execSync } from "child_process"
+import { execFileSync, execSync } from "child_process"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { workspaceRoot, getChangedFiles, getWorkspaceDiff } from "./workspace"
 import { getTaskDetail, updateTaskStatus, addStep, addArtifact } from "./data"
@@ -81,12 +81,24 @@ function gitCommitEnv(): NodeJS.ProcessEnv {
   }
 }
 
+function gitAuthEnv(token: string): NodeJS.ProcessEnv {
+  const credentials = Buffer.from(`x-access-token:${token}`).toString("base64")
+  return {
+    ...gitCommitEnv(),
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_ASKPASS: "echo",
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "http.extraHeader",
+    GIT_CONFIG_VALUE_0: `Authorization: Basic ${credentials}`,
+  }
+}
+
 function ensureWorkspaceGitIdentity(root: string): NodeJS.ProcessEnv {
   const env = gitCommitEnv()
-  execSync(`git config user.name "${AGENT_GIT_NAME}"`, {
+  execFileSync("git", ["config", "user.name", AGENT_GIT_NAME], {
     cwd: root, timeout: 5000, encoding: "utf-8", env,
   })
-  execSync(`git config user.email "${AGENT_GIT_EMAIL}"`, {
+  execFileSync("git", ["config", "user.email", AGENT_GIT_EMAIL], {
     cwd: root, timeout: 5000, encoding: "utf-8", env,
   })
   return env
@@ -228,7 +240,7 @@ export async function commitWorkspaceChanges(
   try {
     const commitEnv = ensureWorkspaceGitIdentity(root)
     // git add all
-    execSync("git add -A -- . ':(exclude).claude/snapshots/**'", {
+    execFileSync("git", ["add", "-A", "--", ".", ":(exclude).claude/snapshots/**"], {
       cwd: root, timeout: 15000, maxBuffer: 256 * 1024, encoding: "utf-8", env: commitEnv,
     })
     // 再次确认没有高危文件被 staged
@@ -241,11 +253,11 @@ export async function commitWorkspaceChanges(
     const { blocked: stageBlocked } = checkRiskFiles(stagedFiles)
     if (stageBlocked.length > 0) {
       // unstage and abort
-      execSync("git reset HEAD -- .", { cwd: root, timeout: 10000, encoding: "utf-8", env: commitEnv })
+      execFileSync("git", ["reset", "HEAD", "--", "."], { cwd: root, timeout: 10000, encoding: "utf-8", env: commitEnv })
       return { ok: false, error: `禁止提交高危文件：${stageBlocked.join("、")}` }
     }
 
-    execSync(`git commit -m "${safeMessage.replace(/"/g, '\\"')}"`, {
+    execFileSync("git", ["commit", "-m", safeMessage], {
       cwd: root, timeout: 30000, maxBuffer: 256 * 1024, encoding: "utf-8", env: commitEnv,
     })
   } catch (err: any) {
@@ -319,23 +331,21 @@ export async function pushAgentBranch(
   const repo = detail.repo
   if (!repo) return { ok: false, error: "任务未关联仓库" }
 
-  // 检查 remote
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) {
+    return { ok: false, error: "任务关联的 GitHub 仓库格式无效" }
+  }
+
+  // Remote 永远保存无凭据 URL；认证仅通过子进程环境注入，避免 token 落盘到 .git/config。
+  const remoteUrl = `https://github.com/${repo}.git`
   try {
     const remotes = execSync("git remote", { cwd: root, timeout: 5000, encoding: "utf-8" }).trim()
     if (!remotes) {
-      // 添加 remote
-      const remoteUrl = `https://x-access-token:${githubToken}@github.com/${repo}.git`
-      try {
-        execSync(`git remote add origin "${remoteUrl}"`, { cwd: root, timeout: 10000, encoding: "utf-8" })
-      } catch {
-        // 可能已经存在但 URL 不对，更新
-        try { execSync(`git remote set-url origin "${remoteUrl}"`, { cwd: root, timeout: 10000, encoding: "utf-8" }) } catch {}
-      }
+      execFileSync("git", ["remote", "add", "origin", remoteUrl], { cwd: root, timeout: 10000, encoding: "utf-8" })
+    } else {
+      execFileSync("git", ["remote", "set-url", "origin", remoteUrl], { cwd: root, timeout: 10000, encoding: "utf-8" })
     }
   } catch {
-    // 添加 remote
-    const remoteUrl = `https://x-access-token:${githubToken}@github.com/${repo}.git`
-    try { execSync(`git remote add origin "${remoteUrl}"`, { cwd: root, timeout: 10000, encoding: "utf-8" }) } catch {}
+    return { ok: false, error: "无法安全配置 Git remote" }
   }
 
   // 写入 step
@@ -347,13 +357,9 @@ export async function pushAgentBranch(
 
   // 执行 push（不 force）
   try {
-    execSync(`git push origin "${currentBranch}"`, {
+    execFileSync("git", ["push", "origin", currentBranch], {
       cwd: root, timeout: 120_000, maxBuffer: 512 * 1024, encoding: "utf-8",
-      env: {
-        ...process.env,
-        GIT_TERMINAL_PROMPT: "0",
-        GIT_ASKPASS: "echo",
-      },
+      env: gitAuthEnv(githubToken),
     })
   } catch (err: any) {
     const stderr = err?.stderr ?? err?.message ?? ""
@@ -399,10 +405,27 @@ export async function createWorkspacePullRequest(
 
   const base = options.base || detail.branch || "main"
 
-  // 获取 changed files 和 diff
-  const changed = getChangedFiles(taskId, userId)
-  const changedFiles = changed.ok ? changed.data.files : []
-  const diff = getWorkspaceDiff(taskId, userId)
+  // 发布阶段工作区通常已经 commit，普通 git diff 会为空；应比较 base...HEAD。
+  let changedFiles: { path: string; status: string }[] = []
+  let diff = ""
+  try {
+    const nameStatus = execFileSync("git", ["diff", "--name-status", `${base}...HEAD`], {
+      cwd: root, timeout: 15_000, maxBuffer: 512 * 1024, encoding: "utf-8",
+    })
+    changedFiles = nameStatus.trim().split("\n").filter(Boolean).map(line => {
+      const [code, ...pathParts] = line.split("\t")
+      const path = pathParts.at(-1) ?? ""
+      const status = code.startsWith("A") ? "added" : code.startsWith("D") ? "deleted" : "modified"
+      return { path, status }
+    }).filter(file => file.path)
+    diff = execFileSync("git", ["diff", "--no-color", `${base}...HEAD`], {
+      cwd: root, timeout: 30_000, maxBuffer: 2 * 1024 * 1024, encoding: "utf-8",
+    })
+  } catch {
+    const changed = getChangedFiles(taskId, userId)
+    changedFiles = changed.ok ? changed.data.files : []
+    diff = getWorkspaceDiff(taskId, userId)
+  }
 
   // 构建 PR title
   const title = options.title || `Agent: ${detail.goal.slice(0, 60)}`
@@ -412,6 +435,16 @@ export async function createWorkspacePullRequest(
   const fileList = changedFiles.map(f => `- ${f.status === "added" ? "A" : f.status === "modified" ? "M" : f.status === "deleted" ? "D" : "?"} \`${f.path}\``).join("\n")
   const riskNote = risk.blocked.length > 0 ? `\n### ⚠️ 高危文件已拦截\n${risk.blocked.map(f => `- ${f}`).join("\n")}\n` : ""
   const warnNote = risk.warnings.length > 0 ? `\n### ⚡ 中风险文件\n${risk.warnings.map(f => `- ${f}`).join("\n")}\n` : ""
+  const latestVerification = new Map<string, boolean>()
+  for (const artifact of [...detail.artifacts].sort((a, b) => b.createdAt.localeCompare(a.createdAt))) {
+    const name = typeof artifact.meta?.name === "string" ? artifact.meta.name : null
+    if (name && typeof artifact.meta?.passed === "boolean" && !latestVerification.has(name)) {
+      latestVerification.set(name, artifact.meta.passed)
+    }
+  }
+  const verificationNote = latestVerification.size
+    ? [...latestVerification].map(([name, passed]) => `- ${name}: **${passed ? "通过" : "失败"}**`).join("\n")
+    : "- 未运行自动测试（仅完成静态 diff 核对）"
 
   const body = options.body || [
     `## 任务目标`,
@@ -427,8 +460,10 @@ export async function createWorkspacePullRequest(
     "",
     riskNote,
     warnNote,
+    "## 验证状态",
+    verificationNote,
+    "",
     "## 备注",
-    "- 测试状态：**本阶段未运行 build/test**",
     "- 回滚说明：本地 workspace 有 snapshot，可回滚",
     "- 由 mychat Agent 创建",
     "",
@@ -460,17 +495,38 @@ export async function createWorkspacePullRequest(
         head: headBranch,
         base,
       }),
+      signal: AbortSignal.timeout(30_000),
     })
 
-    if (!res.ok) {
+    if (!res.ok && res.status === 422) {
+      const owner = repo.split("/")[0]
+      const query = new URLSearchParams({ state: "open", head: `${owner}:${headBranch}`, base })
+      const existing = await fetch(`https://api.github.com/repos/${repo}/pulls?${query}`, {
+        headers: {
+          Authorization: `Bearer ${githubToken}`,
+          Accept: "application/vnd.github+json",
+          "User-Agent": "mychat-agent",
+        },
+        signal: AbortSignal.timeout(30_000),
+      }).catch(() => null)
+      const pulls = existing?.ok ? await existing.json().catch(() => []) : []
+      const first = Array.isArray(pulls) ? pulls[0] : null
+      if (first?.html_url) {
+        prUrl = String(first.html_url)
+        prNumber = Number(first.number) || null
+      }
+    }
+    if (!res.ok && !prUrl) {
       const err = await res.json().catch(() => ({}))
       const msg = (err as any)?.message ?? `HTTP ${res.status}`
       return { ok: false, error: `创建 PR 失败：${msg}` }
     }
 
-    const pr = await res.json()
-    prUrl = (pr as any).html_url ?? ""
-    prNumber = (pr as any).number ?? null
+    if (!prUrl) {
+      const pr = await res.json()
+      prUrl = (pr as any).html_url ?? ""
+      prNumber = (pr as any).number ?? null
+    }
   } catch (err: any) {
     return { ok: false, error: `创建 PR 失败：${err?.message ?? "网络错误"}` }
   }
@@ -523,10 +579,38 @@ export async function publishWorkspaceToPullRequest(
   supabase: SupabaseClient,
   options: { message?: string; title?: string; body?: string; base?: string } = {},
 ): Promise<PublishResult> {
-  // Step 1: 检查 status
+  const taskDetail = await getTaskDetail(supabase, userId, taskId)
+  if (!("workspace" in taskDetail)) return { ok: false, error: "任务不存在", stage: "task" }
+
+  // Step 1: 检查 status。若上次已经 commit 但 push/PR 失败，允许从现有 commit 幂等重试。
   const status = getWorkspaceGitStatus(taskId, userId)
   if (!status.ok) return { ok: false, error: status.error, stage: "status" }
-  if (!status.hasChanges) return { ok: false, error: "没有可提交的改动", stage: "status", status }
+  const canResumeCommittedPublish = !status.hasChanges
+    && !!taskDetail.commitSha
+    && taskDetail.commitSha === status.commitSha
+    && !taskDetail.pullRequestUrl
+  if (!status.hasChanges && !canResumeCommittedPublish) {
+    return { ok: false, error: "没有可提交的改动", stage: "status", status }
+  }
+
+  const currentUpdatedAt = new Date(taskDetail.updatedAt).getTime()
+  if (taskDetail.status === "creating_pr" && Date.now() - currentUpdatedAt < 5 * 60_000) {
+    return { ok: false, error: "发布正在进行，请勿重复提交", stage: "lock", status }
+  }
+  let claimQuery = supabase
+    .from("agent_tasks")
+    .update({ status: "creating_pr", error: null, updated_at: new Date().toISOString() })
+    .eq("id", taskId)
+    .eq("user_id", userId)
+  claimQuery = taskDetail.status === "creating_pr"
+    ? claimQuery.eq("status", "creating_pr").eq("updated_at", taskDetail.updatedAt)
+    : claimQuery.neq("status", "creating_pr")
+  const { data: claimed, error: claimError } = await claimQuery
+    .select("id")
+    .maybeSingle()
+  if (claimError || !claimed) {
+    return { ok: false, error: "发布正在进行，请勿重复提交", stage: "lock", status }
+  }
 
   await addStep(supabase, userId, taskId, {
     kind: "info",
@@ -534,18 +618,19 @@ export async function publishWorkspaceToPullRequest(
     detail: `${status.changedFiles?.length ?? 0} 个待提交文件`,
   })
 
-  // Update status to creating_pr
-  await updateTaskStatus(supabase, userId, taskId, "creating_pr")
-
   // Step 2: Commit
-  const taskDetail = await getTaskDetail(supabase, userId, taskId)
-  const goal = ("workspace" in taskDetail) ? taskDetail.goal : ""
+  const goal = taskDetail.goal
   const msg = options.message || `Agent: ${goal.slice(0, 60) || "code changes"}`
 
-  const commit = await commitWorkspaceChanges(taskId, userId, msg, supabase)
-  if (!commit.ok) {
-    await updateTaskStatus(supabase, userId, taskId, "failed", { error: commit.error })
-    return { ok: false, error: commit.error, stage: "commit", status, commit }
+  let commit: CommitResult
+  if (canResumeCommittedPublish) {
+    commit = { ok: true, commitSha: taskDetail.commitSha!, message: msg, changedFiles: [] }
+  } else {
+    commit = await commitWorkspaceChanges(taskId, userId, msg, supabase)
+    if (!commit.ok) {
+      await updateTaskStatus(supabase, userId, taskId, "failed", { error: commit.error })
+      return { ok: false, error: commit.error, stage: "commit", status, commit }
+    }
   }
 
   // Step 3: Push

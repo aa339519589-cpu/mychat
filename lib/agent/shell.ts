@@ -45,6 +45,11 @@ export function workspaceProcessEnv(): NodeJS.ProcessEnv {
   }
 }
 
+export function localWorkspaceExecutionAllowed(): boolean {
+  return process.env.NODE_ENV !== "production"
+    && process.env.ALLOW_UNSAFE_LOCAL_AGENT_EXECUTION === "true"
+}
+
 // ── 执行命令 ──
 
 export async function runInWorkspace(
@@ -71,6 +76,9 @@ export async function runInWorkspace(
   }
 
   const isolated = isolatedShellConfigured()
+  if (!isolated && !localWorkspaceExecutionAllowed()) {
+    return blockedOut("本机命令执行已关闭；请配置 E2B_API_KEY 使用隔离沙箱")
+  }
   if (!isolated) {
     const verdict = checkCommand(command)
     if (!verdict.allowed) return blockedOut(verdict.reason)

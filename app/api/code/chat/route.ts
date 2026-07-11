@@ -1,5 +1,4 @@
 import { NextRequest } from 'next/server'
-import { cookies } from 'next/headers'
 import { TIER_MAP } from '@/lib/chat-data'
 import { send, done, networkError } from '@/lib/llm/stream'
 import { toOpenAI, chatCompletionsUrl } from '@/lib/llm/openai'
@@ -8,9 +7,11 @@ import type { Emit } from '@/lib/llm/events'
 import { repoMeta } from '@/lib/github'
 import { log } from '@/lib/logger'
 import { validate } from '@/lib/validation'
+import { readJson, requestErrorResponse } from '@/lib/api/request'
 import { addQuotaUsage } from '@/lib/quota'
 import { resolveAuth, enforceLimits } from '@/lib/api/guard'
 import { isolatedShellConfigured, startAgentRecoveryWatchdog } from '@/lib/agent/isolated-shell'
+import { localWorkspaceExecutionAllowed } from '@/lib/agent/shell'
 import { createRecorder } from '@/lib/agent/recorder'
 import { codeContinuationPrompt } from '@/lib/agent/continuation'
 import { saveWorkspaceCheckpoint } from '@/lib/agent/checkpoint'
@@ -23,12 +24,13 @@ import {
 import { getTaskDetail } from '@/lib/agent/data'
 import { buildCodeTools, createCodeToolExecutor } from '@/lib/code-tools'
 import { existsSync } from 'fs'
+import { getGitHubSession } from '@/lib/github-session'
 
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY ?? ''
 const DEEPSEEK_BASE_URL = 'https://api.deepseek.com'
 const TAVILY_API_KEY = process.env.TAVILY_API_KEY ?? ''
 
-function buildCodeSystem(repo: string | null, login: string, memories: string[], hasWorkspace: boolean): string {
+function buildCodeSystem(repo: string | null, login: string, memories: string[], hasWorkspace: boolean, canExecute: boolean): string {
   const executePermission = isolatedShellConfigured()
     ? '在当前任务独享的 Linux 沙箱中执行完整终端命令；服务器密钥不会进入沙箱'
     : '在 workspace 里执行受控命令（node --check、npm run build、npm test 等）'
@@ -114,27 +116,42 @@ ${hasWorkspace
 - 工具失败后先读取错误并自主修复；同一方案失败就换方案，不能只解释错误。
 - ask_user 只允许用于确实缺少登录/授权/密钥，或存在互斥的产品选择。请求用户说“继续”不是有效问题。
 - 只有三种情况可以停：publish 等待用户确认；ask_user 报告真实外部阻塞；complete 表示整个目标已验证完成。`
+  if (!canExecute) {
+    s += `\n\n【执行能力限制】当前没有配置隔离命令沙箱，execute 和 verify 工具不可用。不要声称已经运行测试或构建；只能通过文件读取、静态检查和 diff 核对改动。`
+  }
   return s
 }
 
 export async function POST(req: NextRequest) {
-  let body: any = {}
-  try { body = await req.json() } catch { return new Response(JSON.stringify({ error: '请求体格式错误' }), { status: 400 }) }
+  let body: any
+  try { body = await readJson(req, { maxBytes: 4 * 1024 * 1024 }) }
+  catch (error) { return requestErrorResponse(error) }
 
   const { repo = null, tier = '正构', messages, taskId = null, responseId = null, sessionId = null } = body
   try {
-    validate.array(messages, 'messages', { minLength: 1 })
-    if (repo !== null && (typeof repo !== 'string' || !repo.includes('/'))) throw new Error('仓库参数无效')
+    validate.array(messages, 'messages', { minLength: 1, maxLength: 200 })
+    if (repo !== null && (typeof repo !== 'string' || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo))) throw new Error('仓库参数无效')
+    if (taskId !== null) validate.uuid(taskId, 'taskId')
+    if (responseId !== null) validate.uuid(responseId, 'responseId')
+    if (sessionId !== null) validate.uuid(sessionId, 'sessionId')
+    let totalChars = 0
+    for (const message of messages as any[]) {
+      if (!message || (message.role !== 'user' && message.role !== 'assistant') || typeof message.content !== 'string') {
+        throw new Error('消息格式或角色无效')
+      }
+      if (message.content.length > 100_000) throw new Error('单条消息过长')
+      totalChars += message.content.length
+    }
+    if (totalChars > 2_000_000) throw new Error('消息上下文过大')
   } catch (e) {
     return new Response(JSON.stringify({ error: (e as Error).message }), { status: 400 })
   }
 
   if (!DEEPSEEK_API_KEY) return new Response(JSON.stringify({ error: '服务未配置（DEEPSEEK_API_KEY 未设置）' }), { status: 500 })
 
-  const store = await cookies()
-  const token = store.get('gh_access_token')?.value
-  const login = store.get('gh_login')?.value ?? 'me'
-  if (!token) return new Response(JSON.stringify({ error: '未连接 GitHub' }), { status: 401 })
+  const githubSession = await getGitHubSession()
+  if (!githubSession) return Response.json({ error: '未连接 GitHub 或账号会话已变化' }, { status: 401 })
+  const { token, login } = githubSession
 
   const tierCfg = tier === '观照' ? TIER_MAP['正构'] : (TIER_MAP[tier as keyof typeof TIER_MAP] ?? TIER_MAP['正构'])
   const model = tierCfg.model
@@ -143,7 +160,7 @@ export async function POST(req: NextRequest) {
   // 鉴权 + 限流/额度闸门（与 /api/chat 共用 guard 层）
   const auth = await resolveAuth()
   const { supabase, userId } = auth
-  const gate = await enforceLimits(auth)
+  const gate = await enforceLimits(auth, req)
   if (gate.response) return gate.response
   const usingBalance = gate.usingBalance
 
@@ -157,9 +174,13 @@ export async function POST(req: NextRequest) {
     if (effectiveTaskId) {
       // 校验前端传来的 taskId
       const { data: taskRow } = await supabase.from("agent_tasks")
-        .select("id").eq("id", effectiveTaskId).eq("user_id", userId).single()
+        .select("id, repo, status").eq("id", effectiveTaskId).eq("user_id", userId).single()
       if (!taskRow) {
         effectiveTaskId = null
+      } else if (taskRow.repo && taskRow.repo !== repo) {
+        return Response.json({ error: '任务与仓库不匹配，请重新创建任务' }, { status: 409 })
+      } else if (taskRow.status === 'cancelled' || taskRow.status === 'completed') {
+        return Response.json({ error: `当前任务状态 ${taskRow.status} 不可继续` }, { status: 409 })
       }
     }
     if (!effectiveTaskId) {
@@ -179,6 +200,26 @@ export async function POST(req: NextRequest) {
         return new Response(JSON.stringify({ error: `Agent Task 创建失败：${detail}` }), { status: 500 })
       }
       effectiveTaskId = newTask.id
+    }
+  }
+  const agentRunId = crypto.randomUUID()
+  let runLeaseClaimed = false
+  const releaseRunLease = async () => {
+    if (!runLeaseClaimed || !effectiveTaskId || !supabase) return
+    try { await supabase.rpc('release_agent_run', { input_task_id: effectiveTaskId, input_run_id: agentRunId }) } catch {}
+    runLeaseClaimed = false
+  }
+  if (effectiveTaskId && supabase && userId) {
+    const { data: claimed, error: claimError } = await supabase.rpc('claim_agent_run', {
+      input_task_id: effectiveTaskId,
+      input_run_id: agentRunId,
+      lease_seconds: 120,
+    })
+    if (!claimError) {
+      if (claimed !== true) return Response.json({ error: '任务已有执行进程，请稍后重试' }, { status: 409 })
+      runLeaseClaimed = true
+    } else {
+      log.warn('codeChat', 'Run lease RPC unavailable; continuing in compatibility mode', { code: claimError.code })
     }
   }
   const recorder = createRecorder({ supabase, userId, taskId: effectiveTaskId })
@@ -212,7 +253,10 @@ export async function POST(req: NextRequest) {
   let repoIsPrivate = false
   if (repo) {
     const meta = await repoMeta(token, repo)
-    if (!meta) return new Response(JSON.stringify({ error: '仓库访问失败，请重新连接 GitHub' }), { status: 502 })
+    if (!meta) {
+      await releaseRunLease()
+      return new Response(JSON.stringify({ error: '仓库访问失败，请重新连接 GitHub' }), { status: 502 })
+    }
     defaultBranch = meta.defaultBranch
     repoIsPrivate = meta.isPrivate
   }
@@ -257,11 +301,13 @@ export async function POST(req: NextRequest) {
   }
   // 硬停：有 repo 就必须有 workspace，否则立即报错，不回退到旧 Plan 模式
   if (hasWorkspace && !wsPreReady) {
+    await releaseRunLease()
     return new Response(JSON.stringify({ error: 'Workspace 创建失败，无法在当前仓库工作。请刷新页面重试。' }), { status: 500 })
   }
 
   // 5. 构建系统提示词和工具（repo 存在 = 永远是 workspace 模式）
-  const SYSTEM = buildCodeSystem(repo, login, memContents, hasWorkspace)
+  const canExecute = isolatedShellConfigured() || localWorkspaceExecutionAllowed()
+  const SYSTEM = buildCodeSystem(repo, login, memContents, hasWorkspace, canExecute)
   const url = chatCompletionsUrl(DEEPSEEK_BASE_URL)
 
   // 工具描述：有 repo 一律 workspace 话术
@@ -269,7 +315,7 @@ export async function POST(req: NextRequest) {
   const executePermission = isolatedShellConfigured()
     ? '在当前任务独享的 Linux 沙箱中执行完整终端命令'
     : '在 workspace 中执行受控命令'
-  const tools = buildCodeTools({ isWorkspace: isWs, executePermission })
+  const tools = buildCodeTools({ isWorkspace: isWs, executePermission, canExecute })
 
   let clientConnected = true
   const stream = new ReadableStream({
@@ -340,6 +386,8 @@ export async function POST(req: NextRequest) {
         wsUserId,
         tavilyApiKey: TAVILY_API_KEY,
         emit,
+        signal: req.signal,
+        canExecute,
         state: {
           markUsedTool: () => { usedTools = true },
           hasUsedTools: () => usedTools,
@@ -373,22 +421,36 @@ export async function POST(req: NextRequest) {
       let loopFailed = false
       const heartbeat = setInterval(() => {
         if (!effectiveTaskId || !supabase || !userId) return
-        void supabase.from('agent_tasks').update({ status: 'running', updated_at: new Date().toISOString() })
-          .eq('id', effectiveTaskId).eq('user_id', userId).neq('status', 'cancelled')
-          .select('status')
-          .then(({ data }) => { if (Array.isArray(data) && data.length === 0) cancelled = true })
+        if (runLeaseClaimed) {
+          void supabase.rpc('renew_agent_run', {
+            input_task_id: effectiveTaskId,
+            input_run_id: agentRunId,
+            lease_seconds: 120,
+          }).then(({ data }) => { if (data !== true) cancelled = true })
+          return
+        }
+        void supabase.from('agent_tasks').select('status').eq('id', effectiveTaskId).eq('user_id', userId).single()
+          .then(async ({ data }) => {
+            if (data?.status === 'cancelled') { cancelled = true; return }
+            await supabase.from('agent_tasks').update({ updated_at: new Date().toISOString() })
+              .eq('id', effectiveTaskId).eq('user_id', userId).eq('status', 'running')
+          })
       }, 15_000)
       try {
-        const { totalTokens } = await runAgentLoop({
+        await runAgentLoop({
           url, apiKey: DEEPSEEK_API_KEY, model, adapter: 'deepseek-openai', thinking,
           messages: msgs, tools, emit, executeTool,
+          maxRounds: 80,
           turnOptions: {
             deferTextUntilTurnEnd: true,
             suppressCodeSelfTalk: true,
+            signal: req.signal,
+            timeoutMs: 120_000,
           },
           leakedRetry: true,
-          autoContinue: {},
+          autoContinue: { maxContinuations: 6 },
           idleContinuation: {
+            maxContinuations: 20,
             prompt: ({ idleCount }) => {
               const state = {
                 workspace: wsReady,
@@ -408,13 +470,13 @@ export async function POST(req: NextRequest) {
           onTurn: ({ phase, round, turn }) => {
             log.info('codeChat', `Turn ${phase}`, { round, finishReason: turn.finishReason, leaked: turn.leaked, tools: turn.toolCalls.map(call => call.name), contentLen: turn.content.length, truncated: turn.truncated })
           },
+          onUsage: total => { totalTokensUsed = total },
           onCheckpoint: async latestMessages => {
             if (effectiveTaskId && supabase && userId) {
               await saveAgentRunState(supabase, userId, effectiveTaskId, { resumeMessages: latestMessages.slice(1) })
             }
           },
         })
-        totalTokensUsed += totalTokens
       } catch (error) {
         loopFailed = true
         if (!cancelled) emit({ error: networkError(error) })
@@ -457,6 +519,7 @@ export async function POST(req: NextRequest) {
           }
         }
         if (userId && supabase) await addQuotaUsage(supabase, userId, totalTokensUsed, model, thinking, usingBalance)
+        await releaseRunLease()
         if (clientConnected) {
           try { done(controller) } catch { clientConnected = false }
         }

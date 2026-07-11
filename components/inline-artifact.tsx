@@ -36,8 +36,7 @@ function fitWidthForViewport(aspect: number | null): string {
   return `min(100%, ${width}px)`
 }
 
-// 内联 SVG 渲染：直接注入对话 DOM（非 iframe）
-// - currentColor 继承 text-foreground，切换明暗主题时自动跟随
+// 内联 SVG 渲染：已清洗内容通过 Data URL 与对话 DOM 隔离
 // - 桌面/手机分开限制：手机按视口高度收缩，桌面保留更大预览
 // - 背景透明，融入页面
 export function InlineArtifact({ svg, done }: { svg: string; done: boolean }) {
@@ -45,6 +44,10 @@ export function InlineArtifact({ svg, done }: { svg: string; done: boolean }) {
   const clean = sanitizeSvg(svg)
   const aspect = useMemo(() => clean ? svgAspect(clean) : null, [clean])
   const [fitWidth, setFitWidth] = useState(() => fitWidthForViewport(aspect))
+  const src = useMemo(
+    () => clean ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(clean)}` : "",
+    [clean],
+  )
 
   useEffect(() => {
     const update = () => setFitWidth(fitWidthForViewport(aspect))
@@ -68,10 +71,11 @@ export function InlineArtifact({ svg, done }: { svg: string; done: boolean }) {
     <>
       {/* 桌面端限制最大宽度，手机端按屏幕高度动态收缩 */}
       <div className="group/svg relative my-3 flex w-full min-w-0 justify-center overflow-hidden animate-in fade-in duration-300 md:max-w-2xl">
-        <div
+        <img
+          src={src}
+          alt="生成的图形"
           style={{ width: fitWidth }}
-          className="min-w-0 overflow-hidden text-foreground [&>svg]:mx-auto [&>svg]:block [&>svg]:h-auto [&>svg]:max-h-[42dvh] [&>svg]:max-w-full [&>svg]:w-full md:[&>svg]:max-h-[62dvh]"
-          dangerouslySetInnerHTML={{ __html: clean }}
+          className="block h-auto min-w-0 max-h-[42dvh] max-w-full object-contain md:max-h-[62dvh]"
         />
         <button
           onClick={() => setZoom(true)}
@@ -95,10 +99,11 @@ export function InlineArtifact({ svg, done }: { svg: string; done: boolean }) {
             <X className="size-5" />
           </button>
           <div
-            className="max-h-full w-full max-w-4xl text-foreground [&>svg]:mx-auto [&>svg]:block [&>svg]:h-auto [&>svg]:max-h-[88dvh] [&>svg]:max-w-full [&>svg]:w-auto"
+            className="max-h-full w-full max-w-4xl"
             onClick={e => e.stopPropagation()}
-            dangerouslySetInnerHTML={{ __html: clean }}
-          />
+          >
+            <img src={src} alt="生成的图形（放大）" className="mx-auto block h-auto max-h-[88dvh] max-w-full object-contain" />
+          </div>
         </div>
       )}
     </>

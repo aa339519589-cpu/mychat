@@ -10,6 +10,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import type {
   AgentTask, AgentTaskDetail, AgentTaskStep, AgentToolCall,
   AgentWorkspace, AgentArtifact, CreateTaskInput,
+  AgentTaskStatus, StepKind, ToolCallStatus, WorkspaceStatus,
 } from "./types"
 
 // ───────────── 内部映射 ─────────────
@@ -175,10 +176,10 @@ export async function getTaskDetail(
 
   // ② 并行查关联数据
   const [stepsRes, toolCallsRes, wsRes, artifactsRes] = await Promise.all([
-    supabase.from("agent_task_steps").select("*").eq("task_id", taskId).order("seq"),
-    supabase.from("agent_tool_calls").select("*").eq("task_id", taskId).order("seq"),
-    supabase.from("agent_workspaces").select("*").eq("task_id", taskId).limit(1),
-    supabase.from("agent_artifacts").select("*").eq("task_id", taskId).order("created_at"),
+    supabase.from("agent_task_steps").select("*").eq("task_id", taskId).eq("user_id", userId).order("seq"),
+    supabase.from("agent_tool_calls").select("*").eq("task_id", taskId).eq("user_id", userId).order("seq"),
+    supabase.from("agent_workspaces").select("*").eq("task_id", taskId).eq("user_id", userId).limit(1),
+    supabase.from("agent_artifacts").select("*").eq("task_id", taskId).eq("user_id", userId).order("created_at"),
   ])
 
   return {
@@ -195,11 +196,11 @@ export async function updateTaskStatus(
   supabase: SupabaseClient,
   userId: string,
   taskId: string,
-  status: string,
+  status: AgentTaskStatus,
   extra?: {
-    error?: string
+    error?: string | null
     startedAt?: string
-    finishedAt?: string
+    finishedAt?: string | null
     agentBranch?: string
     pullRequestUrl?: string
     pullRequestNumber?: number
@@ -211,8 +212,8 @@ export async function updateTaskStatus(
     updated_at: new Date().toISOString(),
   }
   if (extra?.error !== undefined) update.error = extra.error
-  if (extra?.startedAt) update.started_at = extra.startedAt
-  if (extra?.finishedAt) update.finished_at = extra.finishedAt
+  if (extra?.startedAt !== undefined) update.started_at = extra.startedAt
+  if (extra?.finishedAt !== undefined) update.finished_at = extra.finishedAt
   if (extra?.agentBranch) update.agent_branch = extra.agentBranch
   if (extra?.pullRequestUrl) update.pull_request_url = extra.pullRequestUrl
   if (extra?.pullRequestNumber != null) update.pull_request_number = extra.pullRequestNumber
@@ -236,6 +237,12 @@ export async function cancelTask(
   userId: string,
   taskId: string,
 ): Promise<AgentTask | { error: string }> {
+  const { data } = await supabase.from("agent_tasks").select("status")
+    .eq("id", taskId).eq("user_id", userId).maybeSingle()
+  if (!data) return { error: "任务不存在" }
+  if (["completed", "failed", "cancelled"].includes(data.status)) {
+    return { error: `当前状态 ${data.status} 不可取消` }
+  }
   return updateTaskStatus(supabase, userId, taskId, "cancelled", {
     finishedAt: new Date().toISOString(),
   })
@@ -261,8 +268,8 @@ export async function resumeTask(
   }
 
   return updateTaskStatus(supabase, userId, taskId, "queued", {
-    error: undefined,
-    finishedAt: undefined,
+    error: null,
+    finishedAt: null,
   })
 }
 
@@ -272,19 +279,9 @@ export async function addStep(
   supabase: SupabaseClient,
   userId: string,
   taskId: string,
-  step: { kind: string; label?: string; detail?: string },
+  step: { kind: StepKind; label?: string; detail?: string },
 ): Promise<AgentTaskStep | { error: string }> {
   const id = crypto.randomUUID()
-
-  // 取当前最大 seq
-  const { data: last } = await supabase
-    .from("agent_task_steps")
-    .select("seq")
-    .eq("task_id", taskId)
-    .order("seq", { ascending: false })
-    .limit(1)
-
-  const seq = (last?.[0]?.seq ?? -1) + 1
 
   const { error, data } = await supabase
     .from("agent_task_steps")
@@ -295,7 +292,6 @@ export async function addStep(
       kind: step.kind,
       label: step.label ?? null,
       detail: step.detail ?? null,
-      seq,
     })
     .select()
     .single()
@@ -303,7 +299,7 @@ export async function addStep(
   if (error || !data) return { error: error?.message ?? "写入步骤失败" }
 
   // touch 任务 updated_at
-  await supabase.from("agent_tasks").update({ updated_at: new Date().toISOString() }).eq("id", taskId)
+  await supabase.from("agent_tasks").update({ updated_at: new Date().toISOString() }).eq("id", taskId).eq("user_id", userId)
 
   return mapStep(data)
 }
@@ -318,19 +314,10 @@ export async function addToolCall(
     stepId?: string
     toolName: string
     input?: Record<string, unknown>
-    status?: string
+    status?: ToolCallStatus
   },
 ): Promise<AgentToolCall | { error: string }> {
   const id = crypto.randomUUID()
-
-  const { data: last } = await supabase
-    .from("agent_tool_calls")
-    .select("seq")
-    .eq("task_id", tc.taskId)
-    .order("seq", { ascending: false })
-    .limit(1)
-
-  const seq = (last?.[0]?.seq ?? -1) + 1
 
   const { error, data } = await supabase
     .from("agent_tool_calls")
@@ -342,7 +329,6 @@ export async function addToolCall(
       tool_name: tc.toolName,
       input: tc.input ?? null,
       status: tc.status ?? "pending",
-      seq,
       started_at: new Date().toISOString(),
     })
     .select()
@@ -350,7 +336,7 @@ export async function addToolCall(
 
   if (error || !data) return { error: error?.message ?? "写入工具调用失败" }
 
-  await supabase.from("agent_tasks").update({ updated_at: new Date().toISOString() }).eq("id", tc.taskId)
+  await supabase.from("agent_tasks").update({ updated_at: new Date().toISOString() }).eq("id", tc.taskId).eq("user_id", userId)
 
   return mapToolCall(data)
 }
@@ -360,7 +346,7 @@ export async function completeToolCall(
   userId: string,
   toolCallId: string,
   result: {
-    status: string
+    status: ToolCallStatus
     output?: Record<string, unknown>
     error?: string
   },
@@ -416,7 +402,7 @@ export async function addWorkspace(
 
   const { error, data } = await supabase
     .from("agent_workspaces")
-    .insert({
+    .upsert({
       id,
       task_id: ws.taskId,
       user_id: userId,
@@ -427,7 +413,7 @@ export async function addWorkspace(
       status: "created",
       created_at: now,
       updated_at: now,
-    })
+    }, { onConflict: "task_id" })
     .select()
     .single()
 
@@ -440,7 +426,7 @@ export async function updateWorkspaceStatus(
   supabase: SupabaseClient,
   userId: string,
   taskId: string,
-  status: string,
+  status: WorkspaceStatus,
   extra?: { path?: string; commitSha?: string },
 ): Promise<AgentWorkspace | { error: string }> {
   const update: Record<string, unknown> = {
@@ -469,7 +455,7 @@ export async function addArtifact(
   userId: string,
   art: {
     taskId: string
-    kind: string
+    kind: AgentArtifact["kind"]
     title?: string
     content?: string
     url?: string

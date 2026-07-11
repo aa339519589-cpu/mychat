@@ -2,10 +2,11 @@
 
 import { useRef, useState, useEffect } from "react"
 import { cn } from "@/lib/utils"
-import { ChevronDown, ChevronLeft, ChevronRight, X, Loader2, Plus, Paperclip, FileText, Globe, ArrowUp, Square, Check, Microscope, Search, Telescope, Trash2 } from "lucide-react"
+import { ChevronDown, ChevronLeft, ChevronRight, X, Loader2, Plus, Paperclip, FileText, Globe, ArrowUp, Square, Check, Microscope, Search, Telescope, Trash2, Server, Image as ImageIcon, Video } from "lucide-react"
 import { MODEL_SHEET_TIERS, TIER_MAP, type Tier } from "@/lib/chat-data"
 import { prepareFile, type AttachedFile } from "@/lib/file-extract"
 import type { SearchMode } from "@/lib/search-mode"
+import type { ModelEndpointSummary } from "@/lib/model-endpoints"
 
 type StoredCustomModel = {
   id: string
@@ -59,6 +60,7 @@ export function ChatInput({
   searchMode, onSearchModeChange,
   deepResearch, onDeepResearchChange,
   historyRetrieval, onHistoryRetrievalChange,
+  customEndpoints, activeEndpointId, onEndpointChange,
   isLoading, onStop,
 }: {
   onSend: (text: string, images?: string[], files?: AttachedFile[]) => void
@@ -71,6 +73,9 @@ export function ChatInput({
   onDeepResearchChange: (on: boolean) => void
   historyRetrieval: boolean
   onHistoryRetrievalChange: (on: boolean) => void
+  customEndpoints: ModelEndpointSummary[]
+  activeEndpointId: string | null
+  onEndpointChange: (id: string) => void
   isLoading: boolean
   onStop: () => void
 }) {
@@ -235,6 +240,11 @@ export function ChatInput({
   const activeTierName = (TIER_MAP as Record<string, { label: string } | undefined>)[activeTier]?.label ?? activeCustom?.label ?? "模型"
   const hasActiveTools = searchMode !== "off" || deepResearch || historyRetrieval
   const canSend = !isLoading && !sendPending && (!!value.trim() || images.length > 0 || files.length > 0)
+  const availableEndpoints = customEndpoints.filter(endpoint => !endpoint.needsReconnect)
+  const activeEndpoint = availableEndpoints.find(endpoint => endpoint.id === activeEndpointId)
+  const activeOutputKind = activeEndpoint?.outputKind
+  const platformSearchDisabled = !!activeEndpoint
+  const activeModelLabel = activeEndpoint?.name || activeEndpoint?.model || activeTierName
 
   return (
     <div className={cn("relative z-10 mx-auto w-full shrink-0", mobile ? "bg-background px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2" : "max-w-[56rem] px-10 pb-8 pt-2")}>
@@ -271,10 +281,34 @@ export function ChatInput({
             <div className="absolute bottom-full left-0 mb-2 w-[8rem] overflow-hidden rounded-xl border border-border/60 bg-card shadow-lg">
               <PlusItem icon={<Paperclip className="size-4" />} label="添加" onClick={() => { setPlusOpen(false); addInputRef.current?.click() }} />
               <div className="border-t border-border/40" />
-              <PlusItem icon={<Globe className={cn("size-4", searchMode === "web" && "text-primary")} />} label="联网" onClick={() => onSearchModeChange(searchMode === "web" ? "off" : "web")} active={searchMode === "web"} />
-              <PlusItem icon={<Search className={cn("size-4 scale-x-[-1]", historyRetrieval && "text-primary")} />} label="检索" onClick={() => onHistoryRetrievalChange(!historyRetrieval)} active={historyRetrieval} />
-              <PlusItem icon={<Telescope className={cn("size-4", searchMode === "deep" && "text-primary")} />} label="深度联网" onClick={() => onSearchModeChange(searchMode === "deep" ? "off" : "deep")} active={searchMode === "deep"} />
-              <PlusItem icon={<Microscope className={cn("size-4", deepResearch && "text-primary")} />} label="深度研究" onClick={() => onDeepResearchChange(!deepResearch)} active={deepResearch} />
+              <PlusItem
+                icon={<Globe className={cn("size-4", searchMode === "web" && "text-primary")} />}
+                label="联网"
+                onClick={() => onSearchModeChange(searchMode === "web" ? "off" : "web")}
+                active={searchMode === "web"}
+                disabled={platformSearchDisabled}
+                title={platformSearchDisabled ? "自定义模型不使用平台联网" : undefined}
+              />
+              <PlusItem
+                icon={<Search className={cn("size-4 scale-x-[-1]", historyRetrieval && "text-primary")} />}
+                label="检索"
+                onClick={() => onHistoryRetrievalChange(!historyRetrieval)}
+                active={historyRetrieval}
+              />
+              <PlusItem
+                icon={<Telescope className={cn("size-4", searchMode === "deep" && "text-primary")} />}
+                label="深度联网"
+                onClick={() => onSearchModeChange(searchMode === "deep" ? "off" : "deep")}
+                active={searchMode === "deep"}
+                disabled={platformSearchDisabled}
+                title={platformSearchDisabled ? "自定义模型不使用平台联网" : undefined}
+              />
+              <PlusItem
+                icon={<Microscope className={cn("size-4", deepResearch && "text-primary")} />}
+                label="深度研究"
+                onClick={() => onDeepResearchChange(!deepResearch)}
+                active={deepResearch}
+              />
             </div>
           )}
           <button onClick={() => setPlusOpen(v => !v)} aria-label="添加" className={cn("relative flex size-8 items-center justify-center rounded-full transition-colors", plusOpen ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-background/40 hover:text-foreground dark:hover:bg-white/10")}>
@@ -285,8 +319,15 @@ export function ChatInput({
 
         <textarea ref={ref} rows={1} value={value} onChange={e => { setValue(e.target.value); resize() }} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !isLoading && !sendPending) { e.preventDefault(); submit() } }} placeholder="说点什么……" className={cn("block min-w-0 flex-1 resize-none bg-transparent py-1.5 text-[15px] leading-[1.6] tracking-wide text-secondary-foreground outline-none placeholder:italic placeholder:text-muted-foreground dark:text-white", mobile ? "max-h-[120px]" : "max-h-[180px]")} />
 
-        <button type="button" onClick={() => setTierMenuOpen(true)} aria-label="选择模型" className="mb-0.5 flex h-8 max-w-[7rem] shrink-0 items-center gap-1 rounded-[0.7rem] px-2.5 text-xs text-muted-foreground transition-colors hover:bg-background/40 hover:text-foreground dark:hover:bg-white/10">
-          <span className="truncate">{activeTierName}</span><ChevronDown className="size-3 shrink-0" />
+        <button
+          type="button"
+          onClick={() => setTierMenuOpen(true)}
+          aria-label="选择模型"
+          className="mb-0.5 flex h-8 min-w-0 max-w-[7rem] shrink-0 items-center gap-1 rounded-[0.7rem] px-2.5 text-xs text-muted-foreground transition-colors hover:bg-background/40 hover:text-foreground dark:hover:bg-white/10 sm:max-w-[11rem]"
+        >
+          {activeOutputKind === "image" ? <ImageIcon className="size-3.5 shrink-0" /> : activeOutputKind === "video" ? <Video className="size-3.5 shrink-0" /> : activeOutputKind === "chat" ? <Server className="size-3.5 shrink-0" /> : null}
+          <span className="min-w-0 truncate">{activeModelLabel}</span>
+          <ChevronDown className="size-3 shrink-0" />
         </button>
 
         {isLoading ? (
@@ -310,8 +351,23 @@ export function ChatInput({
             {modelPage === "list" ? (
               <div className="flex min-h-0 flex-1 flex-col gap-2.5 px-4 pb-4">
                 <div className="min-h-0 overflow-hidden rounded-[1.25rem] bg-card/70 dark:bg-[#151515]"><div className="max-h-[27dvh] overflow-y-auto">
-                  {MODEL_SHEET_TIERS.map((id, index) => <ModelRow key={id} label={TIER_MAP[id].label} active={activeTier === id} divided={index > 0} onClick={() => selectTier(id)} />)}
-                  {customModels.map((m, index) => <ModelRow key={m.id} label={m.label} desc={`${m.supportsVision ? "视觉 · " : ""}${m.model}`} active={activeTier === m.id} divided={MODEL_SHEET_TIERS.length > 0 || index > 0} onClick={() => selectTier(m.id)} onDelete={() => removeCustomModel(m.id)} />)}
+                  {MODEL_SHEET_TIERS.map((id, index) => <ModelRow key={id} label={TIER_MAP[id].label} active={!activeEndpointId && activeTier === id} divided={index > 0} onClick={() => selectTier(id)} />)}
+                  {customModels.map((m, index) => <ModelRow key={m.id} label={m.label} desc={`${m.supportsVision ? "视觉 · " : ""}${m.model}`} active={!activeEndpointId && activeTier === m.id} divided={MODEL_SHEET_TIERS.length > 0 || index > 0} onClick={() => selectTier(m.id)} onDelete={() => removeCustomModel(m.id)} />)}
+                  {availableEndpoints.map((endpoint, index) => {
+                    const kind = endpoint.outputKind
+                    const kindLabel = kind === "image" ? "图片" : kind === "video" ? "视频" : "对话"
+                    return (
+                      <ModelRow
+                        key={endpoint.id}
+                        label={endpoint.name || endpoint.model}
+                        desc={`${kindLabel} · ${endpoint.model}`}
+                        icon={kind === "image" ? <ImageIcon className="size-4" /> : kind === "video" ? <Video className="size-4" /> : <Server className="size-4" />}
+                        active={activeEndpointId === endpoint.id}
+                        divided={MODEL_SHEET_TIERS.length > 0 || customModels.length > 0 || index > 0}
+                        onClick={() => { onEndpointChange(endpoint.id); setTierMenuOpen(false) }}
+                      />
+                    )
+                  })}
                 </div></div>
                 <button onClick={() => setModelPage("more")} className="flex h-12 shrink-0 items-center rounded-[1.25rem] bg-card/70 px-4 text-left text-[15px] font-[750] tracking-[-0.01em] text-foreground transition-colors hover:bg-card dark:bg-[#151515]"><span className="flex-1">More models</span><ChevronRight className="size-4 text-muted-foreground" /></button>
               </div>
@@ -339,13 +395,35 @@ export function ChatInput({
   )
 }
 
-function PlusItem({ icon, label, onClick, active }: { icon: React.ReactNode; label: string; onClick: () => void; active?: boolean }) {
-  return <button onClick={onClick} className={cn("flex w-full items-center gap-2 px-2.5 py-1.5 text-[12px] transition-colors hover:bg-secondary/60", active ? "text-primary" : "text-muted-foreground")}><span className="shrink-0">{icon}</span><span className="flex-1 truncate text-left">{label}</span>{active ? <Check className="size-3.5 shrink-0 text-primary" /> : null}</button>
+function PlusItem({ icon, label, onClick, active, disabled, title }: {
+  icon: React.ReactNode
+  label: string
+  onClick: () => void
+  active?: boolean
+  disabled?: boolean
+  title?: string
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className={cn(
+        "flex w-full items-center gap-2 px-2.5 py-1.5 text-[12px] transition-colors hover:bg-secondary/60 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent",
+        active ? "text-primary" : "text-muted-foreground",
+      )}
+    >
+      <span className="shrink-0">{icon}</span>
+      <span className="flex-1 truncate text-left">{label}</span>
+      {active ? <Check className="size-3.5 shrink-0 text-primary" /> : null}
+    </button>
+  )
 }
 
-function ModelRow({ label, desc, active, divided, onClick, onDelete }: { label: string; desc?: string; active?: boolean; divided?: boolean; onClick: () => void; onDelete?: () => void }) {
+function ModelRow({ label, desc, icon, active, divided, onClick, onDelete }: { label: string; desc?: string; icon?: React.ReactNode; active?: boolean; divided?: boolean; onClick: () => void; onDelete?: () => void }) {
   return (
-    <div className={cn("flex items-center gap-2 px-4 py-2.5", divided && "border-t border-border/40 dark:border-white/10")}>
+    <div className={cn("flex min-w-0 items-center gap-2 px-4 py-2.5", divided && "border-t border-border/40 dark:border-white/10")}>
+      {icon && <span className="shrink-0 text-muted-foreground">{icon}</span>}
       <button onClick={onClick} className="min-w-0 flex-1 text-left"><div className={cn("truncate text-[15px] font-[750] tracking-[-0.01em]", active ? "text-foreground" : "text-foreground/92")}>{label}</div>{desc && <div className="mt-0.5 truncate text-[11px] font-[625] text-muted-foreground">{desc}</div>}</button>
       {onDelete && <button onClick={e => { e.stopPropagation(); onDelete() }} className="flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground/70 transition-colors hover:bg-secondary/70 hover:text-foreground" aria-label={`删除 ${label}`}><Trash2 className="size-3.5" /></button>}
       {active && <Check className="size-5 shrink-0 text-primary" />}

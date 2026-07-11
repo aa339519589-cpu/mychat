@@ -14,7 +14,8 @@ import {
   getChangedFiles,
 } from "@/lib/agent/workspace"
 import { classifyAgentRisk } from "@/lib/agent/risk"
-import { createConfirmationRequest, getPendingConfirmation, clearConfirmation } from "@/lib/agent/permissions"
+import { createConfirmationRequest, getConfirmation, clearConfirmation } from "@/lib/agent/permissions"
+import { readJson, requestErrorResponse } from "@/lib/api/request"
 
 // 风险门禁：如果操作需要确认，创建 confirmation 并返回 waiting_for_user
 async function riskGate(
@@ -28,13 +29,16 @@ async function riskGate(
   }
   if (risk.needsConfirmation) {
     // 检查是否已有已确认的请求（针对同一操作）
-    const existing = await getPendingConfirmation(supabase, userId, taskId)
+    const existing = await getConfirmation(supabase, userId, taskId)
     if (existing) {
       if (existing.status === "confirmed" && existing.operation === operation) {
         await clearConfirmation(supabase, userId, taskId)
         return null // 已确认，放行
       }
-      return json({ needsConfirmation: true, confirmationId: existing.id, risk }, 409)
+      if (existing.status === "pending") {
+        return json({ needsConfirmation: true, confirmationId: existing.id, risk }, 409)
+      }
+      await clearConfirmation(supabase, userId, taskId)
     }
     const req = await createConfirmationRequest(supabase, userId, taskId, risk, "editing")
     return json({ needsConfirmation: true, confirmationId: req.id, risk }, 409)
@@ -48,8 +52,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tas
   const ctx = await requireWorkspace(taskId, { path: true })
   if ("error" in ctx) return ctx.error
 
-  let body: any = {}
-  try { body = await req.json() } catch { return json({ error: "请求体格式错误" }, 400) }
+  let body: any
+  try { body = await readJson(req, { maxBytes: 3 * 1024 * 1024 }) } catch (error) { return requestErrorResponse(error) }
 
   const { path, content } = body
   if (!path || typeof path !== "string") return json({ error: "缺少 path" }, 400)
@@ -92,8 +96,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ ta
   const ctx = await requireWorkspace(taskId, { path: true })
   if ("error" in ctx) return ctx.error
 
-  let body: any = {}
-  try { body = await req.json() } catch { return json({ error: "请求体格式错误" }, 400) }
+  let body: any
+  try { body = await readJson(req, { maxBytes: 3 * 1024 * 1024 }) } catch (error) { return requestErrorResponse(error) }
 
   const { path, old_string, new_string } = body
   if (!path || typeof path !== "string") return json({ error: "缺少 path" }, 400)

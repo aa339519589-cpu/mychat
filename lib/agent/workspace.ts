@@ -6,7 +6,7 @@ import {
   readdirSync, mkdirSync,
 } from "fs"
 import { join, dirname, relative } from "path"
-import { execSync } from "child_process"
+import { execFileSync } from "child_process"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { validatePath, isBinaryFile, fileTooBig, redactSensitive } from "./path-security"
 import { createWorkspaceSnapshot } from "./snapshot"
@@ -24,7 +24,8 @@ export type WorkspaceResult<T = void> =
 export const WORKSPACE_ROOT = "/tmp/mychat-agent-workspaces"
 
 function workspaceRoot(taskId: string, userId: string): string {
-  return join(WORKSPACE_ROOT, userId, taskId)
+  // Runtime-only tenant path under /tmp; it is never a build input.
+  return join(WORKSPACE_ROOT, /* turbopackIgnore: true */ userId, taskId)
 }
 
 // ───────────── 读取文件 ─────────────
@@ -307,14 +308,14 @@ export function getWorkspaceDiff(taskId: string, userId: string): string {
   if (!existsSync(root)) return ""
 
   try {
-    let out = execSync("git diff --no-color", {
+    let out = execFileSync("git", ["diff", "--no-color"], {
       cwd: root,
       timeout: 30_000,
       maxBuffer: 2 * 1024 * 1024,
       encoding: "utf-8",
     })
 
-    const untracked = execSync("git ls-files --others --exclude-standard", {
+    const untracked = execFileSync("git", ["ls-files", "--others", "--exclude-standard"], {
       cwd: root,
       timeout: 10_000,
       maxBuffer: 512 * 1024,
@@ -339,14 +340,14 @@ function getFileDiff(workspacePath: string, relPath: string): string {
     // 判断是否被 git 跟踪
     let tracked = false
     try {
-      execSync(`git ls-files --error-unmatch -- "${relPath}"`, {
+      execFileSync("git", ["ls-files", "--error-unmatch", "--", relPath], {
         cwd: workspacePath, timeout: 5000, encoding: "utf-8", stdio: "pipe",
       })
       tracked = true
     } catch { /* untracked */ }
 
     if (tracked) {
-      const out = execSync(`git diff --no-color -- "${relPath}"`, {
+      const out = execFileSync("git", ["diff", "--no-color", "--", relPath], {
         cwd: workspacePath, timeout: 15000, maxBuffer: 1024 * 1024, encoding: "utf-8",
       })
       if (out.trim()) return out
@@ -374,20 +375,21 @@ export function getChangedFiles(taskId: string, userId: string): WorkspaceResult
   if (!existsSync(root)) return { ok: true, data: { files: [], summary: { added: 0, modified: 0, deleted: 0 } } }
 
   try {
-    const out = execSync("git status --porcelain", {
+    const out = execFileSync("git", ["status", "--porcelain", "-z"], {
       cwd: root,
       timeout: 10_000,
       maxBuffer: 512 * 1024,
       encoding: "utf-8",
     })
 
-    const lines = out.split("\n").filter(line => line.trim().length > 0)
+    const lines = out.split("\0").filter(line => line.length > 0)
     const files: { path: string; status: string }[] = []
     let added = 0, modified = 0, deleted = 0
 
-    for (const line of lines) {
+    for (let index = 0; index < lines.length; index++) {
+      const line = lines[index]
       const statusCode = line.slice(0, 2).trim()
-      const filePath = line.slice(3).trim()
+      const filePath = line.slice(3)
       if (!filePath) continue
 
       let status = "unknown"
@@ -405,6 +407,8 @@ export function getChangedFiles(taskId: string, userId: string): WorkspaceResult
       ) continue
 
       files.push({ path: filePath, status })
+      // porcelain -z 为 rename/copy 额外输出一个旧路径字段。
+      if (statusCode.includes("R") || statusCode.includes("C")) index++
     }
 
     return {
@@ -486,6 +490,11 @@ export async function createWorkspaceForTask(
       path: wsPath,
       commitSha: wsInfo.commit,
     })
+    await supabase.from("agent_tasks").update({
+      repo,
+      branch: wsInfo.baseBranch,
+      updated_at: new Date().toISOString(),
+    }).eq("id", taskId).eq("user_id", userId)
   } catch (err: any) {
     console.error('[workspace] DB persist failed (non-fatal)', err?.message)
   }

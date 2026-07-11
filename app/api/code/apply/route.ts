@@ -1,24 +1,34 @@
-import { cookies } from 'next/headers'
 import { repoMeta, createRepo, commitFiles, enablePages, mergePullRequest, type FileWrite } from '@/lib/github'
 import { resolveAuth } from '@/lib/api/guard'
-import { getTaskDetail } from '@/lib/agent/data'
+import { getTaskDetail, updateTaskStatus } from '@/lib/agent/data'
 import { publishWorkspaceToPullRequest, getWorkspaceGitStatus } from '@/lib/agent/git-publish'
 import { existsSync } from 'fs'
 import { createWorkspaceForTask } from '@/lib/agent/workspace'
 import type { PlanAction } from '@/lib/code-data'
+import { getGitHubSession } from '@/lib/github-session'
+import { readJson, requestErrorResponse } from '@/lib/api/request'
+import { mergeTaskMeta } from '@/lib/agent/meta'
+import { classifyPublishRisk } from '@/lib/agent/risk'
+import { clearConfirmation, createConfirmationRequest, getConfirmation } from '@/lib/agent/permissions'
 
 // 用户在 Code 里点「确认」(或自动模式)后调用：
 //   - 有 taskId + ready workspace → 发布为 Pull Request
 //   - 无 taskId → 仅允许创建新仓库并完成首次提交
 export async function POST(req: Request) {
-  const store = await cookies()
-  const token = store.get('gh_access_token')?.value
-  if (!token) return Response.json({ error: '未连接 GitHub' }, { status: 401 })
+  const githubSession = await getGitHubSession()
+  if (!githubSession) return Response.json({ error: '未连接 GitHub 或账号会话已变化' }, { status: 401 })
+  const token = githubSession.token
 
-  const body = await req.json().catch(() => null)
-  if (!body) return Response.json({ error: '请求体格式错误' }, { status: 400 })
+  let body: any
+  try { body = await readJson(req, { maxBytes: 2 * 1024 * 1024 }) } catch (error) { return requestErrorResponse(error) }
   const { repo: sessionRepo, actions, message, taskId, mode } = body as {
     repo: string | null; actions: PlanAction[]; message: string; taskId?: string; mode?: string
+  }
+  if (sessionRepo !== null && sessionRepo !== undefined && !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(sessionRepo)) {
+    return Response.json({ error: '仓库参数无效' }, { status: 400 })
+  }
+  if (taskId !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(taskId)) {
+    return Response.json({ error: 'taskId 无效' }, { status: 400 })
   }
 
   // ── Workspace PR 模式（body.mode === "workspace_pr" 或 taskId 存在 → 强制 PR，绝不 fallback）──
@@ -71,11 +81,31 @@ export async function POST(req: Request) {
 
     // 检查 workspace 是否有改动
     const wsStatus = getWorkspaceGitStatus(taskId, userId)
-    if (!wsStatus.hasChanges) {
+    const resumablePublish = !!detail.commitSha && detail.commitSha === wsStatus.commitSha && !detail.pullRequestUrl
+    if (!wsStatus.hasChanges && !resumablePublish) {
       return Response.json({
         error: 'Workspace 没有待提交的改动',
         detail: { mode: "workspace_pr", status: "无改动" },
       }, { status: 400 })
+    }
+
+    const committedFiles = [...detail.artifacts].reverse().find(artifact => artifact.kind === 'diff' && Array.isArray(artifact.meta?.changedFiles))?.meta?.changedFiles
+    const riskFiles = wsStatus.changedFiles?.length
+      ? wsStatus.changedFiles.map(file => file.path)
+      : Array.isArray(committedFiles) ? committedFiles.filter((file): file is string => typeof file === 'string') : []
+    const risk = classifyPublishRisk(riskFiles, wsStatus.currentBranch ?? '')
+    if (risk.blocked) return Response.json({ error: risk.reason, blocked: true }, { status: 403 })
+    if (risk.needsConfirmation) {
+      const confirmation = await getConfirmation(supabase, userId, taskId)
+      if (confirmation?.status === 'confirmed' && confirmation.operation === 'publish') {
+        await clearConfirmation(supabase, userId, taskId)
+      } else if (confirmation?.status === 'pending') {
+        return Response.json({ error: '高风险改动需要先在 Agent 任务面板确认', needsConfirmation: true, confirmationId: confirmation.id, risk }, { status: 409 })
+      } else {
+        if (confirmation) await clearConfirmation(supabase, userId, taskId)
+        const created = await createConfirmationRequest(supabase, userId, taskId, risk, 'creating_pr')
+        return Response.json({ error: '高风险改动需要先在 Agent 任务面板确认', needsConfirmation: true, confirmationId: created.id, risk }, { status: 409 })
+      }
     }
 
     // 有 ready/dirty workspace：走 PR 发布
@@ -105,18 +135,18 @@ export async function POST(req: Request) {
     let pagesError: string | undefined
 
     if (deployPages) {
+      await updateTaskStatus(supabase, userId, taskId, 'deploying')
       const pullNumber = result.pr?.pullRequestNumber
       const headSha = result.commit?.commitSha
       if (!pullNumber || !headSha || !targetRepo) {
+        await updateTaskStatus(supabase, userId, taskId, 'failed', { error: '缺少合并信息', finishedAt: new Date().toISOString() })
         return Response.json({ error: 'Pull Request 已创建，但缺少合并信息，无法继续上线' }, { status: 502 })
       }
       const merge = await mergePullRequest(token, targetRepo, pullNumber, headSha)
       if (!merge.merged) {
-        await supabase.from('agent_tasks').update({
-          status: 'failed', error: merge.error,
-          meta: { ...(detail.meta ?? {}), deploymentStatus: 'blocked', deploymentError: merge.error },
-          updated_at: new Date().toISOString(),
-        }).eq('id', taskId).eq('user_id', userId)
+        await mergeTaskMeta(supabase, userId, taskId, { deploymentStatus: 'blocked', deploymentError: merge.error })
+        await supabase.from('agent_tasks').update({ status: 'failed', error: merge.error, updated_at: new Date().toISOString() })
+          .eq('id', taskId).eq('user_id', userId)
         return Response.json({ error: `Pull Request 已创建，但 GitHub 没有允许自动合并：${merge.error}` }, { status: 409 })
       }
       merged = true
@@ -130,16 +160,24 @@ export async function POST(req: Request) {
       pagesUrl = pages.url
       pagesStatus = pages.status
       if (pages.status === 'failed') pagesError = pages.error
-      await supabase.from('agent_tasks').update({
-        meta: {
-          ...(detail.meta ?? {}), deployPages: true,
-          deploymentStatus: pages.status,
-          pagesUrl: pages.url,
-          deploymentError: pages.status === 'failed' ? pages.error : null,
-          mergeCommitSha,
-        },
-        updated_at: new Date().toISOString(),
-      }).eq('id', taskId).eq('user_id', userId)
+      await mergeTaskMeta(supabase, userId, taskId, {
+        deployPages: true,
+        deploymentStatus: pages.status,
+        pagesUrl: pages.url,
+        deploymentError: pages.status === 'failed' ? pages.error : null,
+        mergeCommitSha,
+      })
+      await updateTaskStatus(
+        supabase,
+        userId,
+        taskId,
+        pages.status === 'ready' ? 'completed' : pages.status === 'failed' ? 'failed' : 'deploying',
+        pages.status === 'failed'
+          ? { error: pages.error, finishedAt: new Date().toISOString() }
+          : pages.status === 'ready'
+            ? { error: null, finishedAt: new Date().toISOString() }
+            : { error: null, finishedAt: null },
+      )
     }
 
     return Response.json({

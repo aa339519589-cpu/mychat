@@ -3,6 +3,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { addStep, addToolCall, completeToolCall, updateTaskStatus, addArtifact } from "./data"
+import type { AgentArtifact, AgentTaskStatus, StepKind } from "./types"
 
 // ── 敏感信息打码 ──
 
@@ -66,7 +67,7 @@ export function createRecorder(ctx: RecordCtx) {
           : kind === "tool_call"
             ? "tool_call"
             : "info"
-    await addStep(supabase!, userId!, taskId!, { kind: normalized, label, detail }).catch(() => {})
+    await addStep(supabase!, userId!, taskId!, { kind: normalized as StepKind, label, detail }).catch(() => {})
   }
 
   // ── 工具调用包装 ──
@@ -91,7 +92,7 @@ export function createRecorder(ctx: RecordCtx) {
 
     // 执行工具
     let output: string
-    let status: string = "success"
+    let status: "success" | "error" = "success"
     let error: string | undefined
 
     try {
@@ -115,7 +116,7 @@ export function createRecorder(ctx: RecordCtx) {
   }
 
   // ── 任务状态更新 ──
-  async function setTaskStatus(status: string, error?: string) {
+  async function setTaskStatus(status: AgentTaskStatus, error?: string) {
     if (!enabled) return
     const extra: any = {}
     if (error) extra.error = error
@@ -125,7 +126,7 @@ export function createRecorder(ctx: RecordCtx) {
   }
 
   // ── 产物 ──
-  async function artifact(kind: string, opts: { title?: string; content?: string; url?: string; meta?: Record<string, unknown> }) {
+  async function artifact(kind: AgentArtifact["kind"], opts: { title?: string; content?: string; url?: string; meta?: Record<string, unknown> }) {
     if (!enabled) return
     await addArtifact(supabase!, userId!, {
       taskId: taskId!,

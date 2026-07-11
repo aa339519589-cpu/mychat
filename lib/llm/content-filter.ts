@@ -99,10 +99,11 @@ export function makeContentFilter() {
 
   function flush(): string {
     if (waitingClose) {
-      const rescued = stripToolMarkup(buf)
+      // 开标记之后的内容全部属于未闭合工具协议。不能把末尾参数“抢救”为正文，
+      // 否则截断的 JSON、文件内容或密钥会泄漏到前端。
       buf = ""
       waitingClose = null
-      return rescued.trim() ? rescued : ""
+      return ""
     }
     const out = stripStandalone(buf)
     buf = ""

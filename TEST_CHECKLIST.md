@@ -1,209 +1,77 @@
-# MyChat 改进测试清单
+# MyChat 发布验收清单
 
-## 快速验证步骤
+## 自动验证
 
-### 1️⃣ 代码编译检查
 ```bash
-cd /Users/paopaopaopao/Documents/Codex/2026-06-21/https-zizu-life-api-provider-guide/work
-npm run build
-# 或 npx tsc --noEmit
+npm run verify
+git diff --check
 ```
 
-### 2️⃣ 启动开发服务器
-```bash
-npm run dev
-# 访问 http://localhost:3000
-```
+- [ ] TypeScript 严格检查通过。
+- [ ] 所有测试通过且没有 skipped/failed。
+- [ ] Next.js 生产构建通过。
+- [ ] `git diff --check` 无空白错误。
 
-### 3️⃣ 日志测试（发送消息 10 条）
-**步骤**:
-1. 登录用户账户
-2. 发送 10 条消息到不同的对话
-3. 打开浏览器开发工具 → 后台日志（如果有）
-4. 查看 `/api/chat` 请求的响应流
+## 数据库
 
-**期望**:
-- 浏览器控制台看到 token 使用日志（如启用了前端日志）
-- 后台应用日志（终端）应显示：
-  ```
-  [ISO_TIME] [INFO] [quota] Adding quota usage | {"userId":"...", "rawTokens":1234, "weighted":1187, ...}
-  [ISO_TIME] [INFO] [quota] Quota usage recorded | {"userId":"...", "tokens_5h":2374, "tokens_7d":5891}
-  ```
+- [ ] 已备份目标数据库。
+- [ ] 所有迁移按文件名顺序执行成功。
+- [ ] 原子 RPC（配额、邀请码、任务租约、meta/run state 合并）存在。
+- [ ] 普通认证用户不能直接修改 `profiles.balance`、token 窗口或版本字段。
+- [ ] A 用户无法读取或修改 B 用户的消息、项目文件、代码消息、artifact 和 agent 子记录。
+- [ ] 同一个邀请码并发兑换时只有一个请求成功。
+- [ ] 同一个用户的并发 token 记账不会丢失更新。
 
-### 4️⃣ 速率限制测试（31 个快速请求）
-**使用 curl 测试**（需要替换 YOUR_TOKEN）:
-```bash
-# 获取当前用户的 session token（从浏览器开发工具）
-TOKEN="your-supabase-session-token"
+## 普通聊天
 
-# 发送 31 个并发请求
-for i in {1..31}; do
-  curl -X POST http://localhost:3000/api/chat \
-    -H "Authorization: Bearer $TOKEN" \
-    -H "Content-Type: application/json" \
-    -d '{"messages":[{"role":"user","content":"test"}]}' &
-  sleep 0.1
-done
-wait
-```
+- [ ] 登录用户和匿名用户都能完成一次流式对话。
+- [ ] 匿名登录超过每 IP 每小时上限会返回 429 和 `Retry-After`。
+- [ ] 超大/畸形 JSON、空消息、非法 role、过多图片分别返回 400 或 413。
+- [ ] DeepSeek thinking + tool call 可连续完成，不出现缺失 `reasoning_content` 的 400。
+- [ ] 模型中途失败仍记录已经消耗的 token。
+- [ ] 联网结果中的“忽略系统提示”等文字只作为资料，不会改变代理指令。
+- [ ] 未闭合的 tool/artifact 标记不会泄漏到最终回复。
 
-**期望**:
-- 前 30 个请求返回 200
-- 第 31 个请求返回 429 + 错误信息：`请求过于频繁，请稍后再试`
-- 日志显示：`[WARN] [rateLimit] Rate limit exceeded`
+## 自定义模型
 
-### 5️⃣ PDF 大小限制测试
-**方式一：前端上传**:
-1. 创建一个 60MB 的 PDF 文件（或找一个现成的大文件）
-2. 在聊天界面上传此文件
-3. 发送消息
+- [ ] Base URL 带根路径、`/v1`、`/models` 或 `/chat/completions` 时都能规范化，不会重复拼接 `/v1`。
+- [ ] 正确 Key 能自动获取模型；401、404、超时和非 JSON 响应显示不同的可恢复错误。
+- [ ] 模型名称分类只作为用途建议；无 `image` / `video` 关键词的模型可手动指定用途并按对应接口调用。
+- [ ] 选择模型后会执行真实流式聊天验证，未生成文本时不能保存。
+- [ ] 图片模型可选择并请求 `/images/generations`；`b64_json`、URL 和完成型 SSE 都显示为图片。
+- [ ] 视频模型按 `/videos` 创建任务、轮询状态并读取 `/content`；失败、超时和无权限显示明确错误。
+- [ ] 生成图片保持原比例，视频完整显示且有 controls；桌面与 390px 视口均无横向溢出或裁切。
+- [ ] 结构化 `image_url` / `output_image` / `video_url` 不会退化为 `[object Object]`，危险协议不会渲染。
+- [ ] 媒体 URL 在服务端下载后显示；跨域下载不携带端点 Key，重定向和浏览器私网 URL 会被阻止。
+- [ ] 保存后的 API Key 不会出现在端点列表、聊天请求、DOM、日志或错误信息中。
+- [ ] 超长模型 ID 不会挤压输入框、发送按钮或移动端视口；生成状态固定为「正在生成……」。
+- [ ] 公网生产阻止未列入 `MODEL_ENDPOINT_PRIVATE_ALLOWLIST` 的私网地址；同局域网本地开发可连接私网模型。
+- [ ] IPv4-mapped IPv6、链路本地地址、云元数据地址和 DNS rebinding 均无法绕过端点网络策略。
 
-**期望**:
-- 前端不崩溃
-- 消息正常发送
-- 后台日志显示：`[WARN] [uploadPdf] PDF exceeds 50MB limit | {"name":"...", "size":...}`
+## 代码代理与工作区
 
-**方式二：直接 API 测试**:
-```bash
-# 生成 60MB 的伪 PDF（仅用于测试）
-dd if=/dev/zero of=/tmp/large.pdf bs=1M count=60
-base64 /tmp/large.pdf > /tmp/large.pdf.b64
+- [ ] 生产未设置 `E2B_API_KEY` 时执行和验证接口安全返回 503/blocked，不在宿主机运行命令。
+- [ ] 配置 E2B 后能执行 typecheck/test，输出会截断并脱敏。
+- [ ] `../`、绝对路径、符号链接跳转、私有配置文件写入均被拒绝。
+- [ ] 首次文件修改前的空快照可恢复，删除/新增/修改文件都能正确回滚。
+- [ ] 同一任务并发启动只有一个请求取得运行租约。
+- [ ] 取消后的任务不会被 heartbeat 改回 running。
+- [ ] 高风险发布先进入待确认；拒绝后不能发布；确认后只消费一次确认。
+- [ ] commit message/PR 标题中的引号、换行和 shell 字符不会被执行。
+- [ ] push 成功而 PR 创建失败后可安全重试，并复用已有分支/PR。
 
-# POST 到 /api/chat，attachments 包含此文件
-# （详见 POST 请求体格式）
-```
+## GitHub 与前端渲染
 
-### 6️⃣ 邀请码强度测试
-**步骤**:
-1. 以管理员/创建码的用户身份登录
-2. 调用 POST `/api/generate-code` 生成码（比如 count=5）
-   ```bash
-   curl -X POST http://localhost:3000/api/generate-code \
-     -H "Content-Type: application/json" \
-     -d '{"count":5}'
-   ```
-3. 查看返回的码列表
+- [ ] OAuth callback 使用当前公开域名，登录后 `/api/github/status` 返回绑定账号。
+- [ ] 切换 Supabase 用户后旧 GitHub cookie 不可继续使用。
+- [ ] 仓库列表、clone、push 和 PR 创建均设置超时并正确处理 401/422。
+- [ ] artifact iframe 不拥有 same-origin、表单或弹窗权限。
+- [ ] SVG artifact 通过隔离图片展示，不直接注入页面 DOM。
 
-**期望**:
-- 每个码长度为 **24 位**（不是 16）
-- 码包含 **A-Z、a-z、0-9、-、_** 字符
-- 比如：`a1B-c2D_e3F-g4H_i5J-k6L`
-- 日志显示：`[INFO] [generateCode] Codes generated successfully`
+## 上线后观察
 
-### 7️⃣ 邀请码兑换测试
-**步骤**:
-1. 生成一个新码（见步骤 6）
-2. 用另一个用户账户登录
-3. 调用 POST `/api/redeem-code`
-   ```bash
-   curl -X POST http://localhost:3000/api/redeem-code \
-     -H "Content-Type: application/json" \
-     -d '{"code":"a1B-c2D_e3F-g4H_i5J-k6L"}'
-   ```
-
-**期望**:
-- 返回 `{"success": true, "tokensAdded": 20000000, "newBalance": ...}`
-- 日志显示：`[INFO] [redeemCode] Code redeemed successfully`
-- 该码不能再次兑换（第二次调用返回 400：`邀请码已被使用`）
-
-### 8️⃣ 游客登录测试
-**步骤**:
-1. 不登录，调用 POST `/api/auth/anonymous`
-   ```bash
-   curl -X POST http://localhost:3000/api/auth/anonymous \
-     -H "Content-Type: application/json"
-   ```
-
-**期望**:
-- 返回 `{"success": true, "user": {"id": "uuid..."}}`
-- 日志显示：`[INFO] [anonymousAuth] Anonymous user created`
-- 匿名用户能发送消息（不需要兑换邀请码）
-
-### 9️⃣ 入参验证测试
-**测试错误情况**:
-```bash
-# 1. chat 路由 - messages 为空
-curl -X POST http://localhost:3000/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{"messages":[]}'
-# 期望: 400 + "messages: must have at least 1 items"
-
-# 2. generate-code 路由 - count 超出范围
-curl -X POST http://localhost:3000/api/generate-code \
-  -H "Content-Type: application/json" \
-  -d '{"count":101}'
-# 期望: 400 + "count: must be at most 100"
-
-# 3. redeem-code 路由 - code 缺失
-curl -X POST http://localhost:3000/api/redeem-code \
-  -H "Content-Type: application/json" \
-  -d '{}'
-# 期望: 400 + "code: must be at least 1 characters"
-
-# 4. JSON 解析失败
-curl -X POST http://localhost:3000/api/chat \
-  -H "Content-Type: application/json" \
-  -d 'invalid json'
-# 期望: 400 + "请求体格式错误"
-```
-
-## 数据库更新检查
-
-### 验证 Supabase SQL 执行
-在 Supabase 控制台 SQL Editor 中：
-
-```sql
--- 1. 检查 profiles 表是否有新列
-select column_name from information_schema.columns
-  where table_schema = 'public' and table_name = 'profiles'
-  and column_name in ('tokens_5h', 'window_5h_start', 'tokens_7d', 'window_7d_start', 'quota_version', 'balance');
--- 期望: 6 行结果
-
--- 2. 检查 invitation_codes 表的 RLS policy
-select policyname, qual from pg_policies
-  where schemaname = 'public' and tablename = 'invitation_codes';
--- 期望: codes_read policy 应包含 'used_by is not null'
-
--- 3. 检查索引是否存在
-select indexname from pg_indexes
-  where schemaname = 'public' and tablename = 'profiles'
-  and indexname in ('idx_profiles_window_5h_start', 'idx_profiles_window_7d_start');
--- 期望: 2 行结果
-```
-
-## 性能监控
-
-### 额度系统
-```bash
-# 发送一条消息后，查询 profiles 表
-curl -X GET http://localhost:3000/api/user-profile \
-  -H "Authorization: Bearer YOUR_TOKEN"
-# （需要实现此端点或在 Supabase 直接查询）
-
-# 预期: tokens_5h, tokens_7d, window_5h_start, window_7d_start 应该更新
-```
-
-### 日志聚合
-如果有日志聚合系统（如 ELK、Datadog），搜索：
-```
-tag:quota OR tag:rateLimit OR tag:chat
-```
-
-## 常见问题
-
-### 日志无法看到？
-- 检查环境变量 `LOG_LEVEL` 是否为 `info`
-- 检查前端是否清除了浏览器日志
-- 检查后端终端是否有输出
-
-### 速率限制在 Docker/K8s 中无效？
-- 当前实现使用内存存储，每个 Pod/容器独立
-- 生产环境需要改用 Redis 共享状态
-
-### 邀请码仍是 16 位？
-- 检查 `lib/invitation-code-gen.ts` 中的 `CODE_LENGTH = 24`
-- 清除旧的邀请码缓存
-
----
-
-**完成标志**: 所有 9 个测试项通过（跳过购买界面）= **90+ 分达成** ✅
+- [ ] 429 比率符合预期，没有匿名登录洪峰。
+- [ ] `record_quota_usage` 和任务租约 RPC 无错误。
+- [ ] E2B 创建/连接/同步无持续失败。
+- [ ] DeepSeek/MiMo 超时和工具循环次数没有异常升高。
+- [ ] GitHub OAuth 失败率在旧用户重新授权后恢复正常。

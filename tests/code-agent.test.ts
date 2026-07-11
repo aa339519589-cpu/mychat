@@ -114,7 +114,7 @@ test('runTurn suppresses code self-talk while preserving tool calls', { concurre
   assert.equal(events.some(event => 'text' in event), false)
   assert.equal(turn.toolCalls.length, 1)
   assert.equal(turn.toolCalls[0].name, 'read_file')
-  assert.equal(turn.assistantMessage?.content, null)
+  assert.equal(turn.assistantMessage?.content, '')
 })
 
 test('runTurn suppresses generic preamble before tool calls', { concurrency: false }, async t => {
@@ -144,7 +144,30 @@ test('runTurn suppresses generic preamble before tool calls', { concurrency: fal
   assert.equal(events.some(event => 'text' in event), false)
   assert.equal(turn.toolCalls.length, 1)
   assert.equal(turn.toolCalls[0].name, 'write_file')
-  assert.equal(turn.assistantMessage?.content, null)
+  assert.equal(turn.assistantMessage?.content, '')
+})
+
+test('thinking tool calls preserve reasoning_content for the next model turn', { concurrency: false }, async t => {
+  const originalFetch = globalThis.fetch
+  t.after(() => { globalThis.fetch = originalFetch })
+  globalThis.fetch = async () => Response.json({
+    choices: [{
+      finish_reason: 'tool_calls',
+      message: {
+        reasoning_content: '需要先读取文件。',
+        content: '',
+        tool_calls: [{
+          index: 0,
+          id: 'call_reasoning',
+          function: { name: 'read_file', arguments: '{"path":"README.md"}' },
+        }],
+      },
+    }],
+  })
+
+  const turn = await runTurn('https://example.com', 'key', 'model', [], [], () => {}, { thinking: true })
+  assert.equal(turn.reasoningContent, '需要先读取文件。')
+  assert.equal(turn.assistantMessage?.reasoning_content, '需要先读取文件。')
 })
 
 test('Pages is ready only after GitHub reports built and the URL responds', { concurrency: false }, async t => {

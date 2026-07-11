@@ -1,6 +1,14 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  turbopack: { root: process.cwd() },
+  turbopack: {
+    root: import.meta.dirname,
+  },
+  outputFileTracingRoot: import.meta.dirname,
+  // Workspace routes read tenant files from /tmp at runtime. NFT cannot infer that
+  // dynamic boundary and otherwise pulls build metadata into every API trace.
+  outputFileTracingExcludes: {
+    '/api/*': ['./next.config.mjs', './package-lock.json'],
+  },
   images: {
     unoptimized: true,
   },

@@ -55,7 +55,7 @@ create index if not exists idx_messages_conversation on public.messages(conversa
 create index if not exists idx_conversations_user on public.conversations(user_id);
 create index if not exists idx_memories_user on public.memories(user_id);
 
--- 模型端点表（含 API Key）。RLS 保证只有本人能读自己的 Key
+-- 模型端点表。api_key 由服务端使用 AGENT_CREDENTIAL_KEY 加密后写入。
 create table if not exists public.endpoints (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -64,15 +64,29 @@ create table if not exists public.endpoints (
   base_url text not null,
   api_key text not null,
   model text not null,
-  created_at timestamptz not null default now()
+  output_kind text not null default 'chat',
+  auth_type text not null default 'bearer' check (auth_type in ('bearer', 'x-api-key', 'api-key', 'none')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
+alter table public.endpoints add column if not exists output_kind text not null default 'chat';
+alter table public.endpoints drop constraint if exists endpoints_output_kind_check;
+alter table public.endpoints add constraint endpoints_output_kind_check
+  check (output_kind in ('chat', 'image', 'video'));
 alter table public.endpoints enable row level security;
 drop policy if exists "endpoints_select" on public.endpoints;
 create policy "endpoints_select" on public.endpoints for select using (auth.uid() = user_id);
+-- 这里保留仅限 owner 的写策略：API route 使用用户 Cookie 对应的 Supabase 会话，
+-- 并非 service-role 客户端，移除策略也会让服务端写入失效。用户虽可直接改自己的行，
+-- 但服务端签发的 v3 api_key 密文会用 AES-GCM 同时认证 user_id、id、规范化
+-- base_url、protocol、auth_type、model 和 output_kind；任何路由字段被直改后都会解密失败，
+-- 浏览器也因拿不到 AGENT_CREDENTIAL_KEY 而无法为篡改后的配置生成有效密文。
 drop policy if exists "endpoints_insert" on public.endpoints;
 create policy "endpoints_insert" on public.endpoints for insert with check (auth.uid() = user_id);
 drop policy if exists "endpoints_delete" on public.endpoints;
 create policy "endpoints_delete" on public.endpoints for delete using (auth.uid() = user_id);
+drop policy if exists "endpoints_update" on public.endpoints;
+create policy "endpoints_update" on public.endpoints for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create index if not exists idx_endpoints_user on public.endpoints(user_id);
 
 -- ============================================

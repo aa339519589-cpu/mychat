@@ -22,6 +22,8 @@ function charBigramJaccard(a: string, b: string): number {
 }
 
 const DEDUP_THRESHOLD = 0.55  // Jaccard > 0.55 → 判定为重复/高度相似
+const MAX_MEMORY_CHARS = 5000
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 // 查询已有记忆，如果有高度相似的则返回那条记忆（用于更新），否则返回 null
 async function findSimilarMemory(
@@ -51,7 +53,8 @@ async function runMemoryOp(ctx: ToolContext, opName: string, table: string, inpu
   try {
     if (opName === 'remember' || opName === 'remember_project') {
       const content = String(input?.content ?? '').trim()
-      if (!content) return { action: 'create', ok: false }
+      if (!content || content.length > MAX_MEMORY_CHARS) return { action: 'create', ok: false }
+      if (table === 'project_memories' && !projectId) return { action: 'create', ok: false }
       const ts = new Date().toISOString()
 
       // 去重：检查是否已有相似记忆
@@ -73,14 +76,20 @@ async function runMemoryOp(ctx: ToolContext, opName: string, table: string, inpu
     if (opName === 'update_memory' || opName === 'update_project_memory') {
       const id = String(input?.id ?? '')
       const content = String(input?.content ?? '').trim()
+      if (!UUID_RE.test(id) || !content || content.length > MAX_MEMORY_CHARS) return { action: 'update', id, content, ok: false }
       const ts = new Date().toISOString()
-      const { error } = await supabase.from(table).update({ content, updated_at: ts }).eq('id', id)
+      let query = supabase.from(table).update({ content, updated_at: ts }).eq('id', id).eq('user_id', userId)
+      if (table === 'project_memories') query = query.eq('project_id', projectId)
+      const { error } = await query
       if (error) log.error('memory', `update 失败 (${table})`, error)
       return { action: 'update', id, content, ok: !error, timestamp: ts }
     }
     if (opName === 'forget' || opName === 'forget_project') {
       const id = String(input?.id ?? '')
-      const { error } = await supabase.from(table).delete().eq('id', id)
+      if (!UUID_RE.test(id)) return { action: 'delete', id, ok: false }
+      let query = supabase.from(table).delete().eq('id', id).eq('user_id', userId)
+      if (table === 'project_memories') query = query.eq('project_id', projectId)
+      const { error } = await query
       if (error) log.error('memory', `forget 失败 (${table})`, error)
       return { action: 'delete', id, ok: !error }
     }

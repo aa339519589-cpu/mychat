@@ -5,13 +5,17 @@ import { resolveAuth } from "@/lib/api/guard"
 import { json } from "@/lib/api/response"
 import { createTask, listTasks } from "@/lib/agent/data"
 import type { CreateTaskInput } from "@/lib/agent/types"
+import { readJson, requestErrorResponse } from "@/lib/api/request"
 
 export async function POST(req: NextRequest) {
   const auth = await resolveAuth()
   if (!auth.supabase || !auth.userId) return json({ error: "未登录" }, 401)
 
-  const body: CreateTaskInput = await req.json().catch(() => null)
-  if (!body?.goal) return json({ error: "缺少 goal" }, 400)
+  let body: CreateTaskInput
+  try { body = await readJson<CreateTaskInput>(req, { maxBytes: 64 * 1024 }) } catch (error) { return requestErrorResponse(error) }
+  if (typeof body?.goal !== "string" || !body.goal.trim() || body.goal.length > 10_000) return json({ error: "goal 缺失或过长" }, 400)
+  if (body.repo !== undefined && !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(body.repo)) return json({ error: "repo 格式无效" }, 400)
+  if (body.mode !== undefined && !["auto", "confirm", "plan", "pr"].includes(body.mode)) return json({ error: "mode 无效" }, 400)
 
   const result = await createTask(auth.supabase, auth.userId, body)
   if (result.error) {

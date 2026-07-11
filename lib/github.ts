@@ -4,6 +4,11 @@
 
 const GH = 'https://api.github.com'
 
+function boundedFetch(input: string, init: RequestInit = {}, timeoutMs = 30_000): Promise<Response> {
+  const signals = [init.signal, AbortSignal.timeout(timeoutMs)].filter(Boolean) as AbortSignal[]
+  return fetch(input, { ...init, signal: signals.length === 1 ? signals[0] : AbortSignal.any(signals) })
+}
+
 function ghHeaders(token: string, json = false): Record<string, string> {
   const h: Record<string, string> = {
     Authorization: `Bearer ${token}`,
@@ -18,7 +23,7 @@ export type RepoItem = { name: string; full_name: string; private: boolean; desc
 
 // 当前账号下的仓库（按最近更新排序，只取有 push 权限或自己拥有的）
 export async function listRepos(token: string): Promise<RepoItem[]> {
-  const res = await fetch(`${GH}/user/repos?sort=updated&per_page=50&affiliation=owner,collaborator`, { headers: ghHeaders(token) }).catch(() => null)
+  const res = await boundedFetch(`${GH}/user/repos?sort=updated&per_page=50&affiliation=owner,collaborator`, { headers: ghHeaders(token) }).catch(() => null)
   if (!res?.ok) return []
   const data = await res.json()
   return (data as any[]).map(r => ({
@@ -33,7 +38,7 @@ export type RepoMeta = { defaultBranch: string; canPush: boolean; isPrivate: boo
 
 // 仓库元信息：默认分支 + 当前用户是否有写权限
 export async function repoMeta(token: string, repo: string): Promise<RepoMeta | null> {
-  const res = await fetch(`${GH}/repos/${repo}`, { headers: ghHeaders(token) }).catch(() => null)
+  const res = await boundedFetch(`${GH}/repos/${repo}`, { headers: ghHeaders(token) }).catch(() => null)
   if (!res?.ok) return null
   const data = await res.json()
   return {
@@ -45,7 +50,7 @@ export async function repoMeta(token: string, repo: string): Promise<RepoMeta | 
 
 // 完整文件路径列表（默认分支，递归）。只返回文件（blob），上限 N 条。
 export async function listTree(token: string, repo: string, branch: string, limit = 400): Promise<{ paths: string[]; truncated: boolean }> {
-  const res = await fetch(`${GH}/repos/${repo}/git/trees/${branch}?recursive=1`, { headers: ghHeaders(token) }).catch(() => null)
+  const res = await boundedFetch(`${GH}/repos/${repo}/git/trees/${branch}?recursive=1`, { headers: ghHeaders(token) }).catch(() => null)
   if (!res?.ok) return { paths: [], truncated: false }
   const data = await res.json()
   const blobs = (data.tree as any[]).filter(item => item.type === 'blob').map(item => item.path as string)
@@ -56,7 +61,7 @@ export type FileContent = { content: string; sha: string }
 
 // 读单个文件内容（解码 base64）+ sha（提交时防并发覆盖必须用到）
 export async function readFile(token: string, repo: string, path: string, maxBytes = 120_000): Promise<FileContent | { error: string }> {
-  const res = await fetch(`${GH}/repos/${repo}/contents/${encodeURIComponent(path).replace(/%2F/g, '/')}`, { headers: ghHeaders(token) }).catch(() => null)
+  const res = await boundedFetch(`${GH}/repos/${repo}/contents/${encodeURIComponent(path).replace(/%2F/g, '/')}`, { headers: ghHeaders(token) }).catch(() => null)
   if (!res?.ok) return { error: res?.status === 404 ? '文件不存在' : '文件读取失败' }
   const data = await res.json()
   if (Array.isArray(data)) return { error: '这是一个目录，不是文件' }
@@ -81,7 +86,7 @@ export async function createRepo(token: string, name: string, description: strin
     const tryName = attempt === 0 ? base : `${base}-${attempt + 1}`
     let res: Response | null = null
     try {
-      res = await fetch(`${GH}/user/repos`, {
+      res = await boundedFetch(`${GH}/user/repos`, {
         method: 'POST', headers: ghHeaders(token, true),
         body: JSON.stringify({ name: tryName, description: description || '', private: isPrivate, auto_init: true }),
       })
@@ -115,7 +120,7 @@ export async function createRepo(token: string, name: string, description: strin
 // 取某分支 HEAD 的 commit sha；可重试（新建仓库 auto_init 后引用可能稍有延迟）
 async function getHeadSha(token: string, repo: string, branch: string, retries = 0): Promise<string | null> {
   for (let i = 0; i <= retries; i++) {
-    const res = await fetch(`${GH}/repos/${repo}/git/ref/heads/${branch}`, { headers: ghHeaders(token) }).catch(() => null)
+    const res = await boundedFetch(`${GH}/repos/${repo}/git/ref/heads/${branch}`, { headers: ghHeaders(token) }).catch(() => null)
     if (res?.ok) { const sha = ((await res.json()).object as any)?.sha; if (sha) return sha }
     if (i < retries) await sleep(600)
   }
@@ -132,7 +137,7 @@ export async function commitFiles(token: string, repo: string, branch: string, f
   if (!baseSha) return { error: '获取分支 HEAD 失败' }
 
   // 基树
-  const commitRes = await fetch(`${GH}/repos/${repo}/git/commits/${baseSha}`, { headers: ghHeaders(token) }).catch(() => null)
+  const commitRes = await boundedFetch(`${GH}/repos/${repo}/git/commits/${baseSha}`, { headers: ghHeaders(token) }).catch(() => null)
   if (!commitRes?.ok) return { error: '获取基树失败' }
   const baseTreeSha = ((await commitRes.json()).tree as any).sha as string
 
@@ -143,7 +148,7 @@ export async function commitFiles(token: string, repo: string, branch: string, f
       treeItems.push({ path: f.path, mode: '100644', type: 'blob', sha: null })
       continue
     }
-    const blobRes = await fetch(`${GH}/repos/${repo}/git/blobs`, {
+    const blobRes = await boundedFetch(`${GH}/repos/${repo}/git/blobs`, {
       method: 'POST', headers: ghHeaders(token, true),
       body: JSON.stringify({ content: Buffer.from(f.content, 'utf-8').toString('base64'), encoding: 'base64' }),
     }).catch(() => null)
@@ -152,7 +157,7 @@ export async function commitFiles(token: string, repo: string, branch: string, f
   }
 
   // 新树
-  const treeRes = await fetch(`${GH}/repos/${repo}/git/trees`, {
+  const treeRes = await boundedFetch(`${GH}/repos/${repo}/git/trees`, {
     method: 'POST', headers: ghHeaders(token, true),
     body: JSON.stringify({ base_tree: baseTreeSha, tree: treeItems }),
   }).catch(() => null)
@@ -160,7 +165,7 @@ export async function commitFiles(token: string, repo: string, branch: string, f
   const newTreeSha = (await treeRes.json()).sha as string
 
   // 新提交
-  const newCommitRes = await fetch(`${GH}/repos/${repo}/git/commits`, {
+  const newCommitRes = await boundedFetch(`${GH}/repos/${repo}/git/commits`, {
     method: 'POST', headers: ghHeaders(token, true),
     body: JSON.stringify({ message: message || 'Claude 代码改动', tree: newTreeSha, parents: [baseSha] }),
   }).catch(() => null)
@@ -168,7 +173,7 @@ export async function commitFiles(token: string, repo: string, branch: string, f
   const newCommitSha = (await newCommitRes.json()).sha as string
 
   // 推进分支引用
-  const refRes = await fetch(`${GH}/repos/${repo}/git/refs/heads/${branch}`, {
+  const refRes = await boundedFetch(`${GH}/repos/${repo}/git/refs/heads/${branch}`, {
     method: 'PATCH', headers: ghHeaders(token, true),
     body: JSON.stringify({ sha: newCommitSha, force: false }),
   }).catch(() => null)
@@ -201,7 +206,7 @@ export async function mergePullRequest(
   pullNumber: number,
   headSha: string,
 ): Promise<MergeResult> {
-  const res = await fetch(`${GH}/repos/${repo}/pulls/${pullNumber}/merge`, {
+  const res = await boundedFetch(`${GH}/repos/${repo}/pulls/${pullNumber}/merge`, {
     method: 'PUT',
     headers: ghHeaders(token, true),
     body: JSON.stringify({ sha: headSha, merge_method: 'merge' }),
@@ -227,14 +232,14 @@ export async function waitForPages(
   const intervalMs = options.intervalMs ?? 3_000
   const deadline = Date.now() + timeoutMs
   do {
-    const statusRes = await fetch(`${GH}/repos/${repo}/pages`, { headers: ghHeaders(token) }).catch(() => null)
+    const statusRes = await boundedFetch(`${GH}/repos/${repo}/pages`, { headers: ghHeaders(token) }).catch(() => null)
     if (statusRes?.ok) {
       const data = await statusRes.json().catch(() => null)
       if (data?.html_url) url = data.html_url
       if (data?.status === 'errored') return { status: 'failed', url, error: 'GitHub Pages 构建失败' }
       if (data?.status === 'built') {
         if (options.expectedCommitSha) {
-          const buildRes = await fetch(`${GH}/repos/${repo}/pages/builds/latest`, { headers: ghHeaders(token) }).catch(() => null)
+          const buildRes = await boundedFetch(`${GH}/repos/${repo}/pages/builds/latest`, { headers: ghHeaders(token) }).catch(() => null)
           const build = buildRes?.ok ? await buildRes.json().catch(() => null) : null
           if (build?.commit !== options.expectedCommitSha) {
             if (Date.now() < deadline) await sleep(intervalMs)
@@ -247,7 +252,7 @@ export async function waitForPages(
           }
         }
         if (options.verifyUrl === false) return { status: 'ready', url }
-        const site = await fetch(url, { redirect: 'follow', cache: 'no-store' }).catch(() => null)
+        const site = await boundedFetch(url, { redirect: 'follow', cache: 'no-store' }).catch(() => null)
         if (site?.ok) return { status: 'ready', url }
       }
     }
@@ -263,7 +268,7 @@ export async function enablePages(
   branch: string,
   options: PagesWaitOptions = {},
 ): Promise<PagesResult> {
-  const res = await fetch(`${GH}/repos/${repo}/pages`, {
+  const res = await boundedFetch(`${GH}/repos/${repo}/pages`, {
     method: 'POST', headers: ghHeaders(token, true),
     body: JSON.stringify({ source: { branch, path: '/' } }),
   }).catch(() => null)
@@ -275,7 +280,7 @@ export async function enablePages(
     return { status: 'failed', url, error: `开启 Pages 失败：${(err as any)?.message ?? '未知错误'}` }
   }
   if (res.status === 409) {
-    const update = await fetch(`${GH}/repos/${repo}/pages`, {
+    const update = await boundedFetch(`${GH}/repos/${repo}/pages`, {
       method: 'PUT', headers: ghHeaders(token, true),
       body: JSON.stringify({ source: { branch, path: '/' } }),
     }).catch(() => null)

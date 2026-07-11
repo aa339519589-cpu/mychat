@@ -9,10 +9,21 @@ export function toOpenAI(msgs: RawMsg[]) {
 }
 
 export function chatCompletionsUrl(baseUrl: string) {
-  const base = baseUrl.trim().replace(/\/$/, '')
-  if (base.endsWith('/chat/completions')) return base
-  if (base.endsWith('/v1')) return `${base}/chat/completions`
-  return `${base}/v1/chat/completions`
+  const base = baseUrl.trim().replace(/\/+$/, '')
+  if (/\/chat\/completions$/i.test(base)) return base
+
+  // A non-root path is an explicit API prefix. This covers providers such as
+  // /v1beta/openai and preserves custom gateways normalized from
+  // /gateway/chat/completions back to /gateway.
+  let hasExplicitPath = false
+  try {
+    hasExplicitPath = new URL(base).pathname !== '/'
+  } catch {
+    // Invalid URLs are rejected before custom endpoints reach this helper.
+    // Keep the legacy fallback for internal callers with an unvalidated value.
+    hasExplicitPath = /:\/\/[^/]+\/.+/.test(base)
+  }
+  return `${base}${hasExplicitPath ? '' : '/v1'}/chat/completions`
 }
 
 // 注入附件：附件最终都已是纯文字（文本文件 / 有文字层的 PDF / 扫描件经小米 Omni OCR），直接拼进末条用户消息

@@ -2,7 +2,7 @@
 // 禁止越权、禁止敏感文件、禁止生成目录、禁止大文件/二进制改写
 
 import { resolve, normalize, relative, sep } from "path"
-import { statSync, readFileSync } from "fs"
+import { existsSync, lstatSync, statSync, readFileSync } from "fs"
 
 // ───────────── 禁止的路径模式 ─────────────
 
@@ -12,6 +12,10 @@ const FORBIDDEN_NAMES = new Set([
   ".env.production",
   ".env.development",
   ".env.staging",
+  ".npmrc",
+  ".pypirc",
+  ".netrc",
+  ".yarnrc.yml",
 ])
 
 const FORBIDDEN_PREFIXES = [
@@ -157,10 +161,29 @@ export function validatePath(
     return { ok: false, error: `路径越权：${trimmed} → 解析到 workspace 外部` }
   }
 
+  // 写入尚不存在的文件时，其父目录仍可能是逃逸到 workspace 外部的 symlink。
+  // 因此逐段拒绝所有已存在的符号链接，而不是只检查最终 realpath。
+  let current = resolve(workspacePath)
+  for (const segment of normalized.split(/[/\\]/).filter(Boolean)) {
+    current = resolve(current, segment)
+    if (!existsSync(current)) continue
+    try {
+      if (lstatSync(current).isSymbolicLink()) {
+        return { ok: false, error: `禁止通过符号链接访问：${relative(workspacePath, current)}` }
+      }
+    } catch {
+      return { ok: false, error: `无法安全检查路径：${trimmed}` }
+    }
+  }
+
   // 9) 禁止文件名检查
   const segments = normalized.split(/[/\\]/)
   for (const seg of segments) {
-    if (FORBIDDEN_NAMES.has(seg)) {
+    const lowerSegment = seg.toLowerCase()
+    const privateEnv = lowerSegment.startsWith(".env.")
+      && !lowerSegment.endsWith(".example")
+      && !lowerSegment.endsWith(".sample")
+    if (FORBIDDEN_NAMES.has(lowerSegment) || privateEnv) {
       return { ok: false, error: `禁止访问文件：${seg}` }
     }
   }

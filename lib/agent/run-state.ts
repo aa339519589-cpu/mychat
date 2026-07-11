@@ -1,5 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { redactSensitive } from "./path-security"
+import { log } from "@/lib/logger"
+import { mergeTaskMeta } from "./meta"
 
 const MAX_MESSAGES = 48
 const MAX_CONTENT = 16_000
@@ -56,20 +58,20 @@ export async function saveAgentRunState(
   taskId: string,
   patch: Partial<AgentRunState>,
 ): Promise<void> {
-  const { data } = await supabase
-    .from("agent_tasks")
-    .select("meta")
-    .eq("id", taskId)
-    .eq("user_id", userId)
-    .single()
-  const meta = (data?.meta ?? {}) as Record<string, unknown>
-  const current = (meta.agentRun ?? {}) as Record<string, unknown>
-  const next: Record<string, unknown> = { ...current, ...patch, updatedAt: new Date().toISOString() }
+  const next: Record<string, unknown> = { ...patch, updatedAt: new Date().toISOString() }
   if (Array.isArray(patch.messages)) next.messages = compactRunMessages(patch.messages)
   if (Array.isArray(patch.resumeMessages)) next.resumeMessages = compactRunMessages(patch.resumeMessages)
-  await supabase
-    .from("agent_tasks")
-    .update({ meta: { ...meta, agentRun: next }, updated_at: new Date().toISOString() })
-    .eq("id", taskId)
-    .eq("user_id", userId)
+  let error: { code?: string } | null = null
+  try {
+    const result = await supabase.rpc("merge_agent_run_state", { input_task_id: taskId, patch: next })
+    error = result.error
+  } catch {
+    error = { code: "RPC_UNAVAILABLE" }
+  }
+  if (error) {
+    log.warn("agentRun", "Atomic run-state merge unavailable; using compatibility fallback", { userId, taskId, code: error.code })
+    const { data } = await supabase.from("agent_tasks").select("meta").eq("id", taskId).eq("user_id", userId).single()
+    const current = ((data?.meta as Record<string, unknown> | null)?.agentRun ?? {}) as Record<string, unknown>
+    await mergeTaskMeta(supabase, userId, taskId, { agentRun: { ...current, ...next } })
+  }
 }

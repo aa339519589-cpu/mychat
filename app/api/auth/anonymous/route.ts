@@ -1,9 +1,19 @@
 import { NextRequest } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { log } from '@/lib/logger'
+import { checkRateLimit } from '@/lib/rate-limit'
+import { clientAddress } from '@/lib/api/request'
 
-export async function POST(_req: NextRequest) {
+export async function POST(req: NextRequest) {
   try {
+    const address = clientAddress(req)
+    const rate = checkRateLimit(`anonymous-signin:${address}`, { max: 5, windowMs: 60 * 60_000 })
+    if (!rate.allowed) {
+      return Response.json(
+        { error: '游客登录请求过于频繁，请稍后再试' },
+        { status: 429, headers: { 'Retry-After': String(rate.retryAfterSeconds) } },
+      )
+    }
     const supabase = await createClient()
     const { data, error } = await supabase.auth.signInAnonymously()
 

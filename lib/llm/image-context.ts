@@ -8,6 +8,7 @@ type SummaryOptions = {
   supabase: any
   userId: string | null
   emit: Emit
+  signal?: AbortSignal
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -30,7 +31,7 @@ export async function ensureImageSummaries(messages: RawMsg[], options: SummaryO
   options.emit({ thinking: '正在理解图片内容……' })
   for (const message of pending) {
     const refs = imageRefsFromMessage(message)
-    const summary = await summarizeImages(refs)
+    const summary = await summarizeImages(refs, options.signal)
     if (!summary) continue
     message.imageSummary = summary
     if (message.id) options.emit({ imageSummary: { messageId: message.id, summary } })

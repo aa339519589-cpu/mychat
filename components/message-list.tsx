@@ -15,6 +15,8 @@ import { MermaidChart } from "@/components/mermaid-chart"
 import { FunctionPlotChart } from "@/components/function-plot-chart"
 import { normalizeMathDelimiters } from "@/lib/math"
 import { cn } from "@/lib/utils"
+import { GeneratedMedia } from "@/components/generated-media"
+import { isPrivateNetworkGeneratedMediaUrl, isSafeGeneratedMediaUrl } from "@/lib/generated-media"
 
 const INITIAL_RENDER_COUNT = 70
 const RENDER_STEP = 50
@@ -49,7 +51,15 @@ function MdContent({ text }: { text: string }) {
         tr: ({ children }) => <tr className="border-b border-border/20 last:border-b-0">{children}</tr>,
         th: ({ children }) => <th className="border-r border-border/20 px-3 py-2 text-left text-sm font-[625] last:border-r-0">{children}</th>,
         td: ({ children }) => <td className="break-words border-r border-border/20 px-3 py-2 text-sm last:border-r-0 [overflow-wrap:anywhere]">{children}</td>,
-        img: ({ src, alt }) => <img src={src} alt={alt} className="my-3 h-auto max-w-full rounded-lg border border-border/20" />,
+        img: ({ src, alt }) => isSafeGeneratedMediaUrl("image", src) ? (
+          <img src={src} alt={alt} className="my-3 h-auto max-w-full rounded-lg border border-border/20" />
+        ) : (
+          <span role="alert" className="my-3 block rounded-lg border border-destructive/30 px-3 py-2 text-sm text-muted-foreground">
+            {isPrivateNetworkGeneratedMediaUrl(src)
+              ? "已阻止正文图片直接访问本机或内网地址。"
+              : "正文图片链接不安全或不受支持。"}
+          </span>
+        ),
       }}
     >
       {normalizeMathDelimiters(text)}
@@ -91,15 +101,15 @@ function SearchBlock({ searches, replying }: { searches: { query: string; result
 }
 
 function AiActions({
-  text, isLast, isLoading,
+  text, isLast, isLoading, hasOutput,
   onCopy, onRegenerate,
 }: {
-  text: string; isLast: boolean; isLoading: boolean
+  text: string; isLast: boolean; isLoading: boolean; hasOutput?: boolean
   onCopy?: (t: string) => void
   onRegenerate?: () => void
 }) {
   const [copied, setCopied] = useState(false)
-  if (!text && !isLast) return null
+  if (!text && !hasOutput) return null
   function doCopy() {
     navigator.clipboard.writeText(text).catch(() => {})
     setCopied(true)
@@ -113,7 +123,7 @@ function AiActions({
           {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
         </button>
       )}
-      {isLast && !isLoading && onRegenerate && text && (
+      {isLast && !isLoading && onRegenerate && (text || hasOutput) && (
         <button onClick={onRegenerate} title="重新生成" className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-foreground">
           <RefreshCw className="size-4" />
         </button>
@@ -294,6 +304,16 @@ export function MessageList({
                               <MdContent text={display} />
                             </div>
                           )}
+                          {m.media && m.media.length > 0 && (
+                            <div className="min-w-0 space-y-3">
+                              {m.media.map((media, mediaIndex) => (
+                                <GeneratedMedia
+                                  key={`${media.type}:${media.url.slice(0, 120)}:${mediaIndex}`}
+                                  media={media}
+                                />
+                              ))}
+                            </div>
+                          )}
                           {vegaRaw !== null && <VegaChart spec={vegaRaw} done={vegaDone} />}
                           {mermaidRaw !== null && <MermaidChart code={mermaidRaw} done={mermaidDone} />}
                           {fnPlotRaw !== null && <FunctionPlotChart spec={fnPlotRaw} done={fnPlotDone} />}
@@ -308,10 +328,11 @@ export function MessageList({
                               />
                             </div>
                           )}
-                          {(!!display || raw !== null || idx === lastAiIdx) && (
+                          {(!!display || !!m.media?.length || raw !== null || idx === lastAiIdx) && (
                             <div className="space-y-2.5">
                               <AiActions
                                 text={display}
+                                hasOutput={!!m.media?.length}
                                 isLast={idx === lastAiIdx}
                                 isLoading={!!isLoading}
                                 onRegenerate={onRegenerate}
@@ -319,6 +340,11 @@ export function MessageList({
                             </div>
                           )}
                         </>
+                      )}
+                      {m.outputWarning && (
+                        <p role="alert" className="break-words rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm leading-relaxed text-destructive [overflow-wrap:anywhere]">
+                          {m.outputWarning}
+                        </p>
                       )}
                     </div>
                   )

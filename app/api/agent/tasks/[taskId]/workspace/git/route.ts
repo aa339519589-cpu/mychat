@@ -2,28 +2,25 @@
 // POST /api/agent/tasks/[taskId]/workspace/git — publish (one-shot)
 
 import { NextRequest } from "next/server"
-import { cookies } from "next/headers"
 import { json } from "@/lib/api/response"
 import { requireWorkspace } from "@/lib/agent/workspace-route"
 import {
   getWorkspaceGitStatus,
-  commitWorkspaceChanges,
-  pushAgentBranch,
-  createWorkspacePullRequest,
   publishWorkspaceToPullRequest,
 } from "@/lib/agent/git-publish"
 import { classifyPublishRisk } from "@/lib/agent/risk"
-import { createConfirmationRequest, getPendingConfirmation, clearConfirmation } from "@/lib/agent/permissions"
+import { createConfirmationRequest, getConfirmation, clearConfirmation } from "@/lib/agent/permissions"
+import { getGitHubSession } from "@/lib/github-session"
+import { readJson, requestErrorResponse } from "@/lib/api/request"
 
 async function getContext(taskId: string) {
   const ctx = await requireWorkspace(taskId)
   if ("error" in ctx) return ctx
 
-  const tokenStore = await cookies()
-  const ghToken = tokenStore.get("gh_access_token")?.value
-  if (!ghToken) return { error: json({ error: "未连接 GitHub" }, 401) }
+  const session = await getGitHubSession()
+  if (!session || session.userId !== ctx.userId) return { error: json({ error: "未连接 GitHub 或账号会话已变化" }, 401) }
 
-  return { ...ctx, ghToken }
+  return { ...ctx, ghToken: session.token }
 }
 
 // ─── GET：git status ───
@@ -42,33 +39,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tas
   const ctx = await getContext(taskId)
   if ("error" in ctx) return ctx.error
 
-  let body: any = {}
-  try { body = await req.json() } catch { /* optional */ }
+  let body: Record<string, unknown> = {}
+  try {
+    body = await readJson(req, { maxBytes: 32 * 1024 })
+  } catch (error) {
+    if (req.headers.get("content-length") === "0" || !req.body) body = {}
+    else return requestErrorResponse(error)
+  }
 
   const action = body.action ?? "publish"
 
-  if (action === "commit") {
-    const msg = body.message || `Agent: code changes`
-    const result = await commitWorkspaceChanges(taskId, ctx.userId, msg, ctx.supabase)
-    if (!result.ok) return json(result, 400)
-    return json(result)
-  }
-
-  if (action === "push") {
-    const result = await pushAgentBranch(taskId, ctx.userId, ctx.ghToken, ctx.supabase)
-    if (!result.ok) return json(result, 400)
-    return json(result)
-  }
-
-  if (action === "pr") {
-    const result = await createWorkspacePullRequest(taskId, ctx.userId, ctx.ghToken, ctx.supabase, {
-      title: body.title,
-      body: body.body,
-      base: body.base,
-    })
-    if (!result.ok) return json(result, 400)
-    return json(result)
-  }
+  if (action !== "publish") return json({ error: "不支持的 Git 操作" }, 400)
 
   // default: publish all — risk gate first
   if (action === "publish") {
@@ -79,10 +60,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tas
     if (risk.blocked) return json({ error: risk.reason, blocked: true }, 403)
 
     if (risk.needsConfirmation) {
-      const existing = await getPendingConfirmation(ctx.supabase, ctx.userId, taskId)
+      const existing = await getConfirmation(ctx.supabase, ctx.userId, taskId)
       if (existing?.status === "confirmed" && existing.operation === "publish") {
         await clearConfirmation(ctx.supabase, ctx.userId, taskId)
-      } else if (!existing) {
+      } else if (existing?.status === "pending") {
+        return json({ needsConfirmation: true, confirmationId: existing.id, risk }, 409)
+      } else {
+        if (existing) await clearConfirmation(ctx.supabase, ctx.userId, taskId)
         const req = await createConfirmationRequest(ctx.supabase, ctx.userId, taskId, risk, "creating_pr")
         return json({ needsConfirmation: true, confirmationId: req.id, risk }, 409)
       }
@@ -90,10 +74,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tas
   }
 
   const result = await publishWorkspaceToPullRequest(taskId, ctx.userId, ctx.ghToken, ctx.supabase, {
-    message: body.message,
-    title: body.title,
-    body: body.body,
-    base: body.base,
+    message: typeof body.message === "string" ? body.message.slice(0, 500) : undefined,
+    title: typeof body.title === "string" ? body.title.slice(0, 250) : undefined,
+    body: typeof body.body === "string" ? body.body.slice(0, 20_000) : undefined,
   })
 
   if (!result.ok) return json(result, 400)
