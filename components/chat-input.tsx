@@ -283,7 +283,7 @@ export function ChatInput({
           </button>
         </div>
 
-        <textarea ref={ref} rows={1} value={value} onChange={e => { setValue(e.target.value); resize() }} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !isLoading && !sendPending) { e.preventDefault(); submit() } }} placeholder="说点什么……" className={cn("block min-w-0 flex-1 resize-none bg-transparent py-1.5 text-[16px] leading-[1.6] tracking-wide text-secondary-foreground outline-none placeholder:italic placeholder:text-muted-foreground dark:text-white", mobile ? "max-h-[120px]" : "max-h-[180px]")} />
+        <textarea ref={ref} rows={1} value={value} onChange={e => { setValue(e.target.value); resize() }} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !isLoading && !sendPending) { e.preventDefault(); submit() } }} placeholder="说点什么……" className={cn("block min-w-0 flex-1 resize-none bg-transparent py-1.5 text-[14px] leading-[1.6] tracking-wide text-secondary-foreground outline-none placeholder:italic placeholder:text-muted-foreground dark:text-white", mobile ? "max-h-[120px]" : "max-h-[180px]")} />
 
         <button type="button" onClick={() => setTierMenuOpen(true)} aria-label="选择模型" className="mb-0.5 flex h-8 max-w-[7rem] shrink-0 items-center gap-1 rounded-[0.7rem] px-2.5 text-xs text-muted-foreground transition-colors hover:bg-background/40 hover:text-foreground dark:hover:bg-white/10">
           <span className="truncate">{activeTierName}</span><ChevronDown className="size-3 shrink-0" />
@@ -303,7 +303,7 @@ export function ChatInput({
             <div className="mx-auto mt-3 h-1 w-16 rounded-full bg-muted-foreground/35" />
             <div className="flex h-12 shrink-0 items-center justify-center px-4">
               {modelPage === "more" && <button onClick={() => setModelPage("list")} className="absolute left-3 flex size-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-secondary/70 hover:text-foreground"><ChevronLeft className="size-4" /></button>}
-              <h2 className="text-[17px] font-[600] tracking-[-0.01em] text-foreground">{modelPage === "list" ? "Select model" : "More models"}</h2>
+              <h2 className="text-[15px] font-[600] tracking-[-0.01em] text-foreground">{modelPage === "list" ? "Select model" : "More models"}</h2>
               <button onClick={() => setTierMenuOpen(false)} className="absolute right-3 flex size-9 items-center justify-center rounded-full border border-border/50 bg-secondary/70 text-muted-foreground shadow-sm transition-colors hover:text-foreground dark:border-white/10 dark:bg-[#151515]"><X className="size-4" /></button>
             </div>
 
@@ -313,7 +313,7 @@ export function ChatInput({
                   {MODEL_SHEET_TIERS.map((id, index) => <ModelRow key={id} label={TIER_MAP[id].label} active={activeTier === id} divided={index > 0} onClick={() => selectTier(id)} />)}
                   {customModels.map((m, index) => <ModelRow key={m.id} label={m.label} desc={`${m.supportsVision ? "视觉 · " : ""}${m.model}`} active={activeTier === m.id} divided={MODEL_SHEET_TIERS.length > 0 || index > 0} onClick={() => selectTier(m.id)} onDelete={() => removeCustomModel(m.id)} />)}
                 </div></div>
-                <button onClick={() => setModelPage("more")} className="flex h-12 shrink-0 items-center rounded-[1.25rem] bg-card/70 px-4 text-left text-[16px] font-[600] tracking-[-0.01em] text-foreground transition-colors hover:bg-card dark:bg-[#151515]"><span className="flex-1">More models</span><ChevronRight className="size-4 text-muted-foreground" /></button>
+                <button onClick={() => setModelPage("more")} className="flex h-12 shrink-0 items-center rounded-[1.25rem] bg-card/70 px-4 text-left text-[14px] font-[600] tracking-[-0.01em] text-foreground transition-colors hover:bg-card dark:bg-[#151515]"><span className="flex-1">More models</span><ChevronRight className="size-4 text-muted-foreground" /></button>
               </div>
             ) : (
               <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
@@ -340,13 +340,13 @@ export function ChatInput({
 }
 
 function PlusItem({ icon, label, onClick, active }: { icon: React.ReactNode; label: string; onClick: () => void; active?: boolean }) {
-  return <button onClick={onClick} className={cn("flex w-full items-center gap-2 px-2.5 py-1.5 text-[13px] transition-colors hover:bg-secondary/60", active ? "text-primary" : "text-muted-foreground")}><span className="shrink-0">{icon}</span><span className="flex-1 truncate text-left">{label}</span>{active ? <Check className="size-3.5 shrink-0 text-primary" /> : null}</button>
+  return <button onClick={onClick} className={cn("flex w-full items-center gap-2 px-2.5 py-1.5 text-[11px] transition-colors hover:bg-secondary/60", active ? "text-primary" : "text-muted-foreground")}><span className="shrink-0">{icon}</span><span className="flex-1 truncate text-left">{label}</span>{active ? <Check className="size-3.5 shrink-0 text-primary" /> : null}</button>
 }
 
 function ModelRow({ label, desc, active, divided, onClick, onDelete }: { label: string; desc?: string; active?: boolean; divided?: boolean; onClick: () => void; onDelete?: () => void }) {
   return (
     <div className={cn("flex items-center gap-2 px-4 py-2.5", divided && "border-t border-border/40 dark:border-white/10")}>
-      <button onClick={onClick} className="min-w-0 flex-1 text-left"><div className={cn("truncate text-[16px] font-[600] tracking-[-0.01em]", active ? "text-foreground" : "text-foreground/92")}>{label}</div>{desc && <div className="mt-0.5 truncate text-[12px] font-[500] text-muted-foreground">{desc}</div>}</button>
+      <button onClick={onClick} className="min-w-0 flex-1 text-left"><div className={cn("truncate text-[14px] font-[600] tracking-[-0.01em]", active ? "text-foreground" : "text-foreground/92")}>{label}</div>{desc && <div className="mt-0.5 truncate text-[10px] font-[500] text-muted-foreground">{desc}</div>}</button>
       {onDelete && <button onClick={e => { e.stopPropagation(); onDelete() }} className="flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground/70 transition-colors hover:bg-secondary/70 hover:text-foreground" aria-label={`删除 ${label}`}><Trash2 className="size-3.5" /></button>}
       {active && <Check className="size-5 shrink-0 text-primary" />}
     </div>
@@ -354,5 +354,5 @@ function ModelRow({ label, desc, active, divided, onClick, onDelete }: { label: 
 }
 
 function Field({ label, value, onChange, placeholder, password }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; password?: boolean }) {
-  return <label className="block space-y-1.5"><span className="px-1 text-sm font-[600] text-muted-foreground">{label}</span><input type={password ? "password" : "text"} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} className="h-12 w-full rounded-[1rem] border border-border/50 bg-background/65 px-3 text-[15px] outline-none transition-colors placeholder:text-muted-foreground/45 focus:border-foreground/30 dark:border-white/10 dark:bg-[#20201f]" /></label>
+  return <label className="block space-y-1.5"><span className="px-1 text-sm font-[600] text-muted-foreground">{label}</span><input type={password ? "password" : "text"} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} className="h-12 w-full rounded-[1rem] border border-border/50 bg-background/65 px-3 text-[13px] outline-none transition-colors placeholder:text-muted-foreground/45 focus:border-foreground/30 dark:border-white/10 dark:bg-[#20201f]" /></label>
 }
