@@ -1,0 +1,137 @@
+name: Research Volcengine Seedance reserve
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch official Volcengine public pages and APIs
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p research-output/pages research-output/assets
+          UA='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/126 Safari/537.36'
+          curl -fsSL -A "$UA" -e 'https://www.volcengine.com/docs/82379/1544106?lang=zh' \
+            'https://www.volcengine.com/api/doc/getDocDetail?LibraryID=82379&DocumentID=1544106&newapi=1' \
+            -o research-output/pages/pricing-doc.json || true
+          curl -fsSL -A "$UA" -e 'https://www.volcengine.com/docs/82379/1544681?lang=zh' \
+            'https://www.volcengine.com/api/doc/getDocDetail?LibraryID=82379&DocumentID=1544681&newapi=1' \
+            -o research-output/pages/billing-doc.json || true
+          curl -fsSL -A "$UA" -e 'https://www.volcengine.com/docs/82379/2291680?lang=zh' \
+            'https://www.volcengine.com/api/doc/getDocDetail?LibraryID=82379&DocumentID=2291680&newapi=1' \
+            -o research-output/pages/seedance-doc.json || true
+          curl -fsSL -A "$UA" 'https://www.volcengine.com/pricing?product=ark_bd&tab=1' \
+            -o research-output/pages/pricing.html || true
+          curl -fsSL -A "$UA" 'https://console.volcengine.com/ark/region:ark+cn-beijing/model' \
+            -o research-output/pages/console-model.html || true
+          curl -fsSL -A "$UA" 'https://console.volcengine.com/ark/region:ark+cn-beijing/openManagement' \
+            -o research-output/pages/console-open-management.html || true
+
+      - name: Crawl public JavaScript and extract relevant evidence
+        shell: bash
+        run: |
+          python <<'PY'
+          from __future__ import annotations
+          import html, json, re, ssl, urllib.parse, urllib.request
+          from pathlib import Path
+
+          root = Path('research-output')
+          pages = root / 'pages'
+          assets = root / 'assets'
+          assets.mkdir(parents=True, exist_ok=True)
+          needles = [
+              'doubao-seedance-2.0-mini', 'doubao-seedance-2-0-mini',
+              'OpenAIModels', 'BalanceNotEnough', '下单预留金额',
+              '预留金额', '预扣', '最低余额', 'reserveAmount',
+              'reservedAmount', 'precharge', 'openModels', 'OpenModels',
+          ]
+          needle_re = re.compile('|'.join(re.escape(x) for x in needles), re.I)
+          evidence: list[str] = []
+
+          def snippets(label: str, text: str) -> None:
+              for match in needle_re.finditer(text):
+                  start = max(0, match.start() - 500)
+                  end = min(len(text), match.end() + 800)
+                  evidence.append(f'\n===== {label} @ {match.start()} =====\n{text[start:end]}\n')
+
+          def all_strings(value, path='$'):
+              if isinstance(value, dict):
+                  for k, v in value.items():
+                      yield from all_strings(v, f'{path}.{k}')
+              elif isinstance(value, list):
+                  for i, v in enumerate(value):
+                      yield from all_strings(v, f'{path}[{i}]')
+              elif isinstance(value, str):
+                  yield path, value
+
+          for path in pages.glob('*'):
+              raw = path.read_text(errors='replace')
+              snippets(path.name, raw)
+              if path.suffix == '.json':
+                  try:
+                      data = json.loads(raw)
+                      for jpath, value in all_strings(data):
+                          if needle_re.search(value):
+                              evidence.append(f'\n===== JSON {path.name} {jpath} =====\n{value}\n')
+                  except Exception as exc:
+                      evidence.append(f'JSON parse failed {path.name}: {exc}\n')
+
+          # Discover and download public JS bundles from fetched pages.
+          urls: set[str] = set()
+          for path in pages.glob('*.html'):
+              text = path.read_text(errors='replace')
+              base = 'https://console.volcengine.com/' if path.name.startswith('console') else 'https://www.volcengine.com/'
+              for src in re.findall(r'<script[^>]+src=["\']([^"\']+)', text, re.I):
+                  src = html.unescape(src)
+                  urls.add(urllib.parse.urljoin(base, src))
+              for href in re.findall(r'<link[^>]+href=["\']([^"\']+\.js(?:\?[^"\']*)?)', text, re.I):
+                  urls.add(urllib.parse.urljoin(base, html.unescape(href)))
+
+          ctx = ssl.create_default_context()
+          headers = {'User-Agent': 'Mozilla/5.0 Chrome/126', 'Accept': '*/*'}
+          fetched = []
+          for idx, url in enumerate(sorted(urls)[:250]):
+              try:
+                  req = urllib.request.Request(url, headers=headers)
+                  with urllib.request.urlopen(req, timeout=25, context=ctx) as response:
+                      body = response.read(20 * 1024 * 1024)
+                  text = body.decode('utf-8', errors='replace')
+                  name = f'{idx:03d}-' + re.sub(r'[^A-Za-z0-9._-]+', '_', urllib.parse.urlparse(url).path)[-140:]
+                  out = assets / name
+                  out.write_text(text)
+                  fetched.append(url)
+                  snippets(url, text)
+              except Exception as exc:
+                  evidence.append(f'FETCH FAILED {url}: {exc}\n')
+
+          # Extract likely API URL/path strings from all evidence-bearing assets.
+          api_paths: set[str] = set()
+          for path in assets.glob('*'):
+              text = path.read_text(errors='replace')
+              if not needle_re.search(text):
+                  continue
+              for match in re.findall(r'["\']([^"\']{3,300}(?:OpenAIModels|openModels|model[^"\']*(?:open|activate)|order|balance|reserve|precharge)[^"\']*)["\']', text, re.I):
+                  api_paths.add(match)
+
+          (root / 'fetched-assets.txt').write_text('\n'.join(fetched))
+          (root / 'api-path-candidates.txt').write_text('\n'.join(sorted(api_paths)))
+          (root / 'evidence.txt').write_text(''.join(evidence) or 'NO MATCHES\n')
+          print(f'fetched {len(fetched)} assets, evidence chunks {len(evidence)}, api paths {len(api_paths)}')
+          PY
+
+      - name: Upload research output
+        uses: actions/upload-artifact@v4
+        with:
+          name: volcengine-seedance-reserve-research
+          path: research-output
+          if-no-files-found: error
+          retention-days: 1
