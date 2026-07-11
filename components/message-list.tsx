@@ -57,34 +57,8 @@ function MdContent({ text }: { text: string }) {
   )
 }
 
-function ThinkingBlock({ thinking, active, className = "mb-3" }: { thinking: string; active?: boolean; className?: string }) {
-  const [open, setOpen] = useState(false)
-  if (!thinking.trim()) return null
-
-  if (active) {
-    return (
-      <div className={className} role="status" aria-live="polite">
-        <span className="thinking-flow">Thinking</span>
-      </div>
-    )
-  }
-
-  return (
-    <div className={className}>
-      <button
-        onClick={() => setOpen(v => !v)}
-        className="flex items-center gap-1.5 text-xs font-[400] italic text-muted-foreground/70 transition-colors hover:text-muted-foreground md:text-[13px]"
-      >
-        {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
-        <span>Thinking</span>
-      </button>
-      {open && (
-        <div className="mt-2 break-words whitespace-pre-wrap rounded-xl border border-border/30 bg-muted/15 px-4 py-2.5 text-[13px] font-[400] italic leading-relaxed text-muted-foreground [overflow-wrap:anywhere] md:text-sm">
-          {thinking}
-        </div>
-      )}
-    </div>
-  )
+function ThinkingBlock() {
+  return <div className="mb-3" role="status" aria-live="polite"><span className="thinking-flow">Thinking</span></div>
 }
 
 function SearchBlock({ searches, replying }: { searches: { query: string; results: { title: string; url: string }[] }[]; replying: boolean }) {
@@ -298,7 +272,7 @@ export function MessageList({
           ) : (
             <div key={m.id} className="group min-w-0 pl-[6px] md:pl-0">
               <div className="min-w-0">
-                {m.thinking && <ThinkingBlock thinking={m.thinking} active={!!isLoading && idx === lastAiIdx && !m.content?.trim()} />}
+                {!!isLoading && idx === lastAiIdx && !m.content?.trim() && <ThinkingBlock />}
                 {m.searchNotes && m.searchNotes.length > 0 && <SearchBlock searches={m.searchNotes} replying={!!m.content} />}
                 {m.memoryNotes && m.memoryNotes.length > 0 && (
                   <div className="mb-2.5 space-y-1">
