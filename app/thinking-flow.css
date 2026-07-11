@@ -1,7 +1,31 @@
+:root {
+  --mychat-ui-font: "Noto Serif SC", "Songti SC", SimSun, ui-serif, Georgia, serif;
+  --font-sans: var(--mychat-ui-font);
+  --font-heading: var(--mychat-ui-font);
+  --font-serif: var(--mychat-ui-font);
+  --font-mono: var(--mychat-ui-font);
+}
+
+html,
+body,
+button,
+input,
+textarea,
+select {
+  font-family: var(--mychat-ui-font) !important;
+}
+
 .thinking-flow {
   display: inline-block;
-  color: rgba(255, 255, 255, 0.44);
-  background-image: linear-gradient(100deg, rgba(255, 255, 255, 0.44) 0%, rgba(255, 255, 255, 0.44) 42%, rgba(255, 255, 255, 0.95) 50%, rgba(255, 255, 255, 0.44) 58%, rgba(255, 255, 255, 0.44) 100%);
+  color: rgba(0, 0, 0, 0.44);
+  background-image: linear-gradient(
+    100deg,
+    rgba(0, 0, 0, 0.44) 0%,
+    rgba(0, 0, 0, 0.44) 42%,
+    rgba(0, 0, 0, 0.95) 50%,
+    rgba(0, 0, 0, 0.44) 58%,
+    rgba(0, 0, 0, 0.44) 100%
+  );
   background-size: 220% 100%;
   background-position: 120% 0;
   background-repeat: no-repeat;
@@ -9,13 +33,67 @@
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   animation: thinking-text-flow 1.45s linear infinite;
+  text-transform: capitalize;
   transform: translateZ(0);
   will-change: background-position;
 }
 
-:root:not(.dark) .thinking-flow {
-  color: rgba(0, 0, 0, 0.44);
-  background-image: linear-gradient(100deg, rgba(0, 0, 0, 0.44) 0%, rgba(0, 0, 0, 0.44) 42%, rgba(0, 0, 0, 0.95) 50%, rgba(0, 0, 0, 0.44) 58%, rgba(0, 0, 0, 0.44) 100%);
+.dark .thinking-flow {
+  color: rgba(255, 255, 255, 0.44);
+  background-image: linear-gradient(
+    100deg,
+    rgba(255, 255, 255, 0.44) 0%,
+    rgba(255, 255, 255, 0.44) 42%,
+    rgba(255, 255, 255, 0.95) 50%,
+    rgba(255, 255, 255, 0.44) 58%,
+    rgba(255, 255, 255, 0.44) 100%
+  );
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) .thinking-flow {
+    color: rgba(255, 255, 255, 0.44);
+    background-image: linear-gradient(
+      100deg,
+      rgba(255, 255, 255, 0.44) 0%,
+      rgba(255, 255, 255, 0.44) 42%,
+      rgba(255, 255, 255, 0.95) 50%,
+      rgba(255, 255, 255, 0.44) 58%,
+      rgba(255, 255, 255, 0.44) 100%
+    );
+  }
+}
+
+/* Remove the assistant mascot from every chat message in both themes. */
+article .group:has(.companion-avatar) .companion-avatar {
+  display: none !important;
+}
+
+article .group:has(.companion-avatar) {
+  display: block !important;
+  padding-left: 6px !important;
+}
+
+article .group:has(.companion-avatar) > .flex {
+  display: block !important;
+}
+
+article .group:has(.companion-avatar) > .mt-2 {
+  margin-top: 0.5rem !important;
+}
+
+@media (min-width: 768px) {
+  article .group:has(.companion-avatar) {
+    padding-left: 0 !important;
+  }
+
+  article .group:has(.companion-avatar) > .flex {
+    display: none !important;
+  }
+
+  article .group:has(.companion-avatar) > .mt-2 {
+    margin-top: 0 !important;
+  }
 }
 
 @keyframes thinking-text-flow {
