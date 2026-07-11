@@ -1,6 +1,6 @@
 :root {
   --mychat-ui-font: "Noto Serif SC", "Songti SC", SimSun, ui-serif, Georgia, serif;
-  --thinking-base: rgba(38, 38, 38, 0.46);
+  --thinking-base: rgba(30, 30, 30, 0.42);
   --thinking-shine: rgba(0, 0, 0, 0.96);
   --font-sans: var(--mychat-ui-font);
   --font-heading: var(--mychat-ui-font);
@@ -20,14 +20,13 @@
   }
 }
 
-/* Force the requested UI serif stack over Tailwind's generated font utilities. */
+/* Force the requested serif family through the whole UI. */
 html,
 body,
 body * {
   font-family: var(--mychat-ui-font) !important;
 }
 
-/* Keep code and formulas legible while the rest of the UI uses the serif stack. */
 pre,
 code,
 pre *,
@@ -40,42 +39,69 @@ code * {
   font-family: KaTeX_Main, "Times New Roman", serif !important;
 }
 
-/* Active reasoning state: plain ChatGPT-style Thinking text with a light sweep. */
+/*
+ * The word itself stays fixed. Only a highlight travels inside the glyphs.
+ * The original reasoning animation on the element is explicitly disabled.
+ */
 .thinking-flow {
-  display: inline-block;
+  display: inline-block !important;
+  font-size: 0 !important;
+  line-height: 1 !important;
   color: transparent !important;
   -webkit-text-fill-color: transparent !important;
+  background: none !important;
+  animation: none !important;
+  transform: none !important;
+  text-transform: none !important;
+}
+
+.thinking-flow::before {
+  content: "Thinking";
+  display: inline-block;
+  font-family: var(--mychat-ui-font) !important;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0.025em;
+  white-space: nowrap;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
   background-image: linear-gradient(
     100deg,
     var(--thinking-base) 0%,
-    var(--thinking-base) 34%,
-    var(--thinking-shine) 48%,
+    var(--thinking-base) 36%,
+    var(--thinking-shine) 49%,
     var(--thinking-base) 62%,
     var(--thinking-base) 100%
-  ) !important;
-  background-size: 260% 100% !important;
-  background-position: 140% 0;
-  background-repeat: no-repeat !important;
-  background-clip: text !important;
-  -webkit-background-clip: text !important;
-  animation: thinking-text-flow 1.35s linear infinite !important;
-  text-transform: capitalize;
-  transform: translateZ(0);
+  );
+  background-size: 260% 100%;
+  background-position: 145% 0;
+  background-repeat: no-repeat;
+  background-clip: text;
+  -webkit-background-clip: text;
+  animation: thinking-inner-shimmer 1.45s linear infinite;
   will-change: background-position;
 }
 
-/* While actively thinking, remove the old disclosure arrow and button treatment. */
+@media (min-width: 768px) {
+  .thinking-flow::before {
+    font-size: 13px;
+  }
+}
+
+/* Active Thinking is a permanent label, not a disclosure control. */
 button:has(> .thinking-flow) {
   gap: 0 !important;
-  pointer-events: none;
-  cursor: default;
+  pointer-events: none !important;
+  cursor: default !important;
 }
 
 button:has(> .thinking-flow) > svg {
   display: none !important;
 }
 
-/* Remove the assistant mascot from every chat message in both themes. */
+/* Remove the assistant mascot from chat messages in both themes. */
 article .group:has(.companion-avatar) .companion-avatar {
   display: none !important;
 }
@@ -107,7 +133,7 @@ article .group:has(.companion-avatar) > .mt-2 {
   }
 }
 
-@keyframes thinking-text-flow {
-  from { background-position: 140% 0; }
-  to { background-position: -140% 0; }
+@keyframes thinking-inner-shimmer {
+  from { background-position: 145% 0; }
+  to { background-position: -145% 0; }
 }

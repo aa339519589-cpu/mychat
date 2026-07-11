@@ -47,7 +47,12 @@ export default function RootLayout({
   return (
     <html lang="zh-CN" className="bg-background">
       <head>
-        <link rel="preload" href="/companion.png" as="image" />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link
+          rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@200..900&display=swap"
+        />
       </head>
       <body className="font-sans antialiased">
         {children}
