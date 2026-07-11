@@ -99,7 +99,7 @@ export function LoginScreen() {
 
         <div className="my-5 flex items-center gap-3">
           <div className="h-px flex-1 bg-border/60" />
-          <span className="text-[9px] tracking-wider text-muted-foreground">或</span>
+          <span className="text-[10px] tracking-wider text-muted-foreground">或</span>
           <div className="h-px flex-1 bg-border/60" />
         </div>
 
