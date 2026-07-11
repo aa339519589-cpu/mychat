@@ -35,6 +35,25 @@ alter table public.agent_task_steps alter column seq set default nextval('public
 alter table public.agent_tool_calls alter column seq set default nextval('public.agent_event_seq');
 grant usage, select on sequence public.agent_event_seq to authenticated;
 
+-- Some legacy deployments predate Agent artifacts even though the runtime uses them
+-- for snapshots, reports, and deployment links. Reconcile that missing base table.
+create table if not exists public.agent_artifacts (
+  id uuid primary key default gen_random_uuid(),
+  task_id uuid not null references public.agent_tasks(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  kind text not null default 'other' check (kind in (
+    'diff', 'log', 'screenshot', 'build_report', 'test_report', 'deploy_link',
+    'pr_link', 'pr', 'deploy', 'file', 'summary', 'other'
+  )),
+  title text,
+  content text,
+  url text,
+  meta jsonb,
+  created_at timestamptz not null default now()
+);
+alter table public.agent_artifacts enable row level security;
+create index if not exists idx_agent_artifacts_task on public.agent_artifacts(task_id);
+
 -- One task owns at most one workspace. Keep the newest row if legacy data contains duplicates.
 delete from public.agent_workspaces older
 using public.agent_workspaces newer
@@ -349,9 +368,13 @@ create policy "agent_workspaces_update" on public.agent_workspaces for update
   with check (auth.uid() = user_id and exists (
     select 1 from public.agent_tasks p where p.id = task_id and p.user_id = auth.uid()
   ));
+drop policy if exists "agent_artifacts_select" on public.agent_artifacts;
+create policy "agent_artifacts_select" on public.agent_artifacts for select using (auth.uid() = user_id);
 drop policy if exists "agent_artifacts_insert" on public.agent_artifacts;
 create policy "agent_artifacts_insert" on public.agent_artifacts for insert with check (
   auth.uid() = user_id and exists (
     select 1 from public.agent_tasks p where p.id = task_id and p.user_id = auth.uid()
   )
 );
+drop policy if exists "agent_artifacts_delete" on public.agent_artifacts;
+create policy "agent_artifacts_delete" on public.agent_artifacts for delete using (auth.uid() = user_id);
