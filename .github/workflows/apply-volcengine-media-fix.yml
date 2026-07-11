@@ -1,0 +1,408 @@
+name: Apply Volcengine media compatibility fix
+
+on:
+  push:
+    branches:
+      - fix/volcengine-media-compat
+    paths:
+      - .github/workflows/apply-volcengine-media-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/volcengine-media-compat
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Apply compatibility fixes and regression tests
+        shell: bash
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              file = Path(path)
+              text = file.read_text()
+              if old not in text:
+                  raise SystemExit(f"Expected snippet not found in {path}: {old[:120]!r}")
+              file.write_text(text.replace(old, new, 1))
+
+          # Recognize Volcengine media model families and distinguish known text-only models.
+          replace_once(
+              "lib/model-endpoints.ts",
+              "  `${MODEL_TOKEN_START}(?:image|images|imagen|dall[-_.]?e|gpt[-_.]?image|flux|stable[-_.]?diffusion|sdxl)${MODEL_TOKEN_END}`,",
+              "  `${MODEL_TOKEN_START}(?:image|images|imagen|dall[-_.]?e|gpt[-_.]?image|flux|stable[-_.]?diffusion|sdxl|seedream|seededit)${MODEL_TOKEN_END}`,",
+          )
+          replace_once(
+              "lib/model-endpoints.ts",
+              "  `${MODEL_TOKEN_START}(?:video|sora|veo|kling|wan)${MODEL_TOKEN_END}`,",
+              "  `${MODEL_TOKEN_START}(?:video|sora|veo|kling|wan|seedance)${MODEL_TOKEN_END}`,",
+          )
+          replace_once(
+              "lib/model-endpoints.ts",
+              'const NON_CHAT_MODEL = /(?:^|[-_.\\/])(embedding|embed|rerank|moderation|whisper|transcri|speech|tts)(?:$|[-_.\\/])/i\n',
+              'const NON_CHAT_MODEL = /(?:^|[-_.\\/])(embedding|embed|rerank|moderation|whisper|transcri|speech|tts)(?:$|[-_.\\/])/i\nconst KNOWN_TEXT_ONLY_MODEL = /(?:^|[-_.\\/])(?:doubao[-_.](?:pro|lite|embedding)|mistral|embedding|embed|rerank|moderation|whisper|transcri|speech|tts)(?=$|[-_.\\/]|\\d)/i\n',
+          )
+          replace_once(
+              "lib/model-endpoints.ts",
+              '''export function isLikelyChatModel(modelId: string): boolean {
+  const normalized = modelId.trim()
+  return modelOutputKind(normalized) === "chat" && !NON_CHAT_MODEL.test(normalized)
+}
+''',
+              '''export function isLikelyChatModel(modelId: string): boolean {
+  const normalized = modelId.trim()
+  return modelOutputKind(normalized) === "chat" && !NON_CHAT_MODEL.test(normalized)
+}
+
+/** Reject only model families whose names unambiguously describe text-only workloads. */
+export function isKnownTextOnlyModel(modelId: string): boolean {
+  const normalized = modelId.trim()
+  return modelOutputKind(normalized) === "chat" && KNOWN_TEXT_ONLY_MODEL.test(normalized)
+}
+''',
+          )
+
+          # Prevent obvious text models from being saved or used as image/video endpoints.
+          replace_once(
+              "components/model-endpoint-settings.tsx",
+              'import { modelOutputKind, type DiscoveredModel, type EndpointAuthType, type ModelEndpointSummary, type ModelOutputKind } from "@/lib/model-endpoints"',
+              'import { isKnownTextOnlyModel, modelOutputKind, type DiscoveredModel, type EndpointAuthType, type ModelEndpointSummary, type ModelOutputKind } from "@/lib/model-endpoints"',
+          )
+          replace_once(
+              "components/model-endpoint-settings.tsx",
+              '  const effectiveModel = selectedModel || manualModel.trim()\n',
+              '  const effectiveModel = selectedModel || manualModel.trim()\n  const mediaKindMismatch = outputKind !== "chat" && isKnownTextOnlyModel(effectiveModel)\n',
+          )
+          replace_once(
+              "components/model-endpoint-settings.tsx",
+              '''  async function handleSave() {
+    if (!effectiveModel) return
+    setPhase("testing")
+''',
+              '''  async function handleSave() {
+    if (!effectiveModel) return
+    if (mediaKindMismatch) {
+      setPhase("error")
+      setMessage("当前模型名称明确属于文本/对话模型，不能保存为图片或视频用途。请选择 Seedream、Seedance 等媒体模型。")
+      return
+    }
+    setPhase("testing")
+''',
+          )
+          replace_once(
+              "components/model-endpoint-settings.tsx",
+              '''          {message && (
+            <p className={cn("break-words text-[11px] leading-relaxed [overflow-wrap:anywhere]", phase === "error" ? "text-destructive" : "text-muted-foreground")}>
+''',
+              '''          {mediaKindMismatch && (
+            <p role="alert" className="break-words text-[11px] leading-relaxed text-destructive [overflow-wrap:anywhere]">
+              当前模型是文本/对话模型，不能作为图片或视频模型连接。
+            </p>
+          )}
+
+          {message && (
+            <p className={cn("break-words text-[11px] leading-relaxed [overflow-wrap:anywhere]", phase === "error" ? "text-destructive" : "text-muted-foreground")}>
+''',
+          )
+          replace_once(
+              "components/model-endpoint-settings.tsx",
+              '            disabled={!effectiveModel || phase === "testing" || phase === "discovering"}',
+              '            disabled={!effectiveModel || mediaKindMismatch || phase === "testing" || phase === "discovering"}',
+          )
+
+          for path in ["app/api/endpoints/route.ts", "app/api/endpoints/[endpointId]/route.ts"]:
+              replace_once(
+                  path,
+                  'import { isModelOutputKind, isSafeModelId, modelDisplayName, type EndpointAuthType } from "@/lib/model-endpoints"',
+                  'import { isKnownTextOnlyModel, isModelOutputKind, isSafeModelId, modelDisplayName, type EndpointAuthType } from "@/lib/model-endpoints"',
+              )
+
+          replace_once(
+              "app/api/endpoints/route.ts",
+              '''    const outputKind = body.outputKind
+    if (body.authType !== undefined''',
+              '''    const outputKind = body.outputKind
+    if (outputKind !== "chat" && isKnownTextOnlyModel(model)) {
+      return Response.json({ error: "当前模型是文本/对话模型，不能保存为图片或视频用途" }, { status: 400 })
+    }
+    if (body.authType !== undefined''',
+          )
+          replace_once(
+              "app/api/endpoints/[endpointId]/route.ts",
+              '''    const outputKind = isModelOutputKind(body.outputKind) ? body.outputKind : current.output_kind
+    if (body.authType !== undefined''',
+              '''    const outputKind = isModelOutputKind(body.outputKind) ? body.outputKind : current.output_kind
+    if (outputKind !== "chat" && isKnownTextOnlyModel(model)) {
+      return Response.json({ error: "当前模型是文本/对话模型，不能保存为图片或视频用途" }, { status: 400 })
+    }
+    if (body.authType !== undefined''',
+          )
+
+          replace_once(
+              "app/api/chat/route.ts",
+              "import { isModelOutputKind, type EndpointAuthType, type ModelOutputKind } from '@/lib/model-endpoints'",
+              "import { isKnownTextOnlyModel, isModelOutputKind, type EndpointAuthType, type ModelOutputKind } from '@/lib/model-endpoints'",
+          )
+          replace_once(
+              "app/api/chat/route.ts",
+              '''      outputKind = endpoint.output_kind
+      apiKey = resolveModelEndpointKey(endpoint, userId)
+''',
+              '''      outputKind = endpoint.output_kind
+      if (outputKind !== 'chat' && isKnownTextOnlyModel(endpoint.model)) {
+        return Response.json({ error: '当前端点把文本/对话模型配置成了媒体模型，请在设置中重新选择 Seedream 或 Seedance' }, { status: 409 })
+      }
+      apiKey = resolveModelEndpointKey(endpoint, userId)
+''',
+          )
+
+          # Preserve safe upstream details instead of misreporting every 404/405 as a missing route.
+          replace_once(
+              "lib/llm/media-generation.ts",
+              '''function responseErrorMessage(raw: string, apiKey: string): string {
+  try {
+    const payload = JSON.parse(raw)
+    const message = payload?.error?.message ?? payload?.message ?? payload?.detail
+    return typeof message === "string" ? redact(message, apiKey) : ""
+  } catch {
+    return ""
+  }
+}
+''',
+              '''function responseErrorMessage(raw: string, apiKey: string): string {
+  try {
+    const payload = JSON.parse(raw)
+    const message = payload?.error?.message ?? payload?.message ?? payload?.detail
+      ?? payload?.error?.code ?? payload?.code
+    return typeof message === "string" ? redact(message, apiKey) : ""
+  } catch {
+    return redact(raw, apiKey)
+  }
+}
+''',
+          )
+          replace_once(
+              "lib/llm/media-generation.ts",
+              '''  if (response.status === 404 || response.status === 405) {
+    throw new MediaGenerationError("模型服务没有兼容的媒体生成接口", "media_not_found", response.status)
+  }
+''',
+              '''  if (response.status === 404 || response.status === 405) {
+    const detail = responseErrorMessage(raw, apiKey)
+    throw new MediaGenerationError(
+      `媒体生成请求返回 ${response.status}${detail ? `：${detail}` : "；请检查 Base URL、模型 ID 与模型用途"}`,
+      "media_not_found",
+      response.status,
+    )
+  }
+''',
+          )
+
+          replace_once(
+              "lib/llm/openai-compatible.ts",
+              '''function upstreamMessage(raw: string, secrets: string[] = []): string {
+  try {
+    const parsed = JSON.parse(raw)
+    const message = parsed?.error?.message ?? parsed?.message
+    if (typeof message !== "string") return ""
+    let safe = message
+    for (const secret of secrets.map(item => item.trim()).filter(Boolean)) safe = safe.split(secret).join("***")
+    return safe.replace(/sk-[A-Za-z0-9_-]{8,}/g, "***").slice(0, 180)
+  } catch { return "" }
+}
+''',
+              '''function upstreamMessage(raw: string, secrets: string[] = []): string {
+  let message = ""
+  try {
+    const parsed = JSON.parse(raw)
+    const candidate = parsed?.error?.message ?? parsed?.message ?? parsed?.detail
+      ?? parsed?.error?.code ?? parsed?.code
+    if (typeof candidate === "string") message = candidate
+  } catch {
+    message = raw
+  }
+  if (!message) return ""
+  let safe = message
+  for (const secret of secrets.map(item => item.trim()).filter(Boolean)) safe = safe.split(secret).join("***")
+  return safe
+    .replace(/sk-[A-Za-z0-9_-]{8,}/g, "***")
+    .replace(/[\\u0000-\\u001f\\u007f]/g, " ")
+    .slice(0, 180)
+}
+''',
+          )
+          replace_once(
+              "lib/llm/openai-compatible.ts",
+              '''      if (response.status === 404 || response.status === 405) {
+        lastError = new ModelEndpointError("没有找到模型列表接口", "models", "models_not_found", response.status)
+        continue
+      }
+      const detail = upstreamMessage(raw, [apiKey])
+''',
+              '''      if (response.status === 404 || response.status === 405) {
+        const detail = upstreamMessage(raw, [apiKey])
+        lastError = new ModelEndpointError(
+          `模型列表请求返回 ${response.status}${detail ? `：${detail}` : "；请检查 Base URL"}`,
+          "models",
+          "models_not_found",
+          response.status,
+        )
+        continue
+      }
+      const detail = upstreamMessage(raw, [apiKey])
+''',
+          )
+          replace_once(
+              "lib/llm/openai-compatible.ts",
+              '''  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) throw new ModelEndpointError("API Key 被聊天接口拒绝", "chat", "auth_failed", response.status)
+    if (response.status === 404) throw new ModelEndpointError("没有找到 /chat/completions 接口", "chat", "chat_not_found", 404)
+    const detail = upstreamMessage(raw, [options.apiKey ?? ""])
+    throw new ModelEndpointError(`模型生成测试失败（${response.status}）${detail ? `：${detail}` : ""}`, "chat", "upstream_error", response.status)
+  }
+''',
+              '''  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) throw new ModelEndpointError("API Key 被聊天接口拒绝", "chat", "auth_failed", response.status)
+    const detail = upstreamMessage(raw, [options.apiKey ?? ""])
+    if (response.status === 404 || response.status === 405) {
+      throw new ModelEndpointError(
+        `聊天请求返回 ${response.status}${detail ? `：${detail}` : "；请检查 Base URL 和模型 ID"}`,
+        "chat",
+        "chat_not_found",
+        response.status,
+      )
+    }
+    throw new ModelEndpointError(`模型生成测试失败（${response.status}）${detail ? `：${detail}` : ""}`, "chat", "upstream_error", response.status)
+  }
+''',
+          )
+
+          # Regression coverage.
+          replace_once(
+              "tests/media-generation.test.ts",
+              'import { isLikelyChatModel, modelOutputKind } from "../lib/model-endpoints"',
+              'import { isKnownTextOnlyModel, isLikelyChatModel, modelOutputKind } from "../lib/model-endpoints"',
+          )
+          replace_once(
+              "tests/media-generation.test.ts",
+              '  for (const id of ["image-model", "dall-e-3", "gpt-image-1", "flux.1-dev", "stable-diffusion-xl", "org/sdxl-turbo"]) {',
+              '  for (const id of ["image-model", "dall-e-3", "gpt-image-1", "flux.1-dev", "stable-diffusion-xl", "org/sdxl-turbo", "doubao-seedream-4-5-250528", "seededit-3-0"]) {',
+          )
+          replace_once(
+              "tests/media-generation.test.ts",
+              '  for (const id of ["video-model", "sora-2", "veo3", "kling-v1", "wan2.1", "org/image-to-video-v2"]) {',
+              '  for (const id of ["video-model", "sora-2", "veo3", "kling-v1", "wan2.1", "org/image-to-video-v2", "doubao-seedance-1-5-pro-251215"]) {',
+          )
+          replace_once(
+              "tests/media-generation.test.ts",
+              '''  assert.equal(isLikelyChatModel("text-embedding-3-small"), false)
+})
+''',
+              '''  assert.equal(isLikelyChatModel("text-embedding-3-small"), false)
+  assert.equal(isKnownTextOnlyModel("doubao-pro-4k-functioncall-240515"), true)
+  assert.equal(isKnownTextOnlyModel("mistral-7b-instruct-v0.2"), true)
+  assert.equal(isKnownTextOnlyModel("doubao-seedream-4-5-250528"), false)
+  assert.equal(isKnownTextOnlyModel("canvas-v2"), false)
+})
+''',
+          )
+          replace_once(
+              "tests/media-generation.test.ts",
+              '''test("enforces response and media limits and redacts exact endpoint credentials", async t => {
+''',
+              '''test("media 404 errors preserve a redacted upstream reason", async () => {
+  const apiKey = "opaque-media-credential"
+  await assert.rejects(
+    generateOpenAICompatibleImage({
+      baseUrl: "https://media.example/v1",
+      apiKey,
+      authType: "bearer",
+      model: "doubao-pro-4k-functioncall-240515",
+      outputKind: "image",
+      prompt: "square",
+      fetcher: async () => Response.json(
+        { error: { message: `model does not support image generation (${apiKey})` } },
+        { status: 404 },
+      ),
+    }),
+    (error: unknown) => error instanceof MediaGenerationError
+      && error.code === "media_not_found"
+      && error.message.includes("does not support image generation")
+      && error.message.includes("***")
+      && !error.message.includes(apiKey),
+  )
+})
+
+test("enforces response and media limits and redacts exact endpoint credentials", async t => {
+''',
+          )
+
+          replace_once(
+              "tests/model-endpoints.test.ts",
+              '''test("redacts the exact API key from discovery and probe errors", { concurrency: false }, async t => {
+''',
+              '''test("chat 404 errors preserve a redacted upstream reason", { concurrency: false }, async t => {
+  const mutableEnv = process.env as Record<string, string | undefined>
+  const previousNodeEnv = mutableEnv.NODE_ENV
+  mutableEnv.NODE_ENV = "test"
+  t.after(() => {
+    if (previousNodeEnv === undefined) delete mutableEnv.NODE_ENV
+    else mutableEnv.NODE_ENV = previousNodeEnv
+  })
+
+  const credential = "opaque-chat-credential"
+  const server = createServer((_request, response) => {
+    response.writeHead(404, { "Content-Type": "application/json" })
+    response.end(JSON.stringify({ error: { message: `model is unavailable (${credential})` } }))
+  })
+  server.listen(0, "127.0.0.1")
+  await once(server, "listening")
+  t.after(() => server.close())
+  const address = server.address()
+  assert.ok(address && typeof address === "object")
+
+  await assert.rejects(
+    probeOpenAIChat({
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      apiKey: credential,
+      authType: "bearer",
+      model: "chat-model",
+    }),
+    (error: unknown) => error instanceof ModelEndpointError
+      && error.code === "chat_not_found"
+      && error.message.includes("model is unavailable")
+      && error.message.includes("***")
+      && !error.message.includes(credential),
+  )
+})
+
+test("redacts the exact API key from discovery and probe errors", { concurrency: false }, async t => {
+''',
+          )
+          PY
+
+      - run: npm run verify
+
+      - name: Commit verified fixes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib/model-endpoints.ts components/model-endpoint-settings.tsx app/api/endpoints/route.ts 'app/api/endpoints/[endpointId]/route.ts' app/api/chat/route.ts lib/llm/media-generation.ts lib/llm/openai-compatible.ts tests/media-generation.test.ts tests/model-endpoints.test.ts
+          git diff --cached --check
+          git commit -m "Fix Volcengine media endpoint compatibility"
+          git push origin HEAD:fix/volcengine-media-compat
