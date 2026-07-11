@@ -83,9 +83,10 @@ function responseErrorMessage(raw: string, apiKey: string): string {
   try {
     const payload = JSON.parse(raw)
     const message = payload?.error?.message ?? payload?.message ?? payload?.detail
+      ?? payload?.error?.code ?? payload?.code
     return typeof message === "string" ? redact(message, apiKey) : ""
   } catch {
-    return ""
+    return redact(raw, apiKey)
   }
 }
 
@@ -102,7 +103,12 @@ function failForResponse(response: Response, raw: string, apiKey: string): never
     )
   }
   if (response.status === 404 || response.status === 405) {
-    throw new MediaGenerationError("模型服务没有兼容的媒体生成接口", "media_not_found", response.status)
+    const detail = responseErrorMessage(raw, apiKey)
+    throw new MediaGenerationError(
+      `媒体生成请求返回 ${response.status}${detail ? `：${detail}` : "；请检查 Base URL、模型 ID 与模型用途"}`,
+      "media_not_found",
+      response.status,
+    )
   }
   const detail = responseErrorMessage(raw, apiKey)
   throw new MediaGenerationError(

@@ -3,8 +3,8 @@ import {
   discoverOpenAIModels,
   ModelEndpointError,
   normalizeOpenAIBaseUrl,
-  probeOpenAIChat,
 } from "./llm/openai-compatible"
+import { probeOpenAIChatDetailed } from "./llm/chat-endpoint-probe"
 import { openModelEndpointKey, type ModelEndpointSecretContext } from "./model-endpoint-secret"
 import { isKnownTextOnlyModel, isModelOutputKind, type EndpointAuthType, type ModelEndpointSummary, type ModelOutputKind } from "./model-endpoints"
 
@@ -131,7 +131,7 @@ export async function probeModelEndpointAuthentication(options: {
   for (let index = 0; index < candidates.length; index++) {
     const authType = candidates[index]
     try {
-      await probeOpenAIChat({ ...options, authType })
+      await probeOpenAIChatDetailed({ ...options, authType })
       return authType
     } catch (error) {
       const canRetry = options.authType === "auto"
