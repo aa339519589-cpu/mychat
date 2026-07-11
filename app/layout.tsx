@@ -34,7 +34,7 @@ export const viewport: Viewport = {
   viewportFit: 'cover',
   colorScheme: 'light dark',
   themeColor: [
-    { media: '(prefers-color-scheme: light)', color: '#FDF2E2' },
+    { media: '(prefers-color-scheme: light)', color: '#F5EFE3' },
     { media: '(prefers-color-scheme: dark)', color: '#222221' },
   ],
 }
@@ -52,6 +52,10 @@ export default function RootLayout({
         <link
           rel="stylesheet"
           href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@200..900&display=swap"
+        />
+        <link
+          rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,200..900&display=swap"
         />
       </head>
       <body className="font-sans antialiased">
