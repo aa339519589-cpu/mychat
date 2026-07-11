@@ -20,7 +20,6 @@
   }
 }
 
-/* Force the requested serif family through the whole UI. */
 html,
 body,
 body * {
@@ -39,24 +38,8 @@ code * {
   font-family: KaTeX_Main, "Times New Roman", serif !important;
 }
 
-/*
- * The word itself stays fixed. Only a highlight travels inside the glyphs.
- * The original reasoning animation on the element is explicitly disabled.
- */
+/* Fixed word; only the highlight moves inside the glyphs. */
 .thinking-flow {
-  display: inline-block !important;
-  font-size: 0 !important;
-  line-height: 1 !important;
-  color: transparent !important;
-  -webkit-text-fill-color: transparent !important;
-  background: none !important;
-  animation: none !important;
-  transform: none !important;
-  text-transform: none !important;
-}
-
-.thinking-flow::before {
-  content: "Thinking";
   display: inline-block;
   font-family: var(--mychat-ui-font) !important;
   font-size: 12px;
@@ -81,55 +64,14 @@ code * {
   background-clip: text;
   -webkit-background-clip: text;
   animation: thinking-inner-shimmer 1.45s linear infinite;
+  transform: none;
+  text-transform: none;
   will-change: background-position;
 }
 
 @media (min-width: 768px) {
-  .thinking-flow::before {
+  .thinking-flow {
     font-size: 13px;
-  }
-}
-
-/* Active Thinking is a permanent label, not a disclosure control. */
-button:has(> .thinking-flow) {
-  gap: 0 !important;
-  pointer-events: none !important;
-  cursor: default !important;
-}
-
-button:has(> .thinking-flow) > svg {
-  display: none !important;
-}
-
-/* Remove the assistant mascot from chat messages in both themes. */
-article .group:has(.companion-avatar) .companion-avatar {
-  display: none !important;
-}
-
-article .group:has(.companion-avatar) {
-  display: block !important;
-  padding-left: 6px !important;
-}
-
-article .group:has(.companion-avatar) > .flex {
-  display: block !important;
-}
-
-article .group:has(.companion-avatar) > .mt-2 {
-  margin-top: 0.5rem !important;
-}
-
-@media (min-width: 768px) {
-  article .group:has(.companion-avatar) {
-    padding-left: 0 !important;
-  }
-
-  article .group:has(.companion-avatar) > .flex {
-    display: none !important;
-  }
-
-  article .group:has(.companion-avatar) > .mt-2 {
-    margin-top: 0 !important;
   }
 }
 
