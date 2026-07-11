@@ -16,7 +16,7 @@ import {
   type EndpointAuthSelection,
   type ModelEndpointRow,
 } from "@/lib/model-endpoint-server"
-import { isModelOutputKind, isSafeModelId, modelDisplayName, type EndpointAuthType } from "@/lib/model-endpoints"
+import { isKnownTextOnlyModel, isModelOutputKind, isSafeModelId, modelDisplayName, type EndpointAuthType } from "@/lib/model-endpoints"
 import { sealModelEndpointKey } from "@/lib/model-endpoint-secret"
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -63,6 +63,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ en
       return Response.json({ error: "端点缺少有效用途，请重新连接" }, { status: 409 })
     }
     const outputKind = isModelOutputKind(body.outputKind) ? body.outputKind : current.output_kind
+    if (outputKind !== "chat" && isKnownTextOnlyModel(model)) {
+      return Response.json({ error: "当前模型是文本/对话模型，不能保存为图片或视频用途" }, { status: 400 })
+    }
     if (body.authType !== undefined && (typeof body.authType !== "string" || !AUTH_TYPES.has(body.authType as EndpointAuthSelection))) {
       return Response.json({ error: "鉴权方式无效" }, { status: 400 })
     }

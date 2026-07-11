@@ -6,7 +6,7 @@ import {
   probeOpenAIChat,
 } from "./llm/openai-compatible"
 import { openModelEndpointKey, type ModelEndpointSecretContext } from "./model-endpoint-secret"
-import { isModelOutputKind, type EndpointAuthType, type ModelEndpointSummary, type ModelOutputKind } from "./model-endpoints"
+import { isKnownTextOnlyModel, isModelOutputKind, type EndpointAuthType, type ModelEndpointSummary, type ModelOutputKind } from "./model-endpoints"
 
 export type ModelEndpointRow = {
   id: string
@@ -76,6 +76,10 @@ export async function getOwnedModelEndpoint(
 }
 
 export function resolveModelEndpointKey(row: ModelEndpointRow, userId: string): string {
+  const outputKind = endpointOutputKind(row.output_kind)
+  if (outputKind !== "chat" && isKnownTextOnlyModel(row.model)) {
+    throw new Error("当前端点把文本/对话模型配置成了媒体模型，请在设置中重新选择 Seedream 或 Seedance")
+  }
   const apiKey = openModelEndpointKey(row.api_key, endpointSecretContext(row, userId))
   if (apiKey === null) throw new Error("该端点使用旧版明文凭据或当前无法解密，请在设置中重新连接")
   return apiKey
