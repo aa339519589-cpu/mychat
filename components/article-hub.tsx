@@ -116,20 +116,23 @@ function ArticleCard({ article, index, onOpen }: { article: DailyArticle; index:
       aria-label={`Read ${article.title}`}
     >
       <ArticleCover article={article} />
-      <span className="absolute inset-0 bg-[linear-gradient(to_top,rgba(12,12,11,.9)_0%,rgba(12,12,11,.16)_65%,rgba(12,12,11,.04)_100%)]" />
+      <span className="absolute inset-0 bg-[linear-gradient(to_top,rgba(12,12,11,.78)_0%,rgba(12,12,11,.38)_28%,rgba(12,12,11,.1)_55%,transparent_78%)]" />
       <span className="absolute inset-x-0 bottom-0 block p-5 text-white sm:p-7">
-        <span className="article-kicker mb-3 block text-[10px] font-semibold uppercase text-white/70">{article.category} · {article.readMinutes} min read</span>
-        <span className={cn("article-display block text-[1.9rem] font-semibold leading-[1.06]", index === 0 && "sm:text-[2.8rem]")}>{article.title}</span>
-        <span className="mt-3 line-clamp-2 block max-w-xl text-sm leading-6 text-white/75 opacity-100 transition-opacity lg:opacity-0 lg:group-hover:opacity-100">{article.dek}</span>
+        <span className="article-kicker mb-3 block text-[10px] font-semibold uppercase text-white/75">{article.category} · {article.readMinutes} min read</span>
+        <span className={cn("article-display block text-[1.9rem] font-semibold leading-[1.06] drop-shadow-md", index === 0 && "sm:text-[2.8rem]")}>{article.title}</span>
+        <span className="mt-3 line-clamp-2 block max-w-xl text-sm leading-6 text-white/85 opacity-100 drop-shadow-sm transition-opacity lg:opacity-0 lg:group-hover:opacity-100">{article.dek}</span>
       </span>
     </button>
   )
 }
 
-function ArticleCover({ article, className }: { article: DailyArticle; className?: string }) {
+function ArticleCover({ article, className, tone = "card" }: { article: DailyArticle; className?: string; tone?: "card" | "reader" }) {
   const dayIndex = Number(article.briefDate.replace(/-/g, "")) || 0
   const coverUrl = article.coverImageUrl || EDITORIAL_COVERS[(dayIndex + article.position * 3 + article.coverVariant) % EDITORIAL_COVERS.length]
-  const style = { backgroundImage: `url(${coverUrl})` }
+  const filter = tone === "reader"
+    ? "brightness(1.18) saturate(1.03) contrast(0.96)"
+    : "brightness(1.24) saturate(1.04) contrast(0.94)"
+  const style = { backgroundImage: `url(${coverUrl})`, filter }
   return (
     <div className={cn("article-cover absolute inset-0 bg-cover bg-center transition-transform duration-700 group-hover:scale-[1.025]", `article-cover-${article.coverVariant}`, className)} style={style} aria-hidden="true" />
   )
@@ -140,14 +143,14 @@ function ArticleReader({ article, onBack }: { article: DailyArticle; onBack: () 
   return (
     <article className="article-shell min-w-0 flex-1 overflow-y-auto bg-background text-foreground">
       <div className="relative h-[48vh] min-h-[23rem] max-h-[42rem] overflow-hidden">
-        <ArticleCover article={article} />
-        <div className="absolute inset-0 bg-[linear-gradient(to_top,rgba(14,14,13,.92),rgba(14,14,13,.05)_75%)]" />
+        <ArticleCover article={article} tone="reader" />
+        <div className="absolute inset-0 bg-[linear-gradient(to_top,rgba(14,14,13,.78)_0%,rgba(14,14,13,.34)_34%,rgba(14,14,13,.08)_62%,transparent_84%)]" />
         <button onClick={onBack} className="absolute left-5 top-[max(1rem,env(safe-area-inset-top))] z-10 inline-flex size-11 items-center justify-center rounded-full bg-black/35 text-white backdrop-blur-md transition-colors hover:bg-black/55" aria-label="Back to daily brief" title="Back to daily brief">
           <ArrowLeft className="size-5" />
         </button>
         <header className="absolute inset-x-0 bottom-0 z-10 mx-auto w-full max-w-[58rem] px-5 pb-8 text-white sm:px-8 sm:pb-11">
-          <p className="article-kicker mb-3 text-[10px] font-semibold uppercase text-white/70">{article.category} · {article.readMinutes} min read</p>
-          <h1 className="article-display text-[2.4rem] font-semibold leading-[1.03] sm:text-[4rem]">{article.title}</h1>
+          <p className="article-kicker mb-3 text-[10px] font-semibold uppercase text-white/75">{article.category} · {article.readMinutes} min read</p>
+          <h1 className="article-display text-[2.4rem] font-semibold leading-[1.03] drop-shadow-lg sm:text-[4rem]">{article.title}</h1>
         </header>
       </div>
       <div className="mx-auto max-w-[46rem] px-5 pb-24 pt-10 sm:px-8 sm:pt-14">
