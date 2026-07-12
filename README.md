@@ -66,9 +66,15 @@ DEEP_TIER_VIDEO_BASE_URL=https://your-stable-media-proxy.example/v1
 DEEP_TIER_VIDEO_API_KEY=
 DEEP_TIER_VIDEO_AUTH_TYPE=bearer
 DEEP_TIER_VIDEO_MODEL=grok-imagine-video-1.5
+
+# 每日文章定时生成（Render 每小时检查，America/Chicago 06:00 执行）
+SUPABASE_SERVICE_ROLE_KEY=
+ARTICLES_CRON_SECRET=
 ```
 
 生产环境不要把临时 ngrok 隧道作为模型或媒体服务地址。出现 `ERR_NGROK_3200` 表示隧道已经离线，不是图片提示词或模型 ID 错误；应重启并固定隧道，或把 Render/Vercel 中的 `DEEP_TIER_IMAGE_BASE_URL`（以及视频对应变量）切换为长期可用的 HTTPS 端点。媒体专用变量与深度聊天反代相互独立，可避免一个临时隧道同时拖垮聊天、图片和视频。
+
+「文章」功能还需要应用迁移 `supabase/migrations/20260711010000_daily_articles.sql`。`SUPABASE_SERVICE_ROLE_KEY` 只用于受 `ARTICLES_CRON_SECRET` 保护的服务端定时路由，绝不能使用 `NEXT_PUBLIC_` 前缀或发送到浏览器。首次打开当天文章时也会执行一次登录用户范围内的兜底生成。文章封面是项目内置的绘画插图库，不要求用户连接图片模型。
 
 `ALLOW_UNSAFE_LOCAL_AGENT_EXECUTION=true` 只允许在非生产开发环境临时启用本机命令执行。生产环境即使设置该值也不会生效；代码代理执行命令必须配置 `E2B_API_KEY`。
 

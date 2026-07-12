@@ -11,7 +11,7 @@ import {
   Settings, Folder, Shapes, Pencil, Check, X, PanelLeft,
   FileText, Loader2, FolderPlus,
   MoreHorizontal, Star, Pin, Lock,
-  Code2,
+  Code2, Newspaper,
 } from "lucide-react"
 import { conversationExcerpt, fetchQuota, type QuotaSnapshot } from "@/lib/data"
 import { ConversationMenu, ConversationRename } from "@/components/conversation-menu"
@@ -64,6 +64,7 @@ export type AppSidebarProps = {
   userEmail: string
   onLogout: () => void
   onOpenCode: () => void
+  onOpenArticles: () => void
   modelEndpoints: ModelEndpointSummary[]
   activeEndpointId: string | null
   onEndpointSelect: (id: string) => void
@@ -130,13 +131,14 @@ export function AppSidebar({
         className="mx-4 mb-2 flex items-center gap-2.5 rounded-2xl px-3 py-2.5 text-sm font-medium text-sidebar-foreground transition-colors hover:bg-sidebar-accent"
       >
         <Plus className="size-4 text-sidebar-primary" />
-        起一篇新的对谈
+        新对话
       </button>
 
       <nav className="mx-4 space-y-0.5">
         <NavRow icon={<Folder className="size-4" />} label="项目" onClick={() => push("projects")} />
         <NavRow icon={<Shapes className="size-4" />} label="作品" onClick={() => push("artifacts")} />
         <NavRow icon={<Code2 className="size-4" />} label="代码" onClick={() => { setStack([]); setUserMenuOpen(false); props.onOpenCode() }} />
+        <NavRow icon={<Newspaper className="size-4" />} label="文章" onClick={() => { setStack([]); setUserMenuOpen(false); props.onOpenArticles() }} />
       </nav>
 
       <div className="mx-7 my-3 border-t border-sidebar-border/60" />
