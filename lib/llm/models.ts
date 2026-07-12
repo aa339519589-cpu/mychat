@@ -127,3 +127,34 @@ export function customModelCapability(model: string, baseUrl: string): ModelCapa
 export function isDeepTierProxyConfigured(): boolean {
   return !!(process.env.DEEP_TIER_BASE_URL?.trim() && process.env.DEEP_TIER_API_KEY?.trim())
 }
+
+export type DeepTierImageConfig = {
+  baseUrl: string
+  apiKey: string
+  model: string
+  authType: EndpointAuthType
+}
+
+/**
+ * Platform image generation via the same reverse proxy as deep-tier chat.
+ * Env:
+ *   DEEP_TIER_IMAGE_MODEL  image model id on the proxy (required for 生图)
+ *   Reuses DEEP_TIER_BASE_URL / DEEP_TIER_API_KEY / DEEP_TIER_AUTH_TYPE
+ */
+export function resolveDeepTierImageConfig(): DeepTierImageConfig | null {
+  const baseUrl = process.env.DEEP_TIER_BASE_URL?.trim()
+  const apiKey = process.env.DEEP_TIER_API_KEY?.trim()
+  const model = process.env.DEEP_TIER_IMAGE_MODEL?.trim()
+    || process.env.DEEP_TIER_MODEL?.trim()
+  if (!baseUrl || !apiKey || !model) return null
+  return {
+    baseUrl,
+    apiKey,
+    model,
+    authType: readDeepTierAuthType(),
+  }
+}
+
+export function isDeepTierImageConfigured(): boolean {
+  return !!resolveDeepTierImageConfig()
+}

@@ -13,6 +13,7 @@ export function ChatInput({
   searchMode, onSearchModeChange,
   deepResearch, onDeepResearchChange,
   historyRetrieval, onHistoryRetrievalChange,
+  imageGenMode, onImageGenModeChange, platformImageAvailable,
   customEndpoints, activeEndpointId, onEndpointChange,
   isLoading, onStop,
 }: {
@@ -26,6 +27,10 @@ export function ChatInput({
   onDeepResearchChange: (on: boolean) => void
   historyRetrieval: boolean
   onHistoryRetrievalChange: (on: boolean) => void
+  imageGenMode: boolean
+  onImageGenModeChange: (on: boolean) => void
+  /** Platform reverse-proxy image gen available (deep-tier env configured). */
+  platformImageAvailable: boolean
   customEndpoints: ModelEndpointSummary[]
   activeEndpointId: string | null
   onEndpointChange: (id: string) => void
@@ -149,7 +154,7 @@ export function ChatInput({
   }
 
   const activeTierName = (TIER_MAP as Record<string, { label: string } | undefined>)[activeTier]?.label ?? "模型"
-  const hasActiveTools = searchMode !== "off" || deepResearch || historyRetrieval
+  const hasActiveTools = searchMode !== "off" || deepResearch || historyRetrieval || imageGenMode
   const canSend = !isLoading && !sendPending && (!!value.trim() || images.length > 0 || files.length > 0)
   const availableEndpoints = customEndpoints.filter(endpoint => !endpoint.needsReconnect)
   const activeEndpoint = availableEndpoints.find(endpoint => endpoint.id === activeEndpointId)
@@ -215,6 +220,21 @@ export function ChatInput({
                 onClick={() => onDeepResearchChange(!deepResearch)}
                 active={deepResearch}
               />
+              {platformImageAvailable && !activeEndpointId && (
+                <PlusItem
+                  icon={<ImageIcon className={cn("size-4", imageGenMode && "text-primary")} />}
+                  label="生图"
+                  onClick={() => {
+                    onImageGenModeChange(!imageGenMode)
+                    if (!imageGenMode) {
+                      onDeepResearchChange(false)
+                      onSearchModeChange("off")
+                    }
+                  }}
+                  active={imageGenMode}
+                  title="使用平台反代生成图片（Grok Imagine / 兼容 /images/generations）"
+                />
+              )}
             </div>
           )}
           <button onClick={() => setPlusOpen(v => !v)} aria-label="添加" className={cn("relative flex size-8 items-center justify-center rounded-full transition-colors", plusOpen ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-background/40 hover:text-foreground dark:hover:bg-white/10")}>
@@ -223,7 +243,7 @@ export function ChatInput({
           </button>
         </div>
 
-        <textarea ref={ref} rows={1} value={value} onChange={e => { setValue(e.target.value); resize() }} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !isLoading && !sendPending) { e.preventDefault(); submit() } }} placeholder="说点什么……" className={cn("block min-w-0 flex-1 resize-none bg-transparent py-1.5 text-[15px] leading-[1.6] tracking-wide text-secondary-foreground outline-none placeholder:italic placeholder:text-muted-foreground dark:text-white", mobile ? "max-h-[120px]" : "max-h-[180px]")} />
+        <textarea ref={ref} rows={1} value={value} onChange={e => { setValue(e.target.value); resize() }} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !isLoading && !sendPending) { e.preventDefault(); submit() } }} placeholder={imageGenMode ? "描述你想生成的图片……" : "说点什么……"} className={cn("block min-w-0 flex-1 resize-none bg-transparent py-1.5 text-[15px] leading-[1.6] tracking-wide text-secondary-foreground outline-none placeholder:italic placeholder:text-muted-foreground dark:text-white", mobile ? "max-h-[120px]" : "max-h-[180px]")} />
 
         <button
           type="button"

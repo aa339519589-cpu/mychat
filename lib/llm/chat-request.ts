@@ -29,6 +29,8 @@ export type ChatRequestBody = {
   generationId?: string
   /** Pre-created assistant message row to stream into. */
   assistantMessageId?: string
+  /** Platform / deep-tier reverse-proxy image generation */
+  generateImage?: boolean
 }
 
 function textLength(content: unknown): number {
@@ -159,6 +161,9 @@ export function validateChatRequest(value: unknown): ChatRequestBody {
   }
   if (body.assistantMessageId !== undefined && (typeof body.assistantMessageId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(body.assistantMessageId))) {
     throw new RequestError(400, "assistantMessageId 无效")
+  }
+  if (body.generateImage !== undefined && typeof body.generateImage !== "boolean") {
+    throw new RequestError(400, "generateImage 无效")
   }
   if (body.tier !== undefined && !["绝句", "正构", "鸿篇", "观照"].includes(body.tier)) throw new RequestError(400, "tier 无效")
   if (body.searchMode !== undefined && !["off", "web", "deep"].includes(body.searchMode)) throw new RequestError(400, "searchMode 无效")

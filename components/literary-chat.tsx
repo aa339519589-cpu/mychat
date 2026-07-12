@@ -62,6 +62,9 @@ export function LiteraryChat() {
   const [searchMode, setSearchMode] = useState<SearchMode>("off")
   const [deepResearch, setDeepResearch] = useState(false)
   const [historyRetrieval, setHistoryRetrieval] = useState(false)
+  const [imageGenMode, setImageGenMode] = useState(false)
+  // Platform image gen is available when deep-tier proxy is configured (same env as 深度).
+  const platformImageAvailable = true
   const [activeTier, setActiveTier] = useState<Tier>("绝句")
   const [modelEndpoints, setModelEndpoints] = useState<ModelEndpointSummary[]>([])
   const [activeEndpointId, setActiveEndpointId] = useState<string | null>(null)
@@ -155,6 +158,7 @@ export function LiteraryChat() {
   function handleTierChange(t: Tier) {
     setActiveTier(t)
     setActiveEndpointId(null)
+    // keep imageGenMode — user may want 生图 with platform deep-tier proxy
     try {
       localStorage.setItem("chat_active_tier", t)
       localStorage.setItem("chat_model_selection", JSON.stringify({ kind: "builtin", tier: t }))
@@ -163,6 +167,7 @@ export function LiteraryChat() {
 
   function activateEndpoint(endpoint: ModelEndpointSummary) {
     setActiveEndpointId(endpoint.id)
+    setImageGenMode(false)
     setSearchMode("off")
     if (endpoint.outputKind !== "chat") {
       setDeepResearch(false)
@@ -172,6 +177,7 @@ export function LiteraryChat() {
   }
 
   function handleEndpointSelect(id: string) {
+    setImageGenMode(false)
     const endpoint = modelEndpoints.find(item => item.id === id && !item.needsReconnect)
     if (!endpoint) return
     activateEndpoint(endpoint)
@@ -431,6 +437,7 @@ export function LiteraryChat() {
           conversationId: convId,
           generationId,
           assistantMessageId: msgId,
+          generateImage: imageGenMode && !activeEndpointId,
         }),
       })
 
@@ -1112,6 +1119,9 @@ export function LiteraryChat() {
           onDeepResearchChange={setDeepResearch}
           historyRetrieval={historyRetrieval}
           onHistoryRetrievalChange={setHistoryRetrieval}
+          imageGenMode={imageGenMode}
+          onImageGenModeChange={setImageGenMode}
+          platformImageAvailable={platformImageAvailable && !activeEndpointId}
           isLoading={isActiveGenerating}
           onStop={handleStop}
         />

@@ -8,7 +8,7 @@ import { runAgentLoop, type ExecuteTool } from '@/lib/llm/agent-loop'
 import type { Emit, ChatEvent } from '@/lib/llm/events'
 import type { RawMsg } from '@/lib/llm/types'
 import { buildModelContext } from '@/lib/llm/context'
-import { customModelCapability, getModelCapability, type ModelCapability } from '@/lib/llm/models'
+import { customModelCapability, getModelCapability, resolveDeepTierImageConfig, type ModelCapability } from '@/lib/llm/models'
 import { ensureImageSummaries } from '@/lib/llm/image-context'
 import { ensureConversationIndexed, latestUserQuery, retrieveHistoryContext, type HistoryRetrievalMode } from '@/lib/llm/active-retrieval'
 import { activeTools, toOpenAITools, execTool, type ToolContext } from '@/lib/tools'
@@ -79,7 +79,7 @@ export async function POST(req: NextRequest) {
   let body
   try { body = validateChatRequest(await readJson(req, { maxBytes: 48 * 1024 * 1024 })) }
   catch (e) { return requestErrorResponse(e) }
-  const { tier = '绝句', messages, memories, attachments, searchMode, webSearch, deepWebSearch, deepResearch, project, conversationId, historyRetrieval, endpointId, generationId: bodyGenerationId, assistantMessageId } = body
+  const { tier = '绝句', messages, memories, attachments, searchMode, webSearch, deepWebSearch, deepResearch, project, conversationId, historyRetrieval, endpointId, generationId: bodyGenerationId, assistantMessageId, generateImage } = body
 
   const auth = await resolveAuth()
   const { supabase, userId } = auth
@@ -194,6 +194,70 @@ export async function POST(req: NextRequest) {
     })
     return new Response(mediaStream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } })
   }
+
+  // Platform deep-tier reverse-proxy image generation (Grok Imagine via OpenAI-compatible /images/generations)
+  if (!customEndpoint && generateImage === true) {
+    const imageCfg = resolveDeepTierImageConfig()
+    if (!imageCfg) {
+      return Response.json({
+        error: '平台生图未配置：请设置 DEEP_TIER_BASE_URL、DEEP_TIER_API_KEY，以及 DEEP_TIER_IMAGE_MODEL（或 DEEP_TIER_MODEL）',
+      }, { status: 503 })
+    }
+    const prompt = latestUserPrompt(rawMessages)
+    if (!prompt) return Response.json({ error: '请输入图片生成提示词' }, { status: 400 })
+
+    let clientConnected = true
+    const mediaAbort = new AbortController()
+    const mediaSignal = combineMediaGenerationSignals(req.signal, mediaAbort.signal)
+    const mediaStream = new ReadableStream({
+      async start(controller) {
+        const safeSend = (event: ChatEvent | { heartbeat: true }) => {
+          if (!clientConnected) return
+          try { send(controller, event) } catch {
+            clientConnected = false
+            mediaAbort.abort(new DOMException('Media stream closed', 'AbortError'))
+          }
+        }
+        const heartbeat = setInterval(() => safeSend({ heartbeat: true }), 8_000)
+        try {
+          safeSend({ thinking: `正在用 ${imageCfg.model} 生成图片……` })
+          log.info('chat', 'platform image generation', {
+            model: imageCfg.model,
+            baseUrl: imageCfg.baseUrl,
+            promptLen: prompt.length,
+          })
+          const media = await generateOpenAICompatibleMedia({
+            baseUrl: imageCfg.baseUrl,
+            apiKey: imageCfg.apiKey,
+            authType: imageCfg.authType,
+            model: imageCfg.model,
+            outputKind: 'image',
+            forceKind: 'image',
+            prompt,
+            signal: mediaSignal,
+          })
+          safeSend({ media })
+          safeSend({ text: '图片已生成。' })
+        } catch (error) {
+          const message = error instanceof MediaGenerationError
+            ? error.message
+            : networkError(error, '媒体生成服务', [imageCfg.apiKey])
+          safeSend({ error: message })
+        } finally {
+          clearInterval(heartbeat)
+          if (clientConnected) {
+            try { done(controller) } catch { clientConnected = false }
+          }
+        }
+      },
+      cancel() {
+        clientConnected = false
+        mediaAbort.abort(new DOMException('Media stream cancelled', 'AbortError'))
+      },
+    })
+    return new Response(mediaStream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } })
+  }
+
   const effectiveSearchMode = requestedSearchMode
   const latestBeijingDate = latestBeijingDateFromMessages(rawMessages)
 

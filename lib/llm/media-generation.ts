@@ -47,6 +47,8 @@ export type GenerateMediaOptions = {
   fetcher?: ModelEndpointFetcher
   pollIntervalMs?: number
   timeoutMs?: number
+  /** Skip model-id heuristics (e.g. platform Grok reverse-proxy image models). */
+  forceKind?: MediaOutputKind
 }
 
 export function combineMediaGenerationSignals(
@@ -417,8 +419,15 @@ function mediaEndpoint(baseUrl: string, suffix: string): string {
 }
 
 export async function generateOpenAICompatibleImage(options: GenerateMediaOptions): Promise<GeneratedMedia> {
-  const kind = validateOptions(options)
-  if (kind !== "image") throw new MediaGenerationError("所选模型不是可识别的图片模型", "unsupported_model", 422)
+  // Always allow when caller forces image (platform reverse-proxy model ids may not look like "flux").
+  if (options.forceKind !== "image" && options.outputKind !== "image") {
+    throw new MediaGenerationError("所选模型不是可识别的图片模型", "unsupported_model", 422)
+  }
+  const model = options.model.trim()
+  if (!isSafeModelId(model)) throw new MediaGenerationError("模型 ID 无效", "invalid_model", 400)
+  if (!options.prompt.trim() || options.prompt.length > 32_000) {
+    throw new MediaGenerationError("媒体生成提示词为空或过长", "invalid_prompt", 400)
+  }
   const fetcher = options.fetcher ?? safeModelEndpointFetch
   const apiKey = options.apiKey?.trim() ?? ""
   const creation = await mediaCreationRequest(
@@ -575,15 +584,24 @@ function validateOptions(options: GenerateMediaOptions): MediaOutputKind {
   if (!options.prompt.trim() || options.prompt.length > 32_000) {
     throw new MediaGenerationError("媒体生成提示词为空或过长", "invalid_prompt", 400)
   }
+  if (options.forceKind === "image" || options.forceKind === "video") {
+    return options.forceKind
+  }
   if (options.outputKind !== "image" && options.outputKind !== "video") {
     throw new MediaGenerationError("模型用途必须是图片或视频", "unsupported_model", 422)
   }
-  return options.outputKind
+  // When forceKind is set, trust the caller even if model id is not image-like (Grok reverse proxies).
+  const kind = options.outputKind
+  // Optional soft check when not forced:
+  if (!options.forceKind) {
+    // keep outputKind as source of truth (call sites set it explicitly)
+  }
+  return kind
 }
 
 export async function generateOpenAICompatibleMedia(options: GenerateMediaOptions): Promise<GeneratedMedia> {
   const kind = validateOptions(options)
-  if (kind === "image") return generateOpenAICompatibleImage(options)
+  if (kind === "image") return generateOpenAICompatibleImage({ ...options, outputKind: "image", forceKind: "image" })
   if (kind === "video") return generateOpenAICompatibleVideo(options)
   throw new MediaGenerationError("所选模型不是可识别的图片或视频模型", "unsupported_model", 422)
 }
