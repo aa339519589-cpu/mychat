@@ -28,6 +28,22 @@ import { createGeneration, appendText, appendThinking, setStatus, getAbortSignal
 import { persistAssistantMessage, persistGenerationRow } from '@/lib/generation/persist'
 
 const SAFETY_ROUNDS = 16
+
+/** Map product mode → Grok reasoning intensity. Grok 4.5 cannot fully disable reasoning. */
+function resolveReasoningEffort(opts: {
+  isDeepTierProxy: boolean
+  deepResearch: boolean
+  modelId: string
+}): 'low' | 'medium' | 'high' | null {
+  if (!opts.isDeepTierProxy && !/^grok/i.test(opts.modelId)) return null
+  if (opts.deepResearch) return 'high'
+  const fromEnv = (process.env.DEEP_TIER_REASONING_EFFORT ?? 'low').trim().toLowerCase()
+  if (fromEnv === 'low' || fromEnv === 'medium' || fromEnv === 'high' || fromEnv === 'none') {
+    return fromEnv === 'none' ? 'low' : fromEnv // 4.5 cannot none; clamp to low
+  }
+  return 'low'
+}
+
 const DEEP_RESEARCH_PREFIX = `请以最高努力完成当前问题：先理解真实目标，拆解约束，检查边界和反例，最后给出清晰结论。\n---\n`
 function historyRetrievalModeForTier(tier: string): HistoryRetrievalMode {
   if (tier === '鸿篇') return 'deep'
@@ -215,6 +231,21 @@ export async function POST(req: NextRequest) {
   const openaiTools = toOpenAITools(tools)
   const recentMessages = rawMessages.slice(-RECENT_CONTEXT_MESSAGES)
   const historyRetrievalEnabled = historyRetrieval === true
+  const isDeepTierProxy = capability.provider.id === 'deep-tier'
+  const reasoningEffort = resolveReasoningEffort({
+    isDeepTierProxy,
+    deepResearch: !!deepResearch,
+    modelId: model,
+  })
+  if (reasoningEffort) {
+    log.info('chat', 'reasoning effort', {
+      model,
+      reasoningEffort,
+      deepResearch: !!deepResearch,
+      adapter: capability.provider.adapter,
+    })
+  }
+
 
   let clientConnected = true
   // Client disconnect must NOT cancel generation — only stop writing SSE.
@@ -342,13 +373,19 @@ export async function POST(req: NextRequest) {
         })
         await runAgentLoop({
           url, apiKey, model, adapter: capability.provider.adapter, thinking,
+          reasoningEffort,
           messages: msgs, tools: openaiTools, emit, executeTool,
           maxRounds: SAFETY_ROUNDS,
           leakedRetry: true,
           autoContinue: { maxContinuations: 4 },
           onUsage: total => { totalTokensUsed = total },
           // IMPORTANT: generation signal only — client disconnect does not cancel model.
-          turnOptions: { signal: generationSignal, timeoutMs: 120_000, authType },
+          turnOptions: {
+            signal: generationSignal,
+            timeoutMs: 120_000,
+            authType,
+            logTiming: isDeepTierProxy || process.env.DEBUG_LLM_TIMING === '1',
+          },
           onTurn: ({ phase, round, turn }) => log.info('chat', `Turn ${phase}`, { round, finishReason: turn.finishReason, leaked: turn.leaked, toolCalls: turn.toolCalls.length, contentLen: turn.content.length, truncated: turn.truncated }),
         })
         if (generationSignal?.aborted) {

@@ -18,6 +18,7 @@ export type AgentLoopOpts = {
   model: string
   adapter?: ProviderAdapterId
   thinking: boolean
+  reasoningEffort?: import('./provider-adapters').ReasoningEffort | null
   messages: any[]            // 原地追加 assistant / tool 消息
   tools: any[]               // provider 格式的工具数组（空数组 = 不带工具）
   emit: Emit
@@ -41,7 +42,7 @@ export type AgentLoopOpts = {
 }
 
 export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: number }> {
-  const { url, apiKey, model, adapter, thinking, messages: msgs, tools, emit, executeTool, maxRounds, leakedRetry, autoContinue, idleContinuation, onTurn, onCheckpoint, onUsage, turnOptions } = opts
+  const { url, apiKey, model, adapter, thinking, reasoningEffort, messages: msgs, tools, emit, executeTool, maxRounds, leakedRetry, autoContinue, idleContinuation, onTurn, onCheckpoint, onUsage, turnOptions } = opts
   let totalTokens = 0
   const addUsage = (tokens: number) => {
     totalTokens += tokens
@@ -60,7 +61,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
   }
 
   for (let round = 0; maxRounds === undefined || round < maxRounds; round++) {
-    let turn = await runTurn(url, apiKey, model, msgs, activeTurnTools, emit, { thinking, adapter, ...sharedTurnOptions, emitErrors: false })
+    let turn = await runTurn(url, apiKey, model, msgs, activeTurnTools, emit, { thinking, adapter, reasoningEffort, ...sharedTurnOptions, emitErrors: false })
     addUsage(turn.totalTokens)
     onTurn?.({ phase: 'round', round, turn })
 
@@ -68,7 +69,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
     // retry keeps otherwise compatible models usable without leaking the first error.
     if (turn.failed && adapter === 'generic-openai' && activeTurnTools.length > 0) {
       activeTurnTools = []
-      turn = await runTurn(url, apiKey, model, msgs, activeTurnTools, emit, { thinking, adapter, ...sharedTurnOptions, emitErrors: false })
+      turn = await runTurn(url, apiKey, model, msgs, activeTurnTools, emit, { thinking, adapter, reasoningEffort, ...sharedTurnOptions, emitErrors: false })
       addUsage(turn.totalTokens)
       onTurn?.({ phase: 'round', round, turn })
     }
@@ -77,7 +78,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
     if (turn.failed && consecutiveFailures < MAX_CONSECUTIVE_FAILURES) {
       consecutiveFailures++
       await new Promise(r => setTimeout(r, 1000))
-      turn = await runTurn(url, apiKey, model, msgs, activeTurnTools, emit, { thinking, adapter, ...sharedTurnOptions, emitErrors: false })
+      turn = await runTurn(url, apiKey, model, msgs, activeTurnTools, emit, { thinking, adapter, reasoningEffort, ...sharedTurnOptions, emitErrors: false })
       addUsage(turn.totalTokens)
       onTurn?.({ phase: 'round', round, turn })
     }
@@ -100,7 +101,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
         }
         msgs.push({ role: 'user', content: '继续完成你的回复。禁止在正文中使用 DSML 或任何 <｜ ｜> 标记来调用工具——你必须使用标准的 function calling。如果你的上一条回复被截断了，请重新完整输出。' })
         await onCheckpoint?.(msgs)
-        turn = await runTurn(url, apiKey, model, msgs, [], emit, { thinking, adapter, ...sharedTurnOptions, emitErrors: false })
+        turn = await runTurn(url, apiKey, model, msgs, [], emit, { thinking, adapter, reasoningEffort, ...sharedTurnOptions, emitErrors: false })
         addUsage(turn.totalTokens)
         onTurn?.({ phase: 'leaked-retry', round, turn })
       }
@@ -152,7 +153,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
 
   // 轮次用完但最后一轮还有工具调用 → 补一轮纯文本请求，确保有完整回复
   if (lastHadToolCalls) {
-    lastTurn = await runTurn(url, apiKey, model, msgs, [], emit, { thinking, adapter, ...sharedTurnOptions, emitErrors: false })
+    lastTurn = await runTurn(url, apiKey, model, msgs, [], emit, { thinking, adapter, reasoningEffort, ...sharedTurnOptions, emitErrors: false })
     addUsage(lastTurn.totalTokens)
     onTurn?.({ phase: 'final-text', turn: lastTurn })
   }
@@ -168,7 +169,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
       msgs.push({ role: 'assistant', content: cur.content })
       msgs.push({ role: 'user', content: '紧接上文继续输出剩余内容，不要重复已经写过的部分，也不要加任何开场白。如果之前在正文中使用了 DSML 工具调用格式，请改用标准的 function calling 或直接用文字说明。' })
       await onCheckpoint?.(msgs)
-      cur = await runTurn(url, apiKey, model, msgs, [], emit, { thinking, adapter, ...sharedTurnOptions, emitErrors: false })
+      cur = await runTurn(url, apiKey, model, msgs, [], emit, { thinking, adapter, reasoningEffort, ...sharedTurnOptions, emitErrors: false })
       addUsage(cur.totalTokens)
       onTurn?.({ phase: 'continue', round: cont, turn: cur })
     }

@@ -4,7 +4,7 @@
 import { upstreamError } from './stream'
 import { makeContentFilter, parseDsmlToolCalls, hasIncompleteDsmlToolCall } from './sanitize'
 import type { Emit } from './events'
-import { buildProviderRequest, type ProviderAdapterId } from './provider-adapters'
+import { buildProviderRequest, type ProviderAdapterId, type ReasoningEffort } from './provider-adapters'
 import { looksLikeCodePreamble, looksLikeCodeSelfTalk } from '@/lib/agent/continuation'
 import type { EndpointAuthType } from '@/lib/model-endpoints'
 import { safeModelEndpointFetch } from './openai-compatible'
@@ -119,6 +119,8 @@ export type RunTurnOptions = {
   thinking?: boolean
   adapter?: ProviderAdapterId
   authType?: EndpointAuthType
+  /** Grok / reasoning models via OpenAI-compatible APIs */
+  reasoningEffort?: ReasoningEffort | null
   deferTextUntilTurnEnd?: boolean
   suppressCodeSelfTalk?: boolean
   emitErrors?: boolean
@@ -127,6 +129,8 @@ export type RunTurnOptions = {
   fetcher?: (input: string | URL, init?: RequestInit) => Promise<Response>
   mediaFetcher?: ModelEndpointFetcher
   mediaBudget?: { remaining: number; seen: Set<string> }
+  /** Log first upstream event / first text latency */
+  logTiming?: boolean
 }
 
 // 单轮请求：兼容流式 SSE 与一次性 JSON 两种返回；累积文本、思考链与工具调用。
@@ -144,11 +148,26 @@ export async function runTurn(
     thinking: !!opts?.thinking,
     apiKey,
     authType: opts?.authType,
+    reasoningEffort: opts?.reasoningEffort,
   })
 
   const signals = [opts?.signal, AbortSignal.timeout(opts?.timeoutMs ?? 120_000)].filter(Boolean) as AbortSignal[]
   const signal = signals.length === 1 ? signals[0] : AbortSignal.any(signals)
   const fetcher = opts?.fetcher ?? (generic ? safeModelEndpointFetch : fetch)
+  const timingEnabled = opts?.logTiming === true || process.env.DEBUG_LLM_TIMING === '1'
+  const startedAt = Date.now()
+  let firstEventAt: number | null = null
+  let firstTextAt: number | null = null
+  if (timingEnabled) {
+    console.info('[llm/timing] request started', {
+      model,
+      adapter: opts?.adapter,
+      reasoningEffort: opts?.reasoningEffort ?? null,
+      at: startedAt,
+      bodyKeys: Object.keys(request.body),
+    })
+  }
+
   const res = await fetcher(url, {
     method: 'POST',
     headers: request.headers,
@@ -195,6 +214,10 @@ export async function runTurn(
     const safe = filter.feed(deltaContent)
     if (safe) {
       content += safe
+      if (timingEnabled && firstTextAt === null && safe) {
+        firstTextAt = Date.now()
+        console.info('[llm/timing] first text', { model, ms: firstTextAt - startedAt })
+      }
       if (!opts?.deferTextUntilTurnEnd) emit({ text: safe })
     }
   }
@@ -227,6 +250,41 @@ export async function runTurn(
   }
 
   function handle(obj: any) {
+    if (timingEnabled && firstEventAt === null) {
+      firstEventAt = Date.now()
+      console.info('[llm/timing] first upstream event', {
+        model,
+        ms: firstEventAt - startedAt,
+        type: obj?.type ?? (obj?.choices ? 'chat.completion.chunk' : typeof obj),
+      })
+    }
+    // Responses API style events (if reverse proxy forwards them)
+    if (typeof obj?.type === 'string') {
+      const typ = obj.type as string
+      if (
+        typ === 'response.reasoning_text.delta'
+        || typ === 'response.reasoning_summary_text.delta'
+        || typ === 'response.reasoning_summary.delta'
+      ) {
+        const d = boundedText(obj.delta ?? obj.text ?? '')
+        if (d) {
+          reasoningContent += d
+          emit({ thinking: d })
+        }
+        return
+      }
+      if (typ === 'response.output_text.delta') {
+        const d = boundedText(obj.delta ?? obj.text ?? '')
+        if (d) {
+          if (timingEnabled && firstTextAt === null) {
+            firstTextAt = Date.now()
+            console.info('[llm/timing] first text', { model, ms: firstTextAt - startedAt })
+          }
+          acceptText(d)
+        }
+        return
+      }
+    }
     if (obj?.usage?.total_tokens) totalTokens = obj.usage.total_tokens
     const choice = obj?.choices?.[0]
     if (!choice) {
@@ -237,11 +295,22 @@ export async function runTurn(
     }
     if (choice.finish_reason) finishReason = choice.finish_reason
     const delta = choice.delta ?? choice.message ?? {}
-    const reasoning = delta.reasoning_content ?? delta.reasoning
+    // Grok / OpenAI-compatible reasoning fields (content vs summary)
+    const reasoning =
+      delta.reasoning_content
+      ?? delta.reasoning
+      ?? delta.reasoning_text
+      ?? delta.reasoning_summary
+      ?? delta.reasoning_summary_text
+      ?? (typeof delta.reasoning === 'object' && delta.reasoning
+        ? (delta.reasoning.content ?? delta.reasoning.text ?? delta.reasoning.summary)
+        : null)
     if (reasoning) {
       const reasoningText = boundedText(reasoning)
-      reasoningContent += reasoningText
-      emit({ thinking: reasoningText })
+      if (reasoningText) {
+        reasoningContent += reasoningText
+        emit({ thinking: reasoningText })
+      }
     }
     handleContent(delta.content)
     handleContent(delta.images)
