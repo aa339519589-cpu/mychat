@@ -82,7 +82,6 @@ function emit(entry: RuntimeEntry, partial: Omit<GenerationEvent, 'generationId'
     conversationId: entry.record.conversationId,
     assistantMessageId: entry.record.assistantMessageId,
     sequence: entry.record.sequence,
-    status: entry.record.status,
     content: entry.record.content,
     thinking: entry.record.thinking,
     ...partial,
