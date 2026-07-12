@@ -13,6 +13,15 @@ jobs:
         env:
           ARTICLES_CRON_SECRET: ${{ secrets.ARTICLES_CRON_SECRET }}
         run: |
-          curl --fail --show-error --silent --retry 2 \
-            -H "Authorization: Bearer ${ARTICLES_CRON_SECRET}" \
-            "https://mychat-nm6x.onrender.com/api/articles/cron"
+          page=1
+          force=""
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then force="&force=1"; fi
+          while :; do
+            response=$(curl --fail --show-error --silent --retry 2 \
+              -H "Authorization: Bearer ${ARTICLES_CRON_SECRET}" \
+              "https://mychat-nm6x.onrender.com/api/articles/cron?page=${page}${force}")
+            echo "$response"
+            next_page=$(printf '%s' "$response" | jq -r '.nextPage // empty')
+            if [ -z "$next_page" ]; then break; fi
+            page="$next_page"
+          done
