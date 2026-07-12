@@ -13,7 +13,7 @@
     "precheck": "npm run patch:seedream",
     "check": "tsc --noEmit --incremental false --noUnusedLocals --noUnusedParameters",
     "pretest": "npm run patch:seedream",
-    "test": "tsx --test tests/**/*.test.ts",
+    "test": "node scripts/run-tests.mjs",
     "verify": "npm run check && npm test && npm run build"
   },
   "dependencies": {
