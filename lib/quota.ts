@@ -8,9 +8,10 @@ const QUOTA_LIMIT_7D = 10_000_000
 const MS_5H = 5 * 3600 * 1000
 const MS_7D = 7 * 86400 * 1000
 
-// 倍率：鸿篇/深度研究(v4-pro) 3x，正构(思考) 1x，绝句 0.8x
+// 倍率：深度档（DeepSeek Pro / 反代 Grok 等）3x，正构(思考) 1x，绝句 0.8x
 function tokenMultiplier(model: string, isThinking: boolean) {
-  return model.includes('v4-pro') ? 3 : isThinking ? 1 : 0.8
+  if (model.includes('v4-pro') || /grok/i.test(model)) return 3
+  return isThinking ? 1 : 0.8
 }
 
 // 发送前置检查：当前窗口内加权用量是否已达上限。
