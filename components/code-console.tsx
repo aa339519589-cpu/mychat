@@ -1018,7 +1018,6 @@ function ModelOverlay({ tier, onPick, onClose }: { tier: Tier; onPick: (t: Tier)
           <button key={t.id} onClick={() => onPick(t.id)} className="flex w-full items-center gap-3 rounded-lg border px-4 py-2.5 text-left transition-colors hover:bg-secondary/60"
             style={{ borderColor: tier === t.id ? ACCENT : "var(--border)" }}>
             <span className="flex-1 text-[12px] text-foreground" style={{ fontFamily: MONO }}>{t.label}</span>
-            <span className="text-[10px] text-muted-foreground">{t.desc}</span>
             {tier === t.id && <Check className="size-4" style={{ color: ACCENT }} />}
           </button>
         ))}
