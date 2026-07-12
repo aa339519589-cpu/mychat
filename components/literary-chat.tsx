@@ -34,6 +34,7 @@ import type { ModelEndpointSummary } from "@/lib/model-endpoints"
 import { MAX_GENERATED_MEDIA_ITEMS, normalizeGeneratedMedia, type GeneratedMedia } from "@/lib/generated-media"
 import { planChatStreamFinalization } from "@/lib/chat-stream-finalization"
 import { type ClientGenerationState, isRunning } from "@/lib/generation-client"
+import { isImageGenerationIntent } from "@/lib/image-intent"
 
 type HistoryMsg = { id?: string; role: string; content: string; images?: string[]; imageSummary?: string; ts?: string }
 
@@ -437,7 +438,7 @@ export function LiteraryChat() {
           conversationId: convId,
           generationId,
           assistantMessageId: msgId,
-          generateImage: imageGenMode && !activeEndpointId,
+          generateImage: !activeEndpointId && (imageGenMode || isImageGenerationIntent(String([...messages].reverse().find(m => m.role === "user")?.content ?? ""))),
         }),
       })
 

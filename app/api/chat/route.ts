@@ -9,6 +9,7 @@ import type { Emit, ChatEvent } from '@/lib/llm/events'
 import type { RawMsg } from '@/lib/llm/types'
 import { buildModelContext } from '@/lib/llm/context'
 import { customModelCapability, getModelCapability, resolveDeepTierImageConfig, type ModelCapability } from '@/lib/llm/models'
+import { extractImagePrompt, isImageGenerationIntent } from '@/lib/image-intent'
 import { ensureImageSummaries } from '@/lib/llm/image-context'
 import { ensureConversationIndexed, latestUserQuery, retrieveHistoryContext, type HistoryRetrievalMode } from '@/lib/llm/active-retrieval'
 import { activeTools, toOpenAITools, execTool, type ToolContext } from '@/lib/tools'
@@ -140,6 +141,11 @@ export async function POST(req: NextRequest) {
   const usingBalance = gate.usingBalance
 
   const rawMessages = messages as RawMsg[]
+  const userPrompt = latestUserPrompt(rawMessages)
+  // Explicit flag OR natural-language image intent → real /images/generations path
+  const wantPlatformImage = !customEndpoint && (
+    generateImage === true || isImageGenerationIntent(userPrompt)
+  )
   const requestedSearchMode = searchMode === 'web' || searchMode === 'deep' ? searchMode : normalizeSearchMode(webSearch, deepWebSearch)
   const hasScannedAttachment = Array.isArray(attachments) && attachments.some((attachment: any) => Array.isArray(attachment?.pageImages) && attachment.pageImages.length > 0)
   if (customEndpoint && hasScannedAttachment) {
@@ -196,14 +202,14 @@ export async function POST(req: NextRequest) {
   }
 
   // Platform deep-tier reverse-proxy image generation (Grok Imagine via OpenAI-compatible /images/generations)
-  if (!customEndpoint && generateImage === true) {
+  if (wantPlatformImage) {
     const imageCfg = resolveDeepTierImageConfig()
     if (!imageCfg) {
       return Response.json({
         error: '平台生图未配置：请设置 DEEP_TIER_BASE_URL、DEEP_TIER_API_KEY，以及 DEEP_TIER_IMAGE_MODEL（或 DEEP_TIER_MODEL）',
       }, { status: 503 })
     }
-    const prompt = latestUserPrompt(rawMessages)
+    const prompt = extractImagePrompt(userPrompt || latestUserPrompt(rawMessages))
     if (!prompt) return Response.json({ error: '请输入图片生成提示词' }, { status: 400 })
 
     let clientConnected = true
@@ -239,9 +245,15 @@ export async function POST(req: NextRequest) {
           safeSend({ media })
           safeSend({ text: '图片已生成。' })
         } catch (error) {
-          const message = error instanceof MediaGenerationError
+          let message = error instanceof MediaGenerationError
             ? error.message
             : networkError(error, '媒体生成服务', [imageCfg.apiKey])
+          if (/not enabled for this group|permission/i.test(message)) {
+            message = `反代账号未开通生图权限（Image generation is not enabled for this group）。`
+              + `模型已正确指向 ${imageCfg.model}，但当前 API Key 所属分组禁止 /images/generations。`
+              + `请在反代后台为该 Key 开启图片权限，或换一把有 Imagine 权限的 Key。`
+          }
+          log.error('chat', 'platform image generation failed', { model: imageCfg.model, message })
           safeSend({ error: message })
         } finally {
           clearInterval(heartbeat)
