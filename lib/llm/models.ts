@@ -158,3 +158,24 @@ export function resolveDeepTierImageConfig(): DeepTierImageConfig | null {
 export function isDeepTierImageConfigured(): boolean {
   return !!resolveDeepTierImageConfig()
 }
+
+
+export type DeepTierVideoConfig = {
+  baseUrl: string
+  apiKey: string
+  model: string
+  authType: EndpointAuthType
+}
+
+/** Platform video via reverse proxy: POST /videos/generations → poll GET /videos/{id} */
+export function resolveDeepTierVideoConfig(): DeepTierVideoConfig | null {
+  const baseUrl = process.env.DEEP_TIER_BASE_URL?.trim()
+  const apiKey = process.env.DEEP_TIER_API_KEY?.trim()
+  const model = process.env.DEEP_TIER_VIDEO_MODEL?.trim() || "grok-imagine-video"
+  if (!baseUrl || !apiKey || !model) return null
+  return { baseUrl, apiKey, model, authType: readDeepTierAuthType() }
+}
+
+export function isDeepTierVideoConfigured(): boolean {
+  return !!resolveDeepTierVideoConfig()
+}

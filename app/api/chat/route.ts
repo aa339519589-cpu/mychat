@@ -8,8 +8,8 @@ import { runAgentLoop, type ExecuteTool } from '@/lib/llm/agent-loop'
 import type { Emit, ChatEvent } from '@/lib/llm/events'
 import type { RawMsg } from '@/lib/llm/types'
 import { buildModelContext } from '@/lib/llm/context'
-import { customModelCapability, getModelCapability, resolveDeepTierImageConfig, type ModelCapability } from '@/lib/llm/models'
-import { extractImagePrompt, isImageGenerationIntent } from '@/lib/image-intent'
+import { customModelCapability, getModelCapability, resolveDeepTierImageConfig, resolveDeepTierVideoConfig, type ModelCapability } from '@/lib/llm/models'
+import { extractImagePrompt } from '@/lib/image-intent'
 import { ensureImageSummaries } from '@/lib/llm/image-context'
 import { ensureConversationIndexed, latestUserQuery, retrieveHistoryContext, type HistoryRetrievalMode } from '@/lib/llm/active-retrieval'
 import { activeTools, toOpenAITools, execTool, type ToolContext } from '@/lib/tools'
@@ -48,7 +48,7 @@ function resolveReasoningEffort(opts: {
 const DEEP_RESEARCH_PREFIX = `请以最高努力完成当前问题：先理解真实目标，拆解约束，检查边界和反例，最后给出清晰结论。\n---\n`
 function historyRetrievalModeForTier(tier: string): HistoryRetrievalMode {
   if (tier === '鸿篇') return 'deep'
-  if (tier === '绝句') return 'light'
+  if (tier === '绝句' || tier === '绘影' || tier === '录像') return 'light'
   return 'balanced'
 }
 
@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
   let body
   try { body = validateChatRequest(await readJson(req, { maxBytes: 48 * 1024 * 1024 })) }
   catch (e) { return requestErrorResponse(e) }
-  const { tier = '绝句', messages, memories, attachments, searchMode, webSearch, deepWebSearch, deepResearch, project, conversationId, historyRetrieval, endpointId, generationId: bodyGenerationId, assistantMessageId, generateImage } = body
+  const { tier = '绝句', messages, memories, attachments, searchMode, webSearch, deepWebSearch, deepResearch, project, conversationId, historyRetrieval, endpointId, generationId: bodyGenerationId, assistantMessageId, generateImage, generateVideo } = body
 
   const auth = await resolveAuth()
   const { supabase, userId } = auth
@@ -119,17 +119,27 @@ export async function POST(req: NextRequest) {
   } else {
     const tierCfg = TIER_MAP[tier as keyof typeof TIER_MAP] ?? TIER_MAP['绝句']
     platformTierLabel = tierCfg.label
-    // 深度研究与「深度」档共用 platform-deep（可配反代 Grok；未配则 DeepSeek Pro）
-    const modelKey = (deepResearch || tierCfg.id === '鸿篇') ? 'platform-deep' : tierCfg.model
-    capability = getModelCapability(modelKey)
-    model = capability.id
-    thinking = capability.supportsThinking && (deepResearch || tierCfg.thinking)
-    authType = capability.provider.authType
-    const apiKeyEnv = capability.provider.apiKeyEnv
-    apiKey = apiKeyEnv ? process.env[apiKeyEnv] ?? '' : ''
-    if (!apiKey) {
-      log.error('chat', `${apiKeyEnv ?? 'model key'} not configured`)
-      return new Response(JSON.stringify({ error: `服务未配置（${apiKeyEnv ?? '模型 API Key'} 未设置）` }), { status: 500 })
+    // 图片/视频档：不走聊天模型，也不要求 DeepSeek Key
+    if (tierCfg.id === '绘影' || tierCfg.id === '录像') {
+      model = tierCfg.model
+      thinking = false
+      capability = customModelCapability(tierCfg.model, process.env.DEEP_TIER_BASE_URL?.trim() || 'https://invalid.local')
+      apiKey = process.env.DEEP_TIER_API_KEY?.trim() || ''
+      authType = (process.env.DEEP_TIER_AUTH_TYPE as EndpointAuthType | undefined) || 'bearer'
+      outputKind = tierCfg.id === '绘影' ? 'image' : 'video'
+    } else {
+      // 深度研究与「深度」档共用 platform-deep（可配反代 Grok；未配则 DeepSeek Pro）
+      const modelKey = (deepResearch || tierCfg.id === '鸿篇') ? 'platform-deep' : tierCfg.model
+      capability = getModelCapability(modelKey)
+      model = capability.id
+      thinking = capability.supportsThinking && (deepResearch || tierCfg.thinking)
+      authType = capability.provider.authType
+      const apiKeyEnv = capability.provider.apiKeyEnv
+      apiKey = apiKeyEnv ? process.env[apiKeyEnv] ?? '' : ''
+      if (!apiKey) {
+        log.error('chat', `${apiKeyEnv ?? 'model key'} not configured`)
+        return new Response(JSON.stringify({ error: `服务未配置（${apiKeyEnv ?? '模型 API Key'} 未设置）` }), { status: 500 })
+      }
     }
   }
 
@@ -142,10 +152,9 @@ export async function POST(req: NextRequest) {
 
   const rawMessages = messages as RawMsg[]
   const userPrompt = latestUserPrompt(rawMessages)
-  // Explicit flag OR natural-language image intent → real /images/generations path
-  const wantPlatformImage = !customEndpoint && (
-    generateImage === true || isImageGenerationIntent(userPrompt)
-  )
+  // Media is selected explicitly via tiers 绘影/录像 (or legacy flags). No chat-model intent guessing.
+  const wantPlatformImage = !customEndpoint && (generateImage === true || tier === '绘影')
+  const wantPlatformVideo = !customEndpoint && (generateVideo === true || tier === '录像')
   const requestedSearchMode = searchMode === 'web' || searchMode === 'deep' ? searchMode : normalizeSearchMode(webSearch, deepWebSearch)
   const hasScannedAttachment = Array.isArray(attachments) && attachments.some((attachment: any) => Array.isArray(attachment?.pageImages) && attachment.pageImages.length > 0)
   if (customEndpoint && hasScannedAttachment) {
@@ -254,6 +263,73 @@ export async function POST(req: NextRequest) {
               + `请在反代后台为该 Key 开启图片权限，或换一把有 Imagine 权限的 Key。`
           }
           log.error('chat', 'platform image generation failed', { model: imageCfg.model, message })
+          safeSend({ error: message })
+        } finally {
+          clearInterval(heartbeat)
+          if (clientConnected) {
+            try { done(controller) } catch { clientConnected = false }
+          }
+        }
+      },
+      cancel() {
+        clientConnected = false
+        mediaAbort.abort(new DOMException('Media stream cancelled', 'AbortError'))
+      },
+    })
+    return new Response(mediaStream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } })
+  }
+
+  // Platform video: explicit 录像 tier only — POST /videos/generations + poll GET /videos/{id}
+  if (wantPlatformVideo) {
+    const videoCfg = resolveDeepTierVideoConfig()
+    if (!videoCfg) {
+      return Response.json({
+        error: '平台生视频未配置：请设置 DEEP_TIER_BASE_URL、DEEP_TIER_API_KEY，以及 DEEP_TIER_VIDEO_MODEL',
+      }, { status: 503 })
+    }
+    const prompt = extractImagePrompt(userPrompt || latestUserPrompt(rawMessages))
+    if (!prompt) return Response.json({ error: '请输入视频生成提示词' }, { status: 400 })
+
+    let clientConnected = true
+    const mediaAbort = new AbortController()
+    const mediaSignal = combineMediaGenerationSignals(req.signal, mediaAbort.signal)
+    const mediaStream = new ReadableStream({
+      async start(controller) {
+        const safeSend = (event: ChatEvent | { heartbeat: true }) => {
+          if (!clientConnected) return
+          try { send(controller, event) } catch {
+            clientConnected = false
+            mediaAbort.abort(new DOMException('Media stream closed', 'AbortError'))
+          }
+        }
+        const heartbeat = setInterval(() => safeSend({ heartbeat: true }), 8_000)
+        try {
+          safeSend({ thinking: `正在用 ${videoCfg.model} 生成视频，可能需要一分钟……` })
+          log.info('chat', 'platform video generation', {
+            model: videoCfg.model,
+            baseUrl: videoCfg.baseUrl,
+            promptLen: prompt.length,
+          })
+          const media = await generateOpenAICompatibleMedia({
+            baseUrl: videoCfg.baseUrl,
+            apiKey: videoCfg.apiKey,
+            authType: videoCfg.authType,
+            model: videoCfg.model,
+            outputKind: 'video',
+            forceKind: 'video',
+            prompt,
+            signal: mediaSignal,
+          })
+          safeSend({ media })
+          safeSend({ text: '视频已生成。' })
+        } catch (error) {
+          let message = error instanceof MediaGenerationError
+            ? error.message
+            : networkError(error, '媒体生成服务', [videoCfg.apiKey])
+          if (/not enabled for this group|permission/i.test(message)) {
+            message = `反代账号未开通视频生成权限。模型 ${videoCfg.model} 可用，但当前 Key 分组禁止视频接口。请在反代后台开启视频权限。`
+          }
+          log.error('chat', 'platform video generation failed', { model: videoCfg.model, message })
           safeSend({ error: message })
         } finally {
           clearInterval(heartbeat)

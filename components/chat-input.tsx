@@ -13,7 +13,6 @@ export function ChatInput({
   searchMode, onSearchModeChange,
   deepResearch, onDeepResearchChange,
   historyRetrieval, onHistoryRetrievalChange,
-  imageGenMode, onImageGenModeChange, platformImageAvailable,
   customEndpoints, activeEndpointId, onEndpointChange,
   isLoading, onStop,
 }: {
@@ -27,10 +26,6 @@ export function ChatInput({
   onDeepResearchChange: (on: boolean) => void
   historyRetrieval: boolean
   onHistoryRetrievalChange: (on: boolean) => void
-  imageGenMode: boolean
-  onImageGenModeChange: (on: boolean) => void
-  /** Platform reverse-proxy image gen available (deep-tier env configured). */
-  platformImageAvailable: boolean
   customEndpoints: ModelEndpointSummary[]
   activeEndpointId: string | null
   onEndpointChange: (id: string) => void
@@ -149,12 +144,17 @@ export function ChatInput({
 
   function selectTier(id: string) {
     onTierChange(id as Tier)
+    if (id === "绘影" || id === "录像") {
+      onSearchModeChange("off")
+      onDeepResearchChange(false)
+      onHistoryRetrievalChange(false)
+    }
     try { localStorage.setItem("chat_active_tier", id) } catch {}
     setTierMenuOpen(false)
   }
 
   const activeTierName = (TIER_MAP as Record<string, { label: string } | undefined>)[activeTier]?.label ?? "模型"
-  const hasActiveTools = searchMode !== "off" || deepResearch || historyRetrieval || imageGenMode
+  const hasActiveTools = searchMode !== "off" || deepResearch || historyRetrieval
   const canSend = !isLoading && !sendPending && (!!value.trim() || images.length > 0 || files.length > 0)
   const availableEndpoints = customEndpoints.filter(endpoint => !endpoint.needsReconnect)
   const activeEndpoint = availableEndpoints.find(endpoint => endpoint.id === activeEndpointId)
@@ -220,21 +220,6 @@ export function ChatInput({
                 onClick={() => onDeepResearchChange(!deepResearch)}
                 active={deepResearch}
               />
-              {platformImageAvailable && !activeEndpointId && (
-                <PlusItem
-                  icon={<ImageIcon className={cn("size-4", imageGenMode && "text-primary")} />}
-                  label="生图"
-                  onClick={() => {
-                    onImageGenModeChange(!imageGenMode)
-                    if (!imageGenMode) {
-                      onDeepResearchChange(false)
-                      onSearchModeChange("off")
-                    }
-                  }}
-                  active={imageGenMode}
-                  title="使用平台反代生成图片（Grok Imagine / 兼容 /images/generations）"
-                />
-              )}
             </div>
           )}
           <button onClick={() => setPlusOpen(v => !v)} aria-label="添加" className={cn("relative flex size-8 items-center justify-center rounded-full transition-colors", plusOpen ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-background/40 hover:text-foreground dark:hover:bg-white/10")}>
@@ -243,7 +228,7 @@ export function ChatInput({
           </button>
         </div>
 
-        <textarea ref={ref} rows={1} value={value} onChange={e => { setValue(e.target.value); resize() }} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !isLoading && !sendPending) { e.preventDefault(); submit() } }} placeholder={imageGenMode ? "描述你想生成的图片……" : "说点什么……"} className={cn("block min-w-0 flex-1 resize-none bg-transparent py-1.5 text-[15px] leading-[1.6] tracking-wide text-secondary-foreground outline-none placeholder:italic placeholder:text-muted-foreground dark:text-white", mobile ? "max-h-[120px]" : "max-h-[180px]")} />
+        <textarea ref={ref} rows={1} value={value} onChange={e => { setValue(e.target.value); resize() }} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !isLoading && !sendPending) { e.preventDefault(); submit() } }} placeholder={activeTier === "绘影" ? "描述你想生成的图片……" : activeTier === "录像" ? "描述你想生成的视频……" : "说点什么……"} className={cn("block min-w-0 flex-1 resize-none bg-transparent py-1.5 text-[15px] leading-[1.6] tracking-wide text-secondary-foreground outline-none placeholder:italic placeholder:text-muted-foreground dark:text-white", mobile ? "max-h-[120px]" : "max-h-[180px]")} />
 
         <button
           type="button"
@@ -275,7 +260,21 @@ export function ChatInput({
 
             <div className="min-h-0 flex-1 px-4 pb-4">
               <div className="h-full overflow-hidden rounded-[1.25rem] bg-card/70 dark:bg-[#151515]"><div className="max-h-full overflow-y-auto">
-                {MODEL_SHEET_TIERS.map((id, index) => <ModelRow key={id} label={TIER_MAP[id].label} active={!activeEndpointId && activeTier === id} divided={index > 0} onClick={() => selectTier(id)} />)}
+                {MODEL_SHEET_TIERS.map((id, index) => {
+                  const cfg = TIER_MAP[id]
+                  const icon = cfg.media === "image" ? <ImageIcon className="size-4" /> : cfg.media === "video" ? <Video className="size-4" /> : undefined
+                  return (
+                    <ModelRow
+                      key={id}
+                      label={cfg.label}
+                      desc={cfg.desc}
+                      icon={icon}
+                      active={!activeEndpointId && activeTier === id}
+                      divided={index > 0}
+                      onClick={() => selectTier(id)}
+                    />
+                  )
+                })}
                 {availableEndpoints.map((endpoint, index) => {
                   const kind = endpoint.outputKind
                   const kindLabel = kind === "image" ? "图片" : kind === "video" ? "视频" : "对话"

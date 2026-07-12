@@ -264,6 +264,7 @@ async function materializeMediaUrl(
   if (!sameOrigin && (url.protocol === "https:" || url.protocol === "http:")) {
     const host = url.hostname.toLowerCase()
     const publicLike = host.includes("imgen.x.ai")
+      || host.includes("vidgen.x.ai")
       || host.endsWith(".x.ai")
       || host.endsWith(".supabase.co")
       || host.endsWith(".r2.dev")
@@ -618,9 +619,119 @@ function validateOptions(options: GenerateMediaOptions): MediaOutputKind {
   return kind
 }
 
+
+/**
+ * Grok reverse-proxy video:
+ *   POST {base}/videos/generations  → { request_id }
+ *   GET  {base}/videos/{request_id} → { status, progress, video: { url } }
+ */
+export async function generateGrokProxyVideo(options: GenerateMediaOptions): Promise<GeneratedMedia> {
+  const model = options.model.trim()
+  if (!isSafeModelId(model)) throw new MediaGenerationError("模型 ID 无效", "invalid_model", 400)
+  if (!options.prompt.trim() || options.prompt.length > 32_000) {
+    throw new MediaGenerationError("视频生成提示词为空或过长", "invalid_prompt", 400)
+  }
+  const fetcher = options.fetcher ?? safeModelEndpointFetch
+  const apiKey = options.apiKey?.trim() ?? ""
+  const createUrl = mediaEndpoint(options.baseUrl, "/videos/generations")
+  const creation = await mediaCreationRequest(
+    fetcher,
+    createUrl,
+    authType => ({
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        ...endpointAuthHeaders(apiKey, authType),
+      },
+      body: JSON.stringify({ model, prompt: options.prompt.trim() }),
+      redirect: "manual",
+      signal: combineSignal(options.signal, VIDEO_TIMEOUT_MS),
+    }),
+    apiKey,
+    options.authType,
+  )
+  const { response, raw } = creation
+  if (!response.ok) failForResponse(response, raw, apiKey)
+  const created = parseJson(raw)
+  const requestId = typeof created?.request_id === "string"
+    ? created.request_id.trim()
+    : typeof created?.id === "string"
+      ? created.id.trim()
+      : ""
+  if (!requestId || requestId.length > 512 || /[^A-Za-z0-9_.:-]/.test(requestId)) {
+    // Some proxies may return the video immediately
+    const materializeContext: MaterializeContext = { ...options, authType: creation.authType, fetcher }
+    const immediate = await videoUrlFromPayload(created, options.prompt, materializeContext)
+    if (immediate) return immediate
+    throw new MediaGenerationError("视频接口没有返回有效任务 ID", "invalid_job")
+  }
+
+  const commonHeaders = endpointAuthHeaders(apiKey, creation.authType)
+  const materializeContext: MaterializeContext = { ...options, authType: creation.authType, fetcher }
+  const pollBase = mediaEndpoint(options.baseUrl, "/videos")
+  const startedAt = Date.now()
+  const timeoutMs = Number.isFinite(options.timeoutMs)
+    ? Math.min(15 * 60_000, Math.max(1, options.timeoutMs!))
+    : VIDEO_TIMEOUT_MS
+  const pollIntervalMs = Number.isFinite(options.pollIntervalMs)
+    ? Math.min(30_000, Math.max(200, options.pollIntervalMs!))
+    : 2_000
+
+  while (true) {
+    if (options.signal?.aborted) throw options.signal.reason
+    if (Date.now() - startedAt >= timeoutMs) {
+      throw new MediaGenerationError("视频生成等待超时", "generation_timeout", 504)
+    }
+    const poll = await endpointRequest(
+      fetcher,
+      `${pollBase}/${encodeURIComponent(requestId)}`,
+      {
+        headers: { Accept: "application/json", ...commonHeaders },
+        redirect: "manual",
+        signal: combineSignal(options.signal),
+      },
+      apiKey,
+    )
+    const pollRaw = await readLimitedText(poll)
+    // 202 pending is normal for this proxy
+    if (poll.status !== 200 && poll.status !== 202) failForResponse(poll, pollRaw, apiKey)
+    const job = parseJson(pollRaw)
+    const status = String(job?.status ?? "").toLowerCase()
+    if (["failed", "cancelled", "canceled", "error"].includes(status)) {
+      const detail = responseErrorMessage(JSON.stringify(job), apiKey)
+      throw new MediaGenerationError(`视频生成失败${detail ? `：${detail}` : ""}`, "generation_failed", 422)
+    }
+    if (status === "done" || status === "completed" || status === "succeeded" || status === "success") {
+      const url = typeof job?.video?.url === "string"
+        ? job.video.url
+        : typeof job?.url === "string"
+          ? job.url
+          : ""
+      if (url) return materializeMediaUrl(url, "video", options.prompt, materializeContext)
+      const via = await videoUrlFromPayload(job, options.prompt, materializeContext)
+      if (via) return via
+      throw new MediaGenerationError("视频已完成但未返回地址", "empty_response")
+    }
+    // pending / processing
+    await waitForPoll(pollIntervalMs, options.signal)
+  }
+}
+
 export async function generateOpenAICompatibleMedia(options: GenerateMediaOptions): Promise<GeneratedMedia> {
   const kind = validateOptions(options)
   if (kind === "image") return generateOpenAICompatibleImage({ ...options, outputKind: "image", forceKind: "image" })
-  if (kind === "video") return generateOpenAICompatibleVideo(options)
+  if (kind === "video") {
+    // Prefer Grok reverse-proxy async video API; fall back to OpenAI-style /videos
+    try {
+      return await generateGrokProxyVideo({ ...options, outputKind: "video", forceKind: "video" })
+    } catch (error) {
+      if (error instanceof MediaGenerationError && (error.code === "media_not_found" || error.status === 404)) {
+        return generateOpenAICompatibleVideo(options)
+      }
+      // If proxy uses /videos/generations, grok path is correct even on other errors
+      throw error
+    }
+  }
   throw new MediaGenerationError("所选模型不是可识别的图片或视频模型", "unsupported_model", 422)
 }

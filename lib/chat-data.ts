@@ -1,21 +1,29 @@
 import type { GeneratedMedia } from "@/lib/generated-media"
 
-export type Tier = "绝句" | "正构" | "鸿篇" | "观照"
+export type Tier = "绝句" | "正构" | "鸿篇" | "观照" | "绘影" | "录像"
 
-export type TierConfig = { id: Tier; label: string; desc: string; model: string; thinking: boolean }
+export type TierConfig = { id: Tier; label: string; desc: string; model: string; thinking: boolean; media?: "image" | "video" }
 
 // id 是内部 value（传后端、存 localStorage，绝不改）；label 是 UI 显示名。
 export const TIERS: TierConfig[] = [
   { id: "绝句", label: "快速", desc: "迅捷",  model: "deepseek-v4-flash", thinking: false },
   { id: "正构", label: "均衡", desc: "稳健",  model: "deepseek-v4-flash", thinking: true  },
   { id: "鸿篇", label: "深度", desc: "深推",  model: "platform-deep", thinking: true  },
+  // 独立媒体档：不经过聊天模型判断，直接打反代 images/videos 接口
+  { id: "绘影", label: "图片", desc: "生图",  model: "platform-image", thinking: false, media: "image" },
+  { id: "录像", label: "视频", desc: "生视频", model: "platform-video", thinking: false, media: "video" },
   // 观照只作为图片解析器，不在前端模型列表展示。
   { id: "观照", label: "视觉", desc: "V2.5",  model: "mimo-v2.5",         thinking: false },
 ]
 
-export const MODEL_SHEET_TIERS: Tier[] = ["鸿篇", "正构", "绝句"]
+/** 模型选择面板顺序：深度 → 均衡 → 快速 → 图片 → 视频 */
+export const MODEL_SHEET_TIERS: Tier[] = ["鸿篇", "正构", "绝句", "绘影", "录像"]
 
-export const CODE_TIERS = TIERS.filter(t => t.id !== "观照")
+export const CODE_TIERS = TIERS.filter(t => t.id !== "观照" && t.id !== "绘影" && t.id !== "录像")
+
+export function isPlatformMediaTier(tier: string | undefined | null): tier is "绘影" | "录像" {
+  return tier === "绘影" || tier === "录像"
+}
 
 export const TIER_MAP: Record<Tier, TierConfig> = Object.fromEntries(TIERS.map(t => [t.id, t])) as Record<Tier, TierConfig>
 

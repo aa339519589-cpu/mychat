@@ -31,6 +31,7 @@ export type ChatRequestBody = {
   assistantMessageId?: string
   /** Platform / deep-tier reverse-proxy image generation */
   generateImage?: boolean
+  generateVideo?: boolean
 }
 
 function textLength(content: unknown): number {
@@ -165,7 +166,10 @@ export function validateChatRequest(value: unknown): ChatRequestBody {
   if (body.generateImage !== undefined && typeof body.generateImage !== "boolean") {
     throw new RequestError(400, "generateImage 无效")
   }
-  if (body.tier !== undefined && !["绝句", "正构", "鸿篇", "观照"].includes(body.tier)) throw new RequestError(400, "tier 无效")
+  if (body.generateVideo !== undefined && typeof body.generateVideo !== "boolean") {
+    throw new RequestError(400, "generateVideo 无效")
+  }
+  if (body.tier !== undefined && !["绝句", "正构", "鸿篇", "观照", "绘影", "录像"].includes(body.tier)) throw new RequestError(400, "tier 无效")
   if (body.searchMode !== undefined && !["off", "web", "deep"].includes(body.searchMode)) throw new RequestError(400, "searchMode 无效")
   for (const field of ["deepResearch", "historyRetrieval"] as const) {
     if (body[field] !== undefined && typeof body[field] !== "boolean") throw new RequestError(400, `${field} 无效`)
