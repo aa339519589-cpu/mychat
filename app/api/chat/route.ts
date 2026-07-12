@@ -26,7 +26,6 @@ import { isModelOutputKind, type EndpointAuthType, type ModelOutputKind } from '
 import { combineMediaGenerationSignals, generateOpenAICompatibleMedia, MediaGenerationError } from '@/lib/llm/media-generation'
 
 const SAFETY_ROUNDS = 16
-const MARKDOWN_DIVIDER_GUARD = '\n【排版补充】\n当回复有两个以上语义段落、步骤、转折或结论/解释分层时，优先用 Markdown 分隔线 "---" 做清晰分层。分隔线用于增强阅读节奏，不要滥用到每一句。'
 const DEEP_RESEARCH_PREFIX = `请以最高努力完成当前问题：先理解真实目标，拆解约束，检查边界和反例，最后给出清晰结论。\n---\n`
 function historyRetrievalModeForTier(tier: string): HistoryRetrievalMode {
   if (tier === '鸿篇') return 'deep'
@@ -219,7 +218,6 @@ export async function POST(req: NextRequest) {
   })
     + summary.renderedSummary
     + activeHistoryContext
-    + MARKDOWN_DIVIDER_GUARD
   const openaiTools = toOpenAITools(tools)
 
   let clientConnected = true
