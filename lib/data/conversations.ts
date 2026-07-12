@@ -438,6 +438,25 @@ export async function updateMessageContent(conversationId: string, messageId: st
   await updateCachedMessageContent(conversationId, messageId, content)
 }
 
+export async function updateMessageFields(
+  conversationId: string,
+  messageId: string,
+  fields: { content?: string; thinking?: string | null },
+): Promise<void> {
+  const supabase = createClient()
+  const { error } = await supabase.from("messages").update({
+    ...(fields.content !== undefined ? { content: fields.content } : {}),
+    ...(fields.thinking !== undefined ? { thinking: fields.thinking } : {}),
+  }).eq("id", messageId)
+  if (error) {
+    console.error("updateMessageFields", error)
+    throw new Error("消息更新失败，请检查网络后重试。")
+  }
+  if (fields.content !== undefined) {
+    await updateCachedMessageContent(conversationId, messageId, fields.content)
+  }
+}
+
 export async function deleteMessageRow(id: string): Promise<void> {
   await deleteMessageRows([id])
 }

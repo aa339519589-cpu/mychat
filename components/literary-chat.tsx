@@ -7,7 +7,7 @@ import {
   fetchMemories, insertMemory, updateMemory, deleteMemoryRow,
   fetchConversations, insertConversation, updateConversationTitle, touchConversation, deleteConversationRow,
   setConversationStarred, setConversationPinned, setConversationProject,
-  fetchMessages, insertMessage, updateMessageContent, lastExcerpt, conversationExcerpt,
+  fetchMessages, insertMessage, updateMessageContent, updateMessageFields, lastExcerpt, conversationExcerpt,
   cacheConversationMessages, deleteMessageRow, deleteMessageRows,
   fetchProfile, ensureProfile, setMemoryEnabled,
   fetchProjects, insertProject, updateProject, deleteProjectRow,
@@ -33,6 +33,7 @@ import type { SearchMode } from "@/lib/search-mode"
 import type { ModelEndpointSummary } from "@/lib/model-endpoints"
 import { MAX_GENERATED_MEDIA_ITEMS, normalizeGeneratedMedia, type GeneratedMedia } from "@/lib/generated-media"
 import { planChatStreamFinalization } from "@/lib/chat-stream-finalization"
+import { type ClientGenerationState, isRunning } from "@/lib/generation-client"
 
 type HistoryMsg = { id?: string; role: string; content: string; images?: string[]; imageSummary?: string; ts?: string }
 
@@ -54,7 +55,7 @@ export function LiteraryChat() {
   const [activeId, setActiveId] = useState("")
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [isLoading, setIsLoading] = useState(false)
+  const [generationByConv, setGenerationByConv] = useState<Record<string, ClientGenerationState>>({})
   const [codeOpen, setCodeOpen] = useState(false)
   const [memories, setMemories] = useState<Memory[]>([])
   const [memoryEnabled, setMemoryEnabledState] = useState(true)
@@ -69,7 +70,9 @@ export function LiteraryChat() {
   const [headerRenaming, setHeaderRenaming] = useState(false)
   const [projects, setProjects] = useState<Project[]>([])
 
-  const abortRef = useRef<AbortController | null>(null)
+  const abortByConvRef = useRef<Map<string, AbortController>>(new Map())
+  const generationByConvRef = useRef(generationByConv)
+  generationByConvRef.current = generationByConv
   const loadedRef = useRef<Set<string>>(new Set())
   const projectCtxRef = useRef<Map<string, ProjectContext>>(new Map())
   const draftIdRef = useRef<string | null>(null)
@@ -199,6 +202,108 @@ export function LiteraryChat() {
     [conversations, activeId],
   )
 
+  const activeGeneration = activeId ? generationByConv[activeId] : undefined
+  const isActiveGenerating = isRunning(activeGeneration)
+
+  function markGeneration(convId: string, patch: Partial<ClientGenerationState> & { status: ClientGenerationState["status"] }) {
+    setGenerationByConv(prev => ({
+      ...prev,
+      [convId]: {
+        conversationId: convId,
+        status: patch.status,
+        generationId: patch.generationId ?? prev[convId]?.generationId,
+        assistantMessageId: patch.assistantMessageId ?? prev[convId]?.assistantMessageId,
+      },
+    }))
+  }
+
+  function clearAbort(convId: string, controller: AbortController) {
+    if (abortByConvRef.current.get(convId) === controller) abortByConvRef.current.delete(convId)
+  }
+
+  async function resumeGenerationIfNeeded(conversationId: string) {
+    try {
+      const res = await fetch(`/api/generations/running?conversationId=${encodeURIComponent(conversationId)}`)
+      if (!res.ok) return
+      const data = await res.json()
+      const gens = Array.isArray(data.generations) ? data.generations : []
+      const running = gens.find((g: any) => g.status === 'running' || g.status === 'queued')
+      if (!running) return
+      markGeneration(conversationId, {
+        status: 'running',
+        generationId: running.id,
+        assistantMessageId: running.assistantMessageId,
+      })
+      // apply latest content snapshot
+      if (running.assistantMessageId && (running.content || running.thinking)) {
+        setConversations(prev => prev.map(c => c.id !== conversationId ? c : {
+          ...c,
+          messages: c.messages.map(m => m.id === running.assistantMessageId ? {
+            ...m,
+            content: running.content || m.content,
+            thinking: running.thinking || m.thinking,
+          } : m),
+        }))
+      }
+      // reconnect stream
+      const controller = new AbortController()
+      abortByConvRef.current.set(conversationId, controller)
+      const after = running.sequence ?? 0
+      console.info('[mychat/generation] task resumed', {
+        conversationId,
+        generationId: running.id,
+        assistantMessageId: running.assistantMessageId,
+        afterSequence: after,
+      })
+      const streamRes = await fetch(`/api/generations/${running.id}/stream?afterSequence=${after}`, { signal: controller.signal })
+      if (!streamRes.ok || !streamRes.body) return
+      const reader = streamRes.body.getReader()
+      const dec = new TextDecoder()
+      let buf = ''
+      let full = running.content || ''
+      let thinking = running.thinking || ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += dec.decode(value, { stream: true })
+        const parts = buf.split('\n\n'); buf = parts.pop() ?? ''
+        for (const part of parts) {
+          const line = part.trim()
+          if (!line.startsWith('data: ')) continue
+          try {
+            const ev = JSON.parse(line.slice(6))
+            if (typeof ev.content === 'string') full = ev.content
+            if (typeof ev.thinking === 'string') thinking = ev.thinking
+            if (typeof ev.delta === 'string' && ev.type === 'text') full += ev.delta
+            if (typeof ev.delta === 'string' && ev.type === 'thinking') thinking += ev.delta
+            setConversations(prev => prev.map(c => c.id !== conversationId ? c : {
+              ...c,
+              messages: c.messages.map(m => m.id === running.assistantMessageId ? {
+                ...m,
+                content: full,
+                thinking: thinking || undefined,
+              } : m),
+            }))
+            if (ev.type === 'done' || ['completed','failed','cancelled'].includes(ev.status)) {
+              markGeneration(conversationId, {
+                status: ev.status === 'completed' ? 'completed' : ev.status === 'cancelled' ? 'cancelled' : 'error',
+                generationId: running.id,
+                assistantMessageId: running.assistantMessageId,
+              })
+              clearAbort(conversationId, controller)
+              return
+            }
+          } catch {}
+        }
+      }
+      markGeneration(conversationId, { status: 'completed', generationId: running.id, assistantMessageId: running.assistantMessageId })
+      clearAbort(conversationId, controller)
+    } catch (e: any) {
+      if (e?.name === 'AbortError') return
+      console.warn('resumeGenerationIfNeeded', e)
+    }
+  }
+
   const activeProject = useMemo(
     () => projects.find(p => p.id === active?.projectId) ?? null,
     [projects, active?.projectId],
@@ -216,6 +321,7 @@ export function LiteraryChat() {
     setActiveId(id)
     setDrawerOpen(false)
     setOpenArtifactId(null)
+    void resumeGenerationIfNeeded(id)
     if (loadedRef.current.has(id)) return
     loadedRef.current.add(id)
     const msgs = await fetchMessages(id)
@@ -263,8 +369,13 @@ export function LiteraryChat() {
     controller: AbortController,
     attachments?: AttachedFile[],
     projectCtx?: ProjectContext,
+    generationId?: string,
   ): Promise<string> {
-    if (!user) { setIsLoading(false); return "" }
+    if (!user) {
+      markGeneration(convId, { status: 'error', generationId, assistantMessageId: msgId })
+      return ""
+    }
+    markGeneration(convId, { status: 'running', generationId, assistantMessageId: msgId })
 
     const history = messages
     let fullReply = "", fullThinking = ""
@@ -318,6 +429,8 @@ export function LiteraryChat() {
           historyRetrieval,
           project: projectCtx,
           conversationId: convId,
+          generationId,
+          assistantMessageId: msgId,
         }),
       })
 
@@ -343,6 +456,13 @@ export function LiteraryChat() {
           if (!line.startsWith("data: ")) continue
           try {
             const data = JSON.parse(line.slice(6))
+            if (data.generationId && data.assistantMessageId) {
+              markGeneration(convId, {
+                status: 'running',
+                generationId: data.generationId,
+                assistantMessageId: data.assistantMessageId,
+              })
+            }
             if (data.memory) {
               const mem = data.memory
               const note = mem.action === "create" ? (mem.ok ? `记住了：${mem.content}` : "记忆保存失败")
@@ -420,14 +540,21 @@ export function LiteraryChat() {
         const streamWarning = finalization.warning
         flushStreamMessage(streamWarning)
         try {
-          await insertMessage(user.id, convId, {
-            id: msgId,
-            role: "assistant",
-            content: fullReply,
-            thinking: fullThinking || undefined,
-            media: fullMedia.length ? fullMedia : undefined,
-            time: "",
-          })
+          try {
+            await updateMessageFields(convId, msgId, {
+              content: fullReply,
+              thinking: fullThinking || null,
+            })
+          } catch {
+            await insertMessage(user.id, convId, {
+              id: msgId,
+              role: "assistant",
+              content: fullReply,
+              thinking: fullThinking || undefined,
+              media: fullMedia.length ? fullMedia : undefined,
+              time: "",
+            })
+          }
           await touchConversation(convId)
           setConversations(prev => prev.map(c => c.id === convId ? { ...c, excerpt: conversationExcerpt(fullReply), date: "今日" } : c))
         } catch {
@@ -454,14 +581,30 @@ export function LiteraryChat() {
         }))
       }
 
-      if (abortRef.current === controller) abortRef.current = null
-      setIsLoading(false)
+      clearAbort(convId, controller)
+      markGeneration(convId, {
+        status: aborted ? 'cancelled' : terminalError ? 'error' : 'completed',
+        generationId,
+        assistantMessageId: msgId,
+      })
     }
     return fullReply
   }
 
   function handleStop() {
-    abortRef.current?.abort()
+    if (!activeId) return
+    const controller = abortByConvRef.current.get(activeId)
+    const gen = generationByConvRef.current[activeId]
+    controller?.abort()
+    if (gen?.generationId) {
+      fetch(`/api/generations/${gen.generationId}/cancel`, { method: 'POST' }).catch(() => {})
+    }
+    markGeneration(activeId, { status: 'cancelled' })
+    console.info('[mychat/generation] task cancelled', {
+      conversationId: activeId,
+      generationId: gen?.generationId,
+      assistantMessageId: gen?.assistantMessageId,
+    })
   }
 
   async function handleSend(text: string, images?: string[], files?: AttachedFile[]) {
@@ -475,10 +618,11 @@ export function LiteraryChat() {
     const draftId = active.id
     const baseHistory = active.messages
 
+    const generationId = crypto.randomUUID()
     setConversations(prev => prev.map(c => c.id === draftId
       ? { ...c, draft: false, messages: [...c.messages, userMsg, assistantMsg] }
       : c))
-    setIsLoading(true)
+    markGeneration(draftId, { status: 'running', generationId, assistantMessageId: msgId })
 
     let convId = draftId
     try {
@@ -488,24 +632,33 @@ export function LiteraryChat() {
           setConversations(prev => prev.map(c => c.id === draftId
             ? { ...c, draft: true, messages: c.messages.map(m => m.id === msgId ? { ...m, content: "创建会话失败，请重试", isError: true } : m) }
             : c))
-          setIsLoading(false)
+          markGeneration(draftId, { status: 'error', generationId, assistantMessageId: msgId })
           return
         }
         convId = realId
         loadedRef.current.add(realId)
         draftIdRef.current = null
+        setGenerationByConv(prev => {
+          const { [draftId]: _drop, ...rest } = prev
+          return {
+            ...rest,
+            [realId]: { conversationId: realId, status: 'running', generationId, assistantMessageId: msgId },
+          }
+        })
         setConversations(prev => prev.map(c => c.id === draftId ? { ...c, id: realId } : c))
         setActiveId(realId)
         await insertMessage(user.id, realId, userMsg)
+        await insertMessage(user.id, realId, { ...assistantMsg, content: '' }).catch(() => {})
       } else {
         await insertMessage(user.id, convId, userMsg)
+        await insertMessage(user.id, convId, { ...assistantMsg, content: '' }).catch(() => {})
       }
 
       const history = [...baseHistory, userMsg].map(toHistoryMsg)
       const projectCtx = await getProjectContext(active.projectId)
       const controller = new AbortController()
-      abortRef.current = controller
-      const fullReply = await runAiStream(history, msgId, convId, controller, files?.length ? files : undefined, projectCtx)
+      abortByConvRef.current.set(convId, controller)
+      const fullReply = await runAiStream(history, msgId, convId, controller, files?.length ? files : undefined, projectCtx, generationId)
 
       if (isFirstExchange && fullReply) {
         if (activeEndpoint && activeEndpoint.outputKind !== "chat") {
@@ -518,7 +671,7 @@ export function LiteraryChat() {
       }
     } catch (e) {
       console.error("handleSend failed", e)
-      setIsLoading(false)
+      markGeneration(convId, { status: 'error', generationId, assistantMessageId: msgId })
       setConversations(prev => prev.map(c => c.id === convId
         ? { ...c, messages: c.messages.map(m => m.id === msgId ? { ...m, content: m.content || "发送失败，请重试", isError: true } : m) }
         : c))
@@ -526,7 +679,7 @@ export function LiteraryChat() {
   }
 
   async function handleRegenerate() {
-    if (!user || !active || isLoading) return
+    if (!user || !active || isActiveGenerating) return
     setOpenArtifactId(null)
     const msgs = active.messages
     const lastAiIdx = [...msgs].map((m, i) => ({ m, i })).reverse().find(({ m }) => m.role === "assistant")?.i ?? -1
@@ -536,7 +689,8 @@ export function LiteraryChat() {
     const historyBeforeAi = msgs.slice(0, lastAiIdx).map(toHistoryMsg)
     const newMsgId = crypto.randomUUID()
     let oldReplyDeleted = false
-    setIsLoading(true)
+    const generationId = crypto.randomUUID()
+    markGeneration(activeId, { status: 'running', generationId, assistantMessageId: newMsgId })
     try {
       const projectCtx = await getProjectContext(active.projectId)
       await deleteMessageRow(lastAiMsg.id)
@@ -550,9 +704,10 @@ export function LiteraryChat() {
           { id: newMsgId, role: "assistant" as const, content: "", thinking: "", time: "此刻" },
         ],
       }))
+      await insertMessage(user.id, activeId, { id: newMsgId, role: "assistant", content: "", thinking: "", time: "此刻" }).catch(() => {})
       const controller = new AbortController()
-      abortRef.current = controller
-      await runAiStream(historyBeforeAi, newMsgId, activeId, controller, undefined, projectCtx)
+      abortByConvRef.current.set(activeId, controller)
+      await runAiStream(historyBeforeAi, newMsgId, activeId, controller, undefined, projectCtx, generationId)
     } catch (e) {
       console.error("handleRegenerate failed", e)
       let restored = !oldReplyDeleted
@@ -565,7 +720,7 @@ export function LiteraryChat() {
           restored = false
         }
       }
-      setIsLoading(false)
+      markGeneration(activeId, { status: 'error', generationId, assistantMessageId: newMsgId })
       setConversations(prev => prev.map(c => c.id !== activeId ? c : {
         ...c,
         messages: restored
@@ -583,7 +738,7 @@ export function LiteraryChat() {
   }
 
   async function regenerateFromUserMessage(userMessageId: string, editedContent?: string) {
-    if (!user || !active || isLoading) return
+    if (!user || !active || isActiveGenerating) return
     setOpenArtifactId(null)
     const convId = active.id
     const msgs = active.messages
@@ -600,7 +755,8 @@ export function LiteraryChat() {
     const contentChanged = nextContent !== sourceUser.content.trim()
     let contentUpdated = false
     let branchDeleted = false
-    setIsLoading(true)
+    const generationId = crypto.randomUUID()
+    markGeneration(convId, { status: 'running', generationId, assistantMessageId: newMsgId })
     try {
       const projectCtx = await getProjectContext(active.projectId)
       if (contentChanged) {
@@ -615,10 +771,11 @@ export function LiteraryChat() {
         ...c,
         messages: [...retainedMessages, assistantMsg],
       }))
+      await insertMessage(user.id, convId, { ...assistantMsg, content: '' }).catch(() => {})
       const history = retainedMessages.map(toHistoryMsg)
       const controller = new AbortController()
-      abortRef.current = controller
-      await runAiStream(history, newMsgId, convId, controller, undefined, projectCtx)
+      abortByConvRef.current.set(convId, controller)
+      await runAiStream(history, newMsgId, convId, controller, undefined, projectCtx, generationId)
     } catch (e) {
       console.error("regenerateFromUserMessage failed", e)
       let restored = !branchDeleted
@@ -632,7 +789,7 @@ export function LiteraryChat() {
           restored = false
         }
       }
-      setIsLoading(false)
+      markGeneration(convId, { status: 'error' })
       setConversations(prev => prev.map(c => c.id !== convId ? c : {
         ...c,
         messages: restored ? (() => {
@@ -932,7 +1089,7 @@ export function LiteraryChat() {
               onRegenerate={handleRegenerate}
               onEditUserMessage={handleEditUserMessage}
               onRegenerateFromUser={handleRegenerateFromUser}
-              isLoading={isLoading}
+              isLoading={isActiveGenerating}
               onOpenArtifact={setOpenArtifactId}
               openArtifactId={openArtifactId}
             />
@@ -955,7 +1112,7 @@ export function LiteraryChat() {
           onDeepResearchChange={setDeepResearch}
           historyRetrieval={historyRetrieval}
           onHistoryRetrievalChange={setHistoryRetrieval}
-          isLoading={isLoading}
+          isLoading={isActiveGenerating}
           onStop={handleStop}
         />
       </main>

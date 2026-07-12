@@ -25,6 +25,10 @@ export type ChatRequestBody = {
   conversationId?: string
   historyRetrieval?: boolean
   endpointId?: string
+  /** Durable generation id (server continues after client disconnect). */
+  generationId?: string
+  /** Pre-created assistant message row to stream into. */
+  assistantMessageId?: string
 }
 
 function textLength(content: unknown): number {
@@ -149,6 +153,12 @@ export function validateChatRequest(value: unknown): ChatRequestBody {
   }
   if (body.endpointId !== undefined && (typeof body.endpointId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(body.endpointId))) {
     throw new RequestError(400, "endpointId 无效")
+  }
+  if (body.generationId !== undefined && (typeof body.generationId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(body.generationId))) {
+    throw new RequestError(400, "generationId 无效")
+  }
+  if (body.assistantMessageId !== undefined && (typeof body.assistantMessageId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(body.assistantMessageId))) {
+    throw new RequestError(400, "assistantMessageId 无效")
   }
   if (body.tier !== undefined && !["绝句", "正构", "鸿篇", "观照"].includes(body.tier)) throw new RequestError(400, "tier 无效")
   if (body.searchMode !== undefined && !["off", "web", "deep"].includes(body.searchMode)) throw new RequestError(400, "searchMode 无效")

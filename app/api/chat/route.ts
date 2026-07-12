@@ -24,6 +24,8 @@ import { endpointAuthType, getOwnedModelEndpoint, resolveModelEndpointKey } from
 import { ModelEndpointError, validateModelEndpointNetwork } from '@/lib/llm/openai-compatible'
 import { isModelOutputKind, type EndpointAuthType, type ModelOutputKind } from '@/lib/model-endpoints'
 import { combineMediaGenerationSignals, generateOpenAICompatibleMedia, MediaGenerationError } from '@/lib/llm/media-generation'
+import { createGeneration, appendText, appendThinking, setStatus, getAbortSignal, maybeGc, getGeneration } from '@/lib/generation/runtime'
+import { persistAssistantMessage, persistGenerationRow } from '@/lib/generation/persist'
 
 const SAFETY_ROUNDS = 16
 const DEEP_RESEARCH_PREFIX = `请以最高努力完成当前问题：先理解真实目标，拆解约束，检查边界和反例，最后给出清晰结论。\n---\n`
@@ -61,7 +63,7 @@ export async function POST(req: NextRequest) {
   let body
   try { body = validateChatRequest(await readJson(req, { maxBytes: 48 * 1024 * 1024 })) }
   catch (e) { return requestErrorResponse(e) }
-  const { tier = '绝句', messages, memories, attachments, searchMode, webSearch, deepWebSearch, deepResearch, project, conversationId, historyRetrieval, endpointId } = body
+  const { tier = '绝句', messages, memories, attachments, searchMode, webSearch, deepWebSearch, deepResearch, project, conversationId, historyRetrieval, endpointId, generationId: bodyGenerationId, assistantMessageId } = body
 
   const auth = await resolveAuth()
   const { supabase, userId } = auth
@@ -178,8 +180,27 @@ export async function POST(req: NextRequest) {
   }
   const effectiveSearchMode = requestedSearchMode
   const latestBeijingDate = latestBeijingDateFromMessages(rawMessages)
+
+  // Durable generation: continues after browser disconnect; only explicit cancel aborts model.
+  const generationId = typeof bodyGenerationId === 'string' && bodyGenerationId
+    ? bodyGenerationId
+    : crypto.randomUUID()
+  const assistantId = typeof assistantMessageId === 'string' && assistantMessageId
+    ? assistantMessageId
+    : crypto.randomUUID()
+  const convIdForGen = typeof conversationId === 'string' && conversationId ? conversationId : 'unknown'
+  if (userId) {
+    createGeneration({
+      id: generationId,
+      userId,
+      conversationId: convIdForGen,
+      assistantMessageId: assistantId,
+    })
+    setStatus(generationId, 'running')
+  }
+  const generationSignal = getAbortSignal(generationId)
+
   // 自接 OpenAI 兼容网关经常不支持 tools：无联网时不挂工具，避免「带 tools 失败 → 再重试」双倍延迟。
-  // 开启联网时只挂搜索类工具；记忆工具仅用于平台内置模型。
   const flags = {
     loggedIn: !!userId,
     searchMode: effectiveSearchMode,
@@ -187,7 +208,8 @@ export async function POST(req: NextRequest) {
     projectId: customEndpoint ? null : (project?.id ?? null),
   }
   const tools = activeTools(flags)
-  const ctx: ToolContext = { supabase, userId, projectId: project?.id ?? null, searchMode: effectiveSearchMode, latestBeijingDate, signal: req.signal }
+  // Tools use generation signal so disconnect does not cancel tool mid-flight incorrectly via req.signal
+  const ctx: ToolContext = { supabase, userId, projectId: project?.id ?? null, searchMode: effectiveSearchMode, latestBeijingDate, signal: generationSignal }
   const effectiveMemories = (!customEndpoint && memoryEnabled && !project?.id) ? (memories as Memory[] | undefined) : undefined
   const url = chatCompletionsUrl(capability.provider.baseUrl)
   const openaiTools = toOpenAITools(tools)
@@ -195,36 +217,79 @@ export async function POST(req: NextRequest) {
   const historyRetrievalEnabled = historyRetrieval === true
 
   let clientConnected = true
+  // Client disconnect must NOT cancel generation — only stop writing SSE.
+  req.signal.addEventListener('abort', () => {
+    clientConnected = false
+    log.info('generation', 'stream disconnected (client)', {
+      generationId,
+      conversationId: convIdForGen,
+      assistantMessageId: assistantId,
+    })
+  }, { once: true })
+
   const stream = new ReadableStream({
     async start(controller) {
-      const safeSend = (event: ChatEvent | { heartbeat: true }) => {
+      const safeSend = (event: ChatEvent | { heartbeat: true } | { generationId: string; assistantMessageId: string }) => {
         if (!clientConnected) return
-        try { send(controller, event) } catch { clientConnected = false }
+        try { send(controller, event as any) } catch { clientConnected = false }
       }
-      const emit: Emit = (e) => safeSend(e)
+      const emit: Emit = (e) => {
+        if (e && typeof e === 'object' && 'text' in e && typeof (e as any).text === 'string') {
+          appendText(generationId, (e as any).text)
+        }
+        if (e && typeof e === 'object' && 'thinking' in e && typeof (e as any).thinking === 'string') {
+          appendThinking(generationId, (e as any).thinking)
+        }
+        safeSend(e)
+      }
       let totalTokensUsed = 0
-      // 立刻推心跳，降低“卡住无响应”的体感
+      let lastPersistAt = 0
+      const persistProgress = async (force = false) => {
+        if (!supabase || !userId) return
+        const entry = getGeneration(generationId)
+        if (!entry) return
+        const now = Date.now()
+        if (!force && now - lastPersistAt < 800) return
+        lastPersistAt = now
+        await persistAssistantMessage(supabase as any, assistantId, {
+          content: entry.record.content,
+          thinking: entry.record.thinking || null,
+        })
+        await persistGenerationRow(supabase as any, {
+          id: entry.record.id,
+          userId: entry.record.userId,
+          conversationId: entry.record.conversationId,
+          assistantMessageId: entry.record.assistantMessageId,
+          status: entry.record.status,
+          content: entry.record.content,
+          thinking: entry.record.thinking,
+          sequence: entry.record.sequence,
+          error: entry.record.error,
+        })
+      }
+
       safeSend({ heartbeat: true })
+      safeSend({ generationId, assistantMessageId: assistantId } as any)
       const heartbeat = setInterval(() => safeSend({ heartbeat: true }), 8_000)
+      const persistTimer = setInterval(() => { void persistProgress(false) }, 1000)
       const executeTool: ExecuteTool = async (name, input) => {
         const { result, event } = await execTool(tools, name, input, ctx)
         if (event) emit(event as ChatEvent)
         return result
       }
       try {
-        // 摘要/检索放到流内，避免首包前串行阻塞
         const summary = await prepareConversationSummary({
           supabase,
           userId,
           explicitConversationId: conversationId,
           messages: rawMessages,
-          signal: req.signal,
+          signal: generationSignal,
           allowCompaction: !customEndpoint,
         })
         const resolvedConversationId = summary.conversationId
         let activeHistoryContext = ''
         if (historyRetrievalEnabled) {
-          if (!customEndpoint) await ensureConversationIndexed(supabase, userId, resolvedConversationId, req.signal)
+          if (!customEndpoint) await ensureConversationIndexed(supabase, userId, resolvedConversationId, generationSignal)
           activeHistoryContext = await retrieveHistoryContext({
             supabase,
             userId,
@@ -232,7 +297,7 @@ export async function POST(req: NextRequest) {
             projectId: project?.id ?? null,
             query: latestUserQuery(rawMessages),
             mode: customEndpoint ? 'light' : historyRetrievalModeForTier(String(tier)),
-            signal: req.signal,
+            signal: generationSignal,
           })
         }
         const SYSTEM = buildSystem(effectiveMemories, {
@@ -249,9 +314,8 @@ export async function POST(req: NextRequest) {
           + activeHistoryContext
 
         const preparedMessages = customEndpoint || capability.supportsImageInput
-
           ? recentMessages
-          : await ensureImageSummaries(recentMessages, { supabase, userId, emit, signal: req.signal })
+          : await ensureImageSummaries(recentMessages, { supabase, userId, emit, signal: generationSignal })
         const msgs: any[] = [{ role: 'system', content: SYSTEM }, ...buildModelContext(preparedMessages, capability)]
         if (deepResearch) {
           for (let i = msgs.length - 1; i >= 0; i--) {
@@ -268,8 +332,14 @@ export async function POST(req: NextRequest) {
         }
         const hasScanned = !customEndpoint && hasScannedAttachment
         if (hasScanned) emit({ thinking: '正在识别扫描件内容，请稍候……' })
-        const processedAttachments = await ocrScannedPdfs(attachments, req.signal)
+        const processedAttachments = await ocrScannedPdfs(attachments, generationSignal)
         await injectAttachmentsOpenAI(msgs, processedAttachments)
+        log.info('generation', 'stream connected', {
+          generationId,
+          conversationId: convIdForGen,
+          assistantMessageId: assistantId,
+          status: 'running',
+        })
         await runAgentLoop({
           url, apiKey, model, adapter: capability.provider.adapter, thinking,
           messages: msgs, tools: openaiTools, emit, executeTool,
@@ -277,20 +347,38 @@ export async function POST(req: NextRequest) {
           leakedRetry: true,
           autoContinue: { maxContinuations: 4 },
           onUsage: total => { totalTokensUsed = total },
-          turnOptions: { signal: req.signal, timeoutMs: 120_000, authType },
+          // IMPORTANT: generation signal only — client disconnect does not cancel model.
+          turnOptions: { signal: generationSignal, timeoutMs: 120_000, authType },
           onTurn: ({ phase, round, turn }) => log.info('chat', `Turn ${phase}`, { round, finishReason: turn.finishReason, leaked: turn.leaked, toolCalls: turn.toolCalls.length, contentLen: turn.content.length, truncated: turn.truncated }),
         })
+        if (generationSignal?.aborted) {
+          setStatus(generationId, 'cancelled')
+        } else {
+          setStatus(generationId, 'completed')
+        }
       } catch (error) {
-        emit({ error: networkError(error, '模型服务', [apiKey]) })
+        const msg = networkError(error, '模型服务', [apiKey])
+        if (generationSignal?.aborted) {
+          setStatus(generationId, 'cancelled')
+        } else {
+          setStatus(generationId, 'failed', msg)
+          emit({ error: msg })
+        }
       } finally {
         clearInterval(heartbeat)
+        clearInterval(persistTimer)
+        await persistProgress(true)
         if (!customEndpoint && userId && supabase) await addQuotaUsage(supabase, userId, totalTokensUsed, model, thinking, usingBalance)
         if (clientConnected) {
           try { done(controller) } catch { clientConnected = false }
         }
+        maybeGc(generationId)
       }
     },
-    cancel() { clientConnected = false },
+    cancel() {
+      // Browser closed SSE — do not abort generation.
+      clientConnected = false
+    },
   })
   return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } })
 }
