@@ -20,8 +20,8 @@ test('A running does not make B running (client helper)', () => {
 })
 
 test('runtime isolates generations by conversation', () => {
-  const a = createGeneration({ id: 'gen-a', userId: 'u1', conversationId: 'A', assistantMessageId: 'm-a' })
-  const b = createGeneration({ id: 'gen-b', userId: 'u1', conversationId: 'B', assistantMessageId: 'm-b' })
+  createGeneration({ id: 'gen-a', userId: 'u1', conversationId: 'A', assistantMessageId: 'm-a' })
+  createGeneration({ id: 'gen-b', userId: 'u1', conversationId: 'B', assistantMessageId: 'm-b' })
   setStatus('gen-a', 'running')
   setStatus('gen-b', 'running')
   appendText('gen-a', 'hello-A')

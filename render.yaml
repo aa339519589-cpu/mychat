@@ -49,3 +49,18 @@ services:
         value: https://usibkqqksgwgvdiqwpyo.supabase.co
       - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
         value: sb_publishable_yYWthfTKT4K0vYT-dKPFLQ_gavblOSj
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: ARTICLES_CRON_SECRET
+        sync: false
+  - type: cron
+    name: mychat-daily-articles
+    runtime: node
+    schedule: "0 * * * *"
+    buildCommand: npm install --legacy-peer-deps
+    startCommand: curl --fail --retry 2 -H "Authorization: Bearer $ARTICLES_CRON_SECRET" "$AGENT_PUBLIC_URL/api/articles/cron"
+    envVars:
+      - key: AGENT_PUBLIC_URL
+        value: https://mychat-nm6x.onrender.com
+      - key: ARTICLES_CRON_SECRET
+        sync: false

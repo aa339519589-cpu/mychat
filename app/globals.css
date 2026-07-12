@@ -66,6 +66,58 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+.article-shell {
+  --article-serif: 'Libre Baskerville', 'Source Serif 4', Georgia, serif;
+  --article-sans: 'DM Sans', system-ui, sans-serif;
+  font-family: var(--article-sans) !important;
+}
+.article-display { font-family: var(--article-serif) !important; letter-spacing: 0; }
+.article-kicker { letter-spacing: 0.14em; }
+.article-body p + p { margin-top: 1.45em; }
+.article-body p:first-child::first-letter {
+  float: left;
+  margin: 0.08em 0.12em 0 0;
+  font-family: var(--article-serif);
+  font-size: 4.25rem;
+  line-height: 0.75;
+  color: var(--primary);
+}
+.article-cover { background-color: #53645c; isolation: isolate; }
+.article-cover::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  opacity: .22;
+  mix-blend-mode: soft-light;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.7' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E");
+}
+.article-paint { position: absolute; display: block; filter: blur(1px); }
+.article-cover-1 { background: linear-gradient(160deg,#2b4743 0%,#6f8172 54%,#c5a37a 100%); }
+.article-cover-1 .article-paint-a { inset: 0 0 36% 0; background: repeating-linear-gradient(92deg,transparent 0 7%,#173735 8% 11%,transparent 12% 17%); opacity: .75; }
+.article-cover-1 .article-paint-b { width: 65%; height: 27%; left: 18%; bottom: 15%; border-radius: 55% 45% 28% 62%; background:#d7c4a7; transform:rotate(-5deg); }
+.article-cover-1 .article-paint-c { width: 42%; height: 18%; left: 34%; bottom: 23%; border-radius: 50%; background:#3f6661; transform:rotate(12deg); }
+.article-cover-2 { background: linear-gradient(180deg,#91b3b0 0%,#d2c8aa 53%,#6e8469 100%); }
+.article-cover-2 .article-paint-a { width: 72%; height: 30%; left: 14%; top: 13%; border-radius: 50%; background:#d8d8cf; box-shadow:1.5rem .6rem 0 #c5c7bd,-1rem .6rem 0 #e0ded2; }
+.article-cover-2 .article-paint-b { width: 38%; height: 24%; left: 35%; bottom: 23%; border-radius: 48% 52% 44% 55%; background:#394b45; }
+.article-cover-2 .article-paint-c { width: 8%; height: 25%; left: 53%; bottom: 18%; background:#2f3e38; border-radius:50%; transform:rotate(25deg); }
+.article-cover-3 { background: linear-gradient(170deg,#192d42 0%,#365d73 48%,#bd8078 100%); }
+.article-cover-3 .article-paint-a { inset: 8% 8% 25%; background:radial-gradient(circle at 15% 30%,#e4c486 0 1px,transparent 2px),radial-gradient(circle at 75% 20%,#d2c09d 0 1px,transparent 2px),radial-gradient(circle at 55% 60%,#e7d6ac 0 1.5px,transparent 2px); background-size:37px 33px,51px 46px,43px 39px; }
+.article-cover-3 .article-paint-b { width:55%; height:55%; right:-12%; bottom:-14%; border-radius:50%; background:#6b9aa1; box-shadow:inset 1rem 1rem 0 #8db0ad; }
+.article-cover-3 .article-paint-c { width:30%; height:38%; left:8%; bottom:-8%; border-radius:50% 50% 0 0; background:#182d2d; }
+.article-cover-4 { background: linear-gradient(150deg,#765149,#c59d7b 48%,#3c5c5b); }
+.article-cover-4 .article-paint-a { width:64%; height:70%; left:18%; top:8%; border-radius:50% 45% 10% 10%; background:#283f3e; transform:rotate(5deg); }
+.article-cover-4 .article-paint-b { width:30%; height:32%; left:36%; top:22%; border-radius:50%; background:#d7b796; }
+.article-cover-4 .article-paint-c { width:80%; height:23%; left:10%; bottom:0; background:#b5aa8b; transform:skewY(-5deg); }
+.article-cover-5 { background: linear-gradient(145deg,#342f3d,#786974 48%,#c49e72); }
+.article-cover-5 .article-paint-a { width:58%; height:58%; left:22%; top:10%; border:2px solid #d9b478; border-radius:50%; box-shadow:0 0 0 14px #3e4651,0 0 0 16px #d9b478; }
+.article-cover-5 .article-paint-b { width:12%; height:80%; left:44%; top:10%; background:#b58d64; transform:rotate(35deg); opacity:.55; }
+.article-cover-5 .article-paint-c { width:12%; height:80%; left:44%; top:10%; background:#b58d64; transform:rotate(-35deg); opacity:.55; }
+
+@media (prefers-reduced-motion: reduce) {
+  .article-cover { transition: none !important; }
+}
+
 :root {
   color-scheme: light;
   --background: #F5EFE3;
