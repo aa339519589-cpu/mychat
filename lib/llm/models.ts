@@ -63,10 +63,19 @@ export const MODEL_REGISTRY = {
   },
 } as const satisfies Record<string, ModelCapability>
 
+function parseEndpointAuthType(
+  raw: string | undefined,
+  fallback: EndpointAuthType = 'bearer',
+): EndpointAuthType {
+  const normalized = (raw ?? fallback).trim().toLowerCase()
+  if (normalized === 'x-api-key' || normalized === 'api-key' || normalized === 'none' || normalized === 'bearer') {
+    return normalized
+  }
+  return fallback
+}
+
 function readDeepTierAuthType(): EndpointAuthType {
-  const raw = (process.env.DEEP_TIER_AUTH_TYPE ?? 'bearer').trim().toLowerCase()
-  if (raw === 'x-api-key' || raw === 'api-key' || raw === 'none' || raw === 'bearer') return raw
-  return 'bearer'
+  return parseEndpointAuthType(process.env.DEEP_TIER_AUTH_TYPE)
 }
 
 /**
@@ -128,6 +137,34 @@ export function isDeepTierProxyConfigured(): boolean {
   return !!(process.env.DEEP_TIER_BASE_URL?.trim() && process.env.DEEP_TIER_API_KEY?.trim())
 }
 
+type PlatformMediaTransport = {
+  baseUrl: string
+  apiKey: string
+  authType: EndpointAuthType
+}
+
+type PlatformMediaPrefix = 'DEEP_TIER_IMAGE' | 'DEEP_TIER_VIDEO'
+
+/**
+ * Media can use a stable endpoint independently from the chat/deep-tier proxy.
+ * This prevents an expired temporary tunnel (for example ngrok) from breaking
+ * image/video generation while the rest of the application keeps its current setup.
+ */
+function resolvePlatformMediaTransport(prefix: PlatformMediaPrefix): PlatformMediaTransport | null {
+  const baseUrl = process.env[`${prefix}_BASE_URL`]?.trim()
+    || process.env.DEEP_TIER_BASE_URL?.trim()
+  const apiKey = process.env[`${prefix}_API_KEY`]?.trim()
+    || process.env.DEEP_TIER_API_KEY?.trim()
+  const authType = parseEndpointAuthType(
+    process.env[`${prefix}_AUTH_TYPE`],
+    readDeepTierAuthType(),
+  )
+
+  if (!baseUrl) return null
+  if (!apiKey && authType !== 'none') return null
+  return { baseUrl, apiKey: apiKey ?? '', authType }
+}
+
 export type DeepTierImageConfig = {
   baseUrl: string
   apiKey: string
@@ -136,30 +173,27 @@ export type DeepTierImageConfig = {
 }
 
 /**
- * Platform image generation via the same reverse proxy as deep-tier chat.
- * Env:
- *   DEEP_TIER_IMAGE_MODEL  image model id (default: grok-imagine-image-quality)
- *   Reuses DEEP_TIER_BASE_URL / DEEP_TIER_API_KEY / DEEP_TIER_AUTH_TYPE
+ * Platform image generation.
+ *
+ * Preferred media-specific env:
+ *   DEEP_TIER_IMAGE_BASE_URL
+ *   DEEP_TIER_IMAGE_API_KEY
+ *   DEEP_TIER_IMAGE_AUTH_TYPE
+ *   DEEP_TIER_IMAGE_MODEL
+ *
+ * Missing transport values fall back to DEEP_TIER_BASE_URL / API_KEY / AUTH_TYPE.
  */
 export function resolveDeepTierImageConfig(): DeepTierImageConfig | null {
-  const baseUrl = process.env.DEEP_TIER_BASE_URL?.trim()
-  const apiKey = process.env.DEEP_TIER_API_KEY?.trim()
-  // Prefer explicit image model; fall back to top-tier quality id (never chat model id).
+  const transport = resolvePlatformMediaTransport('DEEP_TIER_IMAGE')
   const model = process.env.DEEP_TIER_IMAGE_MODEL?.trim()
     || 'grok-imagine-image-quality'
-  if (!baseUrl || !apiKey || !model) return null
-  return {
-    baseUrl,
-    apiKey,
-    model,
-    authType: readDeepTierAuthType(),
-  }
+  if (!transport || !model) return null
+  return { ...transport, model }
 }
 
 export function isDeepTierImageConfigured(): boolean {
   return !!resolveDeepTierImageConfig()
 }
-
 
 export type DeepTierVideoConfig = {
   baseUrl: string
@@ -168,14 +202,22 @@ export type DeepTierVideoConfig = {
   authType: EndpointAuthType
 }
 
-/** Platform video via reverse proxy: POST /videos/generations → poll GET /videos/{id} */
+/**
+ * Platform video generation.
+ *
+ * Preferred media-specific env:
+ *   DEEP_TIER_VIDEO_BASE_URL
+ *   DEEP_TIER_VIDEO_API_KEY
+ *   DEEP_TIER_VIDEO_AUTH_TYPE
+ *   DEEP_TIER_VIDEO_MODEL
+ *
+ * Missing transport values fall back to DEEP_TIER_BASE_URL / API_KEY / AUTH_TYPE.
+ */
 export function resolveDeepTierVideoConfig(): DeepTierVideoConfig | null {
-  const baseUrl = process.env.DEEP_TIER_BASE_URL?.trim()
-  const apiKey = process.env.DEEP_TIER_API_KEY?.trim()
-  // Top-tier video model (xAI Imagine 1.5); duration left to API default.
+  const transport = resolvePlatformMediaTransport('DEEP_TIER_VIDEO')
   const model = process.env.DEEP_TIER_VIDEO_MODEL?.trim() || 'grok-imagine-video-1.5'
-  if (!baseUrl || !apiKey || !model) return null
-  return { baseUrl, apiKey, model, authType: readDeepTierAuthType() }
+  if (!transport || !model) return null
+  return { ...transport, model }
 }
 
 export function isDeepTierVideoConfigured(): boolean {
