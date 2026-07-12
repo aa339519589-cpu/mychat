@@ -19,6 +19,22 @@ services:
         sync: false
       - key: DEEP_TIER_AUTH_TYPE
         sync: false
+      - key: DEEP_TIER_IMAGE_BASE_URL
+        sync: false
+      - key: DEEP_TIER_IMAGE_API_KEY
+        sync: false
+      - key: DEEP_TIER_IMAGE_AUTH_TYPE
+        sync: false
+      - key: DEEP_TIER_IMAGE_MODEL
+        sync: false
+      - key: DEEP_TIER_VIDEO_BASE_URL
+        sync: false
+      - key: DEEP_TIER_VIDEO_API_KEY
+        sync: false
+      - key: DEEP_TIER_VIDEO_AUTH_TYPE
+        sync: false
+      - key: DEEP_TIER_VIDEO_MODEL
+        sync: false
       - key: MIMO_API_KEY
         sync: false
       - key: TAVILY_API_KEY
