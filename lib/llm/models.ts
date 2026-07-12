@@ -138,14 +138,15 @@ export type DeepTierImageConfig = {
 /**
  * Platform image generation via the same reverse proxy as deep-tier chat.
  * Env:
- *   DEEP_TIER_IMAGE_MODEL  image model id on the proxy (required for 生图)
+ *   DEEP_TIER_IMAGE_MODEL  image model id (default: grok-imagine-image-quality)
  *   Reuses DEEP_TIER_BASE_URL / DEEP_TIER_API_KEY / DEEP_TIER_AUTH_TYPE
  */
 export function resolveDeepTierImageConfig(): DeepTierImageConfig | null {
   const baseUrl = process.env.DEEP_TIER_BASE_URL?.trim()
   const apiKey = process.env.DEEP_TIER_API_KEY?.trim()
+  // Prefer explicit image model; fall back to top-tier quality id (never chat model id).
   const model = process.env.DEEP_TIER_IMAGE_MODEL?.trim()
-    || process.env.DEEP_TIER_MODEL?.trim()
+    || 'grok-imagine-image-quality'
   if (!baseUrl || !apiKey || !model) return null
   return {
     baseUrl,
@@ -171,7 +172,8 @@ export type DeepTierVideoConfig = {
 export function resolveDeepTierVideoConfig(): DeepTierVideoConfig | null {
   const baseUrl = process.env.DEEP_TIER_BASE_URL?.trim()
   const apiKey = process.env.DEEP_TIER_API_KEY?.trim()
-  const model = process.env.DEEP_TIER_VIDEO_MODEL?.trim() || "grok-imagine-video"
+  // Top-tier video model (xAI Imagine 1.5); duration left to API default.
+  const model = process.env.DEEP_TIER_VIDEO_MODEL?.trim() || 'grok-imagine-video-1.5'
   if (!baseUrl || !apiKey || !model) return null
   return { baseUrl, apiKey, model, authType: readDeepTierAuthType() }
 }

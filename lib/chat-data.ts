@@ -10,8 +10,8 @@ export const TIERS: TierConfig[] = [
   { id: "正构", label: "均衡", desc: "稳健",  model: "deepseek-v4-flash", thinking: true  },
   { id: "鸿篇", label: "深度", desc: "深推",  model: "platform-deep", thinking: true  },
   // 独立媒体档：不经过聊天模型判断，直接打反代 images/videos 接口
-  { id: "绘影", label: "图片", desc: "生图",  model: "platform-image", thinking: false, media: "image" },
-  { id: "录像", label: "视频", desc: "生视频", model: "platform-video", thinking: false, media: "video" },
+  { id: "绘影", label: "图片", desc: "顶配",  model: "platform-image", thinking: false, media: "image" },
+  { id: "录像", label: "视频", desc: "顶配", model: "platform-video", thinking: false, media: "video" },
   // 观照只作为图片解析器，不在前端模型列表展示。
   { id: "观照", label: "视觉", desc: "V2.5",  model: "mimo-v2.5",         thinking: false },
 ]
