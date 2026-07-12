@@ -66,6 +66,32 @@ function latestUserPrompt(messages: RawMsg[]): string {
   return ''
 }
 
+/** Reference images from the latest user turn (data:image/* or https). */
+function latestUserSourceImages(messages: RawMsg[]): string[] {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]
+    if (message.role !== 'user') continue
+    const out: string[] = []
+    if (Array.isArray(message.images)) {
+      for (const img of message.images) {
+        if (typeof img !== 'string') continue
+        const value = img.trim()
+        if (value.startsWith('data:image/') || /^https:\/\//i.test(value)) out.push(value)
+      }
+    }
+    if (Array.isArray(message.content)) {
+      for (const part of message.content as any[]) {
+        const url = typeof part?.image_url?.url === 'string' ? part.image_url.url.trim() : ''
+        if (part?.type === 'image_url' && (url.startsWith('data:image/') || /^https:\/\//i.test(url))) {
+          out.push(url)
+        }
+      }
+    }
+    return out.slice(0, 4)
+  }
+  return []
+}
+
 async function ocrScannedPdfs(attachments?: any[], signal?: AbortSignal): Promise<any[]> {
   if (!attachments?.length) return attachments ?? []
   return Promise.all(attachments.map(async (f) => {
@@ -160,9 +186,14 @@ export async function POST(req: NextRequest) {
   if (customEndpoint && hasScannedAttachment) {
     return Response.json({ error: '自定义模型不会使用平台 OCR，请上传带文字层的 PDF 或文本文件' }, { status: 400 })
   }
+  const sourceImages = latestUserSourceImages(rawMessages)
+  const sourceImage = sourceImages[0]
+
   if (customEndpoint && outputKind !== 'chat') {
     const prompt = latestUserPrompt(rawMessages)
-    if (!prompt) return Response.json({ error: '请输入图片或视频生成提示词' }, { status: 400 })
+    if (!prompt && !sourceImage) {
+      return Response.json({ error: '请输入描述，或附上参考图' }, { status: 400 })
+    }
 
     let clientConnected = true
     const mediaAbort = new AbortController()
@@ -178,14 +209,19 @@ export async function POST(req: NextRequest) {
         }
         const heartbeat = setInterval(() => safeSend({ heartbeat: true }), 8_000)
         try {
-          safeSend({ thinking: outputKind === 'image' ? '正在生成图片……' : '正在生成视频，这可能需要几分钟……' })
+          safeSend({
+            thinking: sourceImage
+              ? (outputKind === 'image' ? '正在根据参考图生成图片……' : '正在根据参考图生成视频……')
+              : (outputKind === 'image' ? '正在生成图片……' : '正在生成视频，这可能需要几分钟……'),
+          })
           const media = await generateOpenAICompatibleMedia({
             baseUrl: capability.provider.baseUrl,
             apiKey,
             authType: authType ?? 'bearer',
             model,
             outputKind,
-            prompt,
+            prompt: prompt || '',
+            sourceImage,
             signal: mediaSignal,
           })
           safeSend({ media })
@@ -210,7 +246,7 @@ export async function POST(req: NextRequest) {
     return new Response(mediaStream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } })
   }
 
-  // Platform deep-tier reverse-proxy image generation (Grok Imagine via OpenAI-compatible /images/generations)
+  // Platform image: text-to-image or image edit (/images/edits) when a reference photo is attached
   if (wantPlatformImage) {
     const imageCfg = resolveDeepTierImageConfig()
     if (!imageCfg) {
@@ -219,7 +255,9 @@ export async function POST(req: NextRequest) {
       }, { status: 503 })
     }
     const prompt = extractImagePrompt(userPrompt || latestUserPrompt(rawMessages))
-    if (!prompt) return Response.json({ error: '请输入图片生成提示词' }, { status: 400 })
+    if (!prompt && !sourceImage) {
+      return Response.json({ error: '请输入图片描述，或附上参考图' }, { status: 400 })
+    }
 
     let clientConnected = true
     const mediaAbort = new AbortController()
@@ -235,11 +273,16 @@ export async function POST(req: NextRequest) {
         }
         const heartbeat = setInterval(() => safeSend({ heartbeat: true }), 8_000)
         try {
-          safeSend({ thinking: `正在用 ${imageCfg.model} 生成图片……` })
+          safeSend({
+            thinking: sourceImage
+              ? `正在用 ${imageCfg.model} 根据参考图生成……`
+              : `正在用 ${imageCfg.model} 生成图片……`,
+          })
           log.info('chat', 'platform image generation', {
             model: imageCfg.model,
             baseUrl: imageCfg.baseUrl,
             promptLen: prompt.length,
+            hasSourceImage: !!sourceImage,
           })
           const media = await generateOpenAICompatibleMedia({
             baseUrl: imageCfg.baseUrl,
@@ -248,7 +291,8 @@ export async function POST(req: NextRequest) {
             model: imageCfg.model,
             outputKind: 'image',
             forceKind: 'image',
-            prompt,
+            prompt: prompt || '',
+            sourceImage,
             signal: mediaSignal,
           })
           safeSend({ media })
@@ -259,7 +303,7 @@ export async function POST(req: NextRequest) {
             : networkError(error, '媒体生成服务', [imageCfg.apiKey])
           if (/not enabled for this group|permission/i.test(message)) {
             message = `反代账号未开通生图权限（Image generation is not enabled for this group）。`
-              + `模型已正确指向 ${imageCfg.model}，但当前 API Key 所属分组禁止 /images/generations。`
+              + `模型已正确指向 ${imageCfg.model}，但当前 API Key 所属分组禁止图片接口。`
               + `请在反代后台为该 Key 开启图片权限，或换一把有 Imagine 权限的 Key。`
           }
           log.error('chat', 'platform image generation failed', { model: imageCfg.model, message })
@@ -279,7 +323,7 @@ export async function POST(req: NextRequest) {
     return new Response(mediaStream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } })
   }
 
-  // Platform video: explicit 录像 tier only — POST /videos/generations + poll GET /videos/{id}
+  // Platform video: text-to-video or image-to-video when a reference photo is attached
   if (wantPlatformVideo) {
     const videoCfg = resolveDeepTierVideoConfig()
     if (!videoCfg) {
@@ -288,7 +332,9 @@ export async function POST(req: NextRequest) {
       }, { status: 503 })
     }
     const prompt = extractImagePrompt(userPrompt || latestUserPrompt(rawMessages))
-    if (!prompt) return Response.json({ error: '请输入视频生成提示词' }, { status: 400 })
+    if (!prompt && !sourceImage) {
+      return Response.json({ error: '请输入视频描述，或附上参考图' }, { status: 400 })
+    }
 
     let clientConnected = true
     const mediaAbort = new AbortController()
@@ -304,11 +350,16 @@ export async function POST(req: NextRequest) {
         }
         const heartbeat = setInterval(() => safeSend({ heartbeat: true }), 8_000)
         try {
-          safeSend({ thinking: `正在用 ${videoCfg.model} 生成视频，可能需要一分钟……` })
+          safeSend({
+            thinking: sourceImage
+              ? `正在用 ${videoCfg.model} 根据参考图生成视频，可能需要一分钟……`
+              : `正在用 ${videoCfg.model} 生成视频，可能需要一分钟……`,
+          })
           log.info('chat', 'platform video generation', {
             model: videoCfg.model,
             baseUrl: videoCfg.baseUrl,
             promptLen: prompt.length,
+            hasSourceImage: !!sourceImage,
           })
           const media = await generateOpenAICompatibleMedia({
             baseUrl: videoCfg.baseUrl,
@@ -317,7 +368,8 @@ export async function POST(req: NextRequest) {
             model: videoCfg.model,
             outputKind: 'video',
             forceKind: 'video',
-            prompt,
+            prompt: prompt || '',
+            sourceImage,
             signal: mediaSignal,
           })
           safeSend({ media })

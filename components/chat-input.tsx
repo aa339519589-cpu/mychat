@@ -228,7 +228,7 @@ export function ChatInput({
           </button>
         </div>
 
-        <textarea ref={ref} rows={1} value={value} onChange={e => { setValue(e.target.value); resize() }} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !isLoading && !sendPending) { e.preventDefault(); submit() } }} placeholder={activeTier === "绘影" ? "描述你想生成的图片……" : activeTier === "录像" ? "描述你想生成的视频……" : "说点什么……"} className={cn("block min-w-0 flex-1 resize-none bg-transparent py-1.5 text-[15px] leading-[1.6] tracking-wide text-secondary-foreground outline-none placeholder:italic placeholder:text-muted-foreground dark:text-white", mobile ? "max-h-[120px]" : "max-h-[180px]")} />
+        <textarea ref={ref} rows={1} value={value} onChange={e => { setValue(e.target.value); resize() }} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !isLoading && !sendPending) { e.preventDefault(); submit() } }} placeholder={activeTier === "绘影" ? "描述图片，也可附上参考图……" : activeTier === "录像" ? "描述视频，也可附上参考图……" : "说点什么……"} className={cn("block min-w-0 flex-1 resize-none bg-transparent py-1.5 text-[15px] leading-[1.6] tracking-wide text-secondary-foreground outline-none placeholder:italic placeholder:text-muted-foreground dark:text-white", mobile ? "max-h-[120px]" : "max-h-[180px]")} />
 
         <button
           type="button"

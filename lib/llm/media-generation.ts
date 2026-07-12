@@ -42,6 +42,11 @@ export type GenerateMediaOptions = {
   model: string
   outputKind: MediaOutputKind
   prompt: string
+  /**
+   * Optional reference image (data URL or https URL) for image edit / image-to-video.
+   * When set, image uses POST /images/edits; video includes `image` on /videos/generations.
+   */
+  sourceImage?: string
   signal?: AbortSignal
   /** Primarily useful for deterministic tests; production uses the SSRF-safe fetcher. */
   fetcher?: ModelEndpointFetcher
@@ -49,6 +54,27 @@ export type GenerateMediaOptions = {
   timeoutMs?: number
   /** Skip model-id heuristics (e.g. platform Grok reverse-proxy image models). */
   forceKind?: MediaOutputKind
+}
+
+const DEFAULT_IMAGE_EDIT_PROMPT = "基于这张参考图创作一张新的高质量图片"
+const DEFAULT_IMAGE_TO_VIDEO_PROMPT = "让画面自然生动地动起来"
+
+function normalizeSourceImage(value: string | undefined | null): string | undefined {
+  const url = (value ?? "").trim()
+  if (!url) return undefined
+  if (url.startsWith("data:image/")) return url
+  if (/^https:\/\//i.test(url)) return url
+  // Reject non-https remote and non-image payloads (SSRF / unsafe).
+  return undefined
+}
+
+function resolveMediaPrompt(options: GenerateMediaOptions, kind: MediaOutputKind): string {
+  const prompt = options.prompt.trim()
+  if (prompt) return prompt.slice(0, 32_000)
+  if (normalizeSourceImage(options.sourceImage)) {
+    return kind === "video" ? DEFAULT_IMAGE_TO_VIDEO_PROMPT : DEFAULT_IMAGE_EDIT_PROMPT
+  }
+  return ""
 }
 
 export function combineMediaGenerationSignals(
@@ -445,14 +471,36 @@ export async function generateOpenAICompatibleImage(options: GenerateMediaOption
   }
   const model = options.model.trim()
   if (!isSafeModelId(model)) throw new MediaGenerationError("模型 ID 无效", "invalid_model", 400)
-  if (!options.prompt.trim() || options.prompt.length > 32_000) {
-    throw new MediaGenerationError("媒体生成提示词为空或过长", "invalid_prompt", 400)
+  const sourceImage = normalizeSourceImage(options.sourceImage)
+  const prompt = resolveMediaPrompt(options, "image")
+  if (!prompt || prompt.length > 32_000) {
+    throw new MediaGenerationError(
+      sourceImage ? "图片编辑提示词无效" : "请输入图片描述，或附上参考图",
+      "invalid_prompt",
+      400,
+    )
   }
   const fetcher = options.fetcher ?? safeModelEndpointFetch
   const apiKey = options.apiKey?.trim() ?? ""
+  // Reference image → xAI-style edit endpoint; otherwise text-to-image generations.
+  const path = sourceImage ? "/images/edits" : "/images/generations"
+  const body: Record<string, unknown> = sourceImage
+    ? {
+        model,
+        prompt,
+        image: { url: sourceImage, type: "image_url" },
+      }
+    : {
+        model,
+        prompt,
+        n: 1,
+        size: /(?:^|[-_.\/])seedream[-_.]?5(?=$|[-_.\/\d])/i.test(model)
+          ? "2048x2048"
+          : "1024x1024",
+      }
   const creation = await mediaCreationRequest(
     fetcher,
-    mediaEndpoint(options.baseUrl, "/images/generations"),
+    mediaEndpoint(options.baseUrl, path),
     authType => ({
       method: "POST",
       headers: {
@@ -460,7 +508,7 @@ export async function generateOpenAICompatibleImage(options: GenerateMediaOption
         Accept: "application/json, text/event-stream",
         ...endpointAuthHeaders(apiKey, authType),
       },
-      body: JSON.stringify({ model: options.model.trim(), prompt: options.prompt.trim(), n: 1, size: "1024x1024" }),
+      body: JSON.stringify(body),
       redirect: "manual",
       signal: combineSignal(options.signal, IMAGE_GENERATION_TIMEOUT_MS),
     }),
@@ -476,7 +524,7 @@ export async function generateOpenAICompatibleImage(options: GenerateMediaOption
     ? parseSsePayloads(raw)
     : [parseJson(raw)]
   for (let index = payloads.length - 1; index >= 0; index--) {
-    const media = await imageFromPayload(payloads[index], options.prompt, materializeContext)
+    const media = await imageFromPayload(payloads[index], prompt, materializeContext)
     if (media) return media
   }
   throw new MediaGenerationError("图片接口已响应，但没有返回图片", "empty_response")
@@ -601,20 +649,19 @@ export async function generateOpenAICompatibleVideo(options: GenerateMediaOption
 function validateOptions(options: GenerateMediaOptions): MediaOutputKind {
   const model = options.model.trim()
   if (!isSafeModelId(model)) throw new MediaGenerationError("模型 ID 无效", "invalid_model", 400)
-  if (!options.prompt.trim() || options.prompt.length > 32_000) {
-    throw new MediaGenerationError("媒体生成提示词为空或过长", "invalid_prompt", 400)
-  }
-  if (options.forceKind === "image" || options.forceKind === "video") {
-    return options.forceKind
-  }
-  if (options.outputKind !== "image" && options.outputKind !== "video") {
+  const kind = options.forceKind === "image" || options.forceKind === "video"
+    ? options.forceKind
+    : options.outputKind
+  if (kind !== "image" && kind !== "video") {
     throw new MediaGenerationError("模型用途必须是图片或视频", "unsupported_model", 422)
   }
-  // When forceKind is set, trust the caller even if model id is not image-like (Grok reverse proxies).
-  const kind = options.outputKind
-  // Optional soft check when not forced:
-  if (!options.forceKind) {
-    // keep outputKind as source of truth (call sites set it explicitly)
+  const hasSource = !!normalizeSourceImage(options.sourceImage)
+  const prompt = resolveMediaPrompt(options, kind)
+  if ((!prompt || prompt.length > 32_000) && !hasSource) {
+    throw new MediaGenerationError("请输入描述，或附上参考图", "invalid_prompt", 400)
+  }
+  if (options.prompt.trim().length > 32_000) {
+    throw new MediaGenerationError("媒体生成提示词过长", "invalid_prompt", 400)
   }
   return kind
 }
@@ -624,16 +671,29 @@ function validateOptions(options: GenerateMediaOptions): MediaOutputKind {
  * Grok reverse-proxy video:
  *   POST {base}/videos/generations  → { request_id }
  *   GET  {base}/videos/{request_id} → { status, progress, video: { url } }
+ * Optional `image.url` for image-to-video.
  */
 export async function generateGrokProxyVideo(options: GenerateMediaOptions): Promise<GeneratedMedia> {
   const model = options.model.trim()
   if (!isSafeModelId(model)) throw new MediaGenerationError("模型 ID 无效", "invalid_model", 400)
-  if (!options.prompt.trim() || options.prompt.length > 32_000) {
-    throw new MediaGenerationError("视频生成提示词为空或过长", "invalid_prompt", 400)
+  const sourceImage = normalizeSourceImage(options.sourceImage)
+  const prompt = resolveMediaPrompt(options, "video")
+  if (!prompt && !sourceImage) {
+    throw new MediaGenerationError("请输入视频描述，或附上参考图", "invalid_prompt", 400)
+  }
+  if (options.prompt.trim().length > 32_000) {
+    throw new MediaGenerationError("视频生成提示词过长", "invalid_prompt", 400)
   }
   const fetcher = options.fetcher ?? safeModelEndpointFetch
   const apiKey = options.apiKey?.trim() ?? ""
   const createUrl = mediaEndpoint(options.baseUrl, "/videos/generations")
+  const requestBody: Record<string, unknown> = {
+    model,
+    prompt: prompt || DEFAULT_IMAGE_TO_VIDEO_PROMPT,
+  }
+  if (sourceImage) {
+    requestBody.image = { url: sourceImage }
+  }
   const creation = await mediaCreationRequest(
     fetcher,
     createUrl,
@@ -644,7 +704,7 @@ export async function generateGrokProxyVideo(options: GenerateMediaOptions): Pro
         Accept: "application/json",
         ...endpointAuthHeaders(apiKey, authType),
       },
-      body: JSON.stringify({ model, prompt: options.prompt.trim() }),
+      body: JSON.stringify(requestBody),
       redirect: "manual",
       signal: combineSignal(options.signal, VIDEO_TIMEOUT_MS),
     }),
@@ -662,7 +722,7 @@ export async function generateGrokProxyVideo(options: GenerateMediaOptions): Pro
   if (!requestId || requestId.length > 512 || /[^A-Za-z0-9_.:-]/.test(requestId)) {
     // Some proxies may return the video immediately
     const materializeContext: MaterializeContext = { ...options, authType: creation.authType, fetcher }
-    const immediate = await videoUrlFromPayload(created, options.prompt, materializeContext)
+    const immediate = await videoUrlFromPayload(created, prompt || DEFAULT_IMAGE_TO_VIDEO_PROMPT, materializeContext)
     if (immediate) return immediate
     throw new MediaGenerationError("视频接口没有返回有效任务 ID", "invalid_job")
   }
@@ -677,6 +737,7 @@ export async function generateGrokProxyVideo(options: GenerateMediaOptions): Pro
   const pollIntervalMs = Number.isFinite(options.pollIntervalMs)
     ? Math.min(30_000, Math.max(200, options.pollIntervalMs!))
     : 2_000
+  const alt = prompt || DEFAULT_IMAGE_TO_VIDEO_PROMPT
 
   while (true) {
     if (options.signal?.aborted) throw options.signal.reason
@@ -708,8 +769,8 @@ export async function generateGrokProxyVideo(options: GenerateMediaOptions): Pro
         : typeof job?.url === "string"
           ? job.url
           : ""
-      if (url) return materializeMediaUrl(url, "video", options.prompt, materializeContext)
-      const via = await videoUrlFromPayload(job, options.prompt, materializeContext)
+      if (url) return materializeMediaUrl(url, "video", alt, materializeContext)
+      const via = await videoUrlFromPayload(job, alt, materializeContext)
       if (via) return via
       throw new MediaGenerationError("视频已完成但未返回地址", "empty_response")
     }

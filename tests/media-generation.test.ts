@@ -505,3 +505,101 @@ test("enforces response and media limits and redacts exact endpoint credentials"
     assert.equal(calls, 1)
   })
 })
+
+test("image edit uses /images/edits when sourceImage is provided", async () => {
+  let requestedUrl = ""
+  let requestedBody: any
+  const fetcher: ModelEndpointFetcher = async (input, init) => {
+    requestedUrl = input.toString()
+    requestedBody = JSON.parse(String(init?.body))
+    return Response.json({ data: [{ b64_json: "aGVsbG8=" }] })
+  }
+
+  const media = await generateOpenAICompatibleMedia({
+    baseUrl: "https://media.example/v1",
+    apiKey: "test-credential",
+    authType: "bearer",
+    model: "grok-imagine-image-quality",
+    outputKind: "image",
+    forceKind: "image",
+    prompt: "改成水彩风格",
+    sourceImage: "data:image/png;base64,aGVsbG8=",
+    fetcher,
+  })
+
+  assert.equal(requestedUrl, "https://media.example/v1/images/edits")
+  assert.equal(requestedBody.model, "grok-imagine-image-quality")
+  assert.equal(requestedBody.prompt, "改成水彩风格")
+  assert.deepEqual(requestedBody.image, {
+    url: "data:image/png;base64,aGVsbG8=",
+    type: "image_url",
+  })
+  assert.equal(media.type, "image")
+})
+
+test("image-to-video includes image field on /videos/generations", async () => {
+  let requestedBody: any
+  let polls = 0
+  const fetcher: ModelEndpointFetcher = async (input, init) => {
+    const url = input.toString()
+    const method = init?.method ?? "GET"
+    if (method === "POST") {
+      requestedBody = JSON.parse(String(init?.body))
+      return Response.json({ request_id: "vid_ref_1" })
+    }
+    polls++
+    if (polls === 1) return Response.json({ status: "pending", progress: 10 })
+    return Response.json({
+      status: "done",
+      video: { url: "https://vidgen.x.ai/out.mp4", duration: 6 },
+    })
+  }
+
+  // materialize will fetch the video url — intercept
+  const fetcher2: ModelEndpointFetcher = async (input, init) => {
+    const url = input.toString()
+    if (url.includes("vidgen.x.ai")) {
+      return new Response(new Uint8Array([1, 2, 3]), { headers: { "Content-Type": "video/mp4" } })
+    }
+    return fetcher(input, init)
+  }
+
+  const media = await generateOpenAICompatibleMedia({
+    baseUrl: "https://media.example/v1",
+    apiKey: "test-credential",
+    authType: "bearer",
+    model: "grok-imagine-video-1.5",
+    outputKind: "video",
+    forceKind: "video",
+    prompt: "镜头缓缓推进",
+    sourceImage: "data:image/jpeg;base64,/9j/4AAQ",
+    fetcher: fetcher2,
+    pollIntervalMs: 0,
+  })
+
+  assert.equal(requestedBody.model, "grok-imagine-video-1.5")
+  assert.equal(requestedBody.prompt, "镜头缓缓推进")
+  assert.deepEqual(requestedBody.image, { url: "data:image/jpeg;base64,/9j/4AAQ" })
+  assert.equal(media.type, "video")
+})
+
+test("image-only reference uses default edit prompt", async () => {
+  let requestedBody: any
+  const media = await generateOpenAICompatibleImage({
+    baseUrl: "https://media.example/v1",
+    apiKey: "k",
+    authType: "bearer",
+    model: "grok-imagine-image-quality",
+    outputKind: "image",
+    forceKind: "image",
+    prompt: "",
+    sourceImage: "data:image/png;base64,aGVsbG8=",
+    fetcher: async (_input, init) => {
+      requestedBody = JSON.parse(String(init?.body))
+      return Response.json({ data: [{ b64_json: "aGVsbG8=" }] })
+    },
+  })
+  assert.ok(requestedBody.prompt.length > 0)
+  assert.equal(requestedBody.image.type, "image_url")
+  assert.equal(media.type, "image")
+})
