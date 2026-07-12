@@ -29,9 +29,10 @@ async function resolveConversationId(
     .map(message => message.id)
     .filter((id): id is string => typeof id === "string" && !!id)
     .slice(0, 6)
-  for (const id of ids) {
-    const { data } = await supabase.from("messages")
-      .select("conversation_id").eq("id", id).eq("user_id", userId).maybeSingle()
+  const rows = await Promise.all(ids.map(id =>
+    supabase.from("messages").select("conversation_id").eq("id", id).eq("user_id", userId).maybeSingle()
+  ))
+  for (const { data } of rows) {
     if (typeof data?.conversation_id === "string") return data.conversation_id
   }
   return null

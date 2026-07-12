@@ -111,17 +111,16 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const memoryEnabled = await getMemoryEnabled(auth)
-  const gate = await enforceLimits(auth, req, { quota: !customEndpoint })
+  const [memoryEnabled, gate] = await Promise.all([
+    getMemoryEnabled(auth),
+    enforceLimits(auth, req, { quota: !customEndpoint }),
+  ])
   if (gate.response) return gate.response
   const usingBalance = gate.usingBalance
 
   const rawMessages = messages as RawMsg[]
   const requestedSearchMode = searchMode === 'web' || searchMode === 'deep' ? searchMode : normalizeSearchMode(webSearch, deepWebSearch)
   const hasScannedAttachment = Array.isArray(attachments) && attachments.some((attachment: any) => Array.isArray(attachment?.pageImages) && attachment.pageImages.length > 0)
-  if (customEndpoint && requestedSearchMode !== 'off') {
-    return Response.json({ error: '自定义模型不会使用平台的联网搜索额度，请关闭联网搜索后重试' }, { status: 400 })
-  }
   if (customEndpoint && hasScannedAttachment) {
     return Response.json({ error: '自定义模型不会使用平台 OCR，请上传带文字层的 PDF 或文本文件' }, { status: 400 })
   }
@@ -174,51 +173,23 @@ export async function POST(req: NextRequest) {
     })
     return new Response(mediaStream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' } })
   }
-  const summary = await prepareConversationSummary({
-    supabase,
-    userId,
-    explicitConversationId: conversationId,
-    messages: rawMessages,
-    signal: req.signal,
-    allowCompaction: !customEndpoint,
-  })
-  const resolvedConversationId = summary.conversationId
-  const recentMessages = rawMessages.slice(-RECENT_CONTEXT_MESSAGES)
-  const historyRetrievalEnabled = historyRetrieval === true
-  let activeHistoryContext = ''
-  if (historyRetrievalEnabled) {
-    if (!customEndpoint) await ensureConversationIndexed(supabase, userId, resolvedConversationId, req.signal)
-    activeHistoryContext = await retrieveHistoryContext({
-      supabase,
-      userId,
-      conversationId: resolvedConversationId,
-      projectId: project?.id ?? null,
-      query: latestUserQuery(rawMessages),
-      mode: customEndpoint ? 'light' : historyRetrievalModeForTier(String(tier)),
-      signal: req.signal,
-    })
-  }
-
   const effectiveSearchMode = requestedSearchMode
   const latestBeijingDate = latestBeijingDateFromMessages(rawMessages)
-  const flags = { loggedIn: !!userId, searchMode: effectiveSearchMode, memoryEnabled, projectId: project?.id ?? null }
+  // 自接 OpenAI 兼容网关经常不支持 tools：无联网时不挂工具，避免「带 tools 失败 → 再重试」双倍延迟。
+  // 开启联网时只挂搜索类工具；记忆工具仅用于平台内置模型。
+  const flags = {
+    loggedIn: !!userId,
+    searchMode: effectiveSearchMode,
+    memoryEnabled: customEndpoint ? false : memoryEnabled,
+    projectId: customEndpoint ? null : (project?.id ?? null),
+  }
   const tools = activeTools(flags)
   const ctx: ToolContext = { supabase, userId, projectId: project?.id ?? null, searchMode: effectiveSearchMode, latestBeijingDate, signal: req.signal }
-  const effectiveMemories = memoryEnabled && !project?.id ? (memories as Memory[] | undefined) : undefined
+  const effectiveMemories = (!customEndpoint && memoryEnabled && !project?.id) ? (memories as Memory[] | undefined) : undefined
   const url = chatCompletionsUrl(capability.provider.baseUrl)
-  const SYSTEM = buildSystem(effectiveMemories, {
-    searchMode: effectiveSearchMode,
-    latestBeijingDate,
-    memoryEnabled,
-    project,
-    modelSource: customEndpoint ? 'custom' : 'platform',
-    tierLabel: customEndpoint ? null : platformTierLabel,
-    modelId: customEndpoint ? model : null,
-    endpointName: customEndpoint ? endpointDisplayName : null,
-  })
-    + summary.renderedSummary
-    + activeHistoryContext
   const openaiTools = toOpenAITools(tools)
+  const recentMessages = rawMessages.slice(-RECENT_CONTEXT_MESSAGES)
+  const historyRetrievalEnabled = historyRetrieval === true
 
   let clientConnected = true
   const stream = new ReadableStream({
@@ -229,6 +200,8 @@ export async function POST(req: NextRequest) {
       }
       const emit: Emit = (e) => safeSend(e)
       let totalTokensUsed = 0
+      // 立刻推心跳，降低“卡住无响应”的体感
+      safeSend({ heartbeat: true })
       const heartbeat = setInterval(() => safeSend({ heartbeat: true }), 8_000)
       const executeTool: ExecuteTool = async (name, input) => {
         const { result, event } = await execTool(tools, name, input, ctx)
@@ -236,7 +209,44 @@ export async function POST(req: NextRequest) {
         return result
       }
       try {
+        // 摘要/检索放到流内，避免首包前串行阻塞
+        const summary = await prepareConversationSummary({
+          supabase,
+          userId,
+          explicitConversationId: conversationId,
+          messages: rawMessages,
+          signal: req.signal,
+          allowCompaction: !customEndpoint,
+        })
+        const resolvedConversationId = summary.conversationId
+        let activeHistoryContext = ''
+        if (historyRetrievalEnabled) {
+          if (!customEndpoint) await ensureConversationIndexed(supabase, userId, resolvedConversationId, req.signal)
+          activeHistoryContext = await retrieveHistoryContext({
+            supabase,
+            userId,
+            conversationId: resolvedConversationId,
+            projectId: project?.id ?? null,
+            query: latestUserQuery(rawMessages),
+            mode: customEndpoint ? 'light' : historyRetrievalModeForTier(String(tier)),
+            signal: req.signal,
+          })
+        }
+        const SYSTEM = buildSystem(effectiveMemories, {
+          searchMode: effectiveSearchMode,
+          latestBeijingDate,
+          memoryEnabled: customEndpoint ? false : memoryEnabled,
+          project: customEndpoint ? undefined : project,
+          modelSource: customEndpoint ? 'custom' : 'platform',
+          tierLabel: customEndpoint ? null : platformTierLabel,
+          modelId: customEndpoint ? model : null,
+          endpointName: customEndpoint ? endpointDisplayName : null,
+        })
+          + summary.renderedSummary
+          + activeHistoryContext
+
         const preparedMessages = customEndpoint || capability.supportsImageInput
+
           ? recentMessages
           : await ensureImageSummaries(recentMessages, { supabase, userId, emit, signal: req.signal })
         const msgs: any[] = [{ role: 'system', content: SYSTEM }, ...buildModelContext(preparedMessages, capability)]

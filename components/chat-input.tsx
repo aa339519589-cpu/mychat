@@ -154,7 +154,6 @@ export function ChatInput({
   const availableEndpoints = customEndpoints.filter(endpoint => !endpoint.needsReconnect)
   const activeEndpoint = availableEndpoints.find(endpoint => endpoint.id === activeEndpointId)
   const activeOutputKind = activeEndpoint?.outputKind
-  const platformSearchDisabled = !!activeEndpoint
   const activeModelLabel = activeEndpoint?.name || activeEndpoint?.model || activeTierName
 
   return (
@@ -197,8 +196,6 @@ export function ChatInput({
                 label="联网"
                 onClick={() => onSearchModeChange(searchMode === "web" ? "off" : "web")}
                 active={searchMode === "web"}
-                disabled={platformSearchDisabled}
-                title={platformSearchDisabled ? "自定义模型不使用平台联网" : undefined}
               />
               <PlusItem
                 icon={<Search className={cn("size-4 scale-x-[-1]", historyRetrieval && "text-primary")} />}
@@ -211,8 +208,6 @@ export function ChatInput({
                 label="深度联网"
                 onClick={() => onSearchModeChange(searchMode === "deep" ? "off" : "deep")}
                 active={searchMode === "deep"}
-                disabled={platformSearchDisabled}
-                title={platformSearchDisabled ? "自定义模型不使用平台联网" : undefined}
               />
               <PlusItem
                 icon={<Microscope className={cn("size-4", deepResearch && "text-primary")} />}
