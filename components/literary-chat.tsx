@@ -391,6 +391,10 @@ export function LiteraryChat() {
               break streamLoop
             }
             if (data.text) {
+              if (typeof window !== "undefined" && window.localStorage?.getItem("mychat_debug_md") === "1") {
+                // JSON.stringify makes \n visible in the console
+                console.debug("[mychat/md] stream delta", JSON.stringify(data.text))
+              }
               fullReply += data.text
               scheduleStreamMessage()
             }
@@ -410,6 +414,9 @@ export function LiteraryChat() {
       const finalization = planChatStreamFinalization({ hasOutput, aborted, terminalError })
 
       if (finalization.kind === "persist") {
+        if (typeof window !== "undefined" && window.localStorage?.getItem("mychat_debug_md") === "1") {
+          console.debug("[mychat/md] final markdown", JSON.stringify(fullReply))
+        }
         const streamWarning = finalization.warning
         flushStreamMessage(streamWarning)
         try {

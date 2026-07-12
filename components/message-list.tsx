@@ -5,6 +5,7 @@ import type { Conversation, Message } from "@/lib/chat-data"
 import { ChevronDown, ChevronRight, Brain, FileText, Globe, Copy, Check, RefreshCw, Pencil, X } from "lucide-react"
 import ReactMarkdown from "react-markdown"
 import remarkMath from "remark-math"
+import remarkGfm from "remark-gfm"
 import rehypeKatex from "rehype-katex"
 import { parseArtifact, artifactTitle } from "@/lib/artifact"
 import { stripToolMarkup } from "@/lib/llm/sanitize"
@@ -14,6 +15,7 @@ import { VegaChart } from "@/components/vega-chart"
 import { MermaidChart } from "@/components/mermaid-chart"
 import { FunctionPlotChart } from "@/components/function-plot-chart"
 import { normalizeMathDelimiters } from "@/lib/math"
+import { prepareChatMarkdown } from "@/lib/markdown"
 import { cn } from "@/lib/utils"
 import { GeneratedMedia } from "@/components/generated-media"
 import { isPrivateNetworkGeneratedMediaUrl, isSafeGeneratedMediaUrl } from "@/lib/generated-media"
@@ -22,9 +24,12 @@ const INITIAL_RENDER_COUNT = 70
 const RENDER_STEP = 50
 
 function MdContent({ text }: { text: string }) {
+  // Always render the *full accumulated* markdown string (stream concatenates first).
+  // remark-gfm is required for GFM tables; without it pipes render as plain text.
+  const markdown = prepareChatMarkdown(normalizeMathDelimiters(text))
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkMath]}
+      remarkPlugins={[remarkGfm, remarkMath]}
       rehypePlugins={[rehypeKatex]}
       components={{
         p: ({ children }) => <p className="mb-2.5 break-words leading-[26px] tracking-[0.001em] [overflow-wrap:anywhere]">{children}</p>,
@@ -45,7 +50,7 @@ function MdContent({ text }: { text: string }) {
         li: ({ children }) => <li className="break-words [overflow-wrap:anywhere]">{children}</li>,
         blockquote: ({ children }) => <blockquote className="my-3 rounded-r border-l-4 border-primary/40 bg-muted/15 py-2 pl-4 pr-3 font-[500] italic text-muted-foreground">{children}</blockquote>,
         hr: () => <hr className="my-6 h-px border-0 bg-foreground/25 opacity-85" />,
-        table: ({ children }) => <div className="my-3 overflow-x-auto"><table className="w-full overflow-hidden rounded-lg border border-collapse border-border/30">{children}</table></div>,
+        table: ({ children }) => <div className="markdown-body my-3 max-w-full overflow-x-auto"><table className="w-full min-w-[28rem] border-collapse rounded-lg border border-border/30">{children}</table></div>,
         thead: ({ children }) => <thead className="bg-muted/40 font-[625]">{children}</thead>,
         tbody: ({ children }) => <tbody>{children}</tbody>,
         tr: ({ children }) => <tr className="border-b border-border/20 last:border-b-0">{children}</tr>,
@@ -62,7 +67,7 @@ function MdContent({ text }: { text: string }) {
         ),
       }}
     >
-      {normalizeMathDelimiters(text)}
+      {markdown}
     </ReactMarkdown>
   )
 }
