@@ -8,7 +8,7 @@ export type TierConfig = { id: Tier; label: string; desc: string; model: string;
 export const TIERS: TierConfig[] = [
   { id: "绝句", label: "快速", desc: "迅捷",  model: "deepseek-v4-flash", thinking: false },
   { id: "正构", label: "均衡", desc: "稳健",  model: "deepseek-v4-flash", thinking: true  },
-  { id: "鸿篇", label: "深度", desc: "深推",  model: "deepseek-v4-pro",   thinking: true  },
+  { id: "鸿篇", label: "深度", desc: "深推",  model: "platform-deep", thinking: true  },
   // 观照只作为图片解析器，不在前端模型列表展示。
   { id: "观照", label: "视觉", desc: "V2.5",  model: "mimo-v2.5",         thinking: false },
 ]

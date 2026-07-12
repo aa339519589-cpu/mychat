@@ -11,6 +11,14 @@ services:
         value: 3000
       - key: DEEPSEEK_API_KEY
         sync: false
+      - key: DEEP_TIER_BASE_URL
+        sync: false
+      - key: DEEP_TIER_API_KEY
+        sync: false
+      - key: DEEP_TIER_MODEL
+        sync: false
+      - key: DEEP_TIER_AUTH_TYPE
+        sync: false
       - key: MIMO_API_KEY
         sync: false
       - key: TAVILY_API_KEY

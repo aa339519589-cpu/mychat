@@ -100,9 +100,12 @@ export async function POST(req: NextRequest) {
   } else {
     const tierCfg = TIER_MAP[tier as keyof typeof TIER_MAP] ?? TIER_MAP['绝句']
     platformTierLabel = tierCfg.label
-    model = deepResearch ? 'deepseek-v4-pro' : tierCfg.model
-    thinking = deepResearch ? true : tierCfg.thinking
-    capability = getModelCapability(model)
+    // 深度研究与「深度」档共用 platform-deep（可配反代 Grok；未配则 DeepSeek Pro）
+    const modelKey = (deepResearch || tierCfg.id === '鸿篇') ? 'platform-deep' : tierCfg.model
+    capability = getModelCapability(modelKey)
+    model = capability.id
+    thinking = capability.supportsThinking && (deepResearch || tierCfg.thinking)
+    authType = capability.provider.authType
     const apiKeyEnv = capability.provider.apiKeyEnv
     apiKey = apiKeyEnv ? process.env[apiKeyEnv] ?? '' : ''
     if (!apiKey) {
