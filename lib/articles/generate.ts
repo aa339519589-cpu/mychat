@@ -79,14 +79,23 @@ export async function generateDailyBrief(supabase: SupabaseClient, userId: strin
     `Current projects: ${signals.projectText.join(" | ") || "none named"}`,
     `Recent questions and interests:\n${signals.messageText.join("\n---\n") || "No recent signals. Create a balanced brief for a curious general reader."}`,
   ].join("\n\n")
-  const results = await Promise.all(EDITORIAL_LANES.map((lane, index) => runTurn(
-    chatCompletionsUrl("https://api.deepseek.com"), apiKey, "deepseek-v4-flash",
-    [{ role: "system", content: EDITORIAL_PROMPT }, { role: "user", content: `${context}\n\nEditorial lane: ${lane}. Do not overlap with the other articles in today's brief.` }], [], () => undefined,
-    { adapter: "deepseek-openai", thinking: false, deferTextUntilTurnEnd: true, emitErrors: false, timeoutMs: 80_000 },
-  ).then(result => {
-    if (result.failed) throw new Error(result.error || "Article generation failed")
-    return parseDraft(result.content, index + 1)
-  })))
+  const results = await Promise.all(EDITORIAL_LANES.map(async (lane, index) => {
+    let lastError: unknown
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const result = await runTurn(
+          chatCompletionsUrl("https://api.deepseek.com"), apiKey, "deepseek-v4-flash",
+          [{ role: "system", content: EDITORIAL_PROMPT }, { role: "user", content: `${context}\n\nEditorial lane: ${lane}. Do not overlap with the other articles in today's brief.` }], [], () => undefined,
+          { adapter: "deepseek-openai", thinking: false, deferTextUntilTurnEnd: true, emitErrors: false, timeoutMs: 80_000 },
+        )
+        if (result.failed) throw new Error(result.error || "Article generation failed")
+        return parseDraft(result.content, index + 1)
+      } catch (error) {
+        lastError = error
+      }
+    }
+    throw lastError
+  }))
   const drafts = results
   const rows = drafts.map((draft, index) => ({
     user_id: userId,
