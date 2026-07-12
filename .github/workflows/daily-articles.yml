@@ -1,0 +1,18 @@
+name: Daily articles
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Request daily article refresh
+        env:
+          ARTICLES_CRON_SECRET: ${{ secrets.ARTICLES_CRON_SECRET }}
+        run: |
+          curl --fail --show-error --silent --retry 2 \
+            -H "Authorization: Bearer ${ARTICLES_CRON_SECRET}" \
+            "https://mychat-nm6x.onrender.com/api/articles/cron"
