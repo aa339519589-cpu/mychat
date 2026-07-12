@@ -318,8 +318,9 @@ export function MessageList({
                             <div className="min-w-0 space-y-3">
                               {m.media.map((media, mediaIndex) => (
                                 <GeneratedMedia
-                                  key={`${media.type}:${media.url.slice(0, 120)}:${mediaIndex}`}
+                                  key={`${m.id}:${media.type}:${media.url.slice(0, 80)}:${mediaIndex}`}
                                   media={media}
+                                  messageId={m.id}
                                 />
                               ))}
                             </div>

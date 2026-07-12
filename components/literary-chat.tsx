@@ -32,6 +32,7 @@ import { ConversationMenu, ConversationRename } from "@/components/conversation-
 import type { SearchMode } from "@/lib/search-mode"
 import type { ModelEndpointSummary } from "@/lib/model-endpoints"
 import { MAX_GENERATED_MEDIA_ITEMS, normalizeGeneratedMedia, type GeneratedMedia } from "@/lib/generated-media"
+import { persistGeneratedMediaList } from "@/lib/media-storage"
 import { planChatStreamFinalization } from "@/lib/chat-stream-finalization"
 import { type ClientGenerationState, isRunning } from "@/lib/generation-client"
 import { isImageGenerationIntent } from "@/lib/image-intent"
@@ -548,10 +549,36 @@ export function LiteraryChat() {
         const streamWarning = finalization.warning
         flushStreamMessage(streamWarning)
         try {
+          let durableMedia = fullMedia
+          if (fullMedia.length && user) {
+            try {
+              durableMedia = await persistGeneratedMediaList(user.id, convId, fullMedia)
+              console.info("[image-generation] message media durable", {
+                conversationId: convId,
+                assistantMessageId: msgId,
+                count: durableMedia.length,
+                urls: durableMedia.map(m => m.url.slice(0, 80)),
+              })
+              // Reflect permanent URLs in UI immediately
+              setConversations(prev => prev.map(c => c.id !== convId ? c : {
+                ...c,
+                messages: c.messages.map(m => m.id === msgId ? { ...m, media: durableMedia } : m),
+              }))
+            } catch (e) {
+              console.warn("[image-generation] durable store failed, keeping provider urls", e)
+            }
+          }
           try {
             await updateMessageFields(convId, msgId, {
               content: fullReply,
               thinking: fullThinking || null,
+              media: durableMedia.length ? durableMedia : undefined,
+            })
+            console.info("[image-generation] message persisted", {
+              conversationId: convId,
+              assistantMessageId: msgId,
+              contentLen: fullReply.length,
+              mediaCount: durableMedia.length,
             })
           } catch {
             await insertMessage(user.id, convId, {
@@ -559,7 +586,7 @@ export function LiteraryChat() {
               role: "assistant",
               content: fullReply,
               thinking: fullThinking || undefined,
-              media: fullMedia.length ? fullMedia : undefined,
+              media: durableMedia.length ? durableMedia : undefined,
               time: "",
             })
           }

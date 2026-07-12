@@ -273,7 +273,24 @@ async function fetchRemoteMessages(conversationId: string, limit = REMOTE_MESSAG
     .order("created_at", { ascending: false })
     .limit(limit)
   if (error || !data) return []
-  return data.map(normalizeMessageRow).reverse()
+  const messages = data.map(normalizeMessageRow).reverse()
+  if (typeof window !== "undefined") {
+    for (const message of messages) {
+      if (message.media?.length) {
+        console.info("[chat-history] hydrated message", {
+          messageId: message.id,
+          conversationId,
+          mediaCount: message.media.length,
+          media: message.media.map(item => ({
+            type: item.type,
+            urlKind: item.url.startsWith("data:") ? "data" : item.url.startsWith("http") ? "http" : "other",
+            urlLen: item.url.length,
+          })),
+        })
+      }
+    }
+  }
+  return messages
 }
 
 // ───────────── 对话 ─────────────
@@ -441,19 +458,71 @@ export async function updateMessageContent(conversationId: string, messageId: st
 export async function updateMessageFields(
   conversationId: string,
   messageId: string,
-  fields: { content?: string; thinking?: string | null },
+  fields: {
+    content?: string
+    thinking?: string | null
+    media?: import("@/lib/generated-media").GeneratedMedia[]
+    images?: string[]
+    imageSummary?: string | null
+  },
 ): Promise<void> {
   const supabase = createClient()
-  const { error } = await supabase.from("messages").update({
-    ...(fields.content !== undefined ? { content: fields.content } : {}),
-    ...(fields.thinking !== undefined ? { thinking: fields.thinking } : {}),
-  }).eq("id", messageId)
+  const generatedMedia = fields.media !== undefined
+    ? normalizeGeneratedMediaList(fields.media)
+    : undefined
+  const patch: Record<string, unknown> = {}
+  if (fields.content !== undefined) patch.content = fields.content
+  if (fields.thinking !== undefined) patch.thinking = fields.thinking
+  if (fields.media !== undefined || fields.images !== undefined || fields.imageSummary !== undefined) {
+    // Merge with existing row so we never wipe refs accidentally when only media is set.
+    const { data: existing } = await supabase
+      .from("messages")
+      .select("images")
+      .eq("id", messageId)
+      .maybeSingle()
+    const prev = (existing?.images && typeof existing.images === "object" && !Array.isArray(existing.images))
+      ? existing.images as Record<string, unknown>
+      : {}
+    const prevMedia = normalizeGeneratedMediaList(prev.generated_media)
+    const nextMedia = generatedMedia !== undefined ? generatedMedia : prevMedia
+    const nextRefs = fields.images !== undefined
+      ? fields.images
+      : Array.isArray(prev.refs) ? prev.refs as string[] : []
+    const nextSummary = fields.imageSummary !== undefined
+      ? fields.imageSummary
+      : (typeof prev.image_summary === "string" ? prev.image_summary : null)
+    patch.images = (nextMedia.length || nextRefs.length || nextSummary)
+      ? {
+        refs: nextRefs,
+        image_summary: nextSummary,
+        generated_media: nextMedia,
+      }
+      : null
+  }
+  const { error } = await supabase.from("messages").update(patch).eq("id", messageId)
   if (error) {
     console.error("updateMessageFields", error)
     throw new Error("消息更新失败，请检查网络后重试。")
   }
-  if (fields.content !== undefined) {
-    await updateCachedMessageContent(conversationId, messageId, fields.content)
+  // Refresh local/idb cache for this message
+  try {
+    const cached = await readCachedMessages(conversationId)
+    if (cached.length) {
+      const next = cached.map(m => {
+        if (m.id !== messageId) return m
+        return {
+          ...m,
+          ...(fields.content !== undefined ? { content: fields.content } : {}),
+          ...(fields.thinking !== undefined ? { thinking: fields.thinking || undefined } : {}),
+          ...(generatedMedia !== undefined ? { media: generatedMedia.length ? generatedMedia : undefined } : {}),
+          ...(fields.images !== undefined ? { images: fields.images } : {}),
+          ...(fields.imageSummary !== undefined ? { imageSummary: fields.imageSummary || undefined } : {}),
+        }
+      })
+      writeCachedMessages(conversationId, next)
+    }
+  } catch (e) {
+    console.warn("updateMessageFields cache", e)
   }
 }
 

@@ -259,6 +259,25 @@ async function materializeMediaUrl(
   const baseOrigin = new URL(normalizeOpenAIBaseUrl(context.baseUrl)).origin
   const apiKey = context.apiKey?.trim() ?? ""
   const sameOrigin = url.origin === baseOrigin
+  // Public CDN URLs (e.g. imgen.x.ai) are stable enough for chat history and new-tab preview.
+  // Skip re-encoding to multi-MB data URLs which break open-in-new-tab and DB inserts.
+  if (!sameOrigin && (url.protocol === "https:" || url.protocol === "http:")) {
+    const host = url.hostname.toLowerCase()
+    const publicLike = host.includes("imgen.x.ai")
+      || host.endsWith(".x.ai")
+      || host.endsWith(".supabase.co")
+      || host.endsWith(".r2.dev")
+      || host.endsWith(".amazonaws.com")
+      || host.endsWith(".cloudfront.net")
+    if (publicLike) {
+      return {
+        type,
+        url: url.toString(),
+        mimeType: type === "image" ? "image/jpeg" : "video/mp4",
+        alt: prompt.slice(0, 300),
+      }
+    }
+  }
   const response = await endpointRequest(context.fetcher, url.toString(), {
     headers: {
       Accept: type === "image" ? "image/*" : "video/*",
