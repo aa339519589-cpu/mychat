@@ -11,7 +11,6 @@ test('resolveDeepTierImageConfig reads env', () => {
   assert.equal(cfg!.model, 'my-image-model')
   assert.equal(cfg!.baseUrl, 'https://proxy.example/v1')
   delete process.env.DEEP_TIER_IMAGE_MODEL
-  process.env.DEEP_TIER_MODEL = 'grok-4.5'
   const cfg2 = resolveDeepTierImageConfig()
-  assert.equal(cfg2!.model, 'grok-4.5')
+  assert.equal(cfg2!.model, 'grok-imagine-image-quality')
 })

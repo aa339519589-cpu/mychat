@@ -540,8 +540,7 @@ test("image edit uses /images/edits when sourceImage is provided", async () => {
 test("image-to-video includes image field on /videos/generations", async () => {
   let requestedBody: any
   let polls = 0
-  const fetcher: ModelEndpointFetcher = async (input, init) => {
-    const url = input.toString()
+  const fetcher: ModelEndpointFetcher = async (_input, init) => {
     const method = init?.method ?? "GET"
     if (method === "POST") {
       requestedBody = JSON.parse(String(init?.body))
