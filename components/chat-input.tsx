@@ -267,7 +267,6 @@ export function ChatInput({
                     <ModelRow
                       key={id}
                       label={cfg.label}
-                      desc={cfg.desc}
                       icon={icon}
                       active={!activeEndpointId && activeTier === id}
                       divided={index > 0}
