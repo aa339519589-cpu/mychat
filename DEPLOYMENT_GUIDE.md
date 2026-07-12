@@ -44,6 +44,7 @@ order by tablename, policyname;
 - 不要在生产设置或依赖 `ALLOW_UNSAFE_LOCAL_AGENT_EXECUTION`。
 - 多实例部署应把当前进程内 API 限流替换为 Redis/网关级共享限流；数据库配额和代码任务租约已经是跨实例原子的。
 - 公网部署只应连接服务器可达的公网 HTTPS 模型端点。自托管且确需局域网模型时，用 `MODEL_ENDPOINT_PRIVATE_ALLOWLIST` 精确列出 `host:port`；不要配置宽泛私网访问。
+- 图片和视频可以通过 `DEEP_TIER_IMAGE_*`、`DEEP_TIER_VIDEO_*` 使用独立端点；未配置时才回退 `DEEP_TIER_*`。生产媒体服务应使用长期可用的域名，不要依赖临时 ngrok 隧道。
 
 GitHub cookie 现在绑定 Supabase 用户。升级前创建的旧 cookie 不包含绑定信息，用户需要断开并重新连接 GitHub，这是预期的安全迁移行为。
 
@@ -54,11 +55,23 @@ GitHub cookie 现在绑定 Supabase 用户。升级前创建的旧 cookie 不包
 3. 执行生产迁移。
 4. 部署应用代码。
 5. 检查 `/api/github/status`、普通聊天和代码任务各一条。
-6. 观察模型错误率、429、数据库 RPC 错误、E2B 启动失败和 GitHub 401/422。
+6. 分别验证图片与视频端点；不要只用 `/models` 或聊天接口判断媒体能力。
+7. 观察模型错误率、429、数据库 RPC 错误、E2B 启动失败和 GitHub 401/422。
 
 若迁移失败，停止代码发布并从数据库备份恢复。若代码发布失败但迁移成功，回滚应用版本；新增 RPC 与列保持向后兼容，旧应用可以继续运行。
 
-## 5. 运行时边界
+## 5. 媒体端点故障排查
+
+出现 `ERR_NGROK_3200` 时，上游返回的 404 表示 ngrok 隧道离线；这与图片提示词、模型 ID、鉴权头或 MyChat 路由无关。处理顺序：
+
+1. 在提供反代的主机上确认服务进程仍监听原端口，并重启 ngrok 隧道。
+2. 若 ngrok 生成了新域名，在 Render/Vercel 中更新对应 Base URL；图片优先更新 `DEEP_TIER_IMAGE_BASE_URL`，视频优先更新 `DEEP_TIER_VIDEO_BASE_URL`。
+3. 长期生产应把媒体反代迁移到固定 HTTPS 域名。保留 `DEEP_TIER_BASE_URL` 给深度聊天，不必让聊天与媒体共用一个临时隧道。
+4. 重新部署后直接调用目标 `/v1/images/generations` 或视频创建接口做冒烟测试，再从 MyChat 前端复测。
+
+不要把 API Key 写入仓库、日志或截图。Render Blueprint 中 `sync: false` 的变量仍需在控制台填入真实值。
+
+## 6. 运行时边界
 
 - `/api/chat`：最大 48 MB，最多 500 条消息，并限制文本、图片和上下文总量。
 - `/api/code/chat`：最大 4 MB，服务端持有任务租约，限制代理轮次、续跑次数和空转次数。
