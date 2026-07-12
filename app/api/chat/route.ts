@@ -73,6 +73,8 @@ export async function POST(req: NextRequest) {
   let apiKey: string
   let authType: EndpointAuthType | undefined
   let outputKind: ModelOutputKind = 'chat'
+  let endpointDisplayName: string | undefined
+  let platformTierLabel: string | undefined
 
   if (customEndpoint) {
     if (!supabase || !userId) return Response.json({ error: '请先登录后使用自定义模型' }, { status: 401 })
@@ -86,6 +88,7 @@ export async function POST(req: NextRequest) {
       apiKey = resolveModelEndpointKey(endpoint, userId)
       const baseUrl = await validateModelEndpointNetwork(endpoint.base_url)
       model = endpoint.model
+      endpointDisplayName = typeof endpoint.name === 'string' ? endpoint.name : undefined
       thinking = false
       authType = endpointAuthType(endpoint.auth_type)
       capability = customModelCapability(model, baseUrl)
@@ -97,6 +100,7 @@ export async function POST(req: NextRequest) {
     }
   } else {
     const tierCfg = TIER_MAP[tier as keyof typeof TIER_MAP] ?? TIER_MAP['绝句']
+    platformTierLabel = tierCfg.label
     model = deepResearch ? 'deepseek-v4-pro' : tierCfg.model
     thinking = deepResearch ? true : tierCfg.thinking
     capability = getModelCapability(model)
@@ -203,7 +207,16 @@ export async function POST(req: NextRequest) {
   const ctx: ToolContext = { supabase, userId, projectId: project?.id ?? null, searchMode: effectiveSearchMode, latestBeijingDate, signal: req.signal }
   const effectiveMemories = memoryEnabled && !project?.id ? (memories as Memory[] | undefined) : undefined
   const url = chatCompletionsUrl(capability.provider.baseUrl)
-  const SYSTEM = buildSystem(effectiveMemories, { searchMode: effectiveSearchMode, latestBeijingDate, memoryEnabled, project })
+  const SYSTEM = buildSystem(effectiveMemories, {
+    searchMode: effectiveSearchMode,
+    latestBeijingDate,
+    memoryEnabled,
+    project,
+    modelSource: customEndpoint ? 'custom' : 'platform',
+    tierLabel: customEndpoint ? null : platformTierLabel,
+    modelId: customEndpoint ? model : null,
+    endpointName: customEndpoint ? endpointDisplayName : null,
+  })
     + summary.renderedSummary
     + activeHistoryContext
     + MARKDOWN_DIVIDER_GUARD

@@ -9,11 +9,6 @@ const BASE_SYSTEM = `【时间理解】
 ---
 【平台背景】
 你运行在作者自建的 MyChat 网页聊天环境中。
-前端有四档模型：
-- 视觉
-- 深度
-- 均衡
-- 快速
 平台具备：
 - Project：项目管理；
 - Artifact：面板渲染与产物展示；
@@ -23,6 +18,7 @@ const BASE_SYSTEM = `【时间理解】
 - 可视化渲染；
 - 文件产物预览与保存。
 理解这些术语即可，不要主动向用户解释内部实现。
+模型身份规则由下方【模型身份】段单独给出；不要把前端档位名称当成底层模型名称。
 ---
 【Memory 规则】
 你可以管理长期记忆，但必须非常克制。
@@ -246,6 +242,14 @@ type SystemFlags = {
   latestBeijingDate?: string | null
   memoryEnabled?: boolean
   project?: ProjectContext
+  /** platform = MyChat 内置档位；custom = 用户自接 API */
+  modelSource?: 'platform' | 'custom'
+  /** 内置档位 UI 名：快速 / 均衡 / 深度 / 视觉 */
+  tierLabel?: string | null
+  /** 用户自接模型的真实 model id */
+  modelId?: string | null
+  /** 用户为自接端点起的显示名（可选） */
+  endpointName?: string | null
 }
 function escapePromptXml(value: string): string {
   return value
@@ -272,9 +276,34 @@ function renderProjectMemoryBlock(projectMemories: unknown[]): string {
     })
     .join('\n')
 }
-// 拼装系统提示词：基础人设 + 当前位置 + 已记忆内容 + 联网模式 + 项目背景
+function renderModelIdentity(flags?: SystemFlags): string {
+  if (flags?.modelSource === 'custom') {
+    const modelId = (flags.modelId ?? '').trim() || '（未提供 model id）'
+    const name = (flags.endpointName ?? '').trim()
+    const nameLine = name ? `用户为该接入端点命名：${name}。` : ''
+    return `
+【模型身份】
+本次对话使用用户自行接入的外部模型，不走 MyChat 内置档位（快速 / 均衡 / 深度 / 视觉）。
+真实模型标识：${modelId}
+${nameLine}
+用户问你是什么模型、哪家公司、哪个版本时：直接按上述真实模型标识回答；你知道自己的模型身份，不要说“看不到模型名称”。
+严禁把回答说成 MyChat 的「快速 / 均衡 / 深度 / 视觉」；那些只是平台内置档位名，与本次自接模型无关。
+不要编造未给出的供应商营销名；标识本身已足够。`
+  }
+
+  const tier = (flags?.tierLabel ?? '').trim() || '当前内置档位'
+  return `
+【模型身份】
+本次对话使用 MyChat 平台内置模型档位「${tier}」。
+用户问你是什么模型时：只说明你是 MyChat 的「${tier}」对话模型（平台内置档位），不要透露底层供应商、真实 model id、公司名或版本号。
+不要把「快速 / 均衡 / 深度 / 视觉」解释成你的底层型号；它们只是前端档位名。
+不要猜测或编造自己是 Claude、GPT、Grok 等其他产品。`
+}
+
+// 拼装系统提示词：基础规则 + 模型身份 + 当前位置 + 记忆 + 联网 + 项目背景
 export function buildSystem(memories?: Memory[], flags?: SystemFlags): string {
   let system = BASE_SYSTEM
+  system += renderModelIdentity(flags)
   const isInProject = !!flags?.project
   if (isInProject) {
     system += `
