@@ -40,6 +40,54 @@ jobs:
             exit 1
           fi
 
+      - name: Inspect production deployment
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from urllib.parse import urljoin
+          from urllib.request import Request, urlopen
+          import re
+
+          base = "https://mychat-nm6x.onrender.com/"
+          needle = "brightness(1.24)"
+          report = []
+          html = ""
+          found = False
+          assets = []
+
+          try:
+              request = Request(base, headers={"User-Agent": "MyChat deployment verifier"})
+              with urlopen(request, timeout=90) as response:
+                  html = response.read().decode("utf-8", errors="replace")
+                  report.append(f"status={response.status}")
+                  report.append(f"final_url={response.geturl()}")
+                  report.append(f"html_bytes={len(html.encode('utf-8'))}")
+
+              Path("production.html").write_text(html, encoding="utf-8")
+              candidates = set(re.findall(r'''(?:src|href)=["']([^"']+)["']''', html))
+              assets = sorted(urljoin(base, value) for value in candidates if "_next/static/" in value and ".js" in value)
+              report.append(f"javascript_assets={len(assets)}")
+
+              for index, asset in enumerate(assets):
+                  try:
+                      with urlopen(Request(asset, headers={"User-Agent": "MyChat deployment verifier"}), timeout=60) as response:
+                          body = response.read().decode("utf-8", errors="replace")
+                      if needle in body:
+                          found = True
+                          report.append(f"needle_asset={asset}")
+                          break
+                  except Exception as error:
+                      report.append(f"asset_error_{index}={type(error).__name__}: {error}")
+          except Exception as error:
+              report.append(f"request_error={type(error).__name__}: {error}")
+
+          report.append(f"brightness_fix_live={'yes' if found else 'no'}")
+          Path("production-check.txt").write_text("\n".join(report) + "\n", encoding="utf-8")
+          print("\n".join(report))
+          PY
+
       - name: Upload verification logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -50,4 +98,6 @@ jobs:
             tests.log
             build.log
             verification-status.txt
-          if-no-files-found: error
+            production-check.txt
+            production.html
+          if-no-files-found: warn
