@@ -24,5 +24,30 @@ jobs:
       - name: Install dependencies
         run: npm install --legacy-peer-deps
 
-      - name: Typecheck, test, and build
-        run: npm run verify
+      - name: Run verification with captured logs
+        id: verify
+        shell: bash
+        run: |
+          set +e
+          npm run check > typecheck.log 2>&1
+          CHECK_STATUS=$?
+          npm test > tests.log 2>&1
+          TEST_STATUS=$?
+          npm run build > build.log 2>&1
+          BUILD_STATUS=$?
+          printf 'typecheck=%s\ntests=%s\nbuild=%s\n' "$CHECK_STATUS" "$TEST_STATUS" "$BUILD_STATUS" | tee verification-status.txt
+          if [ "$CHECK_STATUS" -ne 0 ] || [ "$TEST_STATUS" -ne 0 ] || [ "$BUILD_STATUS" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Upload verification logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-logs
+          path: |
+            typecheck.log
+            tests.log
+            build.log
+            verification-status.txt
+          if-no-files-found: error
