@@ -13,19 +13,16 @@ export async function GET(request: Request) {
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
   if (!url || !serviceKey) return Response.json({ error: "Supabase service credentials are not configured" }, { status: 503 })
   const admin = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
-  let page = 1
-  let generated = 0
+  const requestedPage = Number(new URL(request.url).searchParams.get("page") || "1")
+  const page = Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1
   const failures: string[] = []
-  while (true) {
-    const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 100 })
-    if (error) return Response.json({ error: error.message }, { status: 500 })
-    for (const user of data.users) {
-      if (user.is_anonymous) continue
-      try { await generateDailyBrief(admin, user.id, local.date); generated++ }
-      catch (error) { failures.push(`${user.id}: ${error instanceof Error ? error.message : "failed"}`) }
-    }
-    if (data.users.length < 100) break
-    page++
+  const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 1 })
+  if (error) return Response.json({ error: error.message }, { status: 500 })
+  const user = data.users[0]
+  let generated = 0
+  if (user && !user.is_anonymous) {
+    try { await generateDailyBrief(admin, user.id, local.date); generated = 1 }
+    catch (error) { failures.push(`${user.id}: ${error instanceof Error ? error.message : "failed"}`) }
   }
-  return Response.json({ date: local.date, generated, failures })
+  return Response.json({ date: local.date, page, nextPage: user ? page + 1 : null, generated, failures })
 }
