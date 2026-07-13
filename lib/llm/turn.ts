@@ -5,7 +5,6 @@ import { upstreamError } from './stream'
 import { makeContentFilter, parseDsmlToolCalls, hasIncompleteDsmlToolCall } from './sanitize'
 import type { Emit } from './events'
 import { buildProviderRequest, type ProviderAdapterId, type ReasoningEffort } from './provider-adapters'
-import { looksLikeCodePreamble, looksLikeCodeSelfTalk } from '@/lib/agent/continuation'
 import type { EndpointAuthType } from '@/lib/model-endpoints'
 import { safeModelEndpointFetch } from './openai-compatible'
 import { MAX_GENERATED_MEDIA_ITEMS, type GeneratedMedia } from '@/lib/generated-media'
@@ -21,6 +20,11 @@ import {
 } from './turn-response'
 
 type ToolCall = { id: string; name: string; args: string }
+
+export type TurnContentPolicy = (input: {
+  content: string
+  hasToolCalls: boolean
+}) => string
 
 export type TurnResult = {
   assistantMessage: any
@@ -43,7 +47,8 @@ export type RunTurnOptions = {
   /** Grok / reasoning models via OpenAI-compatible APIs */
   reasoningEffort?: ReasoningEffort | null
   deferTextUntilTurnEnd?: boolean
-  suppressCodeSelfTalk?: boolean
+  /** Optional caller-owned policy for filtering buffered turn text. */
+  contentPolicy?: TurnContentPolicy
   emitErrors?: boolean
   signal?: AbortSignal
   timeoutMs?: number
@@ -52,6 +57,15 @@ export type RunTurnOptions = {
   mediaBudget?: { remaining: number; seen: Set<string> }
   /** Log first upstream event / first text latency */
   logTiming?: boolean
+  /** Sends a provider completion cap and bounds locally accepted visible text. */
+  maxOutputTokens?: number
+}
+
+class CallerOutputLimitReached extends Error {
+  constructor() {
+    super('Caller output limit reached')
+    this.name = 'CallerOutputLimitReached'
+  }
 }
 
 // 单轮请求：兼容流式 SSE 与一次性 JSON 两种返回；累积文本、思考链与工具调用。
@@ -70,6 +84,7 @@ export async function runTurn(
     apiKey,
     authType: opts?.authType,
     reasoningEffort: opts?.reasoningEffort,
+    maxOutputTokens: opts?.maxOutputTokens,
   })
 
   const signals = [opts?.signal, AbortSignal.timeout(opts?.timeoutMs ?? 120_000)].filter(Boolean) as AbortSignal[]
@@ -112,6 +127,10 @@ export async function runTurn(
   let sawDone = false
   let reasoningContent = ''
   let accumulatedTextChars = 0
+  let acceptedOutputChars = 0
+  const maximumOutputChars = opts?.maxOutputTokens === undefined
+    ? Number.POSITIVE_INFINITY
+    : Math.max(32, Math.min(MAX_GENERIC_ACCUMULATED_TEXT_CHARS, Math.floor(opts.maxOutputTokens) * 8))
   const mediaBudget = opts?.mediaBudget ?? { remaining: MAX_GENERATED_MEDIA_ITEMS, seen: new Set<string>() }
   const pendingRemoteMedia: GeneratedMedia[] = []
   const filter = makeContentFilter()
@@ -130,7 +149,11 @@ export async function runTurn(
 
   const acceptText = (value: unknown) => {
     if (typeof value !== 'string' || !value) return
-    const deltaContent = boundedText(value)
+    const bounded = boundedText(value)
+    const remaining = maximumOutputChars - acceptedOutputChars
+    const deltaContent = bounded.slice(0, Math.max(0, remaining))
+    const reachedCallerLimit = deltaContent.length < bounded.length
+    acceptedOutputChars += deltaContent.length
     rawContent += deltaContent
     const safe = filter.feed(deltaContent)
     if (safe) {
@@ -141,6 +164,7 @@ export async function runTurn(
       }
       if (!opts?.deferTextUntilTurnEnd) emit({ text: safe })
     }
+    if (reachedCallerLimit) throw new CallerOutputLimitReached()
   }
 
   const acceptMedia = (value: unknown) => {
@@ -195,14 +219,7 @@ export async function runTurn(
         return
       }
       if (typ === 'response.output_text.delta') {
-        const d = boundedText(obj.delta ?? obj.text ?? '')
-        if (d) {
-          if (timingEnabled && firstTextAt === null) {
-            firstTextAt = Date.now()
-            console.info('[llm/timing] first text', { model, ms: firstTextAt - startedAt })
-          }
-          acceptText(d)
-        }
+        acceptText(obj.delta ?? obj.text ?? '')
         return
       }
     }
@@ -250,10 +267,16 @@ export async function runTurn(
   }
 
   if (res.headers.get('content-type')?.includes('application/json')) {
-    if (generic) {
-      handle(JSON.parse(await readLimitedResponseText(res, MAX_GENERIC_SUCCESS_RESPONSE_BYTES)))
-    } else {
-      handle(await res.json())
+    try {
+      if (generic) {
+        handle(JSON.parse(await readLimitedResponseText(res, MAX_GENERIC_SUCCESS_RESPONSE_BYTES)))
+      } else {
+        handle(await res.json())
+      }
+    } catch (error) {
+      if (!(error instanceof CallerOutputLimitReached)) throw error
+      sawDone = true
+      finishReason = 'caller_limit'
     }
   } else {
     const declared = declaredResponseBytes(res)
@@ -285,7 +308,7 @@ export async function runTurn(
           const payload = line.startsWith('data:') ? line.slice(5).trim() : line
           if (!payload) continue
           try { handle(JSON.parse(payload)) } catch (error) {
-            if (error instanceof GenericResponseLimitError) throw error
+            if (error instanceof GenericResponseLimitError || error instanceof CallerOutputLimitReached) throw error
           }
         }
       }
@@ -295,17 +318,23 @@ export async function runTurn(
         const payload = finalLine.startsWith('data:') ? finalLine.slice(5).trim() : finalLine
         if (payload) {
           try { handle(JSON.parse(payload)) } catch (error) {
-            if (error instanceof GenericResponseLimitError) throw error
+            if (error instanceof GenericResponseLimitError || error instanceof CallerOutputLimitReached) throw error
           }
         }
       } else if (finalLine === 'data: [DONE]') {
         sawDone = true
       }
     } catch (error) {
-      if (generic && error instanceof GenericResponseLimitError) {
+      if (error instanceof CallerOutputLimitReached) {
         await reader.cancel().catch(() => undefined)
+        sawDone = true
+        finishReason = 'caller_limit'
+      } else if (generic && error instanceof GenericResponseLimitError) {
+        await reader.cancel().catch(() => undefined)
+        throw error
+      } else {
+        throw error
       }
-      throw error
     } finally {
       reader.releaseLock()
     }
@@ -336,11 +365,10 @@ export async function runTurn(
     const parsed = parseDsmlToolCalls(rawContent)
     if (parsed.length) toolCalls = parsed
   }
-  const shouldSuppressContent = !!opts?.suppressCodeSelfTalk && (
-    looksLikeCodeSelfTalk(content)
-    || (toolCalls.length > 0 && looksLikeCodePreamble(content))
-  )
-  const visibleContent = shouldSuppressContent ? '' : content
+  const visibleContent = opts?.contentPolicy?.({
+    content,
+    hasToolCalls: toolCalls.length > 0,
+  }) ?? content
   if (opts?.deferTextUntilTurnEnd && visibleContent) emit({ text: visibleContent })
   let assistantMessage: any = null
   if (toolCalls.length) {

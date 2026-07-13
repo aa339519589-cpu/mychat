@@ -7,7 +7,13 @@ import { clientAddress } from '@/lib/api/request'
 export async function POST(req: NextRequest) {
   try {
     const address = clientAddress(req)
-    const rate = checkRateLimit(`anonymous-signin:${address}`, { max: 5, windowMs: 60 * 60_000 })
+    const rate = await checkRateLimit(`anonymous-signin:${address}`, { max: 5, windowMs: 60 * 60_000 })
+    if (rate.unavailable) {
+      return Response.json(
+        { error: '服务暂时不可用，请稍后再试' },
+        { status: 503, headers: { 'Retry-After': String(rate.retryAfterSeconds) } },
+      )
+    }
     if (!rate.allowed) {
       return Response.json(
         { error: '游客登录请求过于频繁，请稍后再试' },

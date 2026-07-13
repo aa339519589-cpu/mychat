@@ -42,3 +42,17 @@ test('deepseek adapter still uses thinking object, not reasoning_effort', () => 
   assert.deepEqual(body.thinking, { type: 'enabled' })
   assert.equal(body.reasoning_effort, undefined)
 })
+
+test('caller output limit is encoded for every provider family', () => {
+  const common = {
+    model: 'bounded-model',
+    messages: [],
+    tools: [],
+    thinking: false,
+    apiKey: 'key',
+    maxOutputTokens: 64,
+  }
+  assert.equal(buildProviderRequest('generic-openai', common).body.max_tokens, 64)
+  assert.equal(buildProviderRequest('deepseek-openai', common).body.max_tokens, 64)
+  assert.equal(buildProviderRequest('mimo-openai', common).body.max_completion_tokens, 64)
+})

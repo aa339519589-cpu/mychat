@@ -52,6 +52,67 @@ test("architecture checker rejects transitive client-to-server paths", () => {
   assert.match(result.stderr, /client-server-path/)
 })
 
+test("architecture checker discovers server-only marker modules", () => {
+  const result = runFixture({
+    "lib/secrets.ts": "import 'server-only'\nexport const secret = 'hidden'\n",
+    "components/leak.tsx": "import { secret } from '@/lib/secrets'\nexport const Leak = () => <p>{secret}</p>\n",
+  })
+
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /client-server-import/)
+})
+
+test("architecture checker propagates Node runtime boundaries", () => {
+  const result = runFixture({
+    "lib/runtime.ts": "import { readFileSync } from 'node:fs'\nexport const secret = readFileSync('/tmp/key', 'utf8')\n",
+    "lib/bridge.ts": "export { secret } from './runtime'\n",
+    "components/leak.tsx": "import { secret } from '@/lib/bridge'\nexport const Leak = () => <p>{secret}</p>\n",
+  })
+
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /client-server-path/)
+})
+
+test("architecture checker propagates private-environment boundaries", () => {
+  const result = runFixture({
+    "lib/runtime.ts": "export const secret = process.env.PRIVATE_KEY\n",
+    "lib/bridge.ts": "export { secret } from './runtime'\n",
+    "components/leak.tsx": "import { secret } from '@/lib/bridge'\nexport const Leak = () => <p>{secret}</p>\n",
+  })
+
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /client-server-path/)
+})
+
+test("architecture checker allows explicitly public environment variables in clients", () => {
+  const result = runFixture({
+    "components/public.tsx": "'use client'\nexport const Public = () => <p>{process.env.NEXT_PUBLIC_LABEL}</p>\n",
+  })
+
+  assert.equal(result.status, 0, result.stderr)
+})
+
+test("architecture checker includes root proxy entries in server paths", () => {
+  const result = runFixture({
+    "proxy.ts": "import { browserValue } from './lib/bridge'\nexport const proxy = () => browserValue\n",
+    "lib/bridge.ts": "export { browserValue } from './data/browser'\n",
+    "lib/data/browser.ts": "export const browserValue = window.location.href\n",
+  })
+
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /server-client-path/)
+})
+
+test("architecture checker prevents generic LLM code from depending on agents", () => {
+  const result = runFixture({
+    "lib/agent/policy.ts": "export const policy = () => true\n",
+    "lib/llm/turn.ts": "import { policy } from '../agent/policy'\nexport const run = policy\n",
+  })
+
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /domain-direction/)
+})
+
 test("architecture checker rejects new runtime cycles", () => {
   const result = runFixture({
     "lib/one.ts": "import { two } from './two'\nexport const one = two\n",

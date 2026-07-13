@@ -44,8 +44,10 @@ flowchart LR
 2. 解析 Supabase 用户；匿名和登录用户都接受 IP/用户限流与配额检查。
 3. 服务端构建 system context，按需读取记忆、对话摘要和历史片段。
 4. agent loop 调用模型并执行受控工具；每轮有超时、取消信号、最大轮数和续跑上限。
-5. 经过内容过滤器输出 SSE；已发生的 token 消耗即使请求后续失败也会原子记账。
-6. 长对话摘要使用 compare-and-set 更新，避免并发覆盖新摘要。
+5. 前端必须先持久化严格匹配 user / conversation / assistant role 的空回复占位；服务端随后在任何模型调用或工具副作用前原子领取 generation lease。占位缺失或身份冲突直接返回 409，不会启动模型。
+6. 经过内容过滤器输出 SSE；进度写入和最终状态均由 owner + lease version 栅栏保护，取消与完成通过数据库 CAS 决定唯一终态。
+7. 已发生的 token 消耗即使请求后续失败也会原子记账；长对话摘要使用 compare-and-set 更新，避免并发覆盖新摘要。
+8. 标题生成使用独立的单轮无工具接口；通用聊天入口必须携带完整 conversation/generation/assistant-message 三元标识，不能降级为无协调的工具任务。
 
 ### 代码代理
 
@@ -60,6 +62,7 @@ flowchart LR
 ## 数据一致性
 
 - 配额使用 `record_quota_usage` 在数据库内锁行并原子累加。
+- 短周期 API 限流使用 `consume_api_rate_limit` 原子计数；服务端先散列身份键，表与 RPC 仅对 `service_role` 开放。
 - 邀请码使用 `redeem_invitation_code` 原子检查、兑换与加余额。
 - task meta/run state 通过数据库函数合并，避免并发读改写丢字段。
 - agent event/step 使用数据库 sequence，不再通过 `max(seq)+1` 竞争。
@@ -68,6 +71,13 @@ flowchart LR
 - 自定义模型 Key 使用用途隔离的 AES-GCM 加密；浏览器只持有端点 ID，不读取已保存 Key。
 - 自定义端点网络请求将 DNS 解析结果固定到实际 socket；生产私网需精确 allowlist，链路本地和云元数据始终阻止。
 - 图片和视频响应有独立字节上限；媒体以受限 URL/Data URL 事件传输，不混入模型名或思考状态文本。
+- 生成中的内容、序号、取消标记与租约持久化到 `chat_generations`；重连到任意实例都可续流。协调 RPC 仅允许 `service_role`，服务端把已验证的 session user id 显式传给函数并再次校验父会话与 assistant 占位归属。浏览器不能读取 lease owner/version，也不能直接领取、续租、写进度或决定终态。
+- generation 的唯一终态会在同一数据库事务中镜像到 assistant 消息（正文、思考、持久媒体及 generation id/status/sequence/error）；消息身份和终态字段受触发器保护。冷启动先拉取云端历史并对账最新 generation，再解锁输入；内存、IndexedDB 和 localStorage 均按 sequence 合并，迟到旧快照不能污染下一轮历史。
+- 取消接口返回取消/完成竞争后的完整权威终态，浏览器不会先断开 SSE 或乐观标记取消；重复终态通过相同 generation id + sequence 幂等应用。
+- 活跃任务只允许一个 owner，迟到的旧 owner 写入会被 fencing 拒绝，数据库 CAS 与触发器共同阻止取消/完成竞态和终态复活。
+- 过期 generation lease 会在行锁内原子转为 failed，客户端必须用新 generation ID 重试；因为工具调用不保证幂等，系统不会自动接管并重放旧生成。
+- 图片和视频同样在调用昂贵上游前领取 lease，断开浏览器不会中止已领取任务。上游媒体必须先由服务端完成 SSRF/MIME/大小校验并上传到用户/会话/generation 作用域的对象存储，再把持久化 HTTPS URL 纳入终态 CAS；只有数据库确认的 URL 会进入 SSE、消息历史和跨实例恢复，取消或 CAS 失败会清理非权威上传。
+- 历史删除只能通过鉴权服务端 API：数据库事务会校验用户归属和 `generated-media/{user}/{conversation}/{generation}/` 对象作用域、锁住会话以阻止新 claim、写入持久清理回执并删除消息或会话；提交后再删对象存储并确认回执，失败任务会重试。这样 DB 失败不会提前破坏媒体引用，Storage 失败也不会丢失清理任务；浏览器角色没有直接 DELETE 权限。
 
 ## 安全边界
 
@@ -80,7 +90,7 @@ flowchart LR
 
 ## 有意保留的基础设施约束
 
-API 短周期限流目前是单进程内存实现，适合单实例与开发环境；多实例生产必须在边缘网关或 Redis 增加共享 IP/user 限流。数据库配额与任务租约不受此限制。E2B workspace 当前以每次命令上传本地工作区来换取隔离性，大仓库应进一步引入增量同步与对象存储。
+开发环境在没有服务角色凭据时可回退进程内限流；生产环境必须配置 `SUPABASE_SERVICE_ROLE_KEY` 并应用运行时迁移，否则限流接口和 readiness 会严格返回 503。E2B workspace 当前以每次命令上传本地工作区来换取隔离性，大仓库应进一步引入增量同步与对象存储。
 
 ## 维护原则
 

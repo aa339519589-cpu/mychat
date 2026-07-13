@@ -151,7 +151,7 @@ export async function resolveModelEndpoint(url: URL, signal?: AbortSignal): Prom
         .filter((item, index, all) =>
           all.findIndex(candidate => candidate.address === item.address) === index)
         .sort((left, right) => left.family - right.family)
-    } catch (error) {
+    } catch {
       if (signal?.aborted) throw abortReason(signal)
       throw new ModelEndpointError('无法解析服务地址，请检查域名', 'network', 'dns_failed', 502)
     }

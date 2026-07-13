@@ -1,5 +1,7 @@
 import type { RawMsg } from '@/lib/llm/types'
 import type { HistoryRetrievalMode } from '@/lib/llm/active-retrieval'
+export { latestBeijingDateFromMessages } from '@/lib/search-mode'
+export type { SearchMode } from '@/lib/search-mode'
 
 export const DEEP_RESEARCH_PREFIX = `请以最高努力完成当前问题：先理解真实目标，拆解约束，检查边界和反例，最后给出清晰结论。\n---\n`
 
@@ -84,4 +86,3 @@ export function prependDeepResearchInstruction(messages: any[]): void {
     return
   }
 }
-

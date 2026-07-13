@@ -2,16 +2,18 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
 import { builtinModules } from "node:module"
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
+import { dirname, join, relative, resolve, sep } from "node:path"
 import process from "node:process"
 import ts from "typescript"
 
 const SOURCE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]
 const SOURCE_DIRECTORIES = ["app", "components", "lib"]
+const ROOT_ENTRY_STEMS = ["proxy", "middleware", "instrumentation", "instrumentation-client", "next.config"]
 const NODE_BUILTINS = new Set([
   ...builtinModules,
   ...builtinModules.map((name) => `node:${name}`),
 ])
+const SERVER_RUNTIME_IMPORTS = new Set(["server-only", "next/server", "next/headers"])
 
 const DEFAULT_BUDGETS = {
   app: { maxLines: 300, maxLocalDependencies: 18 },
@@ -49,13 +51,22 @@ function walk(directory) {
 }
 
 function sourceFiles(root) {
-  return SOURCE_DIRECTORIES.flatMap((directory) => walk(join(root, directory)))
+  const rootEntries = readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && ROOT_ENTRY_STEMS.some((stem) =>
+      SOURCE_EXTENSIONS.some((extension) => entry.name === `${stem}${extension}`)))
+    .map((entry) => join(root, entry.name))
+  return [...SOURCE_DIRECTORIES.flatMap((directory) => walk(join(root, directory))), ...rootEntries]
     .map((absolutePath) => ({
       absolutePath,
       path: normalizePath(relative(root, absolutePath)),
       source: readFileSync(absolutePath, "utf8"),
     }))
     .sort((left, right) => left.path.localeCompare(right.path))
+}
+
+function sourceFileFor(file) {
+  const kind = file.path.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+  return ts.createSourceFile(file.path, file.source, ts.ScriptTarget.Latest, true, kind)
 }
 
 function isTypeOnlyImport(node) {
@@ -81,8 +92,7 @@ function isTypeOnlyImport(node) {
 }
 
 function importsFor(file) {
-  const kind = file.path.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS
-  const sourceFile = ts.createSourceFile(file.path, file.source, ts.ScriptTarget.Latest, true, kind)
+  const sourceFile = sourceFileFor(file)
   const imports = []
 
   function visit(node) {
@@ -112,6 +122,51 @@ function importsFor(file) {
   return imports
 }
 
+function isProcessEnvironment(node) {
+  return ts.isPropertyAccessExpression(node)
+    && ts.isIdentifier(node.expression)
+    && node.expression.text === "process"
+    && node.name.text === "env"
+}
+
+function isPublicEnvironmentName(name) {
+  return name === "NODE_ENV" || name.startsWith("NEXT_PUBLIC_")
+}
+
+function sourceSignals(file) {
+  const sourceFile = sourceFileFor(file)
+  let privateEnvironmentLine
+  const useClient = sourceFile.statements.some((statement) =>
+    ts.isExpressionStatement(statement)
+    && ts.isStringLiteral(statement.expression)
+    && statement.expression.text === "use client")
+
+  function markPrivateEnvironment(node, name) {
+    if (privateEnvironmentLine !== undefined || (name && isPublicEnvironmentName(name))) return
+    privateEnvironmentLine = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1
+  }
+
+  function visit(node) {
+    if (ts.isPropertyAccessExpression(node) && isProcessEnvironment(node.expression)) {
+      markPrivateEnvironment(node, node.name.text)
+    } else if (ts.isElementAccessExpression(node) && isProcessEnvironment(node.expression)) {
+      const argument = node.argumentExpression
+      const name = argument && (ts.isStringLiteral(argument) || ts.isNoSubstitutionTemplateLiteral(argument))
+        ? argument.text
+        : undefined
+      markPrivateEnvironment(node, name)
+    } else if (isProcessEnvironment(node)) {
+      const parentUsesMember = (ts.isPropertyAccessExpression(node.parent) || ts.isElementAccessExpression(node.parent))
+        && node.parent.expression === node
+      if (!parentUsesMember) markPrivateEnvironment(node, undefined)
+    }
+    ts.forEachChild(node, visit)
+  }
+
+  visit(sourceFile)
+  return { privateEnvironmentLine, useClient }
+}
+
 function resolveLocalImport(root, sourcePath, specifier) {
   let candidate
   if (specifier.startsWith("@/")) candidate = join(root, specifier.slice(2))
@@ -127,7 +182,7 @@ function resolveLocalImport(root, sourcePath, specifier) {
   return match ? normalizePath(relative(root, match)) : undefined
 }
 
-function isServerOnly(path) {
+function isDeclaredServerOnly(path) {
   return path.startsWith("lib/api/")
     || (path.startsWith("lib/agent/") && path !== "lib/agent/types.ts")
     || path.startsWith("lib/code-tools/")
@@ -142,11 +197,15 @@ function isServerOnly(path) {
     || path === "lib/generation/runtime.ts"
 }
 
-function isBrowserOnly(path) {
+function isDeclaredBrowserOnly(path) {
   return path.startsWith("lib/data/")
     || path === "lib/supabase/client.ts"
     || path === "lib/code-data.ts"
-    || path === "lib/media-storage.ts"
+}
+
+function isServerRoot(path) {
+  return path.startsWith("app/api/")
+    || ROOT_ENTRY_STEMS.some((stem) => SOURCE_EXTENSIONS.some((extension) => path === `${stem}${extension}`))
 }
 
 function layerFor(path) {
@@ -238,6 +297,7 @@ function inspect(root, config) {
   const files = sourceFiles(root)
   const filePaths = new Set(files.map((file) => file.path))
   const imports = new Map()
+  const signals = new Map(files.map((file) => [file.path, sourceSignals(file)]))
   const graph = new Map(files.map((file) => [file.path, []]))
   const violations = []
 
@@ -250,12 +310,40 @@ function inspect(root, config) {
     graph.set(file.path, [...new Set(resolvedImports
       .filter((entry) => !entry.typeOnly && entry.target && filePaths.has(entry.target))
       .map((entry) => entry.target))])
+  }
 
-    for (const entry of resolvedImports) {
+  const serverOnly = new Set(files
+    .filter((file) => {
+      const fileImports = imports.get(file.path) ?? []
+      return isDeclaredServerOnly(file.path)
+        || signals.get(file.path)?.privateEnvironmentLine !== undefined
+        || fileImports.some((entry) => !entry.typeOnly
+          && (NODE_BUILTINS.has(entry.specifier) || SERVER_RUNTIME_IMPORTS.has(entry.specifier)))
+    })
+    .map((file) => file.path))
+  const browserOnly = new Set(files
+    .filter((file) => isDeclaredBrowserOnly(file.path) || signals.get(file.path)?.useClient)
+    .map((file) => file.path))
+  const clientEntries = new Set(files
+    .filter((file) => file.path.startsWith("components/") || signals.get(file.path)?.useClient)
+    .map((file) => file.path))
+
+  for (const file of files) {
+    const fileSignals = signals.get(file.path)
+    if (clientEntries.has(file.path) && fileSignals?.privateEnvironmentLine !== undefined) {
+      violations.push(violation(
+        "client-private-env",
+        file.path,
+        fileSignals.privateEnvironmentLine,
+        "client module reads a non-public process.env value",
+      ))
+    }
+
+    for (const entry of imports.get(file.path) ?? []) {
       const target = entry.target
-      if (file.path.startsWith("components/")
+      if (clientEntries.has(file.path)
         && !entry.typeOnly
-        && (NODE_BUILTINS.has(entry.specifier) || entry.specifier === "next/server" || entry.specifier === "next/headers")) {
+        && (NODE_BUILTINS.has(entry.specifier) || SERVER_RUNTIME_IMPORTS.has(entry.specifier))) {
         violations.push(violation(
           "client-node-import",
           file.path,
@@ -267,25 +355,28 @@ function inspect(root, config) {
       if (file.path.startsWith("lib/") && (target.startsWith("app/") || target.startsWith("components/"))) {
         violations.push(violation("reverse-layer", file.path, entry.line, `lib must not depend on ${target}`))
       }
+      if (file.path.startsWith("lib/llm/")
+        && (target.startsWith("lib/agent/") || target.startsWith("lib/code-agent/") || target.startsWith("lib/code-tools/"))) {
+        violations.push(violation("domain-direction", file.path, entry.line, `generic LLM code must not depend on ${target}`))
+      }
       if (file.path.startsWith("app/api/") && target.startsWith("components/")) {
         violations.push(violation("api-ui-import", file.path, entry.line, `API routes must not depend on UI module ${target}`))
       }
-      if (file.path.startsWith("components/") && target.startsWith("app/")) {
+      if (clientEntries.has(file.path) && target.startsWith("app/")) {
         violations.push(violation("ui-app-import", file.path, entry.line, `UI must not depend on Next.js entry module ${target}`))
       }
-      if (file.path.startsWith("components/") && !entry.typeOnly && isServerOnly(target)) {
+      if (clientEntries.has(file.path) && !entry.typeOnly && serverOnly.has(target)) {
         violations.push(violation("client-server-import", file.path, entry.line, `client UI imports server-only module ${target}`))
       }
-      if ((file.path.startsWith("app/api/") || isServerOnly(file.path)) && !entry.typeOnly && isBrowserOnly(target)) {
+      if ((isServerRoot(file.path) || serverOnly.has(file.path)) && !entry.typeOnly && browserOnly.has(target)) {
         violations.push(violation("server-client-import", file.path, entry.line, `server module imports browser-only module ${target}`))
       }
     }
   }
 
-
   for (const file of files) {
-    if (file.path.startsWith("components/")) {
-      const path = shortestPath(graph, file.path, isServerOnly)
+    if (clientEntries.has(file.path)) {
+      const path = shortestPath(graph, file.path, (target) => serverOnly.has(target))
       if (path && path.length > 2) {
         violations.push(violation(
           "client-server-path",
@@ -295,14 +386,14 @@ function inspect(root, config) {
         ))
       }
     }
-    if (file.path.startsWith("app/api/")) {
-      const path = shortestPath(graph, file.path, isBrowserOnly)
+    if (isServerRoot(file.path) || serverOnly.has(file.path)) {
+      const path = shortestPath(graph, file.path, (target) => browserOnly.has(target))
       if (path && path.length > 2) {
         violations.push(violation(
           "server-client-path",
           file.path,
           undefined,
-          `API route reaches browser-only code through ${path.join(" -> ")}`,
+          `server entry reaches browser-only code through ${path.join(" -> ")}`,
         ))
       }
     }

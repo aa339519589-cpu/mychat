@@ -14,6 +14,8 @@ type RequestOptions = {
   authType?: EndpointAuthType
   /** For Grok / o-series style models via OpenAI-compatible proxies. */
   reasoningEffort?: ReasoningEffort | null
+  /** Caller-specific completion cap for small bounded jobs. */
+  maxOutputTokens?: number
 }
 
 export function buildProviderRequest(adapter: ProviderAdapterId, opts: RequestOptions) {
@@ -23,12 +25,16 @@ export function buildProviderRequest(adapter: ProviderAdapterId, opts: RequestOp
     stream: true,
   }
 
+  const requestedOutputTokens = opts.maxOutputTokens === undefined
+    ? undefined
+    : Math.max(1, Math.min(65_536, Math.floor(opts.maxOutputTokens)))
   if (adapter !== 'generic-openai') {
     body.thinking = { type: opts.thinking ? 'enabled' : 'disabled' }
     body.stream_options = { include_usage: true }
-    if (adapter === 'mimo-openai') body.max_completion_tokens = 65_536
-    else body.max_tokens = 65_536
+    if (adapter === 'mimo-openai') body.max_completion_tokens = requestedOutputTokens ?? 65_536
+    else body.max_tokens = requestedOutputTokens ?? 65_536
   } else {
+    if (requestedOutputTokens !== undefined) body.max_tokens = requestedOutputTokens
     // Grok 4.5 defaults to high effort if omitted → slow TTFB even for "你是谁".
     // Send both common OpenAI-compatible shapes; reverse proxies usually accept one of them.
     const effort = opts.reasoningEffort

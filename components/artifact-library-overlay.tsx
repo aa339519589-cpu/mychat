@@ -6,13 +6,6 @@ import { Shapes, X, Trash2, ExternalLink, Loader2, Search } from "lucide-react"
 import type { ArtifactLibraryItem } from "@/lib/artifact-data"
 import { fetchArtifacts, deleteArtifactRow } from "@/lib/data"
 
-function patchBrandName() {
-  const nodes = Array.from(document.querySelectorAll("span.font-heading.text-base.tracking-wide"))
-  for (const node of nodes) {
-    if (node.textContent?.trim() === "简") node.textContent = "My Chat"
-  }
-}
-
 function openArtifactPreview(item: ArtifactLibraryItem) {
   const html = item.raw.trim().startsWith("<!DOCTYPE") || item.raw.trim().startsWith("<html")
     ? item.raw
@@ -22,34 +15,15 @@ function openArtifactPreview(item: ArtifactLibraryItem) {
   window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
 
-export function ArtifactLibraryOverlay() {
-  const [open, setOpen] = useState(false)
+export type ArtifactLibraryOverlayProps = {
+  open: boolean
+  onClose: () => void
+}
+
+export function ArtifactLibraryOverlay({ open, onClose }: ArtifactLibraryOverlayProps) {
   const [items, setItems] = useState<ArtifactLibraryItem[]>([])
   const [loading, setLoading] = useState(false)
   const [query, setQuery] = useState("")
-
-  useEffect(() => {
-    patchBrandName()
-    const mo = new MutationObserver(patchBrandName)
-    mo.observe(document.body, { childList: true, subtree: true })
-    return () => mo.disconnect()
-  }, [])
-
-  useEffect(() => {
-    const onClick = (e: MouseEvent) => {
-      const el = e.target as HTMLElement | null
-      const button = el?.closest("button")
-      if (!button) return
-      const text = button.textContent?.replace(/\s+/g, "").trim()
-      if (text === "作品") {
-        e.preventDefault()
-        e.stopPropagation()
-        setOpen(true)
-      }
-    }
-    document.addEventListener("click", onClick, true)
-    return () => document.removeEventListener("click", onClick, true)
-  }, [])
 
   useEffect(() => {
     if (!open) return
@@ -78,7 +52,7 @@ export function ArtifactLibraryOverlay() {
     <div className="fixed inset-0 z-[90] bg-sidebar text-sidebar-foreground">
       <div className="flex h-full flex-col overflow-hidden">
         <div className="flex shrink-0 items-center gap-3 px-5 pb-4 pt-[max(1rem,env(safe-area-inset-top))]">
-          <button onClick={() => setOpen(false)} className="-ml-1 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground" aria-label="关闭作品库">
+          <button onClick={onClose} className="-ml-1 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground" aria-label="关闭作品库">
             <X className="size-5" />
           </button>
           <div className="min-w-0 flex-1">

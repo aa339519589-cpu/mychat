@@ -8,15 +8,19 @@ git diff --check
 ```
 
 - [ ] TypeScript 严格检查通过。
+- [ ] 架构边界和 ESLint 门禁通过，依赖图没有新增循环。
 - [ ] 所有测试通过且没有 skipped/failed。
+- [ ] 已执行模块覆盖率达到行 70%、分支 75%、函数 75%。
 - [ ] Next.js 生产构建通过。
+- [ ] Playwright 桌面/移动端登录壳与已登录会话深链测试通过。
 - [ ] `git diff --check` 无空白错误。
 
 ## 数据库
 
 - [ ] 已备份目标数据库。
 - [ ] 所有迁移按文件名顺序执行成功。
-- [ ] 原子 RPC（配额、邀请码、任务租约、meta/run state 合并）存在。
+- [ ] 原子 RPC（配额、邀请码、共享限流、生成 claim/lease/finalize、任务租约、meta/run state 合并）存在。
+- [ ] `/api/ready` 返回 200，且运行时健康函数覆盖限流、生成 lease、取消列和终态触发器。
 - [ ] 普通认证用户不能直接修改 `profiles.balance`、token 窗口或版本字段。
 - [ ] A 用户无法读取或修改 B 用户的消息、项目文件、代码消息、artifact 和 agent 子记录。
 - [ ] 同一个邀请码并发兑换时只有一个请求成功。
@@ -31,6 +35,12 @@ git diff --check
 - [ ] 模型中途失败仍记录已经消耗的 token。
 - [ ] 联网结果中的“忽略系统提示”等文字只作为资料，不会改变代理指令。
 - [ ] 未闭合的 tool/artifact 标记不会泄漏到最终回复。
+- [ ] 相同 generation ID 并发请求只有一个 runner；另一请求不会重复调用模型、工具或计费。
+- [ ] assistant 占位保存失败、缺失、role 错误或归属不匹配时，不会调用模型；claim 返回 `identity_mismatch`。
+- [ ] authenticated/anon 不能执行 generation 协调 RPC，也不能读取 `lease_owner` / `lease_version`；仅 service role 可执行并显式传入已验证 user id。
+- [ ] runner 崩溃后的过期 lease 会原子转为 failed，旧 owner 的迟到写入被 fencing 拒绝；新请求必须使用新的 generation ID，不能自动重放工具。
+- [ ] 跨实例取消与完成竞态只有一个数据库终态，本地 SSE 与数据库结果一致。
+- [ ] 刷新或切换实例续流不会重复最后一段文本，也不会让孤儿 running 流永久转圈。
 
 ## 自定义模型
 
@@ -43,6 +53,13 @@ git diff --check
 - [ ] 生成图片保持原比例，视频完整显示且有 controls；桌面与 390px 视口均无横向溢出或裁切。
 - [ ] 结构化 `image_url` / `output_image` / `video_url` 不会退化为 `[object Object]`，危险协议不会渲染。
 - [ ] 媒体 URL 在服务端下载后显示；跨域下载不携带端点 Key，重定向和浏览器私网 URL 会被阻止。
+- [ ] 相同 generation ID 的并发媒体请求只有 claim winner 调用上游；浏览器断开后任务继续，数据库取消获胜时 UI 不保留迟到媒体。
+- [ ] 服务端完成媒体下载校验和对象存储上传后才发送持久化 URL；刷新或切换实例能从 generation/message 终态恢复同一 URL，CAS 失败会清理孤儿对象。
+- [ ] 删除含生成媒体的消息或会话时，服务端只接受当前用户作用域内的对象 key，并在同一事务写清理回执、锁会话、删除数据库；DB 失败不碰 Storage，Storage 失败保留待重试回执，活跃 generation 被拒绝，authenticated/anon 不能直接 DELETE。
+- [ ] generation 迁移按桥接闸门开启 → 旧实例排空 → 040000 → 新应用 → 050000 → 关闭闸门执行；维护期间 `/api/chat` 返回 503 和 `Retry-After`。
+- [ ] 冷启动和切换会话先 fresh hydrate，再读取 latest generation；history/CAS 两种交错顺序都得到同一终态，完成对账前发送按钮不可用。
+- [ ] 旧 IndexedDB + 新 localStorage 终态、迟到 React hydrate、低 sequence SSE 都不能覆盖高 sequence 权威消息；刷新后下一轮模型历史包含 canonical terminal 内容。
+- [ ] 取消与完成并发时，客户端不提前 abort/伪造状态；503 保持任务 running，成功响应和 SSE 均应用数据库胜出的完整终态。
 - [ ] 保存后的 API Key 不会出现在端点列表、聊天请求、DOM、日志或错误信息中。
 - [ ] 超长模型 ID 不会挤压输入框、发送按钮或移动端视口；生成状态固定为「正在生成……」。
 - [ ] 公网生产阻止未列入 `MODEL_ENDPOINT_PRIVATE_ALLOWLIST` 的私网地址；同局域网本地开发可连接私网模型。
@@ -67,11 +84,13 @@ git diff --check
 - [ ] 仓库列表、clone、push 和 PR 创建均设置超时并正确处理 401/422。
 - [ ] artifact iframe 不拥有 same-origin、表单或弹窗权限。
 - [ ] SVG artifact 通过隔离图片展示，不直接注入页面 DOM。
+- [ ] 桌面和移动端都只挂载一套 Sidebar/ChatPane/ChatInput；作品库不依赖全局 DOM 监听。
+- [ ] `/c/[id]` 深链、会话切换、删除以及浏览器前进/后退保持 URL 与选中会话一致。
 
 ## 上线后观察
 
 - [ ] 429 比率符合预期，没有匿名登录洪峰。
-- [ ] `record_quota_usage` 和任务租约 RPC 无错误。
+- [ ] `record_quota_usage`、generation lease/finalize 和任务租约 RPC 无错误。
 - [ ] E2B 创建/连接/同步无持续失败。
 - [ ] DeepSeek/MiMo 超时和工具循环次数没有异常升高。
 - [ ] GitHub OAuth 失败率在旧用户重新授权后恢复正常。

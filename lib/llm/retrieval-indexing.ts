@@ -88,7 +88,10 @@ export async function embed(input: string, parentSignal?: AbortSignal): Promise<
       signal: signals.length === 1 ? signals[0] : AbortSignal.any(signals),
     })
     if (!res.ok) {
-      log.warn('activeRetrieval', 'Embedding request failed', { status: res.status, body: await res.text().catch(() => '') })
+      // Do not persist arbitrary upstream response bodies: providers may echo the
+      // indexed user text or include credential-bearing proxy diagnostics.
+      await res.body?.cancel().catch(() => undefined)
+      log.warn('activeRetrieval', 'Embedding request failed', { status: res.status })
       return null
     }
     const json = await res.json()
@@ -100,4 +103,3 @@ export async function embed(input: string, parentSignal?: AbortSignal): Promise<
     return null
   }
 }
-

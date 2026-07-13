@@ -34,6 +34,11 @@ export type ChatRequestBody = {
   generateVideo?: boolean
 }
 
+export type DurableChatRequestBody = ChatRequestBody & Required<Pick<
+  ChatRequestBody,
+  'conversationId' | 'generationId' | 'assistantMessageId'
+>>
+
 function textLength(content: unknown): number {
   if (typeof content === "string") return content.length
   if (!Array.isArray(content)) return 0
@@ -176,4 +181,18 @@ export function validateChatRequest(value: unknown): ChatRequestBody {
   }
 
   return body as ChatRequestBody
+}
+
+// The general chat endpoint can execute tools and expensive media jobs, so every
+// request must be tied to a stable, client-created durable identity. Small,
+// side-effect-free jobs such as title generation use their own endpoint.
+export function requireDurableChatIdentity(
+  body: ChatRequestBody,
+): asserts body is DurableChatRequestBody {
+  if (!body.conversationId || !body.generationId || !body.assistantMessageId) {
+    throw new RequestError(
+      400,
+      'conversationId、generationId 和 assistantMessageId 必须同时提供',
+    )
+  }
 }

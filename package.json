@@ -2,6 +2,9 @@
   "name": "mychat",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "patch:seedream": "node scripts/patch-seedream-image-size.mjs",
     "postinstall": "npm run patch:seedream",
@@ -10,13 +13,17 @@
     "prebuild": "npm run patch:seedream",
     "build": "next build",
     "start": "next start",
+    "lint": "eslint --max-warnings 164 app components e2e lib proxy.ts playwright.config.ts next.config.mjs postcss.config.mjs eslint.config.mjs scripts tests",
     "precheck": "npm run patch:seedream",
     "check": "tsc --noEmit --incremental false --noUnusedLocals --noUnusedParameters",
     "architecture": "node scripts/check-architecture.mjs",
     "pretest": "npm run patch:seedream",
     "test": "node scripts/run-tests.mjs",
-    "quality": "npm run architecture && npm run check && npm test",
-    "verify": "npm run quality && npm run build"
+    "test:coverage": "node scripts/run-tests.mjs --coverage",
+    "test:migrations": "bash scripts/verify-generation-migrations-pg16.sh",
+    "test:e2e": "playwright test",
+    "quality": "npm run architecture && npm run check && npm run lint && npm run test:coverage",
+    "verify": "npm run quality && npm run build && npm run test:e2e"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.0",
@@ -43,10 +50,13 @@
     "vega-lite": "^6.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4.2.0",
     "@types/node": "^24",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.2.6",
     "postcss": "^8.5",
     "shadcn": "^4.8.0",
     "tailwindcss": "^4.2.0",

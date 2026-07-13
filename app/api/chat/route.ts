@@ -3,8 +3,13 @@ import { resolveDeepTierImageConfig, resolveDeepTierVideoConfig } from '@/lib/ll
 import { extractImagePrompt } from '@/lib/image-intent'
 import { log } from '@/lib/logger'
 import { readJson, requestErrorResponse } from '@/lib/api/request'
-import { validateChatRequest } from '@/lib/llm/chat-request'
-import { resolveAuth, getMemoryEnabled, enforceLimits } from '@/lib/api/guard'
+import { requireDurableChatIdentity, validateChatRequest } from '@/lib/llm/chat-request'
+import {
+  enforceQuotaLimit,
+  enforceRequestRateLimit,
+  getMemoryEnabled,
+  resolveAuth,
+} from '@/lib/api/guard'
 import { normalizeSearchMode } from '@/lib/search-mode'
 import { hasScannedPdfAttachment } from '@/lib/chat/attachments'
 import { createDurableChatGenerationResponse } from '@/lib/chat/durable-generation'
@@ -16,8 +21,22 @@ import { generationMaintenanceResponse } from '@/lib/generation/maintenance'
 export async function POST(req: NextRequest) {
   const maintenance = generationMaintenanceResponse()
   if (maintenance) return maintenance
+
+  // Authenticate and consume the shared request budget before buffering as much
+  // as 48 MiB. The same auth context is reused for quota and all downstream work.
+  const auth = await resolveAuth()
+  const rateGate = await enforceRequestRateLimit(auth, req)
+  if (rateGate.response) return rateGate.response
+  const { supabase, userId } = auth
+  if (!supabase || !userId) {
+    return Response.json({ error: '请先建立登录或访客会话' }, { status: 401 })
+  }
+
   let body
-  try { body = validateChatRequest(await readJson(req, { maxBytes: 48 * 1024 * 1024 })) }
+  try {
+    body = validateChatRequest(await readJson(req, { maxBytes: 48 * 1024 * 1024 }))
+    requireDurableChatIdentity(body)
+  }
   catch (e) { return requestErrorResponse(e) }
   const {
     tier = '绝句',
@@ -32,8 +51,8 @@ export async function POST(req: NextRequest) {
     generateVideo,
   } = body
 
-  const auth = await resolveAuth()
-  const { supabase, userId } = auth
+  const quotaGate = await enforceQuotaLimit(auth, { quota: endpointId === undefined })
+  if (quotaGate.response) return quotaGate.response
   let selection
   try {
     selection = await resolveChatModelSelection({
@@ -59,12 +78,15 @@ export async function POST(req: NextRequest) {
     outputKind,
   } = selection
 
-  const [memoryEnabled, gate] = await Promise.all([
-    getMemoryEnabled(auth),
-    enforceLimits(auth, req, { quota: !customEndpoint }),
-  ])
-  if (gate.response) return gate.response
-  const usingBalance = gate.usingBalance
+  const memoryEnabled = await getMemoryEnabled(auth)
+  const usingBalance = quotaGate.usingBalance
+  const durable = {
+    supabase,
+    userId,
+    generationId: body.generationId,
+    conversationId: body.conversationId,
+    assistantMessageId: body.assistantMessageId,
+  }
 
   const rawMessages = messages
   const userPrompt = latestUserPrompt(rawMessages)
@@ -86,6 +108,7 @@ export async function POST(req: NextRequest) {
     }
     return createMediaGenerationResponse({
       requestSignal: req.signal,
+      durable,
       baseUrl: capability.provider.baseUrl,
       apiKey,
       authType: authType ?? 'bearer',
@@ -115,12 +138,12 @@ export async function POST(req: NextRequest) {
 
     const logFields = {
       model: imageCfg.model,
-      baseUrl: imageCfg.baseUrl,
       promptLen: prompt.length,
       hasSourceImage: !!sourceImage,
     }
     return createMediaGenerationResponse({
       requestSignal: req.signal,
+      durable,
       baseUrl: imageCfg.baseUrl,
       apiKey: imageCfg.apiKey,
       authType: imageCfg.authType,
@@ -159,12 +182,12 @@ export async function POST(req: NextRequest) {
 
     const logFields = {
       model: videoCfg.model,
-      baseUrl: videoCfg.baseUrl,
       promptLen: prompt.length,
       hasSourceImage: !!sourceImage,
     }
     return createMediaGenerationResponse({
       requestSignal: req.signal,
+      durable,
       baseUrl: videoCfg.baseUrl,
       apiKey: videoCfg.apiKey,
       authType: videoCfg.authType,

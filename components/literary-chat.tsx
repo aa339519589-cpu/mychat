@@ -1,347 +1,349 @@
 "use client"
 
-import { useMemo, useRef, useState, useEffect } from "react"
-import { type Conversation } from "@/lib/chat-data"
-import {
-  fetchMemories, fetchProfile, ensureProfile,
-  fetchConversations, updateConversationTitle, deleteConversationRow,
-  setConversationStarred, setConversationPinned, setConversationProject,
-  fetchMessages, lastExcerpt,
-  fetchProjects, fetchModelEndpoints,
-} from "@/lib/data"
-import { LoginScreen } from "@/components/login-screen"
-import { createClient } from "@/lib/supabase/client"
-import type { User } from "@supabase/supabase-js"
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react"
+import type { Conversation } from "@/lib/chat-data"
 import type { SearchMode } from "@/lib/search-mode"
+import {
+  deleteConversationRow,
+  fetchMessages,
+  lastExcerpt,
+  mergeCachedMessages,
+  setConversationPinned,
+  setConversationProject,
+  setConversationStarred,
+  updateConversationTitle,
+} from "@/lib/data"
+import { createClient } from "@/lib/supabase/client"
+import { LoginScreen } from "@/components/login-screen"
+import type { AppSidebarProps } from "@/components/app-sidebar"
+import { useAuthUser } from "@/components/literary-chat/use-auth-user"
+import { useChatBootstrap } from "@/components/literary-chat/use-chat-bootstrap"
 import { useChatGeneration } from "@/components/literary-chat/use-chat-generation"
-import { useProjects } from "@/components/literary-chat/use-projects"
-import { useModelSelection } from "@/components/literary-chat/use-model-selection"
-import { useMemories } from "@/components/literary-chat/use-memories"
+import { useConversationRoute } from "@/components/literary-chat/use-conversation-route"
+import { synchronizeConversationState } from "@/components/literary-chat/conversation-synchronization"
 import { useLiteraryChatLayoutState } from "@/components/literary-chat/layout-state"
-import { LiteraryChatView } from "@/components/literary-chat/literary-chat-view"
+import { useMemories } from "@/components/literary-chat/use-memories"
+import { useModelSelection } from "@/components/literary-chat/use-model-selection"
+import { useProjects } from "@/components/literary-chat/use-projects"
+import {
+  LiteraryChatView,
+  type LiteraryChatViewController,
+} from "@/components/literary-chat/literary-chat-view"
+
+const EMPTY_DRAFT_TITLE = "未命名的篇章"
+
+function createDraft(id: string, projectId?: string): Conversation {
+  return { id, title: EMPTY_DRAFT_TITLE, excerpt: "", date: "今日", messages: [], draft: true, projectId }
+}
 
 export function LiteraryChat() {
-  const [user, setUser] = useState<User | null>(null)
-  const [authChecked, setAuthChecked] = useState(false)
+  const { user, setUser, authChecked } = useAuthUser()
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeId, setActiveId] = useState("")
+  const [hydratingConversationId, setHydratingConversationId] = useState<string | null>(null)
   const [searchMode, setSearchMode] = useState<SearchMode>("off")
   const [deepResearch, setDeepResearch] = useState(false)
   const [historyRetrieval, setHistoryRetrieval] = useState(false)
   const layout = useLiteraryChatLayoutState()
-  const { setCodeOpen, setDrawerOpen, setOpenArtifactId } = layout
+  const route = useConversationRoute()
   const loadedRef = useRef<Set<string>>(new Set())
   const draftIdRef = useRef<string | null>(null)
-  const {
-    memories,
-    memoryEnabled,
-    setMemories,
-    restoreMemories,
-    resetMemories,
-    handleMemoryAdd,
-    handleMemoryEdit,
-    handleMemoryDelete,
-    handleMemoryEnabledChange,
-  } = useMemories(user)
-  const {
-    activeTier,
-    modelEndpoints,
-    activeEndpointId,
-    activeEndpoint,
-    restoreModelSelection,
-    resetModelEndpoints,
-    handleTierChange,
-    handleEndpointSelect,
-    handleEndpointCreated,
-    handleEndpointUpdated,
-    handleEndpointDeleted,
-  } = useModelSelection({ setSearchMode, setDeepResearch, setHistoryRetrieval })
-  const {
-    projects,
-    setProjects,
-    resetProjects,
-    getProjectContext,
-    handleProjectCreate,
-    handleProjectRename,
-    handleProjectInstructions,
-    handleProjectDelete,
-    handleNewInProject,
-    handleLoadProjectFiles,
-    handleAddProjectFile,
-    handleDeleteProjectFile,
-    handleLoadProjectMemories,
-    handleAddProjectMemory,
-    handleEditProjectMemory,
-    handleDeleteProjectMemory,
-  } = useProjects({ user, draftIdRef, setActiveId, setConversations, setDrawerOpen })
+  const rootConversationIdRef = useRef<string | null>(null)
+  const conversationsRef = useRef(conversations)
+  const resumeHydratedRef = useRef<(id: string) => Promise<boolean>>(() => Promise.resolve(false))
+  const activationTokenRef = useRef(0)
+  conversationsRef.current = conversations
 
+  const memory = useMemories(user)
+  const model = useModelSelection({ setSearchMode, setDeepResearch, setHistoryRetrieval })
+  const project = useProjects({
+    user,
+    draftIdRef,
+    setActiveId,
+    setConversations,
+    setDrawerOpen: layout.setDrawerOpen,
+  })
+  const workspaceReady = useChatBootstrap({
+    user,
+    routeConversationId: route.routeConversationId,
+    replaceConversation: route.replaceConversation,
+    setConversations,
+    setActiveId,
+    loadedRef,
+    draftIdRef,
+    rootConversationIdRef,
+    memory: { restore: memory.restoreMemories, reset: memory.resetMemories },
+    project: { set: project.setProjects, reset: project.resetProjects },
+    model: { restore: model.restoreModelSelection, reset: model.resetModelEndpoints },
+    onConversationHydrated: id => resumeHydratedRef.current(id),
+  })
+
+  const handleGitHubCallback = useEffectEvent(() => {
+    const github = new URLSearchParams(window.location.search).get("github")
+    if (!github) return
+    if (github === "connected") layout.setCodeOpen(true)
+    route.replaceConversation(route.routeConversationId)
+  })
   useEffect(() => {
-    if (typeof window !== "undefined" && window.location.search.includes("github=")) {
-      if (window.location.search.includes("github=connected")) setCodeOpen(true)
-      window.history.replaceState({}, "", window.location.pathname)
-    }
+    handleGitHubCallback()
   }, [])
-
-
-  useEffect(() => {
-    const supabase = createClient()
-    supabase.auth.getUser().then(({ data }) => {
-      setUser(data.user)
-      setAuthChecked(true)
-    })
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null)
-      setAuthChecked(true)
-    })
-    return () => sub.subscription.unsubscribe()
-  }, [])
-
-  useEffect(() => {
-    if (!user) {
-      setConversations([])
-      resetMemories()
-      setActiveId("")
-      resetProjects()
-      resetModelEndpoints()
-      draftIdRef.current = null
-      loadedRef.current = new Set()
-      return
-    }
-    let cancelled = false
-    ;(async () => {
-      ensureProfile(user.id)
-      const [convs, mems, prof, projs, endpoints] = await Promise.all([
-        fetchConversations(), fetchMemories(), fetchProfile(), fetchProjects(), fetchModelEndpoints().catch(() => []),
-      ])
-      if (cancelled) return
-      restoreMemories(mems, prof.memoryEnabled)
-      setProjects(projs)
-      restoreModelSelection(endpoints)
-      for (const c of convs) if (c.msgCount === 0) deleteConversationRow(c.id)
-      const real = convs.filter(c => c.msgCount !== 0)
-      if (real.length === 0) {
-        const id = crypto.randomUUID()
-        draftIdRef.current = id
-        setConversations([{ id, title: "未命名的篇章", excerpt: "", date: "今日", messages: [], draft: true }])
-        setActiveId(id)
-      } else {
-        setConversations(real)
-        setActiveId(real[0].id)
-        const msgs = await fetchMessages(real[0].id)
-        if (cancelled) return
-        loadedRef.current.add(real[0].id)
-        setConversations(prev => prev.map(c => c.id === real[0].id ? { ...c, messages: msgs, excerpt: lastExcerpt(msgs) } : c))
-      }
-    })()
-    return () => { cancelled = true }
-  }, [user])
 
   const active = useMemo(
-    () => conversations.find(c => c.id === activeId),
+    () => conversations.find(conversation => conversation.id === activeId),
     [conversations, activeId],
   )
-
-  const {
-    isActiveGenerating,
-    handleStop,
-    handleSend,
-    handleRegenerate,
-    handleEditUserMessage,
-    handleRegenerateFromUser,
-    resumeGenerationIfNeeded,
-  } = useChatGeneration({
+  const authorityReady = workspaceReady && hydratingConversationId !== activeId
+  const generation = useChatGeneration({
     user,
     active,
     activeId,
-    activeTier,
-    activeEndpoint,
-    activeEndpointId,
-    memories,
-    memoryEnabled,
+    activeTier: model.activeTier,
+    activeEndpoint: model.activeEndpoint,
+    activeEndpointId: model.activeEndpointId,
+    memories: memory.memories,
+    memoryEnabled: memory.memoryEnabled,
     searchMode,
     deepResearch,
     historyRetrieval,
+    authorityReady,
     setActiveId,
     setConversations,
-    setMemories,
-    setOpenArtifactId,
+    setMemories: memory.setMemories,
+    setOpenArtifactId: layout.setOpenArtifactId,
     loadedRef,
     draftIdRef,
-    getProjectContext,
+    getProjectContext: project.getProjectContext,
+    onConversationCreated: id => {
+      rootConversationIdRef.current = id
+      route.replaceConversation(id)
+    },
   })
+  resumeHydratedRef.current = id => generation.resumeGenerationIfNeeded(id)
 
   const activeProject = useMemo(
-    () => projects.find(p => p.id === active?.projectId) ?? null,
-    [projects, active?.projectId],
+    () => project.projects.find(item => item.id === active?.projectId) ?? null,
+    [project.projects, active?.projectId],
   )
-
-  const desktopScrollRef = useRef<HTMLDivElement>(null)
-  const mobileScrollRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    for (const el of [desktopScrollRef.current, mobileScrollRef.current]) {
-      if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
-    }
+    const element = scrollRef.current
+    if (element) element.scrollTo({ top: element.scrollHeight, behavior: "smooth" })
   }, [active?.messages?.length, activeId])
 
-  async function handleSelect(id: string) {
+  async function activateConversation(id: string) {
+    const activationToken = ++activationTokenRef.current
     setActiveId(id)
-    setDrawerOpen(false)
-    setOpenArtifactId(null)
-    void resumeGenerationIfNeeded(id)
-    if (loadedRef.current.has(id)) return
-    loadedRef.current.add(id)
-    const msgs = await fetchMessages(id)
-    setConversations(prev => prev.map(c => c.id === id ? { ...c, messages: msgs, excerpt: lastExcerpt(msgs) } : c))
+    setHydratingConversationId(id)
+    layout.setDrawerOpen(false)
+    layout.setOpenArtifactId(null)
+    const locallyRunning = generation.generationByConversation[id]?.status === "running"
+    const reconciled = await synchronizeConversationState({
+      hydrate: locallyRunning ? async () => undefined : async () => {
+        const messages = await fetchMessages(id, { fresh: true })
+        loadedRef.current.add(id)
+        setConversations(previous => previous.map(conversation => conversation.id === id
+          ? {
+            ...conversation,
+            messages: mergeCachedMessages(conversation.messages, messages),
+            excerpt: lastExcerpt(messages),
+          }
+          : conversation))
+      },
+      reconcile: () => generation.resumeGenerationIfNeeded(id),
+      isCancelled: () => activationTokenRef.current !== activationToken,
+    })
+    if (reconciled) setHydratingConversationId(current => current === id ? null : current)
   }
 
+  function handleSelect(id: string) {
+    const conversation = conversationsRef.current.find(item => item.id === id)
+    route.openConversation(conversation?.draft ? null : id)
+    void activateConversation(id)
+  }
+
+  const syncConversationRoute = useEffectEvent(() => {
+    if (!workspaceReady) return
+    const items = conversationsRef.current
+    const target = route.routeConversationId
+      ? items.find(item => !item.draft && item.id === route.routeConversationId)
+      : items.find(item => item.id === rootConversationIdRef.current)
+    if (target) {
+      if (target.id !== activeId) void activateConversation(target.id)
+      return
+    }
+    const fallback = items.find(item => !item.draft) ?? items[0]
+    if (!fallback) return
+    rootConversationIdRef.current = fallback.id
+    route.replaceConversation(fallback.draft ? null : fallback.id)
+    if (fallback.id !== activeId) void activateConversation(fallback.id)
+  })
+  useEffect(() => {
+    syncConversationRoute()
+  }, [route.routeConversationId, workspaceReady])
+
   async function handleDelete(id: string) {
-    deleteConversationRow(id)
+    const task = generation.generationByConversation[id]
+    if (task?.status === "running" || hydratingConversationId === id) {
+      console.warn("[mychat/generation] active conversation deletion blocked", { conversationId: id })
+      return
+    }
+    try {
+      await deleteConversationRow(id)
+    } catch {
+      return
+    }
     loadedRef.current.delete(id)
     if (draftIdRef.current === id) draftIdRef.current = null
-    const remaining = conversations.filter(c => c.id !== id)
+    const remaining = conversationsRef.current.filter(conversation => conversation.id !== id)
     if (remaining.length === 0) {
       const draftId = crypto.randomUUID()
       draftIdRef.current = draftId
-      setConversations([{ id: draftId, title: "未命名的篇章", excerpt: "", date: "今日", messages: [], draft: true }])
+      rootConversationIdRef.current = draftId
+      setConversations([createDraft(draftId)])
       setActiveId(draftId)
+      activationTokenRef.current += 1
+      setHydratingConversationId(null)
+      route.replaceConversation(null)
       return
     }
     setConversations(remaining)
-    if (activeId === id) {
-      const next = remaining.find(c => !c.draft) ?? remaining[0]
-      setActiveId(next.id)
-      if (!next.draft && !loadedRef.current.has(next.id)) {
-        loadedRef.current.add(next.id)
-        const msgs = await fetchMessages(next.id)
-        setConversations(prev => prev.map(c => c.id === next.id ? { ...c, messages: msgs, excerpt: lastExcerpt(msgs) } : c))
-      }
-    }
+    if (activeId !== id) return
+    const next = remaining.find(conversation => !conversation.draft) ?? remaining[0]
+    rootConversationIdRef.current = next.id
+    route.replaceConversation(next.draft ? null : next.id)
+    await activateConversation(next.id)
   }
 
   function handleNew() {
     if (!user) return
-    setDrawerOpen(false)
-    if (draftIdRef.current) { setActiveId(draftIdRef.current); return }
+    layout.setDrawerOpen(false)
+    if (draftIdRef.current) {
+      rootConversationIdRef.current = draftIdRef.current
+      route.openConversation(null)
+      setActiveId(draftIdRef.current)
+      activationTokenRef.current += 1
+      setHydratingConversationId(null)
+      return
+    }
     const id = crypto.randomUUID()
     draftIdRef.current = id
-    setConversations(prev => [{ id, title: "未命名的篇章", excerpt: "", date: "今日", messages: [], draft: true }, ...prev])
+    rootConversationIdRef.current = id
+    setConversations(previous => [createDraft(id), ...previous])
+    route.openConversation(null)
     setActiveId(id)
+    activationTokenRef.current += 1
+    setHydratingConversationId(null)
+  }
+
+  function handleNewInProject(projectId: string) {
+    const id = project.handleNewInProject(projectId)
+    if (!id) return
+    rootConversationIdRef.current = id
+    layout.setOpenArtifactId(null)
+    route.openConversation(null)
   }
 
   function handleToggleStar(id: string) {
-    const cur = conversations.find(c => c.id === id)
-    if (!cur) return
-    const next = !cur.starred
-    setConversations(prev => prev.map(c => c.id === id ? { ...c, starred: next } : c))
-    setConversationStarred(id, next)
+    const current = conversationsRef.current.find(conversation => conversation.id === id)
+    if (!current) return
+    const starred = !current.starred
+    setConversations(previous => previous.map(conversation => conversation.id === id ? { ...conversation, starred } : conversation))
+    setConversationStarred(id, starred)
   }
+
   function handleTogglePin(id: string) {
-    const cur = conversations.find(c => c.id === id)
-    if (!cur) return
-    const next = !cur.pinned
-    setConversations(prev => prev.map(c => c.id === id ? { ...c, pinned: next } : c))
-    setConversationPinned(id, next)
+    const current = conversationsRef.current.find(conversation => conversation.id === id)
+    if (!current) return
+    const pinned = !current.pinned
+    setConversations(previous => previous.map(conversation => conversation.id === id ? { ...conversation, pinned } : conversation))
+    setConversationPinned(id, pinned)
   }
-  function handleRenameConversation(id: string, title: string) {
-    const t = title.trim()
-    if (!t) return
-    setConversations(prev => prev.map(c => c.id === id ? { ...c, title: t } : c))
-    updateConversationTitle(id, t)
+
+  function handleRename(id: string, title: string) {
+    const nextTitle = title.trim()
+    if (!nextTitle) return
+    setConversations(previous => previous.map(conversation => conversation.id === id ? { ...conversation, title: nextTitle } : conversation))
+    updateConversationTitle(id, nextTitle)
   }
-  function handleAddToProject(id: string, projectId: string | null) {
-    setConversations(prev => prev.map(c => c.id === id ? { ...c, projectId } : c))
+
+  function handleMove(id: string, projectId: string | null) {
+    setConversations(previous => previous.map(conversation => conversation.id === id ? { ...conversation, projectId } : conversation))
     setConversationProject(id, projectId)
   }
 
   async function handleLogout() {
-    const supabase = createClient()
-    await supabase.auth.signOut()
+    await createClient().auth.signOut()
     setUser(null)
   }
 
-  const sidebarProps = {
-    conversations, activeId,
-    onSelect: handleSelect,
-    onNew: handleNew,
-    onDelete: handleDelete,
-    memories,
-    onMemoryAdd: handleMemoryAdd,
-    onMemoryEdit: handleMemoryEdit,
-    onMemoryDelete: handleMemoryDelete,
-    memoryEnabled,
-    onMemoryEnabledChange: handleMemoryEnabledChange,
-    projects,
-    onProjectCreate: handleProjectCreate,
-    onProjectRename: handleProjectRename,
-    onProjectInstructions: handleProjectInstructions,
-    onProjectDelete: handleProjectDelete,
-    onNewInProject: handleNewInProject,
-    onLoadProjectFiles: handleLoadProjectFiles,
-    onAddProjectFile: handleAddProjectFile,
-    onDeleteProjectFile: handleDeleteProjectFile,
-    onLoadProjectMemories: handleLoadProjectMemories,
-    onAddProjectMemory: handleAddProjectMemory,
-    onEditProjectMemory: handleEditProjectMemory,
-    onDeleteProjectMemory: handleDeleteProjectMemory,
-    onToggleStar: handleToggleStar,
-    onTogglePin: handleTogglePin,
-    onRenameConversation: handleRenameConversation,
-    onAddToProject: handleAddToProject,
-    userEmail: user?.email ?? "",
-    onLogout: handleLogout,
-    onOpenCode: () => { setDrawerOpen(false); setCodeOpen(true) },
-    modelEndpoints,
-    activeEndpointId,
-    onEndpointSelect: handleEndpointSelect,
-    onEndpointCreated: handleEndpointCreated,
-    onEndpointUpdated: handleEndpointUpdated,
-    onEndpointDeleted: handleEndpointDeleted,
+  const sidebar: AppSidebarProps = {
+    conversation: {
+      items: conversations, activeId, select: handleSelect, create: handleNew, delete: handleDelete,
+      toggleStar: handleToggleStar, togglePin: handleTogglePin, rename: handleRename, move: handleMove,
+    },
+    memory: {
+      items: memory.memories, enabled: memory.memoryEnabled, setEnabled: memory.handleMemoryEnabledChange,
+      add: memory.handleMemoryAdd, edit: memory.handleMemoryEdit, delete: memory.handleMemoryDelete,
+    },
+    project: {
+      items: project.projects, create: project.handleProjectCreate, rename: project.handleProjectRename,
+      setInstructions: project.handleProjectInstructions, delete: project.handleProjectDelete,
+      createConversation: handleNewInProject, loadFiles: project.handleLoadProjectFiles,
+      addFile: project.handleAddProjectFile, deleteFile: project.handleDeleteProjectFile,
+      loadMemories: project.handleLoadProjectMemories, addMemory: project.handleAddProjectMemory,
+      editMemory: project.handleEditProjectMemory, deleteMemory: project.handleDeleteProjectMemory,
+    },
+    model: {
+      endpoints: model.modelEndpoints, activeId: model.activeEndpointId, select: model.handleEndpointSelect,
+      created: model.handleEndpointCreated, updated: model.handleEndpointUpdated, deleted: model.handleEndpointDeleted,
+    },
+    session: {
+      email: user?.email ?? "", logout: handleLogout,
+      openCode: () => { layout.setDrawerOpen(false); layout.setCodeOpen(true) },
+      openArtifacts: () => { layout.setDrawerOpen(false); layout.setArtifactLibraryOpen(true) },
+    },
   }
 
   if (!authChecked) return <div className="h-dvh w-full bg-background paper-grain" />
   if (!user) return <LoginScreen />
 
-  return (
-    <LiteraryChatView
-      user={user}
-      active={active}
-      activeProject={activeProject}
-      projects={projects}
-      sidebarProps={sidebarProps}
-      layout={layout}
-      desktopScrollRef={desktopScrollRef}
-      mobileScrollRef={mobileScrollRef}
-      conversationActions={{
-        rename: handleRenameConversation,
-        delete: handleDelete,
-        toggleStar: handleToggleStar,
-        togglePin: handleTogglePin,
-        move: handleAddToProject,
-      }}
-      messageProps={{
-        onRegenerate: handleRegenerate,
-        onEditUserMessage: handleEditUserMessage,
-        onRegenerateFromUser: handleRegenerateFromUser,
-        isLoading: isActiveGenerating,
-        onOpenArtifact: setOpenArtifactId,
+  const controller: LiteraryChatViewController = {
+    session: { user },
+    conversation: {
+      active, activeProject, projects: project.projects,
+      actions: { rename: handleRename, delete: handleDelete, toggleStar: handleToggleStar, togglePin: handleTogglePin, move: handleMove },
+    },
+    sidebar,
+    layout,
+    chat: {
+      scrollRef,
+      messages: {
+        onRegenerate: generation.handleRegenerate,
+        onEditUserMessage: generation.handleEditUserMessage,
+        onRegenerateFromUser: generation.handleRegenerateFromUser,
+        isLoading: !authorityReady || generation.isActiveGenerating,
+        onOpenArtifact: layout.setOpenArtifactId,
         openArtifactId: layout.openArtifactId,
-      }}
-      inputProps={{
-        onSend: handleSend,
-        activeTier,
-        onTierChange: handleTierChange,
-        customEndpoints: modelEndpoints,
-        activeEndpointId,
-        onEndpointChange: handleEndpointSelect,
+      },
+      input: {
+        onSend: generation.handleSend,
+        activeTier: model.activeTier,
+        onTierChange: model.handleTierChange,
+        customEndpoints: model.modelEndpoints,
+        activeEndpointId: model.activeEndpointId,
+        onEndpointChange: model.handleEndpointSelect,
         searchMode,
         onSearchModeChange: setSearchMode,
         deepResearch,
         onDeepResearchChange: setDeepResearch,
         historyRetrieval,
         onHistoryRetrievalChange: setHistoryRetrieval,
-        isLoading: isActiveGenerating,
-        onStop: handleStop,
-      }}
-    />
-  )
+        disabled: !authorityReady,
+        isLoading: generation.isActiveGenerating,
+        onStop: generation.handleStop,
+      },
+    },
+  }
+
+  return <LiteraryChatView controller={controller} />
 }

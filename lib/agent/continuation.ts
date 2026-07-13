@@ -1,3 +1,5 @@
+import type { TurnContentPolicy } from '@/lib/llm/turn'
+
 export type CodeContinuationState = {
   workspace: boolean
   usedTools: boolean
@@ -36,6 +38,13 @@ export function looksLikeCodePreamble(text: string): boolean {
   if (!normalized || normalized.length > 28 || USER_FACING_CUE.test(normalized)) return false
   return PREAMBLE_MARKER.test(normalized) && PREAMBLE_ACTION.test(normalized)
 }
+
+/** Code-specific text policy injected into the generic LLM turn parser. */
+export const codeTurnContentPolicy: TurnContentPolicy = ({ content, hasToolCalls }) => (
+  looksLikeCodeSelfTalk(content) || (hasToolCalls && looksLikeCodePreamble(content))
+    ? ''
+    : content
+)
 
 export function codeContinuationPrompt(state: CodeContinuationState): string | null {
   if (state.completed || state.waitingForUser) return null

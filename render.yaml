@@ -4,6 +4,7 @@ services:
     runtime: node
     buildCommand: npm ci --legacy-peer-deps && npm run build
     startCommand: npm start
+    healthCheckPath: /api/ready
     maxShutdownDelaySeconds: 300
     envVars:
       - key: NODE_VERSION
@@ -41,6 +42,12 @@ services:
       - key: TAVILY_API_KEY
         sync: false
       - key: E2B_API_KEY
+        sync: false
+      - key: E2B_TEMPLATE
+        sync: false
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
         sync: false
       - key: AGENT_CREDENTIAL_KEY
         sync: false

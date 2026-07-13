@@ -83,6 +83,32 @@ test('generic provider caps cumulative bytes even when a stream has no parseable
   assert.equal(cancelled, true)
 })
 
+test('caller completion cap is sent upstream and stops excess streamed text locally', async () => {
+  let cancelled = false
+  const requestBodies: Record<string, unknown>[] = []
+  const event = `data: ${JSON.stringify({ choices: [{ delta: { content: 'x'.repeat(200) } }] })}\n\n`
+  const fetcher: typeof fetch = async (_input, init) => {
+    requestBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+    return new Response(new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new TextEncoder().encode(event)) },
+      cancel() { cancelled = true },
+    }), { headers: { 'Content-Type': 'text/event-stream' } })
+  }
+  const result = await runTurn(
+    'https://api.example.com/v1/chat/completions',
+    'test-key',
+    'test-model',
+    [],
+    [],
+    () => undefined,
+    { adapter: 'generic-openai', fetcher, maxOutputTokens: 4 },
+  )
+  assert.equal(requestBodies[0]?.max_tokens, 4)
+  assert.equal(result.content.length, 32)
+  assert.equal(result.finishReason, 'caller_limit')
+  assert.equal(cancelled, true)
+})
+
 test('generic provider emits structured image and video content parts', { concurrency: false }, async t => {
   const originalFetch = globalThis.fetch
   t.after(() => { globalThis.fetch = originalFetch })

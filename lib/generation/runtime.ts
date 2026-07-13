@@ -1,5 +1,11 @@
 import { log } from '@/lib/logger'
-import type { GenerationEvent, GenerationRecord, GenerationStatus } from './types'
+import type {
+  GenerationEvent,
+  GenerationDurability,
+  GenerationLeaseMutationResult,
+  GenerationRecord,
+  GenerationStatus,
+} from './types'
 
 type Listener = (event: GenerationEvent) => void
 
@@ -10,9 +16,12 @@ type RuntimeEntry = {
   /** sequence of last event each subscriber may have; used for resume */
 }
 
-const globalKey = '__mychat_generation_runtime__'
+const globalRuntime = globalThis as typeof globalThis & {
+  __mychat_generation_runtime__?: Map<string, RuntimeEntry>
+}
 const runtime: Map<string, RuntimeEntry> =
-  (globalThis as any)[globalKey] ?? ((globalThis as any)[globalKey] = new Map())
+  globalRuntime.__mychat_generation_runtime__
+  ?? (globalRuntime.__mychat_generation_runtime__ = new Map())
 
 function now() { return Date.now() }
 
@@ -21,9 +30,18 @@ export function createGeneration(input: {
   userId: string
   conversationId: string
   assistantMessageId: string
+  durability?: GenerationDurability
 }): RuntimeEntry {
   const existing = runtime.get(input.id)
-  if (existing) return existing
+  if (existing) {
+    if (existing.record.userId !== input.userId
+      || existing.record.conversationId !== input.conversationId
+      || existing.record.assistantMessageId !== input.assistantMessageId
+      || (input.durability !== undefined && existing.record.durability !== input.durability)) {
+      throw new Error('Generation identity collision')
+    }
+    return existing
+  }
   const record: GenerationRecord = {
     id: input.id,
     userId: input.userId,
@@ -32,7 +50,11 @@ export function createGeneration(input: {
     status: 'queued',
     content: '',
     thinking: '',
+    media: [],
     sequence: 0,
+    // Fail closed by default. Callers must opt in explicitly to memory-only
+    // resume semantics for jobs that deliberately have no durable row.
+    durability: input.durability ?? 'durable',
     createdAt: now(),
     updatedAt: now(),
   }
@@ -84,6 +106,7 @@ function emit(entry: RuntimeEntry, partial: Omit<GenerationEvent, 'generationId'
     sequence: entry.record.sequence,
     content: entry.record.content,
     thinking: entry.record.thinking,
+    media: entry.record.media,
     ...partial,
     status: partial.status ?? entry.record.status,
   }
@@ -110,6 +133,8 @@ export function appendThinking(id: string, delta: string) {
 export function setStatus(id: string, status: GenerationStatus, error?: string) {
   const entry = runtime.get(id)
   if (!entry) return
+  if (entry.record.status === status
+    && (error === undefined || error === entry.record.error)) return
   if (error) entry.record.error = error
   entry.record.status = status
   log.info('generation', 'status', {
@@ -145,6 +170,7 @@ export function subscribe(id: string, listener: Listener, afterSequence = 0): ((
       status: entry.record.status,
       content: entry.record.content,
       thinking: entry.record.thinking,
+      media: entry.record.media,
       error: entry.record.error,
     })
   }
@@ -166,7 +192,7 @@ export function cancelGeneration(id: string, userId: string): boolean {
   if (entry.record.status === 'completed' || entry.record.status === 'failed' || entry.record.status === 'cancelled') {
     return true
   }
-  entry.abort.abort()
+  abortGeneration(id, userId)
   setStatus(id, 'cancelled')
   log.info('generation', 'task cancelled', {
     generationId: id,
@@ -174,6 +200,47 @@ export function cancelGeneration(id: string, userId: string): boolean {
     assistantMessageId: entry.record.assistantMessageId,
   })
   return true
+}
+
+/** Stop local model/tool work without claiming a durable terminal status. */
+export function abortGeneration(id: string, userId: string): boolean {
+  const entry = getGenerationForUser(id, userId)
+  if (!entry) return false
+  if (!entry.abort.signal.aborted) {
+    entry.abort.abort(new DOMException('Generation cancelled', 'AbortError'))
+  }
+  return true
+}
+
+/** Remove a runner that lost its database fencing token. Durable reads then use DB state. */
+export function discardGeneration(id: string, userId: string): boolean {
+  const entry = getGenerationForUser(id, userId)
+  if (!entry) return false
+  runtime.delete(id)
+  log.warn('generation', 'local runner discarded', {
+    generationId: id,
+    conversationId: entry.record.conversationId,
+    status: entry.record.status,
+  })
+  return true
+}
+
+/** Publish the exact terminal decision/content returned by the database CAS. */
+export function reconcileGeneration(
+  id: string,
+  userId: string,
+  result: Extract<GenerationLeaseMutationResult, { ok: true }>,
+) {
+  const entry = getGenerationForUser(id, userId)
+  if (!entry || !result.status) return
+  if (result.content !== undefined) entry.record.content = result.content
+  if (result.thinking !== undefined) entry.record.thinking = result.thinking
+  entry.record.media = result.media
+  if (result.sequence !== undefined) {
+    entry.record.sequence = Math.max(entry.record.sequence, result.sequence)
+  }
+  entry.record.error = result.error
+  return setStatus(id, result.status, result.error)
 }
 
 export function getAbortSignal(id: string): AbortSignal | undefined {
