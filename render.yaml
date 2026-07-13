@@ -51,5 +51,3 @@ services:
         value: sb_publishable_yYWthfTKT4K0vYT-dKPFLQ_gavblOSj
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
-      - key: ARTICLES_CRON_SECRET
-        sync: false

@@ -19,7 +19,6 @@ import { type AttachedFile, prepareFile } from "@/lib/file-extract"
 import type { Project, ProjectFile, ProjectContext } from "@/lib/project-data"
 import { AppSidebar } from "@/components/app-sidebar"
 import { CodeConsole } from "@/components/code-console"
-import { ArticleHub } from "@/components/article-hub"
 import { MessageList } from "@/components/message-list"
 import { ChatInput } from "@/components/chat-input"
 import { LoginScreen } from "@/components/login-screen"
@@ -59,7 +58,6 @@ export function LiteraryChat() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [generationByConv, setGenerationByConv] = useState<Record<string, ClientGenerationState>>({})
   const [codeOpen, setCodeOpen] = useState(false)
-  const [articlesOpen, setArticlesOpen] = useState(false)
   const [memories, setMemories] = useState<Memory[]>([])
   const [memoryEnabled, setMemoryEnabledState] = useState(true)
   const [searchMode, setSearchMode] = useState<SearchMode>("off")
@@ -87,18 +85,6 @@ export function LiteraryChat() {
     }
   }, [])
 
-  // iOS swipe / browser back exits the articles module when the list is showing.
-  useEffect(() => {
-    if (!articlesOpen) return
-    const onPopState = (event: PopStateEvent) => {
-      const state = event.state as { mychatArticles?: boolean; mychatArticleId?: string } | null
-      // ArticleHub handles article-detail pops; only close the module when leaving articles entirely.
-      if (state?.mychatArticleId) return
-      if (!state?.mychatArticles) setArticlesOpen(false)
-    }
-    window.addEventListener("popstate", onPopState)
-    return () => window.removeEventListener("popstate", onPopState)
-  }, [articlesOpen])
 
   useEffect(() => {
     const supabase = createClient()
@@ -1069,21 +1055,7 @@ export function LiteraryChat() {
     onAddToProject: handleAddToProject,
     userEmail: user?.email ?? "",
     onLogout: handleLogout,
-    onOpenCode: () => { setDrawerOpen(false); setArticlesOpen(false); setCodeOpen(true) },
-    onOpenArticles: () => {
-      setDrawerOpen(false)
-      setCodeOpen(false)
-      setArticlesOpen(true)
-      try {
-        window.history.pushState(
-          { mychatArticles: true },
-          "",
-          window.location.pathname + window.location.search,
-        )
-      } catch {
-        // ignore
-      }
-    },
+    onOpenCode: () => { setDrawerOpen(false); setCodeOpen(true) },
     modelEndpoints,
     activeEndpointId,
     onEndpointSelect: handleEndpointSelect,
@@ -1188,31 +1160,6 @@ export function LiteraryChat() {
   const openMsg = openArtifactId ? active?.messages.find(m => m.id === openArtifactId) : null
   const openArt = openMsg ? parseArtifact(openMsg.content) : null
   const showArt = !!(openArt && openArt.raw !== null)
-  const articleUserName = (() => {
-    const metadataName = user.user_metadata?.full_name ?? user.user_metadata?.name ?? user.user_metadata?.display_name
-    if (typeof metadataName === "string" && metadataName.trim()) return metadataName.trim().split(/\s+/)[0]
-    return user.email?.split("@")[0] || "Reader"
-  })()
-
-  if (articlesOpen) {
-    return (
-      <>
-        <div className="hidden h-dvh min-h-0 w-full overflow-hidden bg-background py-4 pr-4 paper-grain md:flex">
-          <div className={cn("shrink-0 overflow-hidden transition-[width] duration-300 ease-in-out", sidebarCollapsed ? "w-0" : "w-[20rem]") }>
-            <div className="h-full w-[20rem] overflow-hidden border-r border-border/50 bg-sidebar/40"><AppSidebar {...sidebarProps} /></div>
-          </div>
-          <ArticleHub userName={articleUserName} mobile={false} onClose={() => setArticlesOpen(false)} onOpenSidebar={() => setSidebarCollapsed(false)} />
-        </div>
-        <div className="flex h-dvh min-h-0 w-full overflow-hidden bg-background paper-grain md:hidden">
-          <div className={cn("fixed inset-0 z-40", drawerOpen ? "pointer-events-auto" : "pointer-events-none") }>
-            <button type="button" aria-label="收起侧栏" onClick={() => setDrawerOpen(false)} className={cn("absolute inset-0 bg-black/50 transition-opacity duration-300", drawerOpen ? "opacity-100" : "opacity-0")} />
-            <AppSidebar {...sidebarProps} mobile visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
-          </div>
-          <ArticleHub userName={articleUserName} mobile onClose={() => setArticlesOpen(false)} onOpenSidebar={() => setDrawerOpen(true)} />
-        </div>
-      </>
-    )
-  }
 
   return (
     <>
