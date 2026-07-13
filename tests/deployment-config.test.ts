@@ -45,6 +45,7 @@ test('worker deployment has queue bulkheads and a sub-three-second cancellation 
   assert.match(worker, /renewIntervalMs:\s*2_000/)
   assert.doesNotMatch(worker, /queues:\s*\['chat',\s*'media'/)
   assert.match(supervisor, /next\/dist\/bin\/next/)
+  assert.match(supervisor, /process\.argv\.slice\(2\)/)
   assert.match(supervisor, /job-worker\.ts/)
   assert.match(supervisor, /child\.kill\(signal\)/)
   assert.match(keepalive, /cron:\s*'\*\/10 \* \* \* \*'/)

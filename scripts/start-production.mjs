@@ -4,7 +4,7 @@ const services = [
   {
     name: 'web',
     command: process.execPath,
-    args: ['node_modules/next/dist/bin/next', 'start'],
+    args: ['node_modules/next/dist/bin/next', 'start', ...process.argv.slice(2)],
   },
   {
     name: 'worker',
