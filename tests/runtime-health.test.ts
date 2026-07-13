@@ -19,7 +19,7 @@ test('database readiness requires a successful migration-aware RPC', async () =>
       return { data: true, error: null }
     },
   }), true)
-  assert.equal(rpcName, 'runtime_healthcheck_v2')
+  assert.equal(rpcName, 'runtime_healthcheck_v3')
   assert.equal(await probeDatabase({
     rpc: async () => ({ data: null, error: { code: 'missing_function' } }),
   }), false)

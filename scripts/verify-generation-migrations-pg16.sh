@@ -490,4 +490,76 @@ end;
 $$;
 SQL
 
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713060000_rate_limit_timestamp_fix.sql" >/dev/null
+
+"${PSQL[@]}" -d "$DB" <<'SQL'
+begin;
+delete from public.api_rate_limits
+where key_hash in (repeat('a', 64), repeat('b', 64), repeat('0', 64));
+insert into public.api_rate_limits(key_hash, request_count, reset_at, updated_at)
+values (repeat('b', 64), 1, now() - interval '2 days', now() - interval '2 days');
+
+set local role service_role;
+do $$
+declare
+  result record;
+begin
+  select * into result
+  from public.consume_api_rate_limit(repeat('a', 64), 2, 60000);
+  if result.allowed is not true or result.remaining <> 1 or result.retry_after_seconds <> 0 then
+    raise exception 'rate limit insert branch failed: %', result;
+  end if;
+
+  select * into result
+  from public.consume_api_rate_limit(repeat('a', 64), 2, 60000);
+  if result.allowed is not true or result.remaining <> 0 or result.retry_after_seconds <> 0 then
+    raise exception 'rate limit conflict branch failed: %', result;
+  end if;
+
+  select * into result
+  from public.consume_api_rate_limit(repeat('a', 64), 2, 60000);
+  if result.allowed is not false or result.remaining <> 0 or result.retry_after_seconds < 1 then
+    raise exception 'rate limit rejection branch failed: %', result;
+  end if;
+
+  perform public.consume_api_rate_limit(repeat('0', 64), 2, 60000);
+end;
+$$;
+reset role;
+
+do $$
+begin
+  if exists (select 1 from public.api_rate_limits where key_hash = repeat('b', 64)) then
+    raise exception 'rate limit stale cleanup branch failed';
+  end if;
+  if not public.runtime_healthcheck_v3() then
+    raise exception '0600 readiness failed';
+  end if;
+  if not has_function_privilege(
+    'service_role',
+    'public.consume_api_rate_limit(text,integer,integer)',
+    'EXECUTE'
+  ) or has_function_privilege(
+    'authenticated',
+    'public.consume_api_rate_limit(text,integer,integer)',
+    'EXECUTE'
+  ) then
+    raise exception 'rate limit execution privileges are unsafe';
+  end if;
+end;
+$$;
+rollback;
+SQL
+
+# The hotfix is retry-safe and must keep both its runtime behavior and readiness marker.
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713060000_rate_limit_timestamp_fix.sql" >/dev/null
+
+"${PSQL[@]}" -d "$DB" <<'SQL'
+do $$
+begin
+  if not public.runtime_healthcheck_v3() then raise exception '0600 retry readiness failed'; end if;
+end;
+$$;
+SQL
+
 echo "PostgreSQL generation migration verification passed"
