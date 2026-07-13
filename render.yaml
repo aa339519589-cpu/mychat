@@ -2,11 +2,12 @@ services:
   - type: web
     name: mychat
     runtime: node
-    buildCommand: npm install --legacy-peer-deps && npm run build
+    buildCommand: npm ci --legacy-peer-deps && npm run build
     startCommand: npm start
+    maxShutdownDelaySeconds: 300
     envVars:
       - key: NODE_VERSION
-        value: 20
+        value: 24
       - key: PORT
         value: 3000
       - key: DEEPSEEK_API_KEY
@@ -50,4 +51,6 @@ services:
       - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
         value: sb_publishable_yYWthfTKT4K0vYT-dKPFLQ_gavblOSj
       - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: GENERATION_MAINTENANCE_MODE
         sync: false
