@@ -18,17 +18,19 @@ import {
 } from './policy'
 import { readLimitedText, upstreamMessage } from './response'
 import { safeModelEndpointFetch } from './safe-fetch'
+import { isRecord } from '@/lib/unknown-value'
 
 function parseModels(raw: string, apiKey: string): DiscoveredModel[] {
-  let payload: any
+  let payload: unknown
   try { payload = JSON.parse(raw) } catch {
     throw new ModelEndpointError('模型列表不是有效 JSON', 'models', 'invalid_json', 502)
   }
+  const record = isRecord(payload) ? payload : null
   const source = Array.isArray(payload)
     ? payload
-    : Array.isArray(payload?.data)
-      ? payload.data
-      : payload?.models
+    : Array.isArray(record?.data)
+      ? record.data
+      : record?.models
   if (!Array.isArray(source)) {
     throw new ModelEndpointError(
       '模型列表格式不兼容，未找到 data[] 或 models[]',
@@ -40,8 +42,9 @@ function parseModels(raw: string, apiKey: string): DiscoveredModel[] {
 
   const seen = new Set<string>()
   const models: DiscoveredModel[] = []
-  for (const item of source) {
-    const rawId = typeof item === 'string' ? item : item?.id ?? item?.name
+  for (const value of source) {
+    const item = isRecord(value) ? value : null
+    const rawId = typeof value === 'string' ? value : item?.id ?? item?.name
     if (typeof rawId !== 'string') continue
     const id = rawId.replace(/[\u0000-\u001f\u007f]/g, '').trim()
     if (!isSafeModelId(id, apiKey) || id.length > MAX_MODEL_ID || seen.has(id)) continue
@@ -50,7 +53,9 @@ function parseModels(raw: string, apiKey: string): DiscoveredModel[] {
       id,
       displayName: modelDisplayName(
         id,
-        typeof item === 'object' ? item?.display_name ?? item?.displayName : undefined,
+        typeof item?.display_name === 'string'
+          ? item.display_name
+          : typeof item?.displayName === 'string' ? item.displayName : undefined,
         apiKey,
       ),
       ...(typeof item?.owned_by === 'string' ? { ownedBy: item.owned_by.slice(0, 100) } : {}),

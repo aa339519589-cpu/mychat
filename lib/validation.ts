@@ -5,6 +5,12 @@ class ValidationError extends Error {
   }
 }
 
+export const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+export function isUuid(value: unknown): value is string {
+  return typeof value === 'string' && UUID_PATTERN.test(value)
+}
+
 export const validate = {
   string: (value: unknown, fieldName: string, opts?: { minLength?: number; maxLength?: number }): string => {
     if (typeof value !== 'string') {
@@ -20,8 +26,7 @@ export const validate = {
   },
 
   uuid: (value: unknown, fieldName: string): string => {
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-    if (typeof value !== 'string' || !uuidRegex.test(value)) {
+    if (!isUuid(value)) {
       throw new ValidationError(fieldName, 'must be a valid UUID')
     }
     return value

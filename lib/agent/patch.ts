@@ -7,6 +7,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { workspaceRoot, getWorkspaceDiff } from "./workspace"
 import { createWorkspaceSnapshot } from "./snapshot"
 import { validatePath, redactSensitive } from "./path-security"
+import { errorMessage, recordText } from '@/lib/unknown-value'
 
 // ───────────── 类型 ─────────────
 
@@ -165,11 +166,11 @@ export function dryRunWorkspacePatch(
       dryRun: true,
       diffSummary: `## Dry-run 成功\n\n${safety.files.length} 个文件将被修改：\n\n${fileList}\n\n\`\`\`diff\n${redactSensitive(patch).slice(0, 3000)}\n\`\`\``,
     }
-  } catch (err: any) {
-    const stderr = err?.stderr ?? ""
+  } catch (error) {
+    const stderr = recordText(error, 'stderr')
     return {
       ok: false,
-      error: `Dry-run 失败：${stderr || err?.message || "未知错误"}`,
+      error: `Dry-run 失败：${stderr || errorMessage(error)}`,
       dryRun: true,
     }
   }
@@ -206,11 +207,11 @@ export async function applyWorkspacePatch(
       encoding: "utf-8",
       input: patch,
     })
-  } catch (err: any) {
-    const stderr = err?.stderr ?? ""
+  } catch (error) {
+    const stderr = recordText(error, 'stderr')
     return {
       ok: false,
-      error: `Apply 失败：${stderr || err?.message || "未知错误"}`,
+      error: `Apply 失败：${stderr || errorMessage(error)}`,
       dryRun: false,
     }
   }

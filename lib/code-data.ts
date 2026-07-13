@@ -39,6 +39,15 @@ export type CodeMessage = {
 export type CodeSession = { id: string; repo: string; title: string; date: string }
 export type CodeMemory = { id: string; content: string }
 
+type CodeSessionRow = { id: string; repo: string; title: string; updated_at: string }
+type CodeMessageRow = {
+  id: string
+  role: CodeRole
+  content: string
+  meta?: { steps?: CodeStep[]; plan?: PlanAction[]; result?: ApplyResult; taskId?: string } | null
+}
+type CodeMemoryRow = { id: string; content: string }
+
 function fmtDate(iso: string): string {
   const d = new Date(iso)
   const now = new Date()
@@ -55,7 +64,12 @@ export async function fetchCodeSessions(repo: string): Promise<CodeSession[]> {
     .eq("repo", repo)
     .order("updated_at", { ascending: false })
     .limit(50)
-  return (data ?? []).map((r: any) => ({ id: r.id, repo: r.repo, title: r.title, date: fmtDate(r.updated_at) }))
+  return ((data ?? []) as CodeSessionRow[]).map(row => ({
+    id: row.id,
+    repo: row.repo,
+    title: row.title,
+    date: fmtDate(row.updated_at),
+  }))
 }
 
 export async function createCodeSession(userId: string, repo: string, title: string): Promise<string | null> {
@@ -78,14 +92,14 @@ export async function fetchCodeMessages(sessionId: string): Promise<CodeMessage[
     .select("id, role, content, meta")
     .eq("session_id", sessionId)
     .order("created_at")
-  return (data ?? []).map((r: any) => ({
-    id: r.id,
-    role: r.role,
-    content: r.content,
-    steps: r.meta?.steps,
-    plan: r.meta?.plan,
-    result: r.meta?.result,
-    taskId: r.meta?.taskId,
+  return ((data ?? []) as CodeMessageRow[]).map(row => ({
+    id: row.id,
+    role: row.role,
+    content: row.content,
+    steps: row.meta?.steps,
+    plan: row.meta?.plan,
+    result: row.meta?.result,
+    taskId: row.meta?.taskId,
   }))
 }
 
@@ -98,10 +112,11 @@ export async function insertCodeMessage(
   if (msg.plan?.length) meta.plan = msg.plan
   if (msg.result) meta.result = msg.result
   if (msg.taskId) meta.taskId = msg.taskId
-  await supabase.from("code_messages").insert({
+  const { error } = await supabase.from("code_messages").insert({
     id: msg.id, session_id: sessionId, user_id: userId, role: msg.role, content: msg.content,
     meta: Object.keys(meta).length ? meta : null,
   })
+  if (error) throw new Error(`Code message persistence failed: ${error.code ?? 'unknown'}`)
 }
 
 export function modelContent(msg: CodeMessage): string {
@@ -135,7 +150,7 @@ export async function fetchCodeMemories(repo: string): Promise<CodeMemory[]> {
     .select("id, content")
     .eq("repo", repo)
     .order("created_at")
-  return (data ?? []).map((r: any) => ({ id: r.id, content: r.content }))
+  return ((data ?? []) as CodeMemoryRow[]).map(row => ({ id: row.id, content: row.content }))
 }
 
 export async function insertCodeMemory(userId: string, repo: string, content: string): Promise<CodeMemory | null> {

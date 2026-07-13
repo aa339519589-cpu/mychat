@@ -98,7 +98,7 @@ export async function readLimitedText(response: Response): Promise<string> {
   return new TextDecoder().decode(bytes)
 }
 
-export function parseMediaJson(raw: string): any {
+export function parseMediaJson(raw: string): unknown {
   try {
     return JSON.parse(raw)
   } catch {
@@ -106,8 +106,8 @@ export function parseMediaJson(raw: string): any {
   }
 }
 
-export function parseImageSsePayloads(raw: string): any[] {
-  const payloads: any[] = []
+export function parseImageSsePayloads(raw: string): unknown[] {
+  const payloads: unknown[] = []
   for (const line of raw.split(/\r?\n/)) {
     const trimmed = line.trim()
     if (!trimmed.startsWith('data:')) continue
@@ -178,6 +178,12 @@ export async function mediaCreationRequest(
 export function mediaEndpoint(baseUrl: string, suffix: string): string {
   const normalized = normalizeOpenAIBaseUrl(baseUrl)
   return `${normalized}${new URL(normalized).pathname === '/' ? '/v1' : ''}${suffix}`
+}
+
+export function mediaIdempotencyHeaders(value: string | undefined): Record<string, string> {
+  const normalized = value?.trim() ?? ''
+  if (!normalized || normalized.length > 200 || /[^A-Za-z0-9._:-]/.test(normalized)) return {}
+  return { 'Idempotency-Key': normalized }
 }
 
 export async function waitForMediaPoll(intervalMs: number, signal?: AbortSignal): Promise<void> {

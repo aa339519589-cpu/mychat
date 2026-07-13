@@ -52,17 +52,13 @@ function inScope(hitProjectId: string | null | undefined, projectId: string | nu
   return projectId ? hitProjectId === projectId : !hitProjectId
 }
 
-function applyScope(query: any, projectId: string | null | undefined) {
-  return projectId ? query.eq('project_id', projectId) : query.is('project_id', null)
-}
-
 async function scopedConversationIds(supabase: SupabaseServer, userId: string, projectId: string | null | undefined, currentConversationId: string | null, limit = 240): Promise<string[]> {
-  let req: any = supabase.from('conversations').select('id').eq('user_id', userId)
-  req = applyScope(req, projectId)
+  let req = supabase.from('conversations').select('id').eq('user_id', userId)
+  req = projectId ? req.eq('project_id', projectId) : req.is('project_id', null)
   if (currentConversationId) req = req.neq('id', currentConversationId)
   const { data, error } = await req.order('updated_at', { ascending: false }).limit(limit)
   if (error || !data) return []
-  return (data as any[]).map(r => r.id).filter((id): id is string => typeof id === 'string')
+  return (data as Array<{ id?: unknown }>).map(row => row.id).filter((id): id is string => typeof id === 'string')
 }
 
 export async function ensureConversationIndexed(supabase: SupabaseServer | null, userId: string | null, conversationId: string | null, signal?: AbortSignal): Promise<void> {
@@ -82,7 +78,9 @@ export async function ensureConversationIndexed(supabase: SupabaseServer | null,
     const hashes = chunks.map(c => hash(c.content))
     const { data: existing } = await supabase.from('conversation_chunks').select('content_hash').eq('conversation_id', conversationId).in('content_hash', hashes)
 
-    const seen = new Set((existing ?? []).map((r: any) => r.content_hash as string))
+    const seen = new Set(((existing ?? []) as Array<{ content_hash?: unknown }>)
+      .map(row => row.content_hash)
+      .filter((value): value is string => typeof value === 'string'))
     const pending = chunks.filter(c => !seen.has(hash(c.content))).slice(0, 24)
     if (!pending.length) return
 
@@ -293,8 +291,8 @@ async function retrieveUserAnchoredContexts(supabase: SupabaseServer, userId: st
   const convIds = Array.from(new Set(anchors.map(a => a.row.conversation_id).filter(Boolean))) as string[]
   const { data: conversations } = convIds.length
     ? await supabase.from('conversations').select('id, title, project_id').eq('user_id', userId).in('id', convIds)
-    : { data: [] as any[] }
-  const convMap = new Map((conversations ?? []).map((c: any) => [c.id, c as ConversationRow]))
+    : { data: [] as ConversationRow[] }
+  const convMap = new Map(((conversations ?? []) as ConversationRow[]).map(conversation => [conversation.id, conversation]))
 
   const hits: RetrievalHit[] = []
   for (const [index, anchor] of anchors.entries()) {

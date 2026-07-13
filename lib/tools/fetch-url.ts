@@ -1,6 +1,7 @@
 // 读取网页正文工具：给一个网址，返回该页面适合阅读的纯文本正文。
 // 用 Jina Reader（r.jina.ai）把网页转成干净的 Markdown，免费、无需密钥。
 import type { ToolDef, ToolOutcome } from './types'
+import { isRecord } from '@/lib/unknown-value'
 
 const MAX_CHARS = 8000  // 正文上限，避免一次塞太多灌爆上下文
 
@@ -37,7 +38,8 @@ export const fetchUrlTool: ToolDef = {
   schema: { type: 'object', properties: { url: { type: 'string', description: '要读取的完整网址，必须以 http:// 或 https:// 开头' } }, required: ['url'] },
   enabled: f => f.searchMode !== 'off',
   execute: async (input, ctx): Promise<ToolOutcome> => {
-    const text = await readPage(input?.url, ctx.signal)
+    const params = isRecord(input) ? input : {}
+    const text = await readPage(typeof params.url === 'string' ? params.url : '', ctx.signal)
     return { result: text }
   },
 }

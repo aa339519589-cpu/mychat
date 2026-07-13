@@ -135,6 +135,11 @@ export async function enforceQuotaLimit(
       supabase,
       userId,
     )
+    if (q.unavailable) {
+      const response = json({ error: '额度服务暂时不可用，请稍后再试' }, 503)
+      response.headers.set('Retry-After', '5')
+      return { response }
+    }
     if (q.exceeded) {
       const window = q.which === '5h' ? '5 小时' : '7 天'
       const msg = `${window}用量已达上限，余额也已耗尽，暂时无法发送消息。可在「设置 · 使用额度」充值，或等待窗口重置后继续。`

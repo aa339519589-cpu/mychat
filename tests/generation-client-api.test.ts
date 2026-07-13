@@ -1,24 +1,22 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { requestClientGenerationCancellation } from '../components/literary-chat/generation-api'
+import { requestClientGenerationCancellation } from '../components/literary-chat/generation-job-actions'
 
 test('cancel acknowledgement reports the database winner without inferring cancellation', async () => {
   const completed = await requestClientGenerationCancellation('g-completed', {
     fetcher: async () => Response.json({
       ok: true,
       status: 'completed',
-      terminal: {
-        status: 'completed', content: 'answer', thinking: '', sequence: 4, error: null, media: [],
-      },
+      result: { content: 'answer', thinking: '', media: [] },
+      eventSeq: 4,
     }),
   })
   const cancelled = await requestClientGenerationCancellation('g-cancelled', {
     fetcher: async () => Response.json({
       ok: true,
       status: 'cancelled',
-      terminal: {
-        status: 'cancelled', content: 'partial', thinking: '', sequence: 5, error: null, media: [],
-      },
+      result: { content: 'partial', thinking: '', media: [] },
+      eventSeq: 5,
     }),
   })
   assert.equal(completed.status, 'completed')

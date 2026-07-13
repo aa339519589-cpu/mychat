@@ -11,9 +11,9 @@ import {
 } from '../lib/generation/media-storage'
 
 const context: DurableMediaStorageContext = {
-  userId: 'user-1',
-  conversationId: 'conversation-1',
-  generationId: 'generation-1',
+  userId: '00000000-0000-4000-8000-000000000001',
+  conversationId: '10000000-0000-4000-8000-000000000001',
+  generationId: '20000000-0000-4000-8000-000000000001',
   baseUrl: 'https://provider.example/v1',
   apiKey: 'provider-secret',
   authType: 'bearer',
@@ -84,7 +84,7 @@ test('uploads validated data media with a user/conversation/generation scoped ke
 
   assert.equal(uploads.length, 1)
   assert.equal(uploads[0].bucket, 'generated-media')
-  assert.equal(uploads[0].path, 'user-1/conversation-1/generation-1/asset-1.png')
+  assert.equal(uploads[0].path, '00000000-0000-4000-8000-000000000001/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001/asset-1.png')
   assert.deepEqual([...uploads[0].bytes], [1, 2, 3])
   assert.deepEqual(uploads[0].options, {
     contentType: 'image/png',
@@ -94,13 +94,13 @@ test('uploads validated data media with a user/conversation/generation scoped ke
   assert.deepEqual(result, {
     media: {
       type: 'image',
-      url: 'https://project.supabase.co/storage/v1/object/public/generated-media/user-1/conversation-1/generation-1/asset-1.png',
+      url: '/api/v1/media/00000000-0000-4000-8000-000000000001/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001/asset-1.png/content',
       mimeType: 'image/png',
       alt: 'small image',
     },
     receipt: {
       bucket: 'generated-media',
-      objectKey: 'user-1/conversation-1/generation-1/asset-1.png',
+      objectKey: '00000000-0000-4000-8000-000000000001/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001/asset-1.png',
     },
   })
 })
@@ -128,7 +128,7 @@ test('downloads same-origin media with provider auth and never follows redirects
     redirect: 'manual',
   })
   assert.equal(result.media.mimeType, 'image/webp')
-  assert.match(result.media.url, /asset-1\.webp$/)
+  assert.match(result.media.url, /asset-1\.webp\/content$/)
 })
 
 test('forces stable cross-origin CDN media through download without provider credentials', async () => {
@@ -249,10 +249,10 @@ test('best-effort cleans an object when upload throws after a possible write', a
     (error: unknown) => error instanceof DurableMediaStorageError
       && error.code === 'upload_failed',
   )
-  assert.deepEqual(removed, ['user-1/conversation-1/generation-1/asset-1.png'])
+  assert.deepEqual(removed, ['00000000-0000-4000-8000-000000000001/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001/asset-1.png'])
 })
 
-test('rejects unsafe scope segments and cleans an upload with an unsafe public URL', async () => {
+test('rejects unsafe scope segments and never asks Storage for a public URL', async () => {
   await assert.rejects(
     persistDurableGeneratedMedia({ ...context, conversationId: '../other-user' }, {
       type: 'image',
@@ -262,19 +262,57 @@ test('rejects unsafe scope segments and cleans an upload with an unsafe public U
       && error.code === 'invalid_scope',
   )
 
+  const result = await persistDurableGeneratedMedia(context, {
+    type: 'image',
+    url: 'data:image/png;base64,AQID',
+  }, dependencies(storageClient({ publicUrl: () => { throw new Error('public URL must not be read') } })))
+  assert.match(result.media.url, /^\/api\/v1\/media\//)
+})
+
+test('production receipts persist an absolute HTTPS application-proxy URL', async () => {
+  const result = await persistDurableGeneratedMedia(context, {
+    type: 'image',
+    url: 'data:image/png;base64,AQID',
+  }, dependencies(storageClient(), {
+    publicAppUrl: () => 'https://chat.example/a/path-that-must-not-leak',
+  }))
+  assert.equal(result.media.url,
+    'https://chat.example/api/v1/media/00000000-0000-4000-8000-000000000001/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001/asset-1.png/content')
+})
+
+test('production fails closed and removes the upload without an HTTPS proxy origin', {
+  concurrency: false,
+}, async () => {
+  const setEnvironment = (name: string, value: string | undefined) => {
+    if (value === undefined) delete process.env[name]
+    else process.env[name] = value
+  }
+  const prior = {
+    nodeEnv: process.env.NODE_ENV,
+    publicAppUrl: process.env.PUBLIC_APP_URL,
+    agentPublicUrl: process.env.AGENT_PUBLIC_URL,
+  }
   const removed: string[] = []
-  await assert.rejects(
-    persistDurableGeneratedMedia(context, {
-      type: 'image',
-      url: 'data:image/png;base64,AQID',
-    }, dependencies(storageClient({
-      publicUrl: () => 'http://127.0.0.1/generated.png',
-      removed,
-    }))),
-    (error: unknown) => error instanceof DurableMediaStorageError
-      && error.code === 'invalid_storage_url',
-  )
-  assert.deepEqual(removed, ['user-1/conversation-1/generation-1/asset-1.png'])
+  try {
+    setEnvironment('NODE_ENV', 'production')
+    setEnvironment('PUBLIC_APP_URL', undefined)
+    setEnvironment('AGENT_PUBLIC_URL', undefined)
+    await assert.rejects(
+      persistDurableGeneratedMedia(context, {
+        type: 'image',
+        url: 'data:image/png;base64,AQID',
+      }, dependencies(storageClient({ removed }))),
+      (error: unknown) => error instanceof DurableMediaStorageError
+        && error.code === 'invalid_storage_url',
+    )
+    assert.deepEqual(removed, [
+      '00000000-0000-4000-8000-000000000001/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001/asset-1.png',
+    ])
+  } finally {
+    setEnvironment('NODE_ENV', prior.nodeEnv)
+    setEnvironment('PUBLIC_APP_URL', prior.publicAppUrl)
+    setEnvironment('AGENT_PUBLIC_URL', prior.agentPublicUrl)
+  }
 })
 
 test('persists media lists in order', async () => {
@@ -286,11 +324,11 @@ test('persists media lists in order', async () => {
     createAdminClient: () => storageClient(),
     randomUUID: () => `asset-${++asset}`,
   })
-  assert.match(result.media[0].url, /asset-1\.png$/)
-  assert.match(result.media[1].url, /asset-2\.mp4$/)
+  assert.match(result.media[0].url, /asset-1\.png\/content$/)
+  assert.match(result.media[1].url, /asset-2\.mp4\/content$/)
   assert.deepEqual(result.receipts.map(receipt => receipt.objectKey), [
-    'user-1/conversation-1/generation-1/asset-1.png',
-    'user-1/conversation-1/generation-1/asset-2.mp4',
+    '00000000-0000-4000-8000-000000000001/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001/asset-1.png',
+    '00000000-0000-4000-8000-000000000001/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001/asset-2.mp4',
   ])
 })
 
@@ -299,7 +337,7 @@ test('cleanup is scope-bound, deduplicated and idempotent', async () => {
   const client = storageClient({ removed })
   const receipt = {
     bucket: 'generated-media' as const,
-    objectKey: 'user-1/conversation-1/generation-1/asset-1.png',
+    objectKey: '00000000-0000-4000-8000-000000000001/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001/asset-1.png',
   }
   await cleanupDurableGeneratedMediaUploads(context, [receipt, receipt], {
     createAdminClient: () => client,
@@ -312,7 +350,7 @@ test('cleanup is scope-bound, deduplicated and idempotent', async () => {
   await assert.rejects(
     cleanupDurableGeneratedMediaUploads(context, [{
       ...receipt,
-      objectKey: 'user-2/conversation-1/generation-1/asset-1.png',
+      objectKey: '00000000-0000-4000-8000-000000000002/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001/asset-1.png',
     }], { createAdminClient: () => client }),
     (error: unknown) => error instanceof DurableMediaStorageError
       && error.code === 'invalid_receipt',
@@ -323,7 +361,7 @@ test('cleanup failure is durably queued for a later retry', async () => {
   const cleanupUpserts: Record<string, unknown>[][] = []
   const receipt = {
     bucket: 'generated-media' as const,
-    objectKey: 'user-1/conversation-1/generation-1/asset-1.png',
+    objectKey: '00000000-0000-4000-8000-000000000001/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001/asset-1.png',
   }
   await assert.rejects(
     cleanupDurableGeneratedMediaUploads(context, [receipt], {
@@ -352,5 +390,5 @@ test('rolls back earlier uploads when a media batch fails', async () => {
     (error: unknown) => error instanceof DurableMediaStorageError
       && error.code === 'unsafe_media_url',
   )
-  assert.deepEqual(removed, ['user-1/conversation-1/generation-1/asset-1.png'])
+  assert.deepEqual(removed, ['00000000-0000-4000-8000-000000000001/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001/asset-1.png'])
 })

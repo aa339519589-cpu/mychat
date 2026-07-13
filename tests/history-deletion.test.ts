@@ -43,6 +43,19 @@ test('history deletion rejects encoded traversal and non-generated media paths',
   assert.deepEqual(keys, [])
 })
 
+test('history deletion accepts the authenticated proxy but not a lookalike remote origin', () => {
+  const key = `${userId}/${conversationId}/${generationId}/asset.png`
+  const keys = generatedMediaObjectKeys([{
+    id: 'message-proxy',
+    conversation_id: conversationId,
+    images: { generated_media: [
+      { type: 'image', url: `/api/v1/media/${key}/content` },
+      { type: 'image', url: `https://evil.example/storage/v1/object/public/generated-media/${key}` },
+    ] },
+  }], userId, origin)
+  assert.deepEqual(keys, [key])
+})
+
 function mediaMessage(id = '30000000-0000-4000-8000-000000000001') {
   const key = `${userId}/${conversationId}/${generationId}/asset.png`
   return {

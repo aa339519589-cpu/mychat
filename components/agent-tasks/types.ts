@@ -10,7 +10,7 @@ export type RestoreResponse = {
   error?: string
   restoredFiles?: number
   failedFiles?: number
-  usedSource?: "local_patch" | "artifact_patch" | "git_fallback" | "none"
+  usedSource?: "local_cas" | "artifact_cas" | "none"
   snapshotId?: string
   diff?: string
   changedFiles?: { path: string; status: string }[]
@@ -80,6 +80,8 @@ export type PendingConfirmation = {
   reason: string
   files: string[]
   status: string
+  confirmationToken?: string
+  expiresAt?: string
 }
 
 export type PublishResult = {

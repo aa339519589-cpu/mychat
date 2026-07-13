@@ -23,7 +23,7 @@ type StepEvent = { kind: string; label: string }
 type ImageSummaryEvent = { messageId: string; summary: string }
 
 // Code 板块：加入「待执行计划」的动作，前端展示供用户确认
-type CodePlan =
+export type CodePlan =
   | { kind: 'create_repo'; name: string; description: string; private: boolean }
   | { kind: 'write_file'; path: string; oldContent: string; newContent: string }
   | { kind: 'delete_file'; path: string }

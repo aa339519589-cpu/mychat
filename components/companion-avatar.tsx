@@ -1,3 +1,5 @@
+import Image from "next/image"
+
 import { cn } from "@/lib/utils"
 
 type CompanionAvatarProps = {
@@ -10,21 +12,21 @@ type CompanionAvatarProps = {
 export function CompanionAvatar({ size = 44, className, imageClassName, eager = false }: CompanionAvatarProps) {
   return (
     <span className={cn("companion-avatar inline-flex shrink-0 overflow-hidden", className)} aria-hidden="true">
-      <img
+      <Image
         src="/companion.png"
         alt=""
         width={size}
         height={size}
-        loading={eager ? "eager" : "lazy"}
+        priority={eager}
         draggable={false}
         className={cn("companion-avatar-img companion-avatar-light select-none", imageClassName)}
       />
-      <img
+      <Image
         src="/companion-dark.png"
         alt=""
         width={size}
         height={size}
-        loading={eager ? "eager" : "lazy"}
+        priority={eager}
         draggable={false}
         className={cn("companion-avatar-img companion-avatar-dark select-none", imageClassName)}
       />

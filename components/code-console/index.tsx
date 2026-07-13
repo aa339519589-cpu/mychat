@@ -48,9 +48,9 @@ export function CodeConsole({ userId, onExit }: CodeConsoleProps) {
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  const { restoreTask, scheduleTaskRecovery, syncWorkspaceState } = useTaskRecovery({
+  const { restoreTask, syncWorkspaceState } = useTaskRecovery({
     messages,
-    runSend,
+    abortRef,
     setMessages,
     setStreaming,
     setCurrentTaskId,
@@ -65,6 +65,7 @@ export function CodeConsole({ userId, onExit }: CodeConsoleProps) {
     currentTaskId,
     runSend,
     setRepo,
+    setCurrentTaskId,
     invalidateRepos: () => setRepos(null),
     setMessages,
     setPendingPlan,
@@ -125,7 +126,6 @@ export function CodeConsole({ userId, onExit }: CodeConsoleProps) {
       setPendingPlan,
       applyPlan,
       syncWorkspaceState,
-      scheduleTaskRecovery,
     })
   }
 
@@ -215,7 +215,23 @@ export function CodeConsole({ userId, onExit }: CodeConsoleProps) {
   }
 
   async function disconnect() {
-    await fetch("/api/auth/github/disconnect", { method: "POST" }).catch(() => {})
+    try {
+      const response = await fetch("/api/auth/github/disconnect", { method: "POST" })
+      if (!response.ok) {
+        const payload: unknown = await response.json().catch(() => null)
+        const message = payload && typeof payload === "object" && "error" in payload
+          && typeof payload.error === "string"
+          ? payload.error
+          : "GitHub 断开失败，请重试"
+        setApplyError(message)
+        setGhMenu(false)
+        return
+      }
+    } catch {
+      setApplyError("GitHub 断开失败，请重试")
+      setGhMenu(false)
+      return
+    }
     setConnected(false)
     setLogin("")
     setEntered(false)

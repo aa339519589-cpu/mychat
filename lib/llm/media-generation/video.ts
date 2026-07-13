@@ -20,12 +20,14 @@ import {
   failForResponse,
   mediaCreationRequest,
   mediaEndpoint,
+  mediaIdempotencyHeaders,
   parseMediaJson,
   readLimitedText,
   redactMediaError,
   responseErrorMessage,
   waitForMediaPoll,
 } from './transport'
+import { isRecord } from '@/lib/unknown-value'
 
 function videoTiming(options: GenerateMediaOptions, minimumPollMs: number) {
   return {
@@ -38,9 +40,10 @@ function videoTiming(options: GenerateMediaOptions, minimumPollMs: number) {
   }
 }
 
-function failedVideoJob(job: any, apiKey: string): never {
+function failedVideoJob(job: unknown, apiKey: string): never {
+  const error = isRecord(job) ? job.error : undefined
   const detail = responseErrorMessage(JSON.stringify(job), apiKey)
-    || (typeof job?.error === 'string' ? redactMediaError(job.error, apiKey) : '')
+    || (typeof error === 'string' ? redactMediaError(error, apiKey) : '')
   throw new MediaGenerationError(`视频生成失败${detail ? `：${detail}` : ''}`, 'generation_failed', 422)
 }
 
@@ -68,6 +71,7 @@ export async function generateOpenAICompatibleVideo(
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',
+        ...mediaIdempotencyHeaders(options.idempotencyKey),
         ...endpointAuthHeaders(apiKey, authType),
       },
       body: JSON.stringify({
@@ -86,7 +90,8 @@ export async function generateOpenAICompatibleVideo(
   if (!create.ok) failForResponse(create, createRaw, apiKey)
   const commonHeaders = endpointAuthHeaders(apiKey, creation.authType)
   const context: MaterializeContext = { ...options, authType: creation.authType, fetcher }
-  let job = parseMediaJson(createRaw)
+  let jobValue = parseMediaJson(createRaw)
+  let job = isRecord(jobValue) ? jobValue : {}
   const immediate = await videoUrlFromPayload(job, options.prompt, context)
   if (immediate) return immediate
 
@@ -112,7 +117,8 @@ export async function generateOpenAICompatibleVideo(
     }, apiKey)
     const pollRaw = await readLimitedText(poll)
     if (!poll.ok) failForResponse(poll, pollRaw, apiKey)
-    job = parseMediaJson(pollRaw)
+    jobValue = parseMediaJson(pollRaw)
+    job = isRecord(jobValue) ? jobValue : {}
     const direct = await videoUrlFromPayload(job, options.prompt, context)
     if (direct) return direct
   }
@@ -155,6 +161,7 @@ export async function generateGrokProxyVideo(options: GenerateMediaOptions): Pro
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',
+        ...mediaIdempotencyHeaders(options.idempotencyKey),
         ...endpointAuthHeaders(apiKey, authType),
       },
       body: JSON.stringify(requestBody),
@@ -166,7 +173,8 @@ export async function generateGrokProxyVideo(options: GenerateMediaOptions): Pro
   )
   const { response, raw } = creation
   if (!response.ok) failForResponse(response, raw, apiKey)
-  const created = parseMediaJson(raw)
+  const createdValue = parseMediaJson(raw)
+  const created = isRecord(createdValue) ? createdValue : {}
   const requestId = validJobId(created?.request_id ?? created?.id)
   const context: MaterializeContext = { ...options, authType: creation.authType, fetcher }
   const alt = prompt || DEFAULT_IMAGE_TO_VIDEO_PROMPT
@@ -192,13 +200,15 @@ export async function generateGrokProxyVideo(options: GenerateMediaOptions): Pro
     }, apiKey)
     const pollRaw = await readLimitedText(poll)
     if (poll.status !== 200 && poll.status !== 202) failForResponse(poll, pollRaw, apiKey)
-    const job = parseMediaJson(pollRaw)
+    const jobValue = parseMediaJson(pollRaw)
+    const job = isRecord(jobValue) ? jobValue : {}
     const status = String(job?.status ?? '').toLowerCase()
     if (['failed', 'cancelled', 'canceled', 'error'].includes(status)) failedVideoJob(job, apiKey)
     if (['done', 'completed', 'succeeded', 'success'].includes(status)) {
-      const url = typeof job?.video?.url === 'string'
-        ? job.video.url
-        : typeof job?.url === 'string' ? job.url : ''
+      const video = isRecord(job.video) ? job.video : null
+      const url = typeof video?.url === 'string'
+        ? video.url
+        : typeof job.url === 'string' ? job.url : ''
       if (url) return materializeMediaUrl(url, 'video', alt, context)
       const via = await videoUrlFromPayload(job, alt, context)
       if (via) return via

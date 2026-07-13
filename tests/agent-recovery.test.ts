@@ -5,30 +5,9 @@ import { existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync 
 import { saveWorkspaceCheckpoint, restoreLatestWorkspaceCheckpoint } from "../lib/agent/checkpoint"
 import { getChangedFiles, workspaceRoot } from "../lib/agent/workspace"
 import { compactRunMessages } from "../lib/agent/run-state"
-import { openRecoveryToken, sealRecoveryToken } from "../lib/agent/recovery-token"
 import { createWorkspaceSnapshot, restoreWorkspaceSnapshot } from "../lib/agent/snapshot"
 import { detectProjectCommands } from "../lib/agent/project-detect"
-
-test("recovery tokens are encrypted, authenticated, and expire", { concurrency: false }, t => {
-  const previous = process.env.AGENT_CREDENTIAL_KEY
-  process.env.AGENT_CREDENTIAL_KEY = "test-key-that-is-long-enough-for-agent-recovery"
-  t.after(() => { process.env.AGENT_CREDENTIAL_KEY = previous })
-
-  const token = sealRecoveryToken({ taskId: "task-1", cookie: "secret-cookie", expiresAt: Date.now() + 60_000 })
-  assert.ok(token)
-  assert.doesNotMatch(token, /secret-cookie/)
-  assert.deepEqual(openRecoveryToken(token!), {
-    taskId: "task-1",
-    cookie: "secret-cookie",
-    expiresAt: openRecoveryToken(token!)?.expiresAt,
-  })
-  const parts = token!.split(".")
-  parts[3] = `${parts[3][0] === "a" ? "b" : "a"}${parts[3].slice(1)}`
-  assert.equal(openRecoveryToken(parts.join(".")), null)
-
-  const expired = sealRecoveryToken({ taskId: "task-1", cookie: "secret-cookie", expiresAt: Date.now() - 1 })
-  assert.equal(openRecoveryToken(expired!), null)
-})
+import type { SupabaseClient } from "@supabase/supabase-js"
 
 test("run checkpoints keep recent context and redact secrets", () => {
   const messages = Array.from({ length: 60 }, (_, index) => ({
@@ -46,29 +25,27 @@ test("workspace checkpoint restores tracked and new files after local loss", asy
   const userId = "test-user"
   const root = workspaceRoot(taskId, userId)
   const snapshotRoot = `/tmp/mychat-agent-snapshots/${userId}/${taskId}`
-  let taskMeta: Record<string, any> = {}
+  let taskMeta: Record<string, unknown> = {}
   t.after(() => rmSync(root, { recursive: true, force: true }))
   t.after(() => rmSync(snapshotRoot, { recursive: true, force: true }))
 
   class Query {
-    constructor(private operation: "select" | "update") {}
     select() { return this }
-    update(value: any) { taskMeta = value.meta; return new Query("update") }
     eq() { return this }
-    single() { return this }
-    then(resolve: (value: any) => unknown, reject?: (reason: unknown) => unknown) {
-      const value = this.operation === "select" ? { data: { meta: taskMeta }, error: null } : { data: null, error: null }
-      return Promise.resolve(value).then(resolve, reject)
-    }
+    single() { return Promise.resolve({ data: { meta: taskMeta }, error: null }) }
   }
   const supabase = {
+    rpc(name: string, input: { patch?: Record<string, unknown> }) {
+      assert.equal(name, "merge_agent_task_meta")
+      taskMeta = { ...taskMeta, ...input.patch }
+      return Promise.resolve({ data: taskMeta, error: null })
+    },
     from() {
       return {
-        select() { return new Query("select") },
-        update(value: any) { taskMeta = value.meta; return new Query("update") },
+        select() { return new Query() },
       }
     },
-  } as any
+  } as unknown as SupabaseClient
 
   mkdirSync(root, { recursive: true })
   execFileSync("git", ["init", "-q"], { cwd: root })

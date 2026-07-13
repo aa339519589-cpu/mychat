@@ -1,12 +1,16 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import {
+  controlledGeneratedMediaUrl,
+  generatedMediaObjectKey,
   hasInlineGeneratedMedia,
   isPrivateNetworkGeneratedMediaUrl,
   isSafeGeneratedMediaUrl,
   normalizeGeneratedMedia,
   normalizeGeneratedMediaList,
 } from "../lib/generated-media"
+
+const objectKey = '00000000-0000-4000-8000-000000000001/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001/asset.png'
 
 test("generated media accepts supported image and video sources", () => {
   assert.equal(isSafeGeneratedMediaUrl("image", "https://cdn.example/image.png"), true)
@@ -23,6 +27,22 @@ test("generated media rejects executable and unsupported data URLs", () => {
   assert.equal(normalizeGeneratedMedia({ type: "image", url: "javascript:alert(1)" }), null)
   assert.equal(normalizeGeneratedMedia({ type: "image", url: "data:image/svg+xml;base64,PHN2Zz4=" }), null)
   assert.equal(normalizeGeneratedMedia({ type: "video", url: "data:text/html;base64,PGgxPkJhZDwvaDE+" }), null)
+})
+
+test('legacy Storage references normalize to the authenticated same-origin proxy', () => {
+  const controlled = controlledGeneratedMediaUrl(objectKey)
+  const legacy = `https://project.supabase.co/storage/v1/object/public/generated-media/${objectKey}`
+  assert.equal(generatedMediaObjectKey(controlled), objectKey)
+  assert.equal(generatedMediaObjectKey(legacy), objectKey)
+  assert.equal(isSafeGeneratedMediaUrl('image', controlled), true)
+  assert.deepEqual(normalizeGeneratedMedia({ type: 'image', url: legacy }), {
+    type: 'image',
+    url: controlled,
+  })
+  assert.equal(generatedMediaObjectKey(`${controlled}?token=leak`), null)
+  assert.equal(generatedMediaObjectKey('/api/v1/media/../../secret/content'), null)
+  assert.equal(controlledGeneratedMediaUrl(objectKey, 'https://chat.example/base'),
+    `https://chat.example${controlled}`)
 })
 
 test("generated media blocks browser requests to local and private networks", () => {

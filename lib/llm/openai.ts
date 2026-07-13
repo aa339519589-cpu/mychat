@@ -1,6 +1,6 @@
 // OpenAI / DeepSeek / Gemini 兼容协议：消息转换、附件注入。
 // 单轮请求（runTurn）已拆到 turn.ts，多轮循环拆到 agent-loop.ts。
-import type { RawMsg, Attachment } from './types'
+import type { RawMsg, Attachment, ModelMessage, ModelContentPart } from './types'
 import { buildModelContext } from './context'
 import { getModelCapability } from './models'
 
@@ -27,7 +27,7 @@ export function chatCompletionsUrl(baseUrl: string) {
 }
 
 // 注入附件：附件最终都已是纯文字（文本文件 / 有文字层的 PDF / 扫描件经小米 Omni OCR），直接拼进末条用户消息
-export async function injectAttachmentsOpenAI(msgs: any[], attachments?: Attachment[]) {
+export async function injectAttachmentsOpenAI(msgs: ModelMessage[], attachments?: Attachment[]) {
   if (!attachments?.length) return
   const last = msgs[msgs.length - 1]
   if (!last || last.role !== 'user') return
@@ -42,6 +42,7 @@ export async function injectAttachmentsOpenAI(msgs: any[], attachments?: Attachm
   if (typeof last.content === 'string') {
     last.content = `${last.content}\n\n${textBlock}`.trim()
   } else if (Array.isArray(last.content)) {
-    last.content.push({ type: 'text', text: textBlock })
+    const content = last.content as ModelContentPart[]
+    content.push({ type: 'text', text: textBlock })
   }
 }

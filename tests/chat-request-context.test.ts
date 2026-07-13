@@ -57,7 +57,9 @@ test('deep research prefix is added to the latest user model message', () => {
   ]
   prependDeepResearchInstruction(messages)
   assert.equal(messages[0].content, 'older')
-  assert.equal((messages[2].content as any[])[0].text, DEEP_RESEARCH_PREFIX + 'current')
+  const latestContent = messages[2].content
+  assert.ok(Array.isArray(latestContent))
+  assert.equal(latestContent[0]?.text, DEEP_RESEARCH_PREFIX + 'current')
 })
 
 test('scanned attachment detection is independent from OCR transport', () => {
@@ -75,4 +77,3 @@ test('scanned attachment detection is independent from OCR transport', () => {
     pageImages: ['data:image/png;base64,AAAA'],
   }]), true)
 })
-

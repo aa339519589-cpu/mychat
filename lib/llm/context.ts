@@ -1,5 +1,6 @@
 import type { ModelCapability } from './models'
 import type { RawMsg } from './types'
+import { isRecord } from '@/lib/unknown-value'
 
 type ContentPart =
   | { type: 'text'; text: string }
@@ -28,8 +29,8 @@ export function imageRefsFromMessage(message: RawMsg): string[] {
   const direct = Array.isArray(message.images) ? message.images : []
   const embedded = Array.isArray(message.content)
     ? message.content
-      .filter((part: any) => part?.type === 'image_url' && typeof part.image_url?.url === 'string')
-      .map((part: any) => part.image_url.url as string)
+      .filter(part => isRecord(part) && part.type === 'image_url' && isRecord(part.image_url) && typeof part.image_url.url === 'string')
+      .map(part => (part as { image_url: { url: string } }).image_url.url)
     : []
   return [...new Set([...direct, ...embedded].filter(url => typeof url === 'string' && /^(data:image\/|https?:\/\/)/.test(url)))]
 }

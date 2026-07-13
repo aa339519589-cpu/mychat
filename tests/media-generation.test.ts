@@ -12,6 +12,7 @@ import {
   type ModelEndpointFetcher,
 } from "../lib/llm/media-generation"
 import { isLikelyChatModel, modelOutputKind } from "../lib/model-endpoints"
+import { isRecord } from "../lib/unknown-value"
 
 test("classifies common image and video model IDs without misclassifying unknown chat models", () => {
   for (const id of ["image-model", "dall-e-3", "gpt-image-1", "flux.1-dev", "stable-diffusion-xl", "org/sdxl-turbo"]) {
@@ -29,11 +30,11 @@ test("classifies common image and video model IDs without misclassifying unknown
 
 test("generates an image from b64_json with the OpenAI-compatible request shape", async () => {
   let requestedUrl = ""
-  let requestedBody: any
+  let requestedBody: Record<string, unknown> = {}
   let authorization = ""
   const fetcher: ModelEndpointFetcher = async (input, init) => {
     requestedUrl = input.toString()
-    requestedBody = JSON.parse(String(init?.body))
+    requestedBody = JSON.parse(String(init?.body)) as Record<string, unknown>
     authorization = new Headers(init?.headers).get("authorization") ?? ""
     return Response.json({ data: [{ b64_json: "aGVsbG8=" }] })
   }
@@ -312,7 +313,7 @@ test("default media URL fetching applies the private-network policy", { concurre
 })
 
 test("creates, polls, and downloads an OpenAI-compatible video job", async () => {
-  const requests: Array<{ url: string; method: string; body?: any; apiKey: string }> = []
+  const requests: Array<{ url: string; method: string; body?: unknown; apiKey: string }> = []
   let polls = 0
   const fetcher: ModelEndpointFetcher = async (input, init) => {
     const url = input.toString()
@@ -508,10 +509,10 @@ test("enforces response and media limits and redacts exact endpoint credentials"
 
 test("image edit uses /images/edits when sourceImage is provided", async () => {
   let requestedUrl = ""
-  let requestedBody: any
+  let requestedBody: Record<string, unknown> = {}
   const fetcher: ModelEndpointFetcher = async (input, init) => {
     requestedUrl = input.toString()
-    requestedBody = JSON.parse(String(init?.body))
+    requestedBody = JSON.parse(String(init?.body)) as Record<string, unknown>
     return Response.json({ data: [{ b64_json: "aGVsbG8=" }] })
   }
 
@@ -538,12 +539,12 @@ test("image edit uses /images/edits when sourceImage is provided", async () => {
 })
 
 test("image-to-video includes image field on /videos/generations", async () => {
-  let requestedBody: any
+  let requestedBody: Record<string, unknown> = {}
   let polls = 0
   const fetcher: ModelEndpointFetcher = async (_input, init) => {
     const method = init?.method ?? "GET"
     if (method === "POST") {
-      requestedBody = JSON.parse(String(init?.body))
+      requestedBody = JSON.parse(String(init?.body)) as Record<string, unknown>
       return Response.json({ request_id: "vid_ref_1" })
     }
     polls++
@@ -583,7 +584,7 @@ test("image-to-video includes image field on /videos/generations", async () => {
 })
 
 test("image-only reference uses default edit prompt", async () => {
-  let requestedBody: any
+  let requestedBody: Record<string, unknown> = {}
   const media = await generateOpenAICompatibleImage({
     baseUrl: "https://media.example/v1",
     apiKey: "k",
@@ -594,11 +595,13 @@ test("image-only reference uses default edit prompt", async () => {
     prompt: "",
     sourceImage: "data:image/png;base64,aGVsbG8=",
     fetcher: async (_input, init) => {
-      requestedBody = JSON.parse(String(init?.body))
+      requestedBody = JSON.parse(String(init?.body)) as Record<string, unknown>
       return Response.json({ data: [{ b64_json: "aGVsbG8=" }] })
     },
   })
+  assert.ok(typeof requestedBody.prompt === "string")
   assert.ok(requestedBody.prompt.length > 0)
+  assert.ok(isRecord(requestedBody.image))
   assert.equal(requestedBody.image.type, "image_url")
   assert.equal(media.type, "image")
 })

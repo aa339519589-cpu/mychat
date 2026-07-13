@@ -22,10 +22,6 @@ export const MODEL_SHEET_TIERS: Tier[] = ["鸿篇", "正构", "绝句", "绘影"
 
 export const CODE_TIERS = TIERS.filter(t => t.id !== "观照" && t.id !== "绘影" && t.id !== "录像")
 
-export function isPlatformMediaTier(tier: string | undefined | null): tier is "绘影" | "录像" {
-  return tier === "绘影" || tier === "录像"
-}
-
 export const TIER_MAP: Record<Tier, TierConfig> = Object.fromEntries(TIERS.map(t => [t.id, t])) as Record<Tier, TierConfig>
 
 export type MessageGenerationTerminal = {

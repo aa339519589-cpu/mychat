@@ -1,29 +1,50 @@
-import { readJson, requestErrorResponse } from '@/lib/api/request'
+import { type NextRequest } from 'next/server'
+import { apiErrorResponseV1 } from '@/lib/api/errors'
+import { enforceRequestRateLimit, resolveAuth } from '@/lib/api/guard'
+import { readJson, requestErrorResponse, requestId } from '@/lib/api/request'
 import { applyCodeChanges } from '@/lib/code-agent/apply'
 import { parseCodeApplyRequest } from '@/lib/code-agent/apply-request'
-import { getGitHubSession } from '@/lib/github-session'
+import { getCurrentGitHubConnectionStatus } from '@/lib/github-session'
 
-// Transport adapter only: authenticate, bound/read JSON, validate, then delegate.
-export async function POST(req: Request) {
-  let raw: unknown
-  try {
-    raw = await readJson(req, { maxBytes: 2 * 1024 * 1024 })
-  } catch (error) {
-    return requestErrorResponse(error)
-  }
+/** DB-only transport: authenticate, strictly validate and atomically enqueue. */
+export async function POST(request: NextRequest) {
+  const auth = await resolveAuth()
+  const rate = await enforceRequestRateLimit(auth, request)
+  if (rate.response) return rate.response
+  if (!auth.supabase || !auth.userId) return apiErrorResponseV1(request, {
+    status: auth.authUnavailable ? 503 : 401,
+    code: auth.authUnavailable ? 'AUTH_DEPENDENCY_UNAVAILABLE' : 'AUTH_REQUIRED',
+    message: auth.authUnavailable ? '认证服务暂时不可用' : '请先登录',
+    retryable: auth.authUnavailable === true,
+  })
 
   let input
   try {
-    input = parseCodeApplyRequest(raw)
+    input = parseCodeApplyRequest(await readJson(request, { maxBytes: 900_000 }))
   } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : '请求参数无效' }, { status: 400 })
+    return requestErrorResponse(error)
   }
-
-  const githubSession = await getGitHubSession()
-  if (!githubSession) {
-    return Response.json({ error: '未连接 GitHub 或账号会话已变化' }, { status: 401 })
+  try {
+    const connection = await getCurrentGitHubConnectionStatus({
+      purpose: 'agent.operation.enqueue', requestId: requestId(request),
+    })
+    if (!connection) return apiErrorResponseV1(request, {
+      status: 401, code: 'AUTH_REQUIRED',
+      message: '未连接 GitHub 或账号会话已变化', retryable: false,
+    })
+    const outcome = await applyCodeChanges({
+      request: input,
+      client: auth.supabase,
+      userId: auth.userId,
+      authClass: auth.isAnonymous ? 'anonymous' : 'registered',
+    })
+    return Response.json(outcome.body, { status: outcome.status, headers: outcome.headers })
+  } catch (error) {
+    return apiErrorResponseV1(request, {
+      status: 503,
+      code: 'DEPENDENCY_UNAVAILABLE',
+      message: error instanceof Error ? error.message : '发布控制面暂时不可用',
+      retryable: true,
+    })
   }
-
-  const outcome = await applyCodeChanges(input, githubSession.token)
-  return Response.json(outcome.body, { status: outcome.status })
 }

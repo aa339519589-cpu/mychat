@@ -1,6 +1,7 @@
 // 联网搜索工具：调用 Tavily 查最新信息
 import type { ToolDef, ToolOutcome } from './types'
 import { buildSearchQueries, searchSourceBudget } from '@/lib/search-mode'
+import { isRecord } from '@/lib/unknown-value'
 
 type SearchHit = { title: string; url: string; content?: string }
 
@@ -17,12 +18,15 @@ async function tavilySearchOnce(query: string, maxResults: number, searchDepth: 
     })
     if (!res.ok) return { answer: '', results: [] }
     const data = await res.json()
-    const results = (data.results ?? []).map((r: any) => ({
-      title: r.title ?? '',
-      url: r.url ?? '',
-      content: String(r.content ?? ''),
-    }))
-    return { answer: String(data.answer ?? ''), results }
+    const payload = isRecord(data) ? data : {}
+    const results = (Array.isArray(payload.results) ? payload.results : [])
+      .filter(isRecord)
+      .map(result => ({
+        title: typeof result.title === 'string' ? result.title : '',
+        url: typeof result.url === 'string' ? result.url : '',
+        content: String(result.content ?? ''),
+      }))
+    return { answer: String(payload.answer ?? ''), results }
   } catch (error) {
     if (parentSignal?.aborted) throw error
     return { answer: '', results: [] }
@@ -94,8 +98,10 @@ export const webSearchTool: ToolDef = {
   schema: { type: 'object', properties: { query: { type: 'string', description: '搜索关键词' } }, required: ['query'] },
   enabled: f => f.searchMode !== 'off',
   execute: async (input, ctx): Promise<ToolOutcome> => {
+    const params = isRecord(input) ? input : {}
+    const query = typeof params.query === 'string' ? params.query : ''
     const mode = ctx.searchMode === 'deep' ? 'deep' : 'web'
-    const { text, results } = await tavilySearch(input?.query, mode, ctx.latestBeijingDate ?? null, ctx.signal)
-    return { result: text, event: { search: { query: String(input?.query ?? ''), results } } }
+    const { text, results } = await tavilySearch(query, mode, ctx.latestBeijingDate ?? null, ctx.signal)
+    return { result: text, event: { search: { query, results } } }
   },
 }

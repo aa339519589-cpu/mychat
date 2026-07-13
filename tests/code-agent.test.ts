@@ -6,6 +6,7 @@ import { inferPublishPendingFromMessages, isFalseCodePause, isStaleRunningCodeTa
 import { enablePages, mergePullRequest } from '../lib/github'
 import { getWorkspaceDiff, searchWorkspaceFiles, workspaceRoot } from '../lib/agent/workspace'
 import { runTurn } from '../lib/llm/turn'
+import type { ChatEvent } from '../lib/llm/events'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 
@@ -104,7 +105,7 @@ test('runTurn suppresses code self-talk while preserving tool calls', { concurre
     }],
   })
 
-  const events: any[] = []
+  const events: ChatEvent[] = []
   const turn = await runTurn('https://example.com', 'key', 'model', [], [], event => { events.push(event) }, {
     deferTextUntilTurnEnd: true,
     contentPolicy: codeTurnContentPolicy,
@@ -134,7 +135,7 @@ test('runTurn suppresses generic preamble before tool calls', { concurrency: fal
     }],
   })
 
-  const events: any[] = []
+  const events: ChatEvent[] = []
   const turn = await runTurn('https://example.com', 'key', 'model', [], [], event => { events.push(event) }, {
     deferTextUntilTurnEnd: true,
     contentPolicy: codeTurnContentPolicy,

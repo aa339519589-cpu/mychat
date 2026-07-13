@@ -6,9 +6,14 @@
 import { runTurn, type RunTurnOptions, type TurnResult } from './turn'
 import type { Emit } from './events'
 import type { ProviderAdapterId } from './provider-adapters'
+import type { ModelMessage, ModelToolDefinition } from './types'
 
 // 执行单个工具，返回回灌给模型的文字；工具自身需要的前端事件由实现内部 emit。
-export type ExecuteTool = (name: string, input: any) => Promise<string>
+export type ExecuteTool = (
+  name: string,
+  input: unknown,
+  execution?: { toolCallId: string },
+) => Promise<string>
 
 type TurnPhase = 'round' | 'leaked-retry' | 'final-text' | 'continue'
 
@@ -19,8 +24,8 @@ export type AgentLoopOpts = {
   adapter?: ProviderAdapterId
   thinking: boolean
   reasoningEffort?: import('./provider-adapters').ReasoningEffort | null
-  messages: any[]            // 原地追加 assistant / tool 消息
-  tools: any[]               // provider 格式的工具数组（空数组 = 不带工具）
+  messages: ModelMessage[]   // 原地追加 assistant / tool 消息
+  tools: ModelToolDefinition[] // provider 格式的工具数组（空数组 = 不带工具）
   emit: Emit
   executeTool: ExecuteTool
   maxRounds?: number
@@ -35,7 +40,7 @@ export type AgentLoopOpts = {
   // 诊断日志钩子（循环本身不做日志，交给调用方）
   onTurn?: (info: { phase: TurnPhase; round?: number; turn: TurnResult }) => void
   // Code Agent 用它把最新模型轨迹持久化，进程重启后可从工具结果之后继续。
-  onCheckpoint?: (messages: any[]) => void | Promise<void>
+  onCheckpoint?: (messages: ModelMessage[]) => void | Promise<void>
   // 每次收到 usage 都上报累计值；即使后续工具或网络异常，调用方也能正确记账。
   onUsage?: (totalTokens: number) => void
   turnOptions?: Omit<RunTurnOptions, 'thinking' | 'adapter'>
@@ -136,16 +141,20 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
     }
 
     idleCount = 0
-    msgs.push(turn.assistantMessage)
+    if (turn.assistantMessage) msgs.push(turn.assistantMessage)
+    // Persist the provider-issued tool_call ids before any side effect starts.
+    // A replacement worker can then reuse the effect receipt instead of
+    // guessing whether a previous invocation ran.
+    await onCheckpoint?.(msgs)
     for (const tc of turn.toolCalls) {
-      let input: any
+      let input: unknown
       try {
         input = JSON.parse(tc.args || '{}')
       } catch {
         msgs.push({ role: 'tool', tool_call_id: tc.id, content: '工具参数不是有效 JSON，未执行。请修正参数后重新调用。' })
         continue
       }
-      const result = await executeTool(tc.name, input)
+      const result = await executeTool(tc.name, input, { toolCallId: tc.id })
       msgs.push({ role: 'tool', tool_call_id: tc.id, content: result })
     }
     await onCheckpoint?.(msgs)

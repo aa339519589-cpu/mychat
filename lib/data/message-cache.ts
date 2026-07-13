@@ -1,6 +1,7 @@
 import type { Message } from "@/lib/chat-data"
 import { hasInlineGeneratedMedia, normalizeGeneratedMediaList } from "@/lib/generated-media"
 import { generationTerminalWarning, normalizeMessageGeneration } from "@/lib/generation-message"
+import { isRecord } from "@/lib/unknown-value"
 
 // ───────────── 本地消息缓存 ─────────────
 // 目的：切换会话时有缓存就立刻返回，后台再刷新；不能让 UI 等 Supabase 慢查询。
@@ -36,8 +37,8 @@ function cacheKey(conversationId: string) {
   return `${MESSAGE_CACHE_PREFIX}${conversationId}`
 }
 
-function normalizeCachedMessage(value: any): Message | null {
-  if (!value || typeof value.id !== "string") return null
+function normalizeCachedMessage(value: unknown): Message | null {
+  if (!isRecord(value) || typeof value.id !== "string") return null
   if (value.role !== "user" && value.role !== "assistant") return null
   if (typeof value.content !== "string") return null
   const media = normalizeGeneratedMediaList(value.media)
@@ -168,20 +169,21 @@ function readLocalCachedSnapshot(conversationId: string): CachedMessageSnapshot 
   try {
     const raw = window.localStorage.getItem(cacheKey(conversationId))
     if (!raw) return emptySnapshot()
-    const parsed = JSON.parse(raw)
-    const messages = normalizeCachedMessages(Array.isArray(parsed) ? parsed : parsed?.messages)
+    const parsed: unknown = JSON.parse(raw)
+    const record = isRecord(parsed) ? parsed : null
+    const messages = normalizeCachedMessages(Array.isArray(parsed) ? parsed : record?.messages)
     if (messages.some(message => hasInlineGeneratedMedia(message.media))) {
       window.localStorage.removeItem(cacheKey(conversationId))
       return emptySnapshot()
     }
     return {
       messages,
-      ts: Number.isSafeInteger(parsed?.ts) && parsed.ts >= 0 ? parsed.ts : 0,
-      commitId: typeof parsed?.commitId === "string" ? parsed.commitId : undefined,
-      totalCount: Number.isSafeInteger(parsed?.totalCount) && parsed.totalCount >= messages.length
-        ? parsed.totalCount
+      ts: typeof record?.ts === "number" && Number.isSafeInteger(record.ts) && record.ts >= 0 ? record.ts : 0,
+      commitId: typeof record?.commitId === "string" ? record.commitId : undefined,
+      totalCount: typeof record?.totalCount === "number" && Number.isSafeInteger(record.totalCount) && record.totalCount >= messages.length
+        ? record.totalCount
         : undefined,
-      truncated: typeof parsed?.truncated === "boolean" ? parsed.truncated : undefined,
+      truncated: typeof record?.truncated === "boolean" ? record.truncated : undefined,
     }
   } catch {
     return emptySnapshot()
@@ -275,7 +277,7 @@ async function writeIndexedCachedMessages(
           totalCount: commit.totalCount,
           truncated: false,
           messages: mergeCachedMessages(
-            normalizeCachedMessages((existing as any)?.messages),
+            normalizeCachedMessages(isRecord(existing) ? existing.messages : undefined),
             normalizeCachedMessages(messages),
           ).slice(-MESSAGE_CACHE_LIMIT),
         })

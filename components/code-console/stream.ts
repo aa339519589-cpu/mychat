@@ -24,31 +24,6 @@ export function initialCodeStreamState(taskId: string | null): CodeStreamState {
   }
 }
 
-/** Parse complete SSE frames while retaining the final partial frame. */
-export function parseCodeSseChunk(buffer: string, chunk: string): {
-  remainder: string
-  events: CodeStreamEvent[]
-} {
-  const frames = `${buffer}${chunk}`.split("\n\n")
-  const remainder = frames.pop() ?? ""
-  const events: CodeStreamEvent[] = []
-  for (const frame of frames) {
-    const line = frame.trim()
-    if (line === "data: [DONE]") {
-      events.push({ done: true })
-      continue
-    }
-    if (!line.startsWith("data: ")) continue
-    try {
-      const data = JSON.parse(line.slice(6))
-      if (data && typeof data === "object" && !Array.isArray(data)) events.push({ data })
-    } catch {
-      // A malformed optional frame must not poison the remaining stream.
-    }
-  }
-  return { remainder, events }
-}
-
 /** Apply the backend event precedence used by the Code console. */
 export function reduceCodeStreamEvent(state: CodeStreamState, event: CodeStreamEvent): CodeStreamState {
   if ("done" in event) return { ...state, streamDone: true }
@@ -81,4 +56,3 @@ export function reduceCodeStreamEvent(state: CodeStreamState, event: CodeStreamE
   }
   return state
 }
-

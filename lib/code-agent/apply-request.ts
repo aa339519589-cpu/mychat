@@ -1,4 +1,5 @@
 import type { PlanAction } from '@/lib/code-data'
+import type { AgentConfirmationCredential } from '@/lib/agent/confirmation-plan'
 
 export type CodeApplyRequest = {
   repo: string | null
@@ -6,6 +7,7 @@ export type CodeApplyRequest = {
   message: string
   taskId?: string
   mode?: 'workspace_pr' | 'direct_push'
+  confirmation?: AgentConfirmationCredential
 }
 
 const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
@@ -52,10 +54,11 @@ function parseAction(value: unknown, index: number): PlanAction {
   }
   switch (value.kind) {
     case 'create_repo': {
-      if (typeof value.name !== 'string' || !value.name.trim()) {
+      if (typeof value.name !== 'string' || !value.name.trim() || value.name.length > 100) {
         throw new Error(`actions[${index}].name 无效`)
       }
       const description = optionalString(value.description, `actions[${index}].description`)
+      if (description && description.length > 350) throw new Error(`actions[${index}].description 过长`)
       if (value.private !== undefined && typeof value.private !== 'boolean') {
         throw new Error(`actions[${index}].private 无效`)
       }
@@ -64,6 +67,9 @@ function parseAction(value: unknown, index: number): PlanAction {
     case 'write_file':
       if (typeof value.path !== 'string' || !isSafeRepositoryPath(value.path) || typeof value.newContent !== 'string') {
         throw new Error(`actions[${index}] 文件内容无效`)
+      }
+      if (Buffer.byteLength(value.newContent, 'utf8') > 700_000) {
+        throw new Error(`actions[${index}].newContent 过大`)
       }
       if (value.oldContent !== undefined && typeof value.oldContent !== 'string') {
         throw new Error(`actions[${index}].oldContent 无效`)
@@ -105,11 +111,28 @@ export function parseCodeApplyRequest(input: unknown): CodeApplyRequest {
   if (!Array.isArray(rawActions)) throw new Error('actions 格式无效')
   if (rawActions.length > 100) throw new Error('actions 数量过多')
 
+  let confirmation: AgentConfirmationCredential | undefined
+  if (input.confirmationId !== undefined || input.confirmationToken !== undefined) {
+    if (typeof input.confirmationId !== 'string' || !UUID_PATTERN.test(input.confirmationId)
+        || typeof input.confirmationToken !== 'string'
+        || !/^[A-Za-z0-9_-]{43}$/.test(input.confirmationToken)) {
+      throw new Error('confirmationId/confirmationToken 必须同时提供且格式有效')
+    }
+    confirmation = {
+      confirmationId: input.confirmationId,
+      confirmationToken: input.confirmationToken,
+    }
+  }
+
+  const actions = rawActions.map(parseAction)
+  if (!taskId) throw new Error('taskId 必须由客户端预分配，以保证新项目请求幂等')
+
   return {
     repo: repo as string | null,
-    actions: rawActions.map(parseAction),
+    actions,
     message,
     taskId,
     mode: mode as CodeApplyRequest['mode'],
+    ...(confirmation ? { confirmation } : {}),
   }
 }

@@ -9,7 +9,10 @@ import { workspacePath } from "./workspace"
 import { checkCommand, sanitizeCommandOutput } from "./command-security"
 import { safeResolve } from "./path-security"
 import { createRecorder } from "./recorder"
-import { isolatedShellConfigured, runInIsolatedWorkspace } from "./isolated-shell"
+import { runInIsolatedWorkspace } from "./isolated-shell"
+import { agentExecutionBackend } from "./execution-policy"
+
+export { localWorkspaceExecutionAllowed } from "./execution-policy"
 
 const DEFAULT_TIMEOUT = 60_000       // 默认 60 秒
 const MAX_TIMEOUT = 300_000          // 最多 5 分钟
@@ -45,11 +48,6 @@ export function workspaceProcessEnv(): NodeJS.ProcessEnv {
   }
 }
 
-export function localWorkspaceExecutionAllowed(): boolean {
-  return process.env.NODE_ENV !== "production"
-    && process.env.ALLOW_UNSAFE_LOCAL_AGENT_EXECUTION === "true"
-}
-
 // ── 执行命令 ──
 
 export async function runInWorkspace(
@@ -75,23 +73,23 @@ export async function runInWorkspace(
     cwd = resolved
   }
 
-  const isolated = isolatedShellConfigured()
-  if (!isolated && !localWorkspaceExecutionAllowed()) {
+  const backend = agentExecutionBackend()
+  if (backend === "disabled") {
     return blockedOut("本机命令执行已关闭；请配置 E2B_API_KEY 使用隔离沙箱")
   }
-  if (!isolated) {
-    const verdict = checkCommand(command)
-    if (!verdict.allowed) return blockedOut(verdict.reason)
-  }
+  const verdict = checkCommand(command)
+  if (!verdict.allowed) return blockedOut(verdict.reason)
 
   // ③ recorder
   const recorder = createRecorder({ supabase, userId, taskId })
 
   await recorder.step("tool_call", `执行: ${command.slice(0, 80)}`)
 
-  const safeInput = { command, cwd: opts.cwd ?? ".", backend: isolated ? "isolated" : "local" }
+  const safeInput = { command, cwd: opts.cwd ?? ".", backend }
 
-  const result = isolated
+  // Selecting the backend once is intentional: an E2B error is returned as an
+  // isolated failure and can never cause the command to be retried on the host.
+  const result = backend === "isolated"
     ? await runInIsolatedWorkspace(supabase, userId, taskId, command, opts)
     : await execCommand(
         command,

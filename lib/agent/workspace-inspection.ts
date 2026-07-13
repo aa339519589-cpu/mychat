@@ -5,6 +5,7 @@ import { join, relative } from "path"
 import { fileTooBig, isBinaryFile, redactSensitive, validatePath } from "./path-security"
 import { workspaceRoot } from "./workspace-paths"
 import type { WorkspaceResult } from "./workspace-types"
+import { errorMessage } from '@/lib/unknown-value'
 
 // ───────────── 列出 workspace 文件 ─────────────
 
@@ -24,8 +25,8 @@ export function listWorkspaceFiles(
   const files: string[] = []
   try {
     walk(base, root, files, maxFiles)
-  } catch (err: any) {
-    return { ok: false, error: `列出文件失败：${err?.message}` }
+  } catch (error) {
+    return { ok: false, error: `列出文件失败：${errorMessage(error)}` }
   }
 
   return {
@@ -221,4 +222,3 @@ export function getChangedFiles(taskId: string, userId: string): WorkspaceResult
     return { ok: true, data: { files: [], summary: { added: 0, modified: 0, deleted: 0 } } }
   }
 }
-

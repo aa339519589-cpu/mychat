@@ -2,6 +2,7 @@
 // 关键解耦：不认识 SSE controller，只通过注入的 emit 往外推事件 —— 因此可被任意调用方
 // （流式 route、单测、非流式场景）复用，也能用 spy 验证。
 import { upstreamError } from './stream'
+import { createHash } from 'node:crypto'
 import { makeContentFilter, parseDsmlToolCalls, hasIncompleteDsmlToolCall } from './sanitize'
 import type { Emit } from './events'
 import { buildProviderRequest, type ProviderAdapterId, type ReasoningEffort } from './provider-adapters'
@@ -13,11 +14,12 @@ import {
   GenericResponseLimitError,
   MAX_GENERIC_ACCUMULATED_TEXT_CHARS,
   MAX_GENERIC_ERROR_RESPONSE_BYTES,
-  MAX_GENERIC_SUCCESS_RESPONSE_BYTES,
-  declaredResponseBytes,
   mediaFromContentPart,
   readLimitedResponseText,
 } from './turn-response'
+import { CallerOutputLimitReached, consumeTurnResponse } from './turn-stream'
+import { isRecord } from '@/lib/unknown-value'
+import type { ModelMessage, ModelToolCall, ModelToolDefinition } from './types'
 
 type ToolCall = { id: string; name: string; args: string }
 
@@ -27,7 +29,7 @@ export type TurnContentPolicy = (input: {
 }) => string
 
 export type TurnResult = {
-  assistantMessage: any
+  assistantMessage: ModelMessage | null
   toolCalls: ToolCall[]
   failed: boolean
   totalTokens: number
@@ -59,20 +61,15 @@ export type RunTurnOptions = {
   logTiming?: boolean
   /** Sends a provider completion cap and bounds locally accepted visible text. */
   maxOutputTokens?: number
-}
-
-class CallerOutputLimitReached extends Error {
-  constructor() {
-    super('Caller output limit reached')
-    this.name = 'CallerOutputLimitReached'
-  }
+  /** Stable per-job namespace; identical provider bodies reuse one key on retry. */
+  idempotencyNamespace?: string
 }
 
 // 单轮请求：兼容流式 SSE 与一次性 JSON 两种返回；累积文本、思考链与工具调用。
 // emit 用于流式把 thinking/text/error 实时推给前端。
 export async function runTurn(
   url: string, apiKey: string, model: string,
-  messages: any[], tools: any[], emit: Emit,
+  messages: ModelMessage[], tools: ModelToolDefinition[], emit: Emit,
   opts?: RunTurnOptions,
 ): Promise<TurnResult> {
   const generic = opts?.adapter === 'generic-openai'
@@ -90,6 +87,11 @@ export async function runTurn(
   const signals = [opts?.signal, AbortSignal.timeout(opts?.timeoutMs ?? 120_000)].filter(Boolean) as AbortSignal[]
   const signal = signals.length === 1 ? signals[0] : AbortSignal.any(signals)
   const fetcher = opts?.fetcher ?? (generic ? safeModelEndpointFetch : fetch)
+  const idempotencyKey = opts?.idempotencyNamespace
+    ? createHash('sha256')
+      .update(`${opts.idempotencyNamespace}\n${JSON.stringify(request.body)}`)
+      .digest('hex')
+    : null
   const timingEnabled = opts?.logTiming === true || process.env.DEBUG_LLM_TIMING === '1'
   const startedAt = Date.now()
   let firstEventAt: number | null = null
@@ -106,7 +108,10 @@ export async function runTurn(
 
   const res = await fetcher(url, {
     method: 'POST',
-    headers: request.headers,
+    headers: {
+      ...request.headers,
+      ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
+    },
     body: JSON.stringify(request.body),
     redirect: opts?.adapter === 'generic-openai' ? 'manual' : 'follow',
     signal,
@@ -188,23 +193,25 @@ export async function runTurn(
     }
     if (!value || typeof value !== 'object') return
     if (acceptMedia(value)) return
-    const part = value as Record<string, any>
+    const part = value as Record<string, unknown>
     if (typeof part.text === 'string') acceptText(part.text)
     else if (typeof part.output_text === 'string') acceptText(part.output_text)
     if (Array.isArray(part.content)) handleContent(part.content)
   }
 
-  function handle(obj: any) {
+  function handle(value: unknown) {
+    if (!isRecord(value)) return
+    const obj = value
     if (timingEnabled && firstEventAt === null) {
       firstEventAt = Date.now()
       console.info('[llm/timing] first upstream event', {
         model,
         ms: firstEventAt - startedAt,
-        type: obj?.type ?? (obj?.choices ? 'chat.completion.chunk' : typeof obj),
+        type: obj.type ?? (obj.choices ? 'chat.completion.chunk' : typeof obj),
       })
     }
     // Responses API style events (if reverse proxy forwards them)
-    if (typeof obj?.type === 'string') {
+    if (typeof obj.type === 'string') {
       const typ = obj.type as string
       if (
         typ === 'response.reasoning_text.delta'
@@ -223,16 +230,19 @@ export async function runTurn(
         return
       }
     }
-    if (obj?.usage?.total_tokens) totalTokens = obj.usage.total_tokens
-    const choice = obj?.choices?.[0]
+    const usage = isRecord(obj.usage) ? obj.usage : null
+    if (typeof usage?.total_tokens === 'number') totalTokens = usage.total_tokens
+    const choices = Array.isArray(obj.choices) ? obj.choices : []
+    const choice = isRecord(choices[0]) ? choices[0] : null
     if (!choice) {
-      if (Array.isArray(obj?.output)) {
+      if (Array.isArray(obj.output)) {
         for (const output of obj.output) handleContent(output)
       }
       return
     }
-    if (choice.finish_reason) finishReason = choice.finish_reason
-    const delta = choice.delta ?? choice.message ?? {}
+    if (typeof choice.finish_reason === 'string') finishReason = choice.finish_reason
+    const deltaValue = choice.delta ?? choice.message
+    const delta = isRecord(deltaValue) ? deltaValue : {}
     // Grok / OpenAI-compatible reasoning fields (content vs summary)
     const reasoning =
       delta.reasoning_content
@@ -240,7 +250,7 @@ export async function runTurn(
       ?? delta.reasoning_text
       ?? delta.reasoning_summary
       ?? delta.reasoning_summary_text
-      ?? (typeof delta.reasoning === 'object' && delta.reasoning
+      ?? (isRecord(delta.reasoning)
         ? (delta.reasoning.content ?? delta.reasoning.text ?? delta.reasoning.summary)
         : null)
     if (reasoning) {
@@ -256,89 +266,22 @@ export async function runTurn(
     if (delta.image_url) acceptMedia({ type: 'image_url', image_url: delta.image_url })
     if (delta.video_url) acceptMedia({ type: 'video_url', video_url: delta.video_url })
     if (Array.isArray(delta.tool_calls)) {
-      for (const [position, tc] of delta.tool_calls.entries()) {
-        const idx = tc.index ?? position
+      for (const [position, value] of delta.tool_calls.entries()) {
+        if (!isRecord(value)) continue
+        const tc = value
+        const idx = typeof tc.index === 'number' ? tc.index : position
         if (!callMap[idx]) callMap[idx] = { id: '', name: '', args: '' }
         if (tc.id) callMap[idx].id = boundedText(tc.id)
-        if (tc.function?.name) callMap[idx].name += boundedText(tc.function.name)
-        if (tc.function?.arguments) callMap[idx].args += boundedText(tc.function.arguments)
+        const fn = isRecord(tc.function) ? tc.function : null
+        if (fn?.name) callMap[idx].name += boundedText(fn.name)
+        if (fn?.arguments) callMap[idx].args += boundedText(fn.arguments)
       }
     }
   }
 
-  if (res.headers.get('content-type')?.includes('application/json')) {
-    try {
-      if (generic) {
-        handle(JSON.parse(await readLimitedResponseText(res, MAX_GENERIC_SUCCESS_RESPONSE_BYTES)))
-      } else {
-        handle(await res.json())
-      }
-    } catch (error) {
-      if (!(error instanceof CallerOutputLimitReached)) throw error
-      sawDone = true
-      finishReason = 'caller_limit'
-    }
-  } else {
-    const declared = declaredResponseBytes(res)
-    if (generic && declared !== null && declared > MAX_GENERIC_SUCCESS_RESPONSE_BYTES) {
-      await res.body.cancel().catch(() => undefined)
-      throw new GenericResponseLimitError()
-    }
-    const reader = res.body.getReader()
-    const dec = new TextDecoder()
-    let buf = ''
-    let responseBytes = 0
-    try {
-      while (true) {
-        const { done: d, value } = await reader.read()
-        if (d) break
-        if (generic) {
-          responseBytes += value.byteLength
-          if (responseBytes > MAX_GENERIC_SUCCESS_RESPONSE_BYTES) {
-            throw new GenericResponseLimitError()
-          }
-        }
-        buf += dec.decode(value, { stream: true })
-        const parts = buf.split(/\r?\n/)
-        buf = parts.pop() ?? ''
-        for (const part of parts) {
-          const line = part.trim()
-          if (!line) continue
-          if (line === 'data: [DONE]') { sawDone = true; continue }
-          const payload = line.startsWith('data:') ? line.slice(5).trim() : line
-          if (!payload) continue
-          try { handle(JSON.parse(payload)) } catch (error) {
-            if (error instanceof GenericResponseLimitError || error instanceof CallerOutputLimitReached) throw error
-          }
-        }
-      }
-      buf += dec.decode()
-      const finalLine = buf.trim()
-      if (finalLine && finalLine !== 'data: [DONE]') {
-        const payload = finalLine.startsWith('data:') ? finalLine.slice(5).trim() : finalLine
-        if (payload) {
-          try { handle(JSON.parse(payload)) } catch (error) {
-            if (error instanceof GenericResponseLimitError || error instanceof CallerOutputLimitReached) throw error
-          }
-        }
-      } else if (finalLine === 'data: [DONE]') {
-        sawDone = true
-      }
-    } catch (error) {
-      if (error instanceof CallerOutputLimitReached) {
-        await reader.cancel().catch(() => undefined)
-        sawDone = true
-        finishReason = 'caller_limit'
-      } else if (generic && error instanceof GenericResponseLimitError) {
-        await reader.cancel().catch(() => undefined)
-        throw error
-      } else {
-        throw error
-      }
-    } finally {
-      reader.releaseLock()
-    }
-  }
+  const consumed = await consumeTurnResponse(res, generic, handle)
+  sawDone = consumed.sawDone
+  if (consumed.callerLimitReached) finishReason = 'caller_limit'
 
   for (const media of pendingRemoteMedia) {
     const materialized = await materializeOpenAICompatibleMedia(media, {
@@ -370,13 +313,13 @@ export async function runTurn(
     hasToolCalls: toolCalls.length > 0,
   }) ?? content
   if (opts?.deferTextUntilTurnEnd && visibleContent) emit({ text: visibleContent })
-  let assistantMessage: any = null
+  let assistantMessage: ModelMessage | null = null
   if (toolCalls.length) {
     assistantMessage = {
       role: 'assistant',
       content: visibleContent || '',
       ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
-      tool_calls: toolCalls.map(t => ({ id: t.id, type: 'function', function: { name: t.name, arguments: t.args || '{}' } })),
+      tool_calls: toolCalls.map<ModelToolCall>(t => ({ id: t.id, type: 'function', function: { name: t.name, arguments: t.args || '{}' } })),
     }
   }
   // leaked：上游 content 比过滤后长 = 剥掉了工具协议标记

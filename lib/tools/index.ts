@@ -24,7 +24,7 @@ export function toOpenAITools(tools: ToolDef[]) {
 }
 
 // 按名字派发执行；返回回灌模型的文字 + 可选的前端事件
-export async function execTool(tools: ToolDef[], name: string, input: any, ctx: ToolContext): Promise<ToolOutcome> {
+export async function execTool(tools: ToolDef[], name: string, input: unknown, ctx: ToolContext): Promise<ToolOutcome> {
   const tool = tools.find(t => t.name === name)
   if (!tool) return { result: '未知工具' }
   return tool.execute(input, ctx)

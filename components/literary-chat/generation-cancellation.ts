@@ -1,10 +1,7 @@
 import type { Dispatch, SetStateAction } from 'react'
 import type { Conversation } from '@/lib/chat-data'
 import type { ClientGenerationPatch, ClientGenerationState } from '@/lib/generation-client'
-import {
-  applyClientGenerationTerminal,
-  requestClientGenerationCancellation,
-} from './generation-api'
+import { requestClientGenerationCancellation } from './generation-job-actions'
 import { recordAcknowledgedGenerationTerminal } from './generation-terminal-registry'
 
 export async function cancelActiveGeneration(options: {
@@ -13,22 +10,15 @@ export async function cancelActiveGeneration(options: {
   setConversations: Dispatch<SetStateAction<Conversation[]>>
   markGeneration: (conversationId: string, patch: ClientGenerationPatch) => void
 }) {
-  const { conversationId, generation, setConversations, markGeneration } = options
+  const { conversationId, generation, setConversations } = options
   if (generation?.status !== 'running'
     || !generation.generationId
     || !generation.assistantMessageId) return
   try {
     const terminal = await requestClientGenerationCancellation(generation.generationId)
     recordAcknowledgedGenerationTerminal(generation.generationId, terminal)
-    await applyClientGenerationTerminal({
-      conversationId,
-      assistantMessageId: generation.assistantMessageId,
-      generationId: generation.generationId,
-      terminal,
-      setConversations,
-      markGeneration,
-    })
-    // The response stream remains open until it observes the same terminal CAS.
+    // The response stream remains the rendering authority and observes this
+    // same terminal CAS with its already accumulated content.
     console.info('[mychat/generation] cancellation acknowledged', {
       conversationId,
       generationId: generation.generationId,

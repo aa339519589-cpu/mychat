@@ -1,6 +1,7 @@
 "use client"
 
 import ReactMarkdown from "react-markdown"
+import Image from "next/image"
 import rehypeKatex from "rehype-katex"
 import remarkGfm from "remark-gfm"
 import remarkMath from "remark-math"
@@ -44,7 +45,14 @@ export function MessageMarkdown({ text }: { text: string }) {
         th: ({ children }) => <th className="border-r border-border/20 px-3 py-2 text-left text-sm font-[625] last:border-r-0">{children}</th>,
         td: ({ children }) => <td className="break-words border-r border-border/20 px-3 py-2 text-sm last:border-r-0 [overflow-wrap:anywhere]">{children}</td>,
         img: ({ src, alt }) => isSafeGeneratedMediaUrl("image", src) ? (
-          <img src={src} alt={alt} className="my-3 h-auto max-w-full rounded-lg border border-border/20" />
+          <Image
+            src={src}
+            alt={alt ?? ""}
+            width={1024}
+            height={768}
+            unoptimized
+            className="my-3 h-auto max-w-full rounded-lg border border-border/20"
+          />
         ) : (
           <span role="alert" className="my-3 block rounded-lg border border-destructive/30 px-3 py-2 text-sm text-muted-foreground">
             {isPrivateNetworkGeneratedMediaUrl(src)

@@ -9,6 +9,8 @@ services:
     envVars:
       - key: NODE_VERSION
         value: 24
+      - key: NODE_ENV
+        value: production
       - key: PORT
         value: 3000
       - key: DEEPSEEK_API_KEY
@@ -45,6 +47,8 @@ services:
         sync: false
       - key: E2B_TEMPLATE
         sync: false
+      - key: AGENT_SANDBOX_EGRESS_ALLOWLIST
+        sync: false
       - key: GITHUB_CLIENT_ID
         sync: false
       - key: GITHUB_CLIENT_SECRET
@@ -60,4 +64,74 @@ services:
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
       - key: GENERATION_MAINTENANCE_MODE
+        sync: false
+      - key: METRICS_BEARER_TOKEN
+        sync: false
+  - type: worker
+    name: mychat-jobs
+    runtime: node
+    plan: starter
+    buildCommand: npm ci --legacy-peer-deps
+    startCommand: npm run worker
+    maxShutdownDelaySeconds: 300
+    envVars:
+      - key: NODE_VERSION
+        value: 24
+      - key: NODE_ENV
+        value: production
+      - key: JOB_CHAT_CONCURRENCY
+        value: 2
+      - key: JOB_MEDIA_CONCURRENCY
+        value: 1
+      - key: JOB_TITLE_CONCURRENCY
+        value: 1
+      - key: JOB_AGENT_CONCURRENCY
+        value: 1
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: DEEP_TIER_BASE_URL
+        sync: false
+      - key: DEEP_TIER_API_KEY
+        sync: false
+      - key: DEEP_TIER_MODEL
+        sync: false
+      - key: DEEP_TIER_AUTH_TYPE
+        sync: false
+      - key: DEEP_TIER_IMAGE_BASE_URL
+        sync: false
+      - key: DEEP_TIER_IMAGE_API_KEY
+        sync: false
+      - key: DEEP_TIER_IMAGE_AUTH_TYPE
+        sync: false
+      - key: DEEP_TIER_IMAGE_MODEL
+        sync: false
+      - key: DEEP_TIER_VIDEO_BASE_URL
+        sync: false
+      - key: DEEP_TIER_VIDEO_API_KEY
+        sync: false
+      - key: DEEP_TIER_VIDEO_AUTH_TYPE
+        sync: false
+      - key: DEEP_TIER_VIDEO_MODEL
+        sync: false
+      - key: MIMO_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: E2B_API_KEY
+        sync: false
+      - key: E2B_TEMPLATE
+        sync: false
+      - key: AGENT_SANDBOX_EGRESS_ALLOWLIST
+        sync: false
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      - key: AGENT_CREDENTIAL_KEY
+        sync: false
+      - key: AGENT_PUBLIC_URL
+        value: https://mychat-nm6x.onrender.com
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        value: https://usibkqqksgwgvdiqwpyo.supabase.co
+      - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false

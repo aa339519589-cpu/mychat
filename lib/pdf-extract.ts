@@ -26,10 +26,10 @@ export async function extractPdf(file: File): Promise<PdfExtractResult> {
     const content = await page.getTextContent()
     let lastY = 0, line = ''
     for (const item of content.items) {
-      const it = item as any
-      const y: number = it.transform?.[5] ?? 0
+      if (!("str" in item)) continue
+      const y = typeof item.transform[5] === "number" ? item.transform[5] : 0
       if (lastY && Math.abs(y - lastY) > 2) { text += line + '\n'; line = '' }
-      line += it.str ?? ''
+      line += item.str
       lastY = y
     }
     if (line) text += line + '\n'
@@ -49,7 +49,7 @@ export async function extractPdf(file: File): Promise<PdfExtractResult> {
     const ctx = canvas.getContext('2d')!
     ctx.fillStyle = '#fff'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
-    await page.render({ canvasContext: ctx, viewport } as any).promise
+    await page.render({ canvas, canvasContext: ctx, viewport }).promise
     images.push(canvas.toDataURL('image/jpeg', 0.85))
   }
   return { kind: 'scanned', images }

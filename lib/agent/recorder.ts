@@ -4,6 +4,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { addStep, addToolCall, completeToolCall, updateTaskStatus, addArtifact } from "./data"
 import type { AgentArtifact, AgentTaskStatus, StepKind } from "./types"
+import { errorMessage } from '@/lib/unknown-value'
 
 // ── 敏感信息打码 ──
 
@@ -97,10 +98,10 @@ export function createRecorder(ctx: RecordCtx) {
 
     try {
       output = await execute()
-    } catch (e: any) {
-      output = e?.message ?? String(e)
+    } catch (caught) {
+      output = errorMessage(caught)
       status = "error"
-      error = e?.message ?? String(e)
+      error = output
     }
 
     // 完成记录
@@ -118,7 +119,7 @@ export function createRecorder(ctx: RecordCtx) {
   // ── 任务状态更新 ──
   async function setTaskStatus(status: AgentTaskStatus, error?: string) {
     if (!enabled) return
-    const extra: any = {}
+    const extra: { error?: string; startedAt?: string; finishedAt?: string } = {}
     if (error) extra.error = error
     if (status === "running") extra.startedAt = new Date().toISOString()
     if (["completed", "failed", "cancelled"].includes(status)) extra.finishedAt = new Date().toISOString()

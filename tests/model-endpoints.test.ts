@@ -449,9 +449,9 @@ test("endpoint secrets are encrypted and bound to user and endpoint", { concurre
 test("generic agent loop retries plain chat when tools are unsupported", { concurrency: false }, async t => {
   const originalFetch = globalThis.fetch
   t.after(() => { globalThis.fetch = originalFetch })
-  const bodies: any[] = []
+  const bodies: Array<Record<string, unknown>> = []
   globalThis.fetch = async (_input, init) => {
-    const body = JSON.parse(String(init?.body))
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>
     bodies.push(body)
     if (body.tools) return Response.json({ error: { message: "tools unsupported" } }, { status: 400 })
     return Response.json({ choices: [{ finish_reason: "stop", message: { content: "fallback-ok" } }] })
@@ -486,7 +486,7 @@ test("discovers models and verifies the real streaming chat path", { concurrency
     else mutableEnv.NODE_ENV = previousNodeEnv
   })
 
-  const requests: { method?: string; url?: string; auth?: string; body?: any }[] = []
+  const requests: { method?: string; url?: string; auth?: string; body?: Record<string, unknown> }[] = []
   const server = createServer(async (request: IncomingMessage, response: ServerResponse) => {
     if (request.method === "GET" && request.url === "/gateway/models") {
       response.writeHead(404, { "Content-Type": "application/json" })
@@ -509,7 +509,7 @@ test("discovers models and verifies the real streaming chat path", { concurrency
       return
     }
     if (request.method === "POST" && request.url === "/gateway/v1/chat/completions") {
-      const body = JSON.parse(await requestBody(request))
+      const body = JSON.parse(await requestBody(request)) as Record<string, unknown>
       requests.push({ method: request.method, url: request.url, auth: request.headers.authorization, body })
       response.writeHead(200, { "Content-Type": "text/event-stream" })
       response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "O" }, finish_reason: null }] })}\n\n`)
@@ -538,11 +538,12 @@ test("discovers models and verifies the real streaming chat path", { concurrency
   assert.equal(probe.content, "OK")
   const chatRequest = requests.find(request => request.method === "POST")
   assert.equal(chatRequest?.auth, "Bearer test-key")
-  assert.equal(chatRequest?.body.model, "chat-model")
-  assert.equal(chatRequest?.body.stream, true)
-  assert.equal(chatRequest?.body.thinking, undefined)
-  assert.equal(chatRequest?.body.stream_options, undefined)
-  assert.equal(chatRequest?.body.tools, undefined)
+  assert.ok(chatRequest?.body)
+  assert.equal(chatRequest.body.model, "chat-model")
+  assert.equal(chatRequest.body.stream, true)
+  assert.equal(chatRequest.body.thinking, undefined)
+  assert.equal(chatRequest.body.stream_options, undefined)
+  assert.equal(chatRequest.body.tools, undefined)
 })
 
 test("automatic model discovery falls back to no auth only after authentication failures", { concurrency: false }, async t => {

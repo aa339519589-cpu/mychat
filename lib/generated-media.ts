@@ -11,9 +11,55 @@ const MAX_MEDIA_URL_CHARS = 16 * 1024 * 1024
 const MAX_REMOTE_MEDIA_URL_CHARS = 8 * 1024
 const IMAGE_DATA_URL = /^data:image\/(?:png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=_-]+$/i
 const VIDEO_DATA_URL = /^data:video\/(?:mp4|webm|quicktime);base64,[A-Za-z0-9+/=_-]+$/i
+const UUID_SEGMENT = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+const ASSET_SEGMENT = '[A-Za-z0-9][A-Za-z0-9_-]{0,127}\\.(?:png|jpg|webp|gif|mp4|webm|mov)'
+const OBJECT_KEY = new RegExp(`^${UUID_SEGMENT}/${UUID_SEGMENT}/${UUID_SEGMENT}/${ASSET_SEGMENT}$`, 'i')
+const CONTROLLED_PREFIX = '/api/v1/media/'
+const PUBLIC_STORAGE_PREFIX = '/storage/v1/object/public/generated-media/'
+const AUTHENTICATED_STORAGE_PREFIX = '/storage/v1/object/authenticated/generated-media/'
+
+export function controlledGeneratedMediaUrl(objectKey: string, origin?: string): string {
+  if (!OBJECT_KEY.test(objectKey)) throw new TypeError('Invalid generated media object key')
+  const path = `${CONTROLLED_PREFIX}${objectKey}/content`
+  if (!origin) return path
+  const parsed = new URL(origin)
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password) {
+    throw new TypeError('Invalid generated media proxy origin')
+  }
+  return new URL(path, parsed.origin).toString()
+}
+
+/** Parse only canonical BFF references or the exact legacy Storage URL shape. */
+export function generatedMediaObjectKey(value: unknown): string | null {
+  if (typeof value !== 'string' || !value || value.length > MAX_REMOTE_MEDIA_URL_CHARS) return null
+  let pathname: string
+  if (value.startsWith('/')) {
+    if (value.includes('?') || value.includes('#')) return null
+    pathname = value
+  } else {
+    if (!/^https?:\/\//i.test(value)) return null
+    try {
+      const parsed = new URL(value)
+      if (parsed.username || parsed.password || parsed.search || parsed.hash) return null
+      pathname = parsed.pathname
+    } catch {
+      return null
+    }
+  }
+  let key: string | null = null
+  if (pathname.startsWith(CONTROLLED_PREFIX) && pathname.endsWith('/content')) {
+    key = pathname.slice(CONTROLLED_PREFIX.length, -'/content'.length)
+  } else if (pathname.startsWith(PUBLIC_STORAGE_PREFIX)) {
+    key = pathname.slice(PUBLIC_STORAGE_PREFIX.length)
+  } else if (pathname.startsWith(AUTHENTICATED_STORAGE_PREFIX)) {
+    key = pathname.slice(AUTHENTICATED_STORAGE_PREFIX.length)
+  }
+  return key && OBJECT_KEY.test(key) ? key : null
+}
 
 function isSupportedGeneratedMediaUrl(type: GeneratedMedia["type"], value: unknown): value is string {
   if (typeof value !== "string" || !value || value.length > MAX_MEDIA_URL_CHARS) return false
+  if (generatedMediaObjectKey(value)) return true
   if (/^https?:\/\//i.test(value)) {
     if (value.length > MAX_REMOTE_MEDIA_URL_CHARS) return false
     try {
@@ -130,6 +176,7 @@ export function isPrivateNetworkGeneratedMediaUrl(value: unknown): boolean {
 }
 
 export function isSafeGeneratedMediaUrl(type: GeneratedMedia["type"], value: unknown): value is string {
+  if (generatedMediaObjectKey(value)) return true
   return isSupportedGeneratedMediaUrl(type, value) && !isPrivateNetworkGeneratedMediaUrl(value)
 }
 
@@ -143,9 +190,10 @@ export function normalizeGeneratedMedia(value: unknown): GeneratedMedia | null {
   if (source.type !== "image" && source.type !== "video") return null
   // Preserve blocked URLs so the renderer can show an explicit safety error.
   if (!isSupportedGeneratedMediaUrl(source.type, source.url)) return null
+  const objectKey = generatedMediaObjectKey(source.url)
   return {
     type: source.type,
-    url: source.url,
+    url: objectKey ? controlledGeneratedMediaUrl(objectKey) : source.url,
     ...(typeof source.mimeType === "string" ? { mimeType: source.mimeType.slice(0, 100) } : {}),
     ...(typeof source.alt === "string" ? { alt: source.alt.slice(0, 500) } : {}),
   }
