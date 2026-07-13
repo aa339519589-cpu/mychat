@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "budgets": {
+    "app": {
+      "maxLines": 300,
+      "maxLocalDependencies": 18
+    },
+    "components": {
+      "maxLines": 350,
+      "maxLocalDependencies": 18
+    },
+    "lib": {
+      "maxLines": 400,
+      "maxLocalDependencies": 18
+    }
+  },
+  "exceptions": {},
+  "allowedCycles": []
+}

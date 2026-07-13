@@ -103,6 +103,7 @@ supabase/migrations/20260711000000_custom_model_endpoints.sql
 
 ## 架构与部署
 
+- [整体架构与自动化边界](docs/architecture.md)
 - [后台架构说明](BACKEND_ARCHITECTURE.md)
 - [部署指南](DEPLOYMENT_GUIDE.md)
 - [验收清单](TEST_CHECKLIST.md)

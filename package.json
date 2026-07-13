@@ -12,9 +12,11 @@
     "start": "next start",
     "precheck": "npm run patch:seedream",
     "check": "tsc --noEmit --incremental false --noUnusedLocals --noUnusedParameters",
+    "architecture": "node scripts/check-architecture.mjs",
     "pretest": "npm run patch:seedream",
     "test": "node scripts/run-tests.mjs",
-    "verify": "npm run check && npm test && npm run build"
+    "quality": "npm run architecture && npm run check && npm test",
+    "verify": "npm run quality && npm run build"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.0",

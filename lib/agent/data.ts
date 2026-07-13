@@ -5,98 +5,14 @@
 //  - taskId 查询必须确认属于当前用户
 //  - 错误明确返回，不吞掉
 //  - 风格贴近 lib/code-data.ts
-
 import type { SupabaseClient } from "@supabase/supabase-js"
 import type {
   AgentTask, AgentTaskDetail, AgentTaskStep, AgentToolCall,
   AgentWorkspace, AgentArtifact, CreateTaskInput,
   AgentTaskStatus, StepKind, ToolCallStatus, WorkspaceStatus,
 } from "./types"
+import { mapArtifact, mapStep, mapTask, mapToolCall, mapWorkspace } from "./data-mappers"
 
-// ───────────── 内部映射 ─────────────
-
-function mapTask(row: any): AgentTask {
-  return {
-    id: row.id,
-    userId: row.user_id,
-    goal: row.goal,
-    mode: row.mode,
-    repo: row.repo ?? null,
-    branch: row.branch ?? "main",
-    status: row.status,
-    error: row.error ?? null,
-    meta: row.meta ?? null,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    startedAt: row.started_at ?? null,
-    finishedAt: row.finished_at ?? null,
-    agentBranch: row.agent_branch ?? null,
-    pullRequestUrl: row.pull_request_url ?? null,
-    pullRequestNumber: row.pull_request_number ?? null,
-    commitSha: row.commit_sha ?? null,
-  }
-}
-
-function mapStep(row: any): AgentTaskStep {
-  return {
-    id: row.id,
-    taskId: row.task_id,
-    userId: row.user_id,
-    kind: row.kind,
-    label: row.label ?? null,
-    detail: row.detail ?? null,
-    seq: row.seq,
-    createdAt: row.created_at,
-  }
-}
-
-function mapToolCall(row: any): AgentToolCall {
-  return {
-    id: row.id,
-    taskId: row.task_id,
-    userId: row.user_id,
-    stepId: row.step_id ?? null,
-    toolName: row.tool_name,
-    input: row.input ?? null,
-    output: row.output ?? null,
-    error: row.error ?? null,
-    status: row.status,
-    startedAt: row.started_at ?? null,
-    finishedAt: row.finished_at ?? null,
-    durationMs: row.duration_ms ?? null,
-    seq: row.seq,
-    createdAt: row.created_at,
-  }
-}
-
-function mapWorkspace(row: any): AgentWorkspace {
-  return {
-    id: row.id,
-    taskId: row.task_id,
-    userId: row.user_id,
-    repo: row.repo,
-    branch: row.branch ?? "main",
-    commitSha: row.commit_sha ?? null,
-    path: row.path ?? null,
-    status: row.status,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }
-}
-
-function mapArtifact(row: any): AgentArtifact {
-  return {
-    id: row.id,
-    taskId: row.task_id,
-    userId: row.user_id,
-    kind: row.kind,
-    title: row.title ?? null,
-    content: row.content ?? null,
-    url: row.url ?? null,
-    meta: row.meta ?? null,
-    createdAt: row.created_at,
-  }
-}
 
 // ───────────── 任务 CRUD ─────────────
 

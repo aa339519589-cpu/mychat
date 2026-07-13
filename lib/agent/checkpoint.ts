@@ -3,7 +3,7 @@ import { execFileSync, execSync } from "child_process"
 import { gzipSync, gunzipSync } from "zlib"
 import type { SupabaseClient } from "@supabase/supabase-js"
 import { mergeTaskMeta } from "./meta"
-import { workspacePath } from "./workspace"
+import { workspacePath } from "./workspace-paths"
 import { redactSensitive } from "./path-security"
 
 const MAX_DIFF_BYTES = 2 * 1024 * 1024
