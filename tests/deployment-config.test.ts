@@ -19,8 +19,11 @@ test('CI and Render use the supported Node runtime and strict readiness', () => 
   assert.match(workflow, /playwright install --with-deps chromium/)
   assert.match(render, /healthCheckPath:\s*\/api\/ready/)
   assert.match(render, /key:\s*NODE_VERSION\s*\n\s*value:\s*24/)
-  assert.equal(render.match(/key:\s*NODE_ENV\s*\n\s*value:\s*production/g)?.length, 2)
+  assert.equal(render.match(/key:\s*NODE_ENV\s*\n\s*value:\s*production/g)?.length, 1)
+  assert.equal(render.match(/^\s*- type:/gm)?.length, 1)
+  assert.doesNotMatch(render, /type:\s*worker/)
   assert.match(read('package.json'), /"prestart":\s*"tsx scripts\/assert-production-agent-sandbox\.ts"/)
+  assert.match(read('package.json'), /"start":\s*"node scripts\/start-production\.mjs"/)
   assert.match(read('job-worker.ts'), /assertProductionAgentSandbox\(\)/)
   assert.match(read('lib/agent/isolated-shell.ts'), /network:\s*\{\s*allowOut:\s*sandboxEgressAllowlist\(\)\s*\}/)
   assert.match(read('lib/agent/isolated-shell.ts'), /updateNetwork\(\{\s*allowOut:\s*sandboxEgressAllowlist\(\)\s*\}\)/)
@@ -29,6 +32,8 @@ test('CI and Render use the supported Node runtime and strict readiness', () => 
 test('worker deployment has queue bulkheads and a sub-three-second cancellation poll', () => {
   const render = read('render.yaml')
   const worker = read('job-worker.ts')
+  const supervisor = read('scripts/start-production.mjs')
+  const keepalive = read('.github/workflows/render-keepalive.yml')
 
   for (const queue of ['CHAT', 'MEDIA', 'TITLE', 'AGENT']) {
     assert.match(render, new RegExp(`key:\\s*JOB_${queue}_CONCURRENCY`))
@@ -39,6 +44,11 @@ test('worker deployment has queue bulkheads and a sub-three-second cancellation 
   assert.match(worker, /queues:\s*\['agent'\]/)
   assert.match(worker, /renewIntervalMs:\s*2_000/)
   assert.doesNotMatch(worker, /queues:\s*\['chat',\s*'media'/)
+  assert.match(supervisor, /next\/dist\/bin\/next/)
+  assert.match(supervisor, /job-worker\.ts/)
+  assert.match(supervisor, /child\.kill\(signal\)/)
+  assert.match(keepalive, /cron:\s*'\*\/10 \* \* \* \*'/)
+  assert.match(keepalive, /mychat-nm6x\.onrender\.com\/api\/live/)
 })
 
 test('runtime readiness is defined after and checks every scaling primitive', () => {
