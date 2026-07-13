@@ -82,15 +82,27 @@
   line-height: 0.75;
   color: var(--primary);
 }
-.article-cover { background-color: #53645c; isolation: isolate; }
+.article-cover {
+  background-color: #53645c;
+  /* Do not create an isolated stacking context that traps overlays above controls. */
+  isolation: auto;
+  position: absolute;
+}
+/* Subtle paper grain — keep low so real cover photos stay bright */
 .article-cover::after {
   content: '';
   position: absolute;
   inset: 0;
-  z-index: 3;
-  opacity: .22;
+  z-index: 1;
+  pointer-events: none;
+  opacity: .12;
   mix-blend-mode: soft-light;
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.7' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E");
+}
+/* Article detail hero: even lighter grain so the photo subject stays clear */
+.article-cover--reader::after {
+  opacity: .06;
+  mix-blend-mode: normal;
 }
 .article-paint { position: absolute; display: block; filter: blur(1px); }
 .article-cover-1 { background: linear-gradient(160deg,#2b4743 0%,#6f8172 54%,#c5a37a 100%); }

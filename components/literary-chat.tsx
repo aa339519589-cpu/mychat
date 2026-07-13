@@ -87,6 +87,19 @@ export function LiteraryChat() {
     }
   }, [])
 
+  // iOS swipe / browser back exits the articles module when the list is showing.
+  useEffect(() => {
+    if (!articlesOpen) return
+    const onPopState = (event: PopStateEvent) => {
+      const state = event.state as { mychatArticles?: boolean; mychatArticleId?: string } | null
+      // ArticleHub handles article-detail pops; only close the module when leaving articles entirely.
+      if (state?.mychatArticleId) return
+      if (!state?.mychatArticles) setArticlesOpen(false)
+    }
+    window.addEventListener("popstate", onPopState)
+    return () => window.removeEventListener("popstate", onPopState)
+  }, [articlesOpen])
+
   useEffect(() => {
     const supabase = createClient()
     supabase.auth.getUser().then(({ data }) => {
@@ -1057,7 +1070,20 @@ export function LiteraryChat() {
     userEmail: user?.email ?? "",
     onLogout: handleLogout,
     onOpenCode: () => { setDrawerOpen(false); setArticlesOpen(false); setCodeOpen(true) },
-    onOpenArticles: () => { setDrawerOpen(false); setCodeOpen(false); setArticlesOpen(true) },
+    onOpenArticles: () => {
+      setDrawerOpen(false)
+      setCodeOpen(false)
+      setArticlesOpen(true)
+      try {
+        window.history.pushState(
+          { mychatArticles: true },
+          "",
+          window.location.pathname + window.location.search,
+        )
+      } catch {
+        // ignore
+      }
+    },
     modelEndpoints,
     activeEndpointId,
     onEndpointSelect: handleEndpointSelect,
