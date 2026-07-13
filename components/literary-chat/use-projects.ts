@@ -75,7 +75,7 @@ export function useProjects(options: UseProjectsOptions) {
   }
 
   function handleNewInProject(projectId: string) {
-    if (!user) return
+    if (!user) return null
     setDrawerOpen(false)
     if (draftIdRef.current) {
       const draftId = draftIdRef.current
@@ -83,7 +83,7 @@ export function useProjects(options: UseProjectsOptions) {
         ? { ...conversation, projectId }
         : conversation))
       setActiveId(draftId)
-      return
+      return draftId
     }
     const id = crypto.randomUUID()
     draftIdRef.current = id
@@ -97,6 +97,7 @@ export function useProjects(options: UseProjectsOptions) {
       projectId,
     }, ...previous])
     setActiveId(id)
+    return id
   }
 
   async function handleLoadProjectFiles(projectId: string): Promise<ProjectFile[]> {

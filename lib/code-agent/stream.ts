@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server'
 import { saveWorkspaceCheckpoint } from '@/lib/agent/checkpoint'
-import { codeContinuationPrompt } from '@/lib/agent/continuation'
+import { codeContinuationPrompt, codeTurnContentPolicy } from '@/lib/agent/continuation'
 import { isolatedShellConfigured } from '@/lib/agent/isolated-shell'
 import { createRecorder } from '@/lib/agent/recorder'
 import { isInternalRecoveryToken } from '@/lib/agent/recovery-token'
@@ -156,7 +156,7 @@ export async function createCodeAgentStream(options: CodeStreamOptions): Promise
           maxRounds: 80,
           turnOptions: {
             deferTextUntilTurnEnd: true,
-            suppressCodeSelfTalk: true,
+            contentPolicy: codeTurnContentPolicy,
             signal: req.signal,
             timeoutMs: 120_000,
           },

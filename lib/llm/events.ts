@@ -1,4 +1,5 @@
 import type { GeneratedMedia } from "@/lib/generated-media"
+import type { GenerationTerminalEvent } from "@/lib/generation/types"
 
 // SSE 事件契约：服务端 emit 与前端解析共用的唯一真源。
 // 服务端每次只发一个单键事件对象；前端按键名分支处理。新增事件类型只改这里。
@@ -39,6 +40,7 @@ export type ChatEvent =
   | { media: GeneratedMedia }
   | { step: StepEvent }
   | { plan: CodePlan }
+  | GenerationTerminalEvent
 
 // 把一个事件推给前端（由 route 用 SSE send 实现，注入到 turn / agent-loop）
 export type Emit = (event: ChatEvent) => void

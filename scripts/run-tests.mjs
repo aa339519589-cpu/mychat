@@ -37,7 +37,16 @@ const executable = join(process.cwd(), "node_modules", ".bin", process.platform 
 const displayNames = tests.map(file => relative(process.cwd(), file))
 console.log(`Running ${tests.length} test file${tests.length === 1 ? "" : "s"}: ${displayNames.join(", ")}`)
 
-const result = spawnSync(executable, ["--test", ...tests], {
+const coverage = process.argv.includes("--coverage")
+const coverageArguments = coverage
+  ? [
+      "--experimental-test-coverage",
+      "--test-coverage-lines=70",
+      "--test-coverage-branches=75",
+      "--test-coverage-functions=75",
+    ]
+  : []
+const result = spawnSync(executable, ["--test", ...coverageArguments, ...tests], {
   cwd: process.cwd(),
   stdio: "inherit",
   env: process.env,

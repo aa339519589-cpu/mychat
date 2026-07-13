@@ -5,21 +5,19 @@ import type { Memory } from "@/lib/memory-data"
 import type { ModelEndpointSummary } from "@/lib/model-endpoints"
 import type { ProjectContext } from "@/lib/project-data"
 import type { SearchMode } from "@/lib/search-mode"
-import type { ClientGenerationState } from "@/lib/generation-client"
+import type { ClientGenerationPatch, ClientGenerationState } from "@/lib/generation-client"
 import {
-  conversationExcerpt,
-  insertMessage,
-  touchConversation,
-  updateMessageFields,
-} from "@/lib/data"
+  isGenerationTerminalSnapshot,
+  type GenerationTerminalSnapshot,
+} from "@/lib/generation/types"
 import {
   MAX_GENERATED_MEDIA_ITEMS,
   normalizeGeneratedMedia,
   type GeneratedMedia,
 } from "@/lib/generated-media"
-import { planChatStreamFinalization } from "@/lib/chat-stream-finalization"
-import { persistGeneratedMediaList } from "@/lib/media-storage"
 import { parseSseEvent, splitSseEvents } from "./stream-events"
+import { takeAcknowledgedGenerationTerminal } from "./generation-terminal-registry"
+import { finalizeChatStream } from "./chat-stream-finalizer"
 
 export type HistoryMessage = {
   id?: string
@@ -28,10 +26,6 @@ export type HistoryMessage = {
   images?: string[]
   imageSummary?: string
   ts?: string
-}
-
-type GenerationPatch = Partial<ClientGenerationState> & {
-  status: ClientGenerationState["status"]
 }
 
 export type RunChatStreamOptions = {
@@ -53,11 +47,16 @@ export type RunChatStreamOptions = {
   historyRetrieval: boolean
   setConversations: Dispatch<SetStateAction<Conversation[]>>
   setMemories: Dispatch<SetStateAction<Memory[]>>
-  markGeneration: (conversationId: string, patch: GenerationPatch) => void
+  markGeneration: (conversationId: string, patch: ClientGenerationPatch) => void
   clearAbort: (conversationId: string, controller: AbortController) => void
 }
 
-export async function runChatStream(options: RunChatStreamOptions): Promise<string> {
+export type RunChatStreamResult = {
+  content: string
+  status: ClientGenerationState["status"]
+}
+
+export async function runChatStream(options: RunChatStreamOptions): Promise<RunChatStreamResult> {
   const {
     userId,
     messages,
@@ -90,7 +89,10 @@ export async function runChatStream(options: RunChatStreamOptions): Promise<stri
   let fullReply = ""
   let fullThinking = ""
   let terminalError: string | null = null
+  let authoritativeTerminal: GenerationTerminalSnapshot | null = null
+  let terminalProtocolExpected = false
   let aborted = false
+  let finalStatus: ClientGenerationState["status"] = "error"
   const fullMedia: GeneratedMedia[] = []
   let renderScheduled = false
   let rafId: number | null = null
@@ -106,7 +108,8 @@ export async function runChatStream(options: RunChatStreamOptions): Promise<stri
     rafId = null
     setConversations(previous => previous.map(conversation => conversation.id !== conversationId ? conversation : {
       ...conversation,
-      messages: conversation.messages.map(message => message.id !== assistantMessageId ? message : {
+      messages: conversation.messages.map(message => message.id !== assistantMessageId
+        || (generationId && message.generation?.id === generationId) ? message : {
         ...message,
         content: fullReply,
         thinking: fullThinking || undefined,
@@ -167,7 +170,23 @@ export async function runChatStream(options: RunChatStreamOptions): Promise<stri
         if (!event || event.kind === "done") continue
         const data = event.data as Record<string, any>
 
+        if ("terminal" in data) {
+          if (!isGenerationTerminalSnapshot(data.terminal)) {
+            terminalError = "生成终态响应无效，请重新载入会话"
+            cancelScheduledRender()
+            await reader.cancel().catch(() => undefined)
+            break streamLoop
+          }
+          authoritativeTerminal = data.terminal
+          fullReply = authoritativeTerminal.content
+          fullThinking = authoritativeTerminal.thinking
+          fullMedia.splice(0, fullMedia.length, ...authoritativeTerminal.media)
+          cancelScheduledRender()
+          continue
+        }
+
         if (data.generationId && data.assistantMessageId) {
+          terminalProtocolExpected = true
           markGeneration(conversationId, {
             status: "running",
             generationId: data.generationId,
@@ -252,92 +271,38 @@ export async function runChatStream(options: RunChatStreamOptions): Promise<stri
     if (error?.name === "AbortError" || controller.signal.aborted) aborted = true
     else terminalError = error?.message ?? String(error)
   } finally {
-    cancelScheduledRender()
-    const hasOutput = !!fullReply || fullMedia.length > 0
-    const finalization = planChatStreamFinalization({ hasOutput, aborted, terminalError })
-
-    if (finalization.kind === "persist") {
-      if (typeof window !== "undefined" && window.localStorage?.getItem("mychat_debug_md") === "1") {
-        console.debug("[mychat/md] final markdown", JSON.stringify(fullReply))
-      }
-      const streamWarning = finalization.warning
-      flushStreamMessage(streamWarning)
-      try {
-        let durableMedia = fullMedia
-        if (fullMedia.length) {
-          try {
-            durableMedia = await persistGeneratedMediaList(userId, conversationId, fullMedia)
-            console.info("[image-generation] message media durable", {
-              conversationId,
-              assistantMessageId,
-              count: durableMedia.length,
-              urls: durableMedia.map(media => media.url.slice(0, 80)),
-            })
-            setConversations(previous => previous.map(conversation => conversation.id !== conversationId ? conversation : {
-              ...conversation,
-              messages: conversation.messages.map(message => message.id === assistantMessageId ? { ...message, media: durableMedia } : message),
-            }))
-          } catch (error) {
-            console.warn("[image-generation] durable store failed, keeping provider urls", error)
-          }
-        }
-        try {
-          await updateMessageFields(conversationId, assistantMessageId, {
-            content: fullReply,
-            thinking: fullThinking || null,
-            media: durableMedia.length ? durableMedia : undefined,
-          })
-          console.info("[image-generation] message persisted", {
-            conversationId,
-            assistantMessageId,
-            contentLen: fullReply.length,
-            mediaCount: durableMedia.length,
-          })
-        } catch {
-          await insertMessage(userId, conversationId, {
-            id: assistantMessageId,
-            role: "assistant",
-            content: fullReply,
-            thinking: fullThinking || undefined,
-            media: durableMedia.length ? durableMedia : undefined,
-            time: "",
-          })
-        }
-        await touchConversation(conversationId)
-        setConversations(previous => previous.map(conversation => conversation.id === conversationId
-          ? { ...conversation, excerpt: conversationExcerpt(fullReply), date: "今日" }
-          : conversation))
-      } catch {
-        const warning = streamWarning
-          ? `${streamWarning} 部分结果未能保存，请先下载媒体或复制内容后重试。`
-          : "结果已生成，但未能保存。请先下载媒体或复制内容，然后检查网络后重试。"
-        flushStreamMessage(warning)
-      }
-    } else if (finalization.kind === "remove") {
-      setConversations(previous => previous.map(conversation => conversation.id !== conversationId ? conversation : {
-        ...conversation,
-        messages: conversation.messages.filter(message => message.id !== assistantMessageId),
-      }))
-    } else {
-      setConversations(previous => previous.map(conversation => conversation.id !== conversationId ? conversation : {
-        ...conversation,
-        messages: conversation.messages.map(message => message.id !== assistantMessageId ? message : {
-          ...message,
-          content: finalization.message,
-          thinking: fullThinking || undefined,
-          isError: true,
-          outputWarning: undefined,
-        }),
-      }))
+    const acknowledgedTerminal = generationId
+      ? takeAcknowledgedGenerationTerminal(generationId)
+      : null
+    if (!authoritativeTerminal && acknowledgedTerminal) {
+      authoritativeTerminal = acknowledgedTerminal
+      fullReply = acknowledgedTerminal.content
+      fullThinking = acknowledgedTerminal.thinking
+      fullMedia.splice(0, fullMedia.length, ...acknowledgedTerminal.media)
     }
-
-    clearAbort(conversationId, controller)
-    markGeneration(conversationId, {
-      status: aborted ? "cancelled" : terminalError ? "error" : "completed",
-      generationId,
+    cancelScheduledRender()
+    finalStatus = await finalizeChatStream({
+      userId,
+      conversationId,
       assistantMessageId,
+      controller,
+      generationId,
+      fullReply,
+      fullThinking,
+      fullMedia,
+      terminalError,
+      authoritativeTerminal,
+      terminalProtocolExpected,
+      aborted,
+      setConversations,
+      markGeneration,
+      clearAbort,
+      flushStreamMessage,
     })
   }
 
-  return fullReply
+  return {
+    content: finalStatus === "completed" ? fullReply : "",
+    status: finalStatus,
+  }
 }

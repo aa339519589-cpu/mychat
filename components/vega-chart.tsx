@@ -1,7 +1,6 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import vegaEmbed from "vega-embed"
 import { Maximize2, X } from "lucide-react"
 
 function describeError(error: unknown): string {
@@ -58,6 +57,7 @@ function normalizeSpec(spec: string) {
 }
 
 async function renderChartInto(container: HTMLDivElement, spec: string) {
+  const { default: vegaEmbed } = await import("vega-embed")
   container.innerHTML = ""
   const result = await vegaEmbed(container, normalizeSpec(spec), {
     actions: false,

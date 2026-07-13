@@ -28,6 +28,13 @@ export function isPlatformMediaTier(tier: string | undefined | null): tier is "ç
 
 export const TIER_MAP: Record<Tier, TierConfig> = Object.fromEntries(TIERS.map(t => [t.id, t])) as Record<Tier, TierConfig>
 
+export type MessageGenerationTerminal = {
+  id: string
+  status: "completed" | "failed" | "cancelled"
+  sequence: number
+  error: string | null
+}
+
 export type Message = {
   id: string
   role: "user" | "assistant"
@@ -43,6 +50,8 @@ export type Message = {
   memoryNotes?: string[]
   files?: string[]
   searchNotes?: { query: string; results: { title: string; url: string }[] }[]
+  /** Database-authoritative terminal metadata mirrored with the assistant message. */
+  generation?: MessageGenerationTerminal
 }
 
 export type Conversation = {

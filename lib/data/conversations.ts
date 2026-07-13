@@ -2,19 +2,23 @@ import { createClient } from "@/lib/supabase/client"
 import type { Conversation, Message } from "@/lib/chat-data"
 import { parseArtifact, artifactTitle } from "@/lib/artifact"
 import { normalizeGeneratedMediaList } from "@/lib/generated-media"
+import {
+  generationTerminalWarning,
+  normalizeMessageGeneration,
+} from "@/lib/generation-message"
 import { insertArtifactFromMessage } from "./artifacts"
 import { fmtDate } from "./shared"
 import {
-  MESSAGE_CACHE_LIMIT,
   MESSAGE_CACHE_WARM_LIMIT,
   REMOTE_MESSAGE_LIMIT,
+  mergeCachedMessages,
   readCachedMessages,
   removeCachedMessages,
   updateCachedMessageContent,
   writeCachedMessages,
 } from "./message-cache"
 
-export { cacheConversationMessages } from "./message-cache"
+export { cacheConversationMessages, mergeCachedMessages } from "./message-cache"
 
 const warming = new Set<string>()
 
@@ -57,6 +61,9 @@ async function saveMessageArtifact(userId: string, conversationId: string, msg: 
 
 function normalizeMessageRow(r: any): Message {
   const stored = r.images as unknown
+  const generation = !Array.isArray(stored)
+    ? normalizeMessageGeneration((stored as any)?.generation)
+    : undefined
   const images = Array.isArray(stored)
     ? stored.filter((value): value is string => typeof value === "string")
     : Array.isArray((stored as any)?.refs)
@@ -74,6 +81,9 @@ function normalizeMessageRow(r: any): Message {
     images: images?.length ? images : undefined,
     imageSummary,
     media: media.length ? media : undefined,
+    isError: generation?.status === "failed" ? true : undefined,
+    outputWarning: generationTerminalWarning(generation),
+    generation,
     time: "",
     ts: (r.created_at as string) || undefined,
   }
@@ -87,7 +97,8 @@ async function fetchRemoteMessages(conversationId: string, limit = REMOTE_MESSAG
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: false })
     .limit(limit)
-  if (error || !data) return []
+  if (error) throw new Error("消息同步暂时不可用", { cause: error })
+  if (!data) throw new Error("消息同步响应无效")
   const messages = data.map(normalizeMessageRow).reverse()
   if (typeof window !== "undefined") {
     for (const message of messages) {
@@ -201,28 +212,39 @@ export async function touchConversation(id: string): Promise<void> {
 }
 
 export async function deleteConversationRow(id: string): Promise<void> {
+  const response = await fetch(`/api/conversations/${encodeURIComponent(id)}`, { method: "DELETE" })
+  if (!response.ok) {
+    console.error("deleteConversationRow", response.status)
+    throw new Error("会话删除失败，请稍后重试。")
+  }
   removeCachedMessages(id)
-  const supabase = createClient()
-  const { error } = await supabase.from("conversations").delete().eq("id", id)
-  if (error) console.error("deleteConversationRow", error)
 }
 
 // ───────────── 消息 ─────────────
 
-export async function fetchMessages(conversationId: string): Promise<Message[]> {
+export async function fetchMessages(
+  conversationId: string,
+  options: { fresh?: boolean } = {},
+): Promise<Message[]> {
   const cached = await readCachedMessages(conversationId)
 
-  if (cached.length > 0) {
-    // 有缓存时立刻返回，后台刷新本地缓存；不要让 UI 等 Supabase。
-    fetchRemoteMessages(conversationId, MESSAGE_CACHE_LIMIT)
-      .then(messages => { if (messages.length > 0) writeCachedMessages(conversationId, messages) })
-      .catch(() => {})
-    return cached
+  if (options.fresh) {
+    const messages = await fetchRemoteMessages(conversationId, REMOTE_MESSAGE_LIMIT)
+    if (messages.length > 0) {
+      const latestCached = await readCachedMessages(conversationId)
+      const reconciled = mergeCachedMessages(latestCached, messages)
+      await writeCachedMessages(conversationId, reconciled)
+      return reconciled
+    }
+    await writeCachedMessages(conversationId, [])
+    return []
   }
+
+  if (cached.length > 0) return cached
 
   // 首次打开也只取最近一屏需要的消息，不再把几百上千条旧消息一次性拉进 DOM。
   const messages = await fetchRemoteMessages(conversationId, REMOTE_MESSAGE_LIMIT)
-  if (messages.length > 0) writeCachedMessages(conversationId, messages)
+  if (messages.length > 0) await writeCachedMessages(conversationId, messages)
   return messages
 }
 
@@ -306,8 +328,10 @@ export async function updateMessageFields(
     const nextSummary = fields.imageSummary !== undefined
       ? fields.imageSummary
       : (typeof prev.image_summary === "string" ? prev.image_summary : null)
-    patch.images = (nextMedia.length || nextRefs.length || nextSummary)
+    const generation = normalizeMessageGeneration(prev.generation)
+    patch.images = (nextMedia.length || nextRefs.length || nextSummary || generation)
       ? {
+        ...prev,
         refs: nextRefs,
         image_summary: nextSummary,
         generated_media: nextMedia,
@@ -348,10 +372,13 @@ export async function deleteMessageRow(id: string): Promise<void> {
 export async function deleteMessageRows(ids: string[]): Promise<void> {
   const uniqueIds = [...new Set(ids.filter(Boolean))]
   if (uniqueIds.length === 0) return
-  const supabase = createClient()
-  const { error } = await supabase.from("messages").delete().in("id", uniqueIds)
-  if (error) {
-    console.error("deleteMessageRows", error)
+  const response = await fetch("/api/messages/delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids: uniqueIds }),
+  })
+  if (!response.ok) {
+    console.error("deleteMessageRows", response.status)
     throw new Error("旧回复删除失败，未开始重新生成。")
   }
 }

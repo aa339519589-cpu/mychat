@@ -61,7 +61,13 @@ async function runMemoryOp(ctx: ToolContext, opName: string, table: string, inpu
       const similar = await findSimilarMemory(supabase, table, userId, content, projectId)
       if (similar) {
         // 已有相似记忆：不自动写库，反馈给模型让它自行决定合并/更新/跳过
-        log.info('memory', `remember 发现相似记忆，反馈模型自行处理`, { table, projectId: projectId ?? null, similarId: similar.id, newContent: content.slice(0, 60), oldContent: similar.content.slice(0, 60) })
+        log.info('memory', `remember 发现相似记忆，反馈模型自行处理`, {
+          table,
+          projectId: projectId ?? null,
+          similarId: similar.id,
+          newContentLength: content.length,
+          oldContentLength: similar.content.length,
+        })
         return { action: 'duplicate', id: similar.id, content: similar.content, ok: true, timestamp: ts }
       }
 

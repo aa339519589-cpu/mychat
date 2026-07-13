@@ -8,21 +8,25 @@ import type { Memory } from "@/lib/memory-data"
 import type { ModelEndpointSummary } from "@/lib/model-endpoints"
 import type { ProjectContext } from "@/lib/project-data"
 import type { SearchMode } from "@/lib/search-mode"
-import type { ClientGenerationState } from "@/lib/generation-client"
-import { isRunning } from "@/lib/generation-client"
+import type { ClientGenerationPatch, ClientGenerationState } from "@/lib/generation-client"
+import { isRunning, reduceClientGenerationState } from "@/lib/generation-client"
 import {
   insertConversation,
   insertMessage,
   updateConversationTitle,
 } from "@/lib/data"
-import { runChatStream, type HistoryMessage } from "./chat-stream-service"
-import { generateConversationTitle, resumeConversationGeneration } from "./generation-api"
+import {
+  runChatStream,
+  type HistoryMessage,
+  type RunChatStreamResult,
+} from "./chat-stream-service"
+import {
+  generateConversationTitle,
+  resumeConversationGeneration,
+} from "./generation-api"
+import { cancelActiveGeneration } from "./generation-cancellation"
 import { toHistoryMessage } from "./message-history"
 import { regenerateFromUser, regenerateLastAssistant } from "./message-regeneration"
-
-type GenerationPatch = Partial<ClientGenerationState> & {
-  status: ClientGenerationState["status"]
-}
 
 type UseChatGenerationOptions = {
   user: User | null
@@ -36,6 +40,7 @@ type UseChatGenerationOptions = {
   searchMode: SearchMode
   deepResearch: boolean
   historyRetrieval: boolean
+  authorityReady: boolean
   setActiveId: Dispatch<SetStateAction<string>>
   setConversations: Dispatch<SetStateAction<Conversation[]>>
   setMemories: Dispatch<SetStateAction<Memory[]>>
@@ -43,6 +48,7 @@ type UseChatGenerationOptions = {
   loadedRef: MutableRefObject<Set<string>>
   draftIdRef: MutableRefObject<string | null>
   getProjectContext: (projectId?: string | null) => Promise<ProjectContext | undefined>
+  onConversationCreated?: (id: string) => void
 }
 
 export function useChatGeneration(options: UseChatGenerationOptions) {
@@ -58,6 +64,7 @@ export function useChatGeneration(options: UseChatGenerationOptions) {
     searchMode,
     deepResearch,
     historyRetrieval,
+    authorityReady,
     setActiveId,
     setConversations,
     setMemories,
@@ -65,26 +72,23 @@ export function useChatGeneration(options: UseChatGenerationOptions) {
     loadedRef,
     draftIdRef,
     getProjectContext,
+    onConversationCreated,
   } = options
 
   const [generationByConversation, setGenerationByConversation] = useState<Record<string, ClientGenerationState>>({})
   const generationRef = useRef(generationByConversation)
   generationRef.current = generationByConversation
   const abortByConversationRef = useRef<Map<string, AbortController>>(new Map())
+  const resumeByConversationRef = useRef<Map<string, {
+    operation: Promise<void>
+    reconciled: Promise<boolean>
+  }>>(new Map())
 
   const activeGeneration = activeId ? generationByConversation[activeId] : undefined
   const isActiveGenerating = isRunning(activeGeneration)
 
-  function markGeneration(conversationId: string, patch: GenerationPatch) {
-    setGenerationByConversation(previous => ({
-      ...previous,
-      [conversationId]: {
-        conversationId,
-        status: patch.status,
-        generationId: patch.generationId ?? previous[conversationId]?.generationId,
-        assistantMessageId: patch.assistantMessageId ?? previous[conversationId]?.assistantMessageId,
-      },
-    }))
+  function markGeneration(conversationId: string, patch: ClientGenerationPatch) {
+    setGenerationByConversation(previous => reduceClientGenerationState(previous, conversationId, patch))
   }
 
   function clearAbort(conversationId: string, controller: AbortController) {
@@ -94,13 +98,32 @@ export function useChatGeneration(options: UseChatGenerationOptions) {
   }
 
   function resumeGenerationIfNeeded(conversationId: string) {
-    return resumeConversationGeneration({
+    const activeController = abortByConversationRef.current.get(conversationId)
+    if (activeController && !activeController.signal.aborted) return Promise.resolve(true)
+    const existing = resumeByConversationRef.current.get(conversationId)
+    if (existing) return existing.reconciled
+    let resolveReconciled!: (available: boolean) => void
+    const reconciled = new Promise<boolean>(resolve => { resolveReconciled = resolve })
+    const operation = resumeConversationGeneration({
       conversationId,
       setConversations,
       markGeneration,
       registerAbort: (id, controller) => abortByConversationRef.current.set(id, controller),
       clearAbort,
+      onReconciled: resolveReconciled,
     })
+    const entry = { operation, reconciled }
+    resumeByConversationRef.current.set(conversationId, entry)
+    const cleanup = () => {
+      if (resumeByConversationRef.current.get(conversationId) === entry) {
+        resumeByConversationRef.current.delete(conversationId)
+      }
+    }
+    void operation.then(cleanup, () => {
+      resolveReconciled(false)
+      cleanup()
+    })
+    return reconciled
   }
 
   function generateTitle(conversationId: string, userText: string, assistantText: string) {
@@ -123,7 +146,7 @@ export function useChatGeneration(options: UseChatGenerationOptions) {
   ) {
     if (!user) {
       markGeneration(conversationId, { status: "error", generationId, assistantMessageId })
-      return ""
+      return { content: "", status: "error" } satisfies RunChatStreamResult
     }
     return runChatStream({
       userId: user.id,
@@ -149,24 +172,18 @@ export function useChatGeneration(options: UseChatGenerationOptions) {
     })
   }
 
-  function handleStop() {
+  async function handleStop() {
     if (!activeId) return
-    const controller = abortByConversationRef.current.get(activeId)
-    const generation = generationRef.current[activeId]
-    controller?.abort()
-    if (generation?.generationId) {
-      fetch(`/api/generations/${generation.generationId}/cancel`, { method: "POST" }).catch(() => {})
-    }
-    markGeneration(activeId, { status: "cancelled" })
-    console.info("[mychat/generation] task cancelled", {
+    await cancelActiveGeneration({
       conversationId: activeId,
-      generationId: generation?.generationId,
-      assistantMessageId: generation?.assistantMessageId,
+      generation: generationRef.current[activeId],
+      setConversations,
+      markGeneration,
     })
   }
 
   async function handleSend(text: string, images?: string[], files?: AttachedFile[]) {
-    if (!user || !active) return
+    if (!authorityReady || !user || !active) return
 
     const userMessage: Message = {
       id: crypto.randomUUID(),
@@ -194,7 +211,7 @@ export function useChatGeneration(options: UseChatGenerationOptions) {
     setConversations(previous => previous.map(conversation => conversation.id === draftId
       ? { ...conversation, draft: false, messages: [...conversation.messages, userMessage, assistantMessage] }
       : conversation))
-    markGeneration(draftId, { status: "running", generationId, assistantMessageId })
+    markGeneration(draftId, { status: "running", generationId, assistantMessageId, begin: true })
 
     let conversationId = draftId
     try {
@@ -225,20 +242,21 @@ export function useChatGeneration(options: UseChatGenerationOptions) {
           ? { ...conversation, id: realId }
           : conversation))
         setActiveId(realId)
+        onConversationCreated?.(realId)
         await insertMessage(user.id, realId, userMessage)
-        await insertMessage(user.id, realId, assistantMessage).catch(() => {})
+        await insertMessage(user.id, realId, assistantMessage)
       } else {
         await insertMessage(user.id, conversationId, userMessage)
-        await insertMessage(user.id, conversationId, assistantMessage).catch(() => {})
+        await insertMessage(user.id, conversationId, assistantMessage)
       }
 
       const history = [...baseHistory, userMessage].map(toHistoryMessage)
       const projectContext = await getProjectContext(active.projectId)
       const controller = new AbortController()
       abortByConversationRef.current.set(conversationId, controller)
-      const fullReply = await startStream(history, assistantMessageId, conversationId, controller, files?.length ? files : undefined, projectContext, generationId)
+      const result = await startStream(history, assistantMessageId, conversationId, controller, files?.length ? files : undefined, projectContext, generationId)
 
-      if (isFirstExchange && fullReply) {
+      if (isFirstExchange && result.status === "completed" && result.content) {
         if (activeEndpoint && activeEndpoint.outputKind !== "chat") {
           const title = text.trim().replace(/\s+/g, " ").slice(0, 14) || "媒体生成"
           setConversations(previous => previous.map(conversation => conversation.id === conversationId
@@ -246,7 +264,7 @@ export function useChatGeneration(options: UseChatGenerationOptions) {
             : conversation))
           updateConversationTitle(conversationId, title)
         } else {
-          generateTitle(conversationId, text, fullReply)
+          generateTitle(conversationId, text, result.content)
         }
       }
     } catch (error) {
@@ -266,7 +284,7 @@ export function useChatGeneration(options: UseChatGenerationOptions) {
       user,
       active,
       activeId,
-      isActiveGenerating,
+      isActiveGenerating: !authorityReady || isActiveGenerating,
       setOpenArtifactId,
       setConversations,
       markGeneration,

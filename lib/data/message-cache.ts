@@ -1,5 +1,6 @@
 import type { Message } from "@/lib/chat-data"
 import { hasInlineGeneratedMedia, normalizeGeneratedMediaList } from "@/lib/generated-media"
+import { generationTerminalWarning, normalizeMessageGeneration } from "@/lib/generation-message"
 
 // ───────────── 本地消息缓存 ─────────────
 // 目的：切换会话时有缓存就立刻返回，后台再刷新；不能让 UI 等 Supabase 慢查询。
@@ -15,6 +16,21 @@ const LOCAL_CACHE_LIMIT = 50
 const LOCAL_CONTENT_LIMIT = 80_000
 
 let dbPromise: Promise<IDBDatabase | null> | null = null
+let lastCommitTime = 0
+
+export type CachedMessageSnapshot = {
+  messages: Message[]
+  ts: number
+  commitId?: string
+  totalCount?: number
+  truncated?: boolean
+}
+
+type CacheCommit = { id: string; ts: number; totalCount: number }
+
+function emptySnapshot(): CachedMessageSnapshot {
+  return { messages: [], ts: 0 }
+}
 
 function cacheKey(conversationId: string) {
   return `${MESSAGE_CACHE_PREFIX}${conversationId}`
@@ -25,13 +41,17 @@ function normalizeCachedMessage(value: any): Message | null {
   if (value.role !== "user" && value.role !== "assistant") return null
   if (typeof value.content !== "string") return null
   const media = normalizeGeneratedMediaList(value.media)
+  const generation = normalizeMessageGeneration(value.generation)
   return {
     id: value.id,
     role: value.role,
     content: value.content,
     time: typeof value.time === "string" ? value.time : "",
     ts: typeof value.ts === "string" ? value.ts : undefined,
-    isError: value.isError === true ? true : undefined,
+    isError: generation?.status === "failed" || value.isError === true ? true : undefined,
+    outputWarning: typeof value.outputWarning === "string"
+      ? value.outputWarning
+      : generationTerminalWarning(generation),
     thinking: typeof value.thinking === "string" && value.thinking ? value.thinking : undefined,
     images: Array.isArray(value.images) ? value.images.filter((x: unknown): x is string => typeof x === "string") : undefined,
     imageSummary: typeof value.imageSummary === "string" ? value.imageSummary : undefined,
@@ -39,12 +59,97 @@ function normalizeCachedMessage(value: any): Message | null {
     memoryNotes: Array.isArray(value.memoryNotes) ? value.memoryNotes.filter((x: unknown): x is string => typeof x === "string") : undefined,
     files: Array.isArray(value.files) ? value.files.filter((x: unknown): x is string => typeof x === "string") : undefined,
     searchNotes: Array.isArray(value.searchNotes) ? value.searchNotes : undefined,
+    generation,
   }
 }
 
 export function normalizeCachedMessages(value: unknown): Message[] {
   if (!Array.isArray(value)) return []
   return value.map(normalizeCachedMessage).filter((m): m is Message => !!m)
+}
+
+export function mergeCachedMessages(existing: Message[], incoming: Message[]): Message[] {
+  const previousById = new Map(existing.map(message => [message.id, message]))
+  return incoming.map(message => {
+    const previous = previousById.get(message.id)
+    const previousGeneration = previous?.generation
+    const incomingGeneration = message.generation
+    const incomingIsOlder = previousGeneration && (
+      !incomingGeneration
+      || (incomingGeneration.id === previousGeneration.id
+        && incomingGeneration.sequence < previousGeneration.sequence)
+    )
+    if (!previous || !previousGeneration || !incomingIsOlder) return message
+    return {
+      ...message,
+      content: previous.content,
+      thinking: previous.thinking,
+      media: previous.media,
+      isError: previous.isError,
+      outputWarning: previous.outputWarning,
+      generation: previousGeneration,
+    }
+  })
+}
+
+export function mergeCachedMessageSnapshots(
+  indexed: CachedMessageSnapshot,
+  local: CachedMessageSnapshot,
+): Message[] {
+  if (!indexed.messages.length && !local.messages.length) return []
+  if (!indexed.messages.length) {
+    const indexedIsAuthoritativeEmpty = Boolean(
+      indexed.commitId
+      && indexed.truncated === false
+      && indexed.ts >= local.ts,
+    )
+    return indexedIsAuthoritativeEmpty ? [] : local.messages
+  }
+  if (!local.messages.length) {
+    const localIsAuthoritativeEmpty = Boolean(
+      local.commitId
+      && local.truncated === false
+      && local.ts >= indexed.ts,
+    )
+    return localIsAuthoritativeEmpty ? [] : indexed.messages
+  }
+  if (indexed.commitId && indexed.commitId === local.commitId) {
+    return mergeCachedMessages(local.messages, indexed.messages)
+  }
+  const [older, newer] = indexed.ts <= local.ts
+    ? [indexed, local]
+    : [local, indexed]
+  const resolvedNewer = mergeCachedMessages(older.messages, newer.messages)
+  const resolvedById = new Map([
+    ...older.messages.map(message => [message.id, message] as const),
+    ...resolvedNewer.map(message => [message.id, message] as const),
+  ])
+  if (newer.commitId && newer.truncated === false) return resolvedNewer
+
+  const newerIds = new Set(newer.messages.map(message => message.id))
+  if (newer.commitId && newer.truncated && newer.totalCount) {
+    const firstShared = older.messages.findIndex(message => newerIds.has(message.id))
+    const candidates = (firstShared >= 0
+      ? older.messages.slice(0, firstShared)
+      : older.messages.filter(message => !newerIds.has(message.id)))
+    const needed = Math.max(0, newer.totalCount - newer.messages.length)
+    const orderedIds = [
+      ...candidates.slice(-needed).map(message => message.id),
+      ...newer.messages.map(message => message.id),
+    ]
+    return orderedIds.map(id => resolvedById.get(id)!).filter(Boolean)
+  }
+
+  // Legacy entries had no commit metadata. Preserve the longer snapshot's
+  // chronological order and place only genuinely newer extras at the tail.
+  const backbone = indexed.messages.length >= local.messages.length ? indexed : local
+  const secondary = backbone === indexed ? local : indexed
+  const backboneIds = new Set(backbone.messages.map(message => message.id))
+  const extras = secondary.messages.filter(message => !backboneIds.has(message.id))
+  const orderedIds = secondary.ts <= backbone.ts
+    ? [...extras.map(message => message.id), ...backbone.messages.map(message => message.id)]
+    : [...backbone.messages.map(message => message.id), ...extras.map(message => message.id)]
+  return orderedIds.map(id => resolvedById.get(id)!).filter(Boolean)
 }
 
 function slimForLocalStorage(m: Message): Message {
@@ -58,34 +163,46 @@ function slimForLocalStorage(m: Message): Message {
   }
 }
 
-function readLocalCachedMessages(conversationId: string): Message[] {
-  if (typeof window === "undefined") return []
+function readLocalCachedSnapshot(conversationId: string): CachedMessageSnapshot {
+  if (typeof window === "undefined") return emptySnapshot()
   try {
     const raw = window.localStorage.getItem(cacheKey(conversationId))
-    if (!raw) return []
+    if (!raw) return emptySnapshot()
     const parsed = JSON.parse(raw)
     const messages = normalizeCachedMessages(Array.isArray(parsed) ? parsed : parsed?.messages)
     if (messages.some(message => hasInlineGeneratedMedia(message.media))) {
       window.localStorage.removeItem(cacheKey(conversationId))
-      return []
+      return emptySnapshot()
     }
-    return messages
+    return {
+      messages,
+      ts: Number.isSafeInteger(parsed?.ts) && parsed.ts >= 0 ? parsed.ts : 0,
+      commitId: typeof parsed?.commitId === "string" ? parsed.commitId : undefined,
+      totalCount: Number.isSafeInteger(parsed?.totalCount) && parsed.totalCount >= messages.length
+        ? parsed.totalCount
+        : undefined,
+      truncated: typeof parsed?.truncated === "boolean" ? parsed.truncated : undefined,
+    }
   } catch {
-    return []
+    return emptySnapshot()
   }
 }
 
-function writeLocalCachedMessages(conversationId: string, messages: Message[]) {
+function writeLocalCachedMessages(conversationId: string, messages: Message[], commit: CacheCommit) {
   if (typeof window === "undefined") return
-  if (messages.some(message => hasInlineGeneratedMedia(message.media))) {
+  const merged = mergeCachedMessages(readLocalCachedSnapshot(conversationId).messages, messages)
+  if (merged.some(message => hasInlineGeneratedMedia(message.media))) {
     try { window.localStorage.removeItem(cacheKey(conversationId)) } catch {}
     return
   }
   const write = (count: number, limit: number) => {
     const payload = {
       version: 2,
-      ts: Date.now(),
-      messages: messages.slice(-count).map(m => ({
+      ts: commit.ts,
+      commitId: commit.id,
+      totalCount: commit.totalCount,
+      truncated: merged.length > count,
+      messages: merged.slice(-count).map(m => ({
         ...slimForLocalStorage(m),
         content: m.content.length > limit ? `${m.content.slice(0, limit)}\n\n（此消息过大，已缓存前半部分；完整内容会从云端刷新。）` : m.content,
       })),
@@ -117,32 +234,54 @@ function openCacheDb(): Promise<IDBDatabase | null> {
   return dbPromise
 }
 
-async function readIndexedCachedMessages(conversationId: string): Promise<Message[]> {
+async function readIndexedCachedSnapshot(conversationId: string): Promise<CachedMessageSnapshot> {
   const db = await openCacheDb()
-  if (!db) return []
+  if (!db) return emptySnapshot()
   return new Promise(resolve => {
     try {
       const tx = db.transaction(MESSAGE_CACHE_STORE, "readonly")
       const req = tx.objectStore(MESSAGE_CACHE_STORE).get(conversationId)
-      req.onsuccess = () => resolve(normalizeCachedMessages(req.result?.messages))
-      req.onerror = () => resolve([])
+      req.onsuccess = () => resolve({
+        messages: normalizeCachedMessages(req.result?.messages),
+        ts: Number.isSafeInteger(req.result?.ts) && req.result.ts >= 0 ? req.result.ts : 0,
+        commitId: typeof req.result?.commitId === "string" ? req.result.commitId : undefined,
+        totalCount: Number.isSafeInteger(req.result?.totalCount) ? req.result.totalCount : undefined,
+        truncated: req.result?.truncated === false ? false : undefined,
+      })
+      req.onerror = () => resolve(emptySnapshot())
     } catch {
-      resolve([])
+      resolve(emptySnapshot())
     }
   })
 }
 
-async function writeIndexedCachedMessages(conversationId: string, messages: Message[]): Promise<void> {
+async function writeIndexedCachedMessages(
+  conversationId: string,
+  messages: Message[],
+  commit: CacheCommit,
+): Promise<void> {
   const db = await openCacheDb()
   if (!db) return
   return new Promise(resolve => {
     try {
       const tx = db.transaction(MESSAGE_CACHE_STORE, "readwrite")
-      tx.objectStore(MESSAGE_CACHE_STORE).put({
-        conversationId,
-        ts: Date.now(),
-        messages: normalizeCachedMessages(messages).slice(-MESSAGE_CACHE_LIMIT),
-      })
+      const store = tx.objectStore(MESSAGE_CACHE_STORE)
+      const request = store.get(conversationId)
+      const put = (existing: unknown) => {
+        store.put({
+          conversationId,
+          ts: commit.ts,
+          commitId: commit.id,
+          totalCount: commit.totalCount,
+          truncated: false,
+          messages: mergeCachedMessages(
+            normalizeCachedMessages((existing as any)?.messages),
+            normalizeCachedMessages(messages),
+          ).slice(-MESSAGE_CACHE_LIMIT),
+        })
+      }
+      request.onsuccess = () => put(request.result)
+      request.onerror = () => put(undefined)
       tx.oncomplete = () => resolve()
       tx.onerror = () => resolve()
       tx.onabort = () => resolve()
@@ -169,26 +308,34 @@ async function removeIndexedCachedMessages(conversationId: string): Promise<void
 }
 
 export async function readCachedMessages(conversationId: string): Promise<Message[]> {
-  const indexed = await readIndexedCachedMessages(conversationId)
-  if (indexed.length) return indexed
-  return readLocalCachedMessages(conversationId)
+  const [indexed, local] = await Promise.all([
+    readIndexedCachedSnapshot(conversationId),
+    Promise.resolve(readLocalCachedSnapshot(conversationId)),
+  ])
+  return mergeCachedMessageSnapshots(indexed, local)
 }
 
-export function writeCachedMessages(conversationId: string, messages: Message[]) {
+export async function writeCachedMessages(conversationId: string, messages: Message[]) {
   const safe = normalizeCachedMessages(messages).slice(-MESSAGE_CACHE_LIMIT)
-  if (!safe.length) return
-  void writeIndexedCachedMessages(conversationId, safe)
-  writeLocalCachedMessages(conversationId, safe)
+  const now = Date.now()
+  lastCommitTime = Math.max(now, lastCommitTime + 1)
+  const commit: CacheCommit = {
+    id: `${lastCommitTime}-${crypto.randomUUID()}`,
+    ts: lastCommitTime,
+    totalCount: safe.length,
+  }
+  writeLocalCachedMessages(conversationId, safe, commit)
+  await writeIndexedCachedMessages(conversationId, safe, commit)
 }
 
 export function cacheConversationMessages(conversationId: string, messages: Message[]) {
-  writeCachedMessages(conversationId, messages)
+  void writeCachedMessages(conversationId, messages)
 }
 
 export async function updateCachedMessageContent(conversationId: string, messageId: string, content: string) {
   const cached = await readCachedMessages(conversationId)
   if (!cached.length) return
-  writeCachedMessages(conversationId, cached.map(m => m.id === messageId ? { ...m, content } : m))
+  await writeCachedMessages(conversationId, cached.map(m => m.id === messageId ? { ...m, content } : m))
 }
 
 export function removeCachedMessages(conversationId: string) {
@@ -197,4 +344,3 @@ export function removeCachedMessages(conversationId: string) {
   }
   void removeIndexedCachedMessages(conversationId)
 }
-

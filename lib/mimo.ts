@@ -39,7 +39,10 @@ async function understandImages(images: string[], prompt: string, maxTokens: num
       signal: signals.length === 1 ? signals[0] : AbortSignal.any(signals),
     })
     if (!res.ok) {
-      log.warn('mimo', 'Vision request failed', { status: res.status, body: (await res.text()).slice(0, 300) })
+      // Upstream bodies can echo prompts, image data, or credential-bearing proxy
+      // diagnostics. Status is sufficient for production telemetry.
+      await res.body?.cancel().catch(() => undefined)
+      log.warn('mimo', 'Vision request failed', { status: res.status })
       return ''
     }
     const json = await res.json()

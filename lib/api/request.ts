@@ -1,6 +1,9 @@
 import type { NextRequest } from "next/server"
+import { isIP } from "node:net"
 
 const DEFAULT_MAX_BODY_BYTES = 1024 * 1024
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/
+const localRequestIds = new WeakMap<Request, string>()
 
 export class RequestError extends Error {
   constructor(
@@ -60,12 +63,18 @@ export function requestErrorResponse(error: unknown): Response {
 }
 
 export function clientAddress(request: NextRequest | Request): string {
-  const headers = request.headers
-  const candidates = [
-    headers.get("cf-connecting-ip"),
-    headers.get("x-real-ip"),
-    headers.get("x-forwarded-for")?.split(",")[0],
-  ]
-  const value = candidates.find(candidate => candidate?.trim())?.trim()
-  return value?.slice(0, 128) || "unknown"
+  // Render guarantees the first X-Forwarded-For entry is the real client IP.
+  // Do not accept caller-controlled alternative IP headers as identity input.
+  const value = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
+  return value && isIP(value) ? value : "unknown"
+}
+
+export function requestId(request: NextRequest | Request): string {
+  const forwarded = request.headers.get("x-request-id")?.trim()
+  if (forwarded && REQUEST_ID_PATTERN.test(forwarded)) return forwarded
+  const existing = localRequestIds.get(request)
+  if (existing) return existing
+  const generated = crypto.randomUUID()
+  localRequestIds.set(request, generated)
+  return generated
 }

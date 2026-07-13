@@ -42,7 +42,7 @@ Run `npm run architecture` locally. The checker validates:
 - per-layer file-size budgets;
 - local dependency fan-out budgets.
 
-`npm run quality` runs the architecture check, strict TypeScript check, and tests. `npm run verify` adds a production build; pull requests and pushes to `main` run that full verification command in CI.
+`npm run quality` runs the architecture check, strict TypeScript check, ESLint, and unit/integration tests with minimum exercised-module coverage gates of 70% lines, 75% branches, and 75% functions. ESLint errors fail immediately and the existing 164-warning count is ratcheted, so new warnings cannot silently increase the baseline. `npm run verify` adds a production build plus Playwright smoke tests against `next start` on desktop Chromium and a Pixel 7 viewport. Pull requests and pushes to `main` run that full command plus an actual PostgreSQL 16 baseline/expand/replay/contract migration verification in CI.
 
 The budgets in `scripts/architecture-baseline.json` are enforceable ceilings: API entry points default to 300 lines, components to 350, libraries to 400, and every module to at most 18 local runtime dependencies. The checker rejects stale exceptions after a file shrinks, so temporary debt can only move downward. The current baseline contains no size, fan-out, or cycle exceptions.
 
@@ -51,9 +51,22 @@ The budgets in `scripts/architecture-baseline.json` are enforceable ceilings: AP
 The largest workflows are organized as feature packages with thin public entry points:
 
 - `lib/chat/` owns model selection, media responses, history preparation, attachment OCR, and durable chat streaming.
-- `lib/code-agent/` owns code-agent request validation, task context, prompts, runtime state, and SSE orchestration.
+- `lib/code-agent/` owns code-agent request validation, task context, prompts, runtime state, apply/publish orchestration, and SSE orchestration.
 - `components/literary-chat/`, `components/code-console/`, `components/sidebar/`, and `components/agent-tasks/` separate workflow hooks from presentation.
 - `lib/llm/media-generation/` and `lib/llm/openai-compatible/` isolate protocol transport and network-security policy behind stable facades.
 - `lib/agent/snapshot/` and `lib/agent/git-publish/` isolate persistence, recovery, Git, pull-request, and publishing responsibilities.
 
 Future changes must keep these dependency directions and budgets intact. Do not move code into a new oversized file or create a facade cycle to satisfy a budget mechanically.
+
+## Runtime topology
+
+- The browser mounts one responsive chat/sidebar tree at every viewport. `/c/[conversationId]` is the canonical deep link; history navigation is synchronized through the route controller.
+- Durable generation state, cancellation markers, and execution leases live in Supabase. A request can reconnect to another application instance and continue polling until a terminal state. Before any model or tool side effect, the canonical assistant placeholder must already exist with the exact verified user/conversation/role identity, then a runner atomically claims the generation. Claim, renewal, progress, cancellation, stale settlement, and finalization are service-role-only; browser roles cannot read fencing credentials.
+- A cold client fetches fresh message history, reconciles the latest generation snapshot, and only then unlocks the composer. React state, localStorage, and IndexedDB all merge terminal snapshots by generation sequence, so a late pre-terminal read cannot overwrite canonical history or contaminate the next model request.
+- Cancellation is a database compare-and-set, not a local UI guess. The cancel response and resume stream carry the complete winning terminal snapshot; clients keep the stream open and apply the same canonical content, thinking, media, error, and sequence idempotently.
+- A duplicate request for an active generation is rejected before model execution. An expired lease is atomically finalized as failed and must be retried with a new generation ID; the system deliberately does not replay a tool-capable generation without an idempotent checkpoint.
+- Image and video jobs use the same pre-provider claim and terminal CAS. Provider media is validated and uploaded server-side under a user/conversation/generation-scoped object key before its durable HTTPS reference enters the database terminal snapshot. Direct streams and reconnects render only that authoritative reference; cancellation or a lost CAS removes the non-canonical upload.
+- History deletion is service-owned: the browser cannot delete conversations or messages directly. One database transaction verifies ownership, locks the conversation against new generation claims, records scoped object-cleanup receipts, and deletes the rows. Storage removal then acknowledges those receipts; failures remain durably queued and never leave a retained message pointing at an object that was already removed.
+- Conversation titles use a separate owned, one-round, tool-free endpoint. `/api/chat` requires a complete stable conversation/generation/assistant-message identity for every chat or media job.
+- Production API rate limits use an atomic, service-role-only PostgreSQL RPC. In-memory limiting is a development fallback only; production fails closed if the shared limiter is unavailable.
+- `/api/health` is a liveness probe. `/api/health?ready=1` and the deployment-facing `/api/ready` verify the privileged database dependency, rate limiter, generation lease/finalization RPCs, and terminal-state guard without revealing credentials or connection details.

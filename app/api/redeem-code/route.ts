@@ -6,9 +6,9 @@ import { readJson, requestErrorResponse } from '@/lib/api/request'
 import { checkRateLimit } from '@/lib/rate-limit'
 
 export async function POST(req: NextRequest) {
-  let body: any = {}
+  let body: { code?: unknown } = {}
   try {
-    body = await readJson(req, { maxBytes: 16 * 1024 })
+    body = await readJson<{ code?: unknown }>(req, { maxBytes: 16 * 1024 })
   } catch (e) {
     log.error('redeemCode', 'Invalid JSON in request body', e)
     return requestErrorResponse(e)
@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const code = validate.string(body.code, 'code', { minLength: 8, maxLength: 128 })
-    log.info('redeemCode', 'Attempting to redeem code', { code: code.substring(0, 6) + '...' })
+    log.info('redeemCode', 'Attempting to redeem code', { codeLength: code.length })
 
     const supabase = await createClient()
     const { data: user } = await supabase.auth.getUser()
@@ -24,7 +24,13 @@ export async function POST(req: NextRequest) {
       log.warn('redeemCode', 'Not logged in')
       return new Response(JSON.stringify({ error: '未登录' }), { status: 401, headers: { 'Content-Type': 'application/json' } })
     }
-    const rate = checkRateLimit(`redeem:${user.user.id}`, { max: 10, windowMs: 60 * 60_000 })
+    const rate = await checkRateLimit(`redeem:${user.user.id}`, { max: 10, windowMs: 60 * 60_000 })
+    if (rate.unavailable) {
+      return Response.json({ error: '服务暂时不可用，请稍后再试' }, {
+        status: 503,
+        headers: { 'Retry-After': String(rate.retryAfterSeconds) },
+      })
+    }
     if (!rate.allowed) {
       return Response.json({ error: '兑换尝试过于频繁，请稍后再试' }, {
         status: 429,

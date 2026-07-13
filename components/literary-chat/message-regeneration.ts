@@ -2,7 +2,7 @@ import type { Dispatch, SetStateAction } from "react"
 import type { User } from "@supabase/supabase-js"
 import type { Conversation, Message } from "@/lib/chat-data"
 import type { AttachedFile } from "@/lib/file-extract"
-import type { ClientGenerationState } from "@/lib/generation-client"
+import type { ClientGenerationPatch } from "@/lib/generation-client"
 import type { ProjectContext } from "@/lib/project-data"
 import {
   cacheConversationMessages,
@@ -11,12 +11,8 @@ import {
   insertMessage,
   updateMessageContent,
 } from "@/lib/data"
-import type { HistoryMessage } from "./chat-stream-service"
+import type { HistoryMessage, RunChatStreamResult } from "./chat-stream-service"
 import { toHistoryMessage } from "./message-history"
-
-type GenerationPatch = Partial<ClientGenerationState> & {
-  status: ClientGenerationState["status"]
-}
 
 type StartStream = (
   history: HistoryMessage[],
@@ -26,7 +22,7 @@ type StartStream = (
   attachments?: AttachedFile[],
   projectContext?: ProjectContext,
   generationId?: string,
-) => Promise<string>
+) => Promise<RunChatStreamResult>
 
 type RegenerationContext = {
   user: User | null
@@ -35,7 +31,7 @@ type RegenerationContext = {
   isActiveGenerating: boolean
   setOpenArtifactId: Dispatch<SetStateAction<string | null>>
   setConversations: Dispatch<SetStateAction<Conversation[]>>
-  markGeneration: (conversationId: string, patch: GenerationPatch) => void
+  markGeneration: (conversationId: string, patch: ClientGenerationPatch) => void
   getProjectContext: (projectId?: string | null) => Promise<ProjectContext | undefined>
   registerAbort: (conversationId: string, controller: AbortController) => void
   startStream: StartStream
@@ -67,7 +63,7 @@ export async function regenerateLastAssistant(context: RegenerationContext) {
   const assistantMessageId = crypto.randomUUID()
   let oldReplyDeleted = false
   const generationId = crypto.randomUUID()
-  markGeneration(activeId, { status: "running", generationId, assistantMessageId })
+  markGeneration(activeId, { status: "running", generationId, assistantMessageId, begin: true })
 
   try {
     const projectContext = await getProjectContext(active.projectId)
@@ -80,7 +76,7 @@ export async function regenerateLastAssistant(context: RegenerationContext) {
       ...conversation,
       messages: [...retainedMessages, replacement],
     }))
-    await insertMessage(user.id, activeId, replacement).catch(() => {})
+    await insertMessage(user.id, activeId, replacement)
     const controller = new AbortController()
     registerAbort(activeId, controller)
     await startStream(history, assistantMessageId, activeId, controller, undefined, projectContext, generationId)
@@ -145,7 +141,7 @@ export async function regenerateFromUser(context: RegenerationContext & {
   let contentUpdated = false
   let branchDeleted = false
   const generationId = crypto.randomUUID()
-  markGeneration(conversationId, { status: "running", generationId, assistantMessageId })
+  markGeneration(conversationId, { status: "running", generationId, assistantMessageId, begin: true })
 
   try {
     const projectContext = await getProjectContext(active.projectId)
@@ -161,7 +157,7 @@ export async function regenerateFromUser(context: RegenerationContext & {
       ...conversation,
       messages: [...retainedMessages, assistantMessage],
     }))
-    await insertMessage(user.id, conversationId, assistantMessage).catch(() => {})
+    await insertMessage(user.id, conversationId, assistantMessage)
     const controller = new AbortController()
     registerAbort(conversationId, controller)
     await startStream(retainedMessages.map(toHistoryMessage), assistantMessageId, conversationId, controller, undefined, projectContext, generationId)

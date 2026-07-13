@@ -1,43 +1,48 @@
 import { NextRequest } from 'next/server'
 import { resolveAuth } from '@/lib/api/guard'
-import { cancelGeneration, getGenerationForUser } from '@/lib/generation/runtime'
-import { persistAssistantMessage, persistGenerationRow } from '@/lib/generation/persist'
-import { log } from '@/lib/logger'
+import { coordinateGenerationCancellation } from '@/lib/generation/cancel-service'
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params
+  if (!UUID.test(id)) return Response.json({ error: '生成任务不存在' }, { status: 404 })
+
   const auth = await resolveAuth()
+  if (auth.authUnavailable) {
+    return Response.json(
+      { error: '认证服务暂时不可用，请稍后再试' },
+      { status: 503, headers: { 'Retry-After': '5' } },
+    )
+  }
   if (!auth.userId || !auth.supabase) {
     return Response.json({ error: '请先登录' }, { status: 401 })
   }
-  const entry = getGenerationForUser(id, auth.userId)
-  const ok = cancelGeneration(id, auth.userId)
-  if (!ok && !entry) {
-    // Best-effort mark DB cancelled even if not in memory
-    try {
-      await (auth.supabase as any).from('chat_generations')
-        .update({ status: 'cancelled', updated_at: new Date().toISOString() })
-        .eq('id', id)
-        .eq('user_id', auth.userId)
-    } catch { /* ignore */ }
-    return Response.json({ ok: true, note: 'not_in_memory' })
+
+  const result = await coordinateGenerationCancellation({
+    userId: auth.userId,
+    generationId: id,
+  })
+  if (result.kind === 'unavailable') {
+    return Response.json(
+      { error: '取消服务暂时不可用，请稍后再试' },
+      { status: 503, headers: { 'Retry-After': '1' } },
+    )
   }
-  if (entry) {
-    await persistGenerationRow(auth.supabase as any, {
-      id: entry.record.id,
-      userId: entry.record.userId,
-      conversationId: entry.record.conversationId,
-      assistantMessageId: entry.record.assistantMessageId,
-      status: 'cancelled',
-      content: entry.record.content,
-      thinking: entry.record.thinking,
-      sequence: entry.record.sequence,
-    })
-    await persistAssistantMessage(auth.supabase as any, entry.record.assistantMessageId, {
-      content: entry.record.content,
-      thinking: entry.record.thinking || null,
-    })
+  if (result.kind === 'not_found') {
+    return Response.json({ error: '生成任务不存在' }, { status: 404 })
   }
-  log.info('generation', 'cancel api', { generationId: id, userId: auth.userId })
-  return Response.json({ ok: true })
+  if (result.kind === 'transitioning') {
+    return Response.json(
+      { error: '任务状态正在变化，请重试取消' },
+      { status: 409, headers: { 'Retry-After': '1' } },
+    )
+  }
+
+  return Response.json({
+    ok: true,
+    status: result.terminal.status,
+    terminal: result.terminal,
+    ...(result.accepted ? {} : { note: 'already_terminal' }),
+  })
 }

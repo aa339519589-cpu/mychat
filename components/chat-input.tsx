@@ -14,7 +14,7 @@ export function ChatInput({
   deepResearch, onDeepResearchChange,
   historyRetrieval, onHistoryRetrievalChange,
   customEndpoints, activeEndpointId, onEndpointChange,
-  isLoading, onStop,
+  disabled = false, isLoading, onStop,
 }: {
   onSend: (text: string, images?: string[], files?: AttachedFile[]) => void
   activeTier: string
@@ -29,6 +29,7 @@ export function ChatInput({
   customEndpoints: ModelEndpointSummary[]
   activeEndpointId: string | null
   onEndpointChange: (id: string) => void
+  disabled?: boolean
   isLoading: boolean
   onStop: () => void
 }) {
@@ -50,7 +51,7 @@ export function ChatInput({
     if (!activeTier.startsWith("custom:")) return
     onTierChange("绝句")
     try { localStorage.setItem("chat_active_tier", "绝句") } catch {}
-  }, [])
+  }, [activeTier, onTierChange])
 
   useEffect(() => {
     if (!tierMenuOpen) return
@@ -97,7 +98,7 @@ export function ChatInput({
   }, [sendPending, isLoading])
 
   function submit() {
-    if (sendPending) return
+    if (disabled || sendPending) return
     const text = value.trim()
     if (!text && images.length === 0 && files.length === 0) return
     setSendPending(true)
@@ -155,7 +156,7 @@ export function ChatInput({
 
   const activeTierName = (TIER_MAP as Record<string, { label: string } | undefined>)[activeTier]?.label ?? "模型"
   const hasActiveTools = searchMode !== "off" || deepResearch || historyRetrieval
-  const canSend = !isLoading && !sendPending && (!!value.trim() || images.length > 0 || files.length > 0)
+  const canSend = !disabled && !isLoading && !sendPending && (!!value.trim() || images.length > 0 || files.length > 0)
   const availableEndpoints = customEndpoints.filter(endpoint => !endpoint.needsReconnect)
   const activeEndpoint = availableEndpoints.find(endpoint => endpoint.id === activeEndpointId)
   const activeOutputKind = activeEndpoint?.outputKind
@@ -228,7 +229,7 @@ export function ChatInput({
           </button>
         </div>
 
-        <textarea ref={ref} rows={1} value={value} onChange={e => { setValue(e.target.value); resize() }} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !isLoading && !sendPending) { e.preventDefault(); submit() } }} placeholder={activeTier === "绘影" ? "描述图片，也可附上参考图……" : activeTier === "录像" ? "描述视频，也可附上参考图……" : "说点什么……"} className={cn("block min-w-0 flex-1 resize-none bg-transparent py-1.5 text-[15px] leading-[1.6] tracking-wide text-secondary-foreground outline-none placeholder:italic placeholder:text-muted-foreground dark:text-white", mobile ? "max-h-[120px]" : "max-h-[180px]")} />
+        <textarea ref={ref} rows={1} value={value} disabled={disabled} onChange={e => { setValue(e.target.value); resize() }} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !disabled && !isLoading && !sendPending) { e.preventDefault(); submit() } }} placeholder={disabled ? "正在同步会话……" : activeTier === "绘影" ? "描述图片，也可附上参考图……" : activeTier === "录像" ? "描述视频，也可附上参考图……" : "说点什么……"} className={cn("block min-w-0 flex-1 resize-none bg-transparent py-1.5 text-[15px] leading-[1.6] tracking-wide text-secondary-foreground outline-none placeholder:italic placeholder:text-muted-foreground disabled:cursor-wait dark:text-white", mobile ? "max-h-[120px]" : "max-h-[180px]")} />
 
         <button
           type="button"

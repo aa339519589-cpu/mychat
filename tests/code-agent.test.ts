@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { modelContent, type CodeMessage } from '../lib/code-data'
-import { codeContinuationPrompt, isCodeUserBlocker, looksLikeCodePreamble, looksLikeCodeSelfTalk } from '../lib/agent/continuation'
+import { codeContinuationPrompt, codeTurnContentPolicy, isCodeUserBlocker, looksLikeCodePreamble, looksLikeCodeSelfTalk } from '../lib/agent/continuation'
 import { inferPublishPendingFromMessages, isFalseCodePause, isStaleRunningCodeTask, shouldShowWorkspacePublish } from '../lib/code-agent-ui'
 import { enablePages, mergePullRequest } from '../lib/github'
 import { getWorkspaceDiff, searchWorkspaceFiles, workspaceRoot } from '../lib/agent/workspace'
@@ -107,7 +107,7 @@ test('runTurn suppresses code self-talk while preserving tool calls', { concurre
   const events: any[] = []
   const turn = await runTurn('https://example.com', 'key', 'model', [], [], event => { events.push(event) }, {
     deferTextUntilTurnEnd: true,
-    suppressCodeSelfTalk: true,
+    contentPolicy: codeTurnContentPolicy,
   })
 
   assert.equal(turn.content, '')
@@ -137,7 +137,7 @@ test('runTurn suppresses generic preamble before tool calls', { concurrency: fal
   const events: any[] = []
   const turn = await runTurn('https://example.com', 'key', 'model', [], [], event => { events.push(event) }, {
     deferTextUntilTurnEnd: true,
-    suppressCodeSelfTalk: true,
+    contentPolicy: codeTurnContentPolicy,
   })
 
   assert.equal(turn.content, '')
