@@ -47,9 +47,9 @@ export async function probeDatabase(
   let timeout: ReturnType<typeof setTimeout> | undefined
   try {
     const result = await Promise.race([
-      // Versioned so the legacy 030000 probe cannot report a lease-aware
-      // application ready when the 040000 expand migration was not applied.
-      client.rpc('runtime_healthcheck_v2'),
+      // Versioned so structurally present but unusable infrastructure RPCs do
+      // not let a newer application revision report ready.
+      client.rpc('runtime_healthcheck_v3'),
       new Promise<null>(resolve => {
         timeout = setTimeout(() => resolve(null), Math.max(100, timeoutMs))
       }),

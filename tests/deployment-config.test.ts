@@ -34,3 +34,18 @@ test('runtime readiness is defined after and checks every scaling primitive', ()
   assert.match(migration, /tgname = 'preserve_chat_generation_terminal_status'/)
   assert.match(migration, /has_function_privilege\([\s\S]*?'service_role'/)
 })
+
+test('rate-limit hotfix is additive, executable, and readiness-versioned', () => {
+  const migration = read('supabase/migrations/20260713060000_rate_limit_timestamp_fix.sql')
+  const rateLimitFunction = migration.slice(
+    migration.indexOf('create or replace function public.consume_api_rate_limit'),
+    migration.indexOf('comment on function public.consume_api_rate_limit'),
+  )
+
+  assert.match(rateLimitFunction, /v_now timestamptz := clock_timestamp\(\)/)
+  assert.doesNotMatch(rateLimitFunction, /\bcurrent_time\b/i)
+  assert.match(migration, /mychat\.rate_limit\.contract\.v2/)
+  assert.match(migration, /create or replace function public\.runtime_healthcheck_v3\(\)/)
+  assert.match(migration, /select public\.runtime_healthcheck_v2\(\)/)
+  assert.match(migration, /grant execute on function public\.runtime_healthcheck_v3\(\)[\s\S]*to service_role/)
+})
