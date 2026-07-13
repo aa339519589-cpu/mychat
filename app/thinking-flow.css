@@ -1,9 +1,9 @@
 :root {
-  --mychat-zh-font: "Noto Serif SC", "Songti SC", SimSun, ui-serif, Georgia, serif;
+  --mychat-zh-font: var(--font-noto-serif-sc), "Songti SC", SimSun, ui-serif, Georgia, serif;
   /* Anthropic's editorial English voice is a high-contrast text serif.
      Source Serif 4 is the web-safe equivalent of its proprietary Tiempos family. */
-  --mychat-en-font: "Source Serif 4", "Iowan Old Style", "Times New Roman", serif;
-  --mychat-base-font: "Noto Serif SC", "Source Serif 4", "Songti SC", STSong, SimSun, ui-serif, Georgia, serif;
+  --mychat-en-font: var(--font-source-serif), "Iowan Old Style", "Times New Roman", serif;
+  --mychat-base-font: var(--font-noto-serif-sc), var(--font-source-serif), "Songti SC", STSong, SimSun, ui-serif, Georgia, serif;
   --thinking-base: rgba(30, 30, 30, 0.42);
   --thinking-shine: rgba(0, 0, 0, 0.96);
   --font-sans: var(--mychat-base-font);
@@ -27,7 +27,7 @@
 html,
 body,
 body * {
-  font-family: "Noto Serif SC", "Source Serif 4", "Songti SC", STSong, SimSun, ui-serif, Georgia, serif !important;
+  font-family: var(--mychat-base-font) !important;
 }
 
 pre,

@@ -2,16 +2,26 @@ import { createClient } from "@/lib/supabase/client"
 import type { ArtifactLibraryItem } from "@/lib/artifact-data"
 import { fmtDate } from "./shared"
 
-function normalizeArtifactRow(r: any): ArtifactLibraryItem {
+type ArtifactRow = {
+  id: string
+  title: string | null
+  raw: string | null
+  conversation_id: string | null
+  message_id: string | null
+  project_id: string | null
+  created_at: string | null
+}
+
+function normalizeArtifactRow(row: ArtifactRow): ArtifactLibraryItem {
   return {
-    id: r.id as string,
-    title: (r.title as string) || "未命名作品",
-    raw: (r.raw as string) || "",
-    conversationId: (r.conversation_id as string) ?? null,
-    messageId: (r.message_id as string) ?? null,
-    projectId: (r.project_id as string) ?? null,
-    date: fmtDate((r.created_at as string) || new Date().toISOString()),
-    createdAt: (r.created_at as string) || undefined,
+    id: row.id,
+    title: row.title || "未命名作品",
+    raw: row.raw || "",
+    conversationId: row.conversation_id,
+    messageId: row.message_id,
+    projectId: row.project_id,
+    date: fmtDate(row.created_at || new Date().toISOString()),
+    createdAt: row.created_at || undefined,
   }
 }
 
@@ -23,7 +33,7 @@ export async function fetchArtifacts(): Promise<ArtifactLibraryItem[]> {
     .order("created_at", { ascending: false })
     .limit(100)
   if (error || !data) return []
-  return data.map(normalizeArtifactRow)
+  return (data as ArtifactRow[]).map(normalizeArtifactRow)
 }
 
 export async function insertArtifactFromMessage(args: {
@@ -61,7 +71,7 @@ export async function insertArtifactFromMessage(args: {
     if (error) console.error("insertArtifactFromMessage", error)
     return null
   }
-  return normalizeArtifactRow(data)
+  return normalizeArtifactRow(data as ArtifactRow)
 }
 
 export async function deleteArtifactRow(id: string): Promise<void> {

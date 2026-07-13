@@ -133,10 +133,6 @@ export function customModelCapability(model: string, baseUrl: string): ModelCapa
   }
 }
 
-export function isDeepTierProxyConfigured(): boolean {
-  return !!(process.env.DEEP_TIER_BASE_URL?.trim() && process.env.DEEP_TIER_API_KEY?.trim())
-}
-
 type PlatformMediaTransport = {
   baseUrl: string
   apiKey: string
@@ -191,10 +187,6 @@ export function resolveDeepTierImageConfig(): DeepTierImageConfig | null {
   return { ...transport, model }
 }
 
-export function isDeepTierImageConfigured(): boolean {
-  return !!resolveDeepTierImageConfig()
-}
-
 export type DeepTierVideoConfig = {
   baseUrl: string
   apiKey: string
@@ -218,8 +210,4 @@ export function resolveDeepTierVideoConfig(): DeepTierVideoConfig | null {
   const model = process.env.DEEP_TIER_VIDEO_MODEL?.trim() || 'grok-imagine-video-1.5'
   if (!transport || !model) return null
   return { ...transport, model }
-}
-
-export function isDeepTierVideoConfigured(): boolean {
-  return !!resolveDeepTierVideoConfig()
 }

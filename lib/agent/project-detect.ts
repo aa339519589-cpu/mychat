@@ -3,6 +3,7 @@
 import { existsSync, readFileSync } from "fs"
 import { join } from "path"
 import { workspaceRoot } from "./workspace"
+import { isRecord } from '@/lib/unknown-value'
 
 const workspaceFile = (root: string, name: string) => join(/* turbopackIgnore: true */ root, name)
 
@@ -42,19 +43,23 @@ export function detectProjectCommands(taskId: string, userId: string): DetectedP
   // ── Read package.json ──
   const pkg = readJson(root, "package.json")
   const scripts: Record<string, string> = {}
-  if (pkg && typeof pkg === "object") {
-    const s = (pkg as any).scripts
-    if (s && typeof s === "object") Object.assign(scripts, s)
+  if (pkg) {
+    const source = isRecord(pkg.scripts) ? pkg.scripts : null
+    if (source) {
+      for (const [name, value] of Object.entries(source)) {
+        if (typeof value === 'string') scripts[name] = value
+      }
+    }
     if (Object.keys(scripts).length > 0) confidence += 15
   }
 
   // ── Framework ──
   let framework: DetectedProject["framework"] = "unknown"
   const deps = new Set<string>()
-  if (pkg && typeof pkg === "object") {
+  if (pkg) {
     for (const k of ["dependencies", "devDependencies", "peerDependencies"]) {
-      const obj = (pkg as any)[k]
-      if (obj && typeof obj === "object") Object.keys(obj).forEach(d => deps.add(d))
+      const obj = isRecord(pkg[k]) ? pkg[k] : null
+      if (obj) Object.keys(obj).forEach(d => deps.add(d))
     }
   }
 

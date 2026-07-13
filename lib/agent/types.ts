@@ -127,6 +127,16 @@ export type SnapshotRecord = {
   storage: "local" | "artifact" | "both"
   restorable: boolean
   workspaceId: string | null
+  format: "cas-v1" | "legacy-patch"
+  head: string | null
+  parentSnapshotId: string | null
+  parentDigest: string | null
+  treeDigest: string | null
+  manifestDigest: string | null
+  entryCount: number
+  totalBytes: number
+  integrityVerified: boolean
+  durable: boolean
 }
 
 export type RestoreResult = {
@@ -134,7 +144,7 @@ export type RestoreResult = {
   snapshotId?: string
   restoredFiles: number
   failedFiles: number
-  usedSource: "local_patch" | "artifact_patch" | "git_fallback" | "none"
+  usedSource: "local_cas" | "artifact_cas" | "none"
   error?: string
 }
 

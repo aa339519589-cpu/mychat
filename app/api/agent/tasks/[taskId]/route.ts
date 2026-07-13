@@ -14,5 +14,25 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tas
   const detail = await getTaskDetail(auth.supabase, auth.userId, taskId)
   if (detail.error) return json(detail, 404)
 
-  return json(detail)
+  const { data: latestJob, error: jobError } = await auth.supabase.from('jobs')
+    .select('id,status,subject')
+    .eq('principal_id', auth.userId)
+    .eq('type', 'agent.task')
+    .contains('subject', { taskId })
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (jobError) return json({ error: '作业状态暂时不可用' }, 503)
+
+  const subject = latestJob?.subject && typeof latestJob.subject === 'object'
+    && !Array.isArray(latestJob.subject) ? latestJob.subject as Record<string, unknown> : null
+  return json({
+    ...detail,
+    job: latestJob ? {
+      id: latestJob.id,
+      status: latestJob.status,
+      responseId: typeof subject?.responseId === 'string' ? subject.responseId : null,
+      streamUrl: `/api/v1/jobs/${latestJob.id}/events?from_seq=0`,
+    } : null,
+  })
 }

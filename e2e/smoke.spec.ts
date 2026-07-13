@@ -42,10 +42,10 @@ async function mockAuthenticatedWorkspace(page: Page) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ endpoints: [] }),
   }))
-  await page.route('**/api/generations/running?*', route => route.fulfill({
+  await page.route('**/api/v1/conversations/*/generation', route => route.fulfill({
     status: 200,
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ generations: [] }),
+    body: JSON.stringify({ job: null, streamUrl: null }),
   }))
   await page.route('https://example.supabase.co/**', route => {
     const request = route.request()

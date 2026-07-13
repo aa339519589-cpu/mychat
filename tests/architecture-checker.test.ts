@@ -31,6 +31,16 @@ test("architecture checker accepts a valid dependency direction", () => {
   assert.equal(result.status, 0, result.stderr)
 })
 
+test("architecture checker rejects library modules owned only by tests", () => {
+  const result = runFixture({
+    "app/page.tsx": "export default function Page() { return null }\n",
+    "lib/obsolete.ts": "export const obsolete = true\n",
+  })
+
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /unused-runtime-module/)
+})
+
 test("architecture checker rejects client imports of server-only modules", () => {
   const result = runFixture({
     "lib/api/secret.ts": "export const secret = 'server-only'\n",

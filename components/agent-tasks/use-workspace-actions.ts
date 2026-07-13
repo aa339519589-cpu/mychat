@@ -107,16 +107,29 @@ export function useWorkspaceActions(taskId: string | null, workspaceStatus?: Wor
 
   const decideConfirmation = async (action: "confirm" | "reject") => {
     if (!taskId || !pendingConf) return
+    if (!pendingConf.confirmationToken) {
+      if (pendingConf.operation === "publish") await publish(false)
+      return
+    }
     setConfirming(true)
     try {
       const response = await fetch(`/api/agent/tasks/${taskId}/confirm`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, confirmationId: pendingConf.id }),
+        body: JSON.stringify({
+          action,
+          operation: pendingConf.operation,
+          confirmationId: pendingConf.id,
+          confirmationToken: pendingConf.confirmationToken,
+        }),
       })
       if (response.ok) {
-        setPendingConf(null)
-        void fetchDiff(taskId)
+        if (action === "confirm" && pendingConf.operation === "publish") {
+          await publish(false, pendingConf)
+        } else {
+          setPendingConf(null)
+          void fetchDiff(taskId)
+        }
       }
     } catch {
       // Keep the card visible so the operation can be retried.
@@ -125,26 +138,43 @@ export function useWorkspaceActions(taskId: string | null, workspaceStatus?: Wor
     }
   }
 
-  const publish = async () => {
+  const publish = async (askFirst = true, confirmation?: PendingConfirmation) => {
     if (!taskId) return
     if (!gitStatus?.hasChanges) {
       alert("没有可发布的改动")
       return
     }
-    if (!confirm("将 commit → push → 创建 Pull Request，确定发布？")) return
+    if (askFirst && !confirm("将 commit → push → 创建 Pull Request，确定发布？")) return
     setPublishing(true)
     setPublishResult(null)
     try {
       const response = await fetch(`/api/agent/tasks/${taskId}/workspace/git`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "publish" }),
+        body: JSON.stringify({
+          action: "publish",
+          confirmationId: confirmation?.id,
+          confirmationToken: confirmation?.confirmationToken,
+        }),
       })
       const data = await response.json()
       setPublishResult(data)
       if (data.ok) {
+        setPendingConf(null)
         void fetchDiff(taskId)
         setGitStatus(null)
+      } else if (data.needsConfirmation && typeof data.confirmationId === "string") {
+        setPendingConf({
+          id: data.confirmationId,
+          operation: typeof data.operation === "string" ? data.operation : "publish",
+          riskLevel: data.risk?.level ?? "high",
+          title: data.risk?.title ?? "高风险发布",
+          reason: data.risk?.reason ?? data.error ?? "需要确认",
+          files: Array.isArray(data.risk?.files) ? data.risk.files : [],
+          status: "pending",
+          confirmationToken: typeof data.confirmationToken === "string" ? data.confirmationToken : undefined,
+          expiresAt: typeof data.expiresAt === "string" ? data.expiresAt : undefined,
+        })
       }
     } catch {
       setPublishResult({ ok: false, error: "发布请求失败" })
@@ -188,7 +218,7 @@ export function useWorkspaceActions(taskId: string | null, workspaceStatus?: Wor
     gitStatus,
     lastSnapshotId,
     pendingConf,
-    publish,
+    publish: () => publish(),
     publishing,
     publishResult,
     restore,

@@ -1,4 +1,5 @@
-import type { RawMsg } from '@/lib/llm/types'
+import type { ModelContentPart, ModelMessage, RawMsg } from '@/lib/llm/types'
+import { isRecord } from '@/lib/unknown-value'
 import type { HistoryRetrievalMode } from '@/lib/llm/active-retrieval'
 export { latestBeijingDateFromMessages } from '@/lib/search-mode'
 export type { SearchMode } from '@/lib/search-mode'
@@ -33,7 +34,7 @@ function messageText(message: RawMsg): string {
   if (typeof message.content === 'string') return message.content
   if (!Array.isArray(message.content)) return ''
   return message.content
-    .map((part: any) => typeof part?.text === 'string' ? part.text : '')
+    .map(part => isRecord(part) && typeof part.text === 'string' ? part.text : '')
     .filter(Boolean)
     .join('\n')
 }
@@ -61,9 +62,11 @@ export function latestUserSourceImages(messages: RawMsg[]): string[] {
       if (value.startsWith('data:image/') || /^https:\/\//i.test(value)) images.push(value)
     }
     if (Array.isArray(message.content)) {
-      for (const part of message.content as any[]) {
-        const url = typeof part?.image_url?.url === 'string' ? part.image_url.url.trim() : ''
-        if (part?.type === 'image_url' && (url.startsWith('data:image/') || /^https:\/\//i.test(url))) {
+      for (const value of message.content) {
+        if (!isRecord(value)) continue
+        const image = isRecord(value.image_url) ? value.image_url : null
+        const url = typeof image?.url === 'string' ? image.url.trim() : ''
+        if (value.type === 'image_url' && (url.startsWith('data:image/') || /^https:\/\//i.test(url))) {
           images.push(url)
         }
       }
@@ -73,14 +76,16 @@ export function latestUserSourceImages(messages: RawMsg[]): string[] {
   return []
 }
 
-export function prependDeepResearchInstruction(messages: any[]): void {
+export function prependDeepResearchInstruction(messages: ModelMessage[]): void {
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index]
     if (message.role !== 'user') continue
     if (typeof message.content === 'string') {
       message.content = DEEP_RESEARCH_PREFIX + message.content
     } else if (Array.isArray(message.content)) {
-      const textPart = message.content.find((part: any) => part.type === 'text')
+      const textPart = message.content.find((part): part is ModelContentPart => (
+        isRecord(part) && part.type === 'text' && typeof part.text === 'string'
+      ))
       if (textPart) textPart.text = DEEP_RESEARCH_PREFIX + textPart.text
     }
     return

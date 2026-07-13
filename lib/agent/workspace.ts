@@ -12,6 +12,7 @@ import { createWorkspaceSnapshot } from "./snapshot"
 import { workspacePath, workspaceRoot } from "./workspace-paths"
 import type { WorkspaceResult } from "./workspace-types"
 import { getChangedFiles, getFileDiff } from "./workspace-inspection"
+import { errorMessage } from '@/lib/unknown-value'
 
 export { WORKSPACE_ROOT, workspacePath, workspaceRoot } from "./workspace-paths"
 export type { WorkspaceResult } from "./workspace-types"
@@ -45,8 +46,8 @@ export function readWorkspaceFile(
   try {
     const content = readFileSync(abs, "utf-8")
     return { ok: true, data: { path: chk.normalized!, content, size: content.length } }
-  } catch (err: any) {
-    return { ok: false, error: `读取失败：${err?.message ?? "未知错误"}` }
+  } catch (error) {
+    return { ok: false, error: `读取失败：${errorMessage(error)}` }
   }
 }
 
@@ -82,8 +83,8 @@ export async function writeWorkspaceFile(
     mkdirSync(dir, { recursive: true })
 
     writeFileSync(abs, content, "utf-8")
-  } catch (err: any) {
-    return { ok: false, error: `写入失败：${err?.message ?? "未知错误"}` }
+  } catch (error) {
+    return { ok: false, error: `写入失败：${errorMessage(error)}` }
   }
 
   // 获取 diff
@@ -124,8 +125,8 @@ export async function editWorkspaceFile(
   let content: string
   try {
     content = readFileSync(abs, "utf-8")
-  } catch (err: any) {
-    return { ok: false, error: `读取失败：${err?.message ?? "未知错误"}` }
+  } catch (error) {
+    return { ok: false, error: `读取失败：${errorMessage(error)}` }
   }
 
   // 查找 old_string
@@ -145,8 +146,8 @@ export async function editWorkspaceFile(
 
   try {
     writeFileSync(abs, newContent, "utf-8")
-  } catch (err: any) {
-    return { ok: false, error: `写入失败：${err?.message ?? "未知错误"}` }
+  } catch (error) {
+    return { ok: false, error: `写入失败：${errorMessage(error)}` }
   }
 
   const diff = getFileDiff(root, chk.normalized!)
@@ -191,8 +192,8 @@ export async function deleteWorkspaceFile(
 
   try {
     unlinkSync(abs)
-  } catch (err: any) {
-    return { ok: false, error: `删除失败：${err?.message ?? "未知错误"}` }
+  } catch (error) {
+    return { ok: false, error: `删除失败：${errorMessage(error)}` }
   }
 
   return {
@@ -216,20 +217,28 @@ export async function createWorkspaceForTask(
   repo: string,
   _goal?: string,
   baseBranch = "main",
-): Promise<any> {
+  restoreCheckpoint = true,
+): Promise<{
+  taskId: string
+  userId: string
+  repo: string
+  baseBranch: string
+  agentBranch: string
+  path: string
+  commit: string | null
+  status: 'ready'
+} | { error: string }> {
   const { cloneWorkspace: cloneWs } = await import("./git-workspace")
   const result = await cloneWs(userId, taskId, repo, token, _goal ?? "task", baseBranch)
-  if (typeof result === "object" && result !== null && "error" in result) {
-    return { error: (result as any).error }
-  }
+  if ("error" in result) return result
   const wsPath = workspacePath(userId, taskId)
   const wsInfo = {
     taskId, userId, repo,
-    baseBranch: (result as any)?.branch ?? "main",
-    agentBranch: (result as any)?.agentBranch ?? `agent/${taskId.slice(0, 8)}`,
+    baseBranch: result.branch,
+    agentBranch: result.agentBranch,
     path: wsPath,
-    commit: (result as any)?.commitSha ?? null,
-    status: "ready",
+    commit: null,
+    status: "ready" as const,
   }
 
   // 持久化到 agent_workspaces 表，确保后续 getTaskDetail 能查到
@@ -244,7 +253,7 @@ export async function createWorkspaceForTask(
       await supabase.from("agent_workspaces").update({
         repo,
         branch: wsInfo.baseBranch,
-        commit_sha: wsInfo.commit,
+        commit_sha: null,
         path: wsPath,
         status: "ready",
         updated_at: new Date().toISOString(),
@@ -255,7 +264,6 @@ export async function createWorkspaceForTask(
         taskId,
         repo,
         branch: wsInfo.baseBranch,
-        commitSha: wsInfo.commit,
         path: wsPath,
       })
     }
@@ -263,19 +271,18 @@ export async function createWorkspaceForTask(
     const { updateWorkspaceStatus } = await import("./data")
     await updateWorkspaceStatus(supabase, userId, taskId, "ready", {
       path: wsPath,
-      commitSha: wsInfo.commit,
     })
     await supabase.from("agent_tasks").update({
       repo,
       branch: wsInfo.baseBranch,
       updated_at: new Date().toISOString(),
     }).eq("id", taskId).eq("user_id", userId)
-  } catch (err: any) {
-    console.error('[workspace] DB persist failed (non-fatal)', err?.message)
+  } catch (error) {
+    console.error('[workspace] DB persist failed (non-fatal)', errorMessage(error))
   }
 
   const currentChanges = getChangedFiles(taskId, userId)
-  if (!currentChanges.ok || currentChanges.data.files.length === 0) {
+  if (restoreCheckpoint && (!currentChanges.ok || currentChanges.data.files.length === 0)) {
     const { restoreLatestWorkspaceCheckpoint } = await import("./checkpoint")
     const restored = await restoreLatestWorkspaceCheckpoint(supabase, userId, taskId)
     if (!restored.ok) return { error: `Workspace 检查点恢复失败：${restored.error}` }

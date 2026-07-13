@@ -4,6 +4,13 @@ import { chatCompletionsUrl } from '../lib/llm/openai'
 import { normalizeOpenAIBaseUrl } from '../lib/llm/openai-compatible'
 import { runTurn } from '../lib/llm/turn'
 import { runAgentLoop } from '../lib/llm/agent-loop'
+import type { ChatEvent } from '../lib/llm/events'
+
+type MediaEvent = Extract<ChatEvent, { media: unknown }>
+
+function mediaEvents(events: ChatEvent[]): MediaEvent[] {
+  return events.filter((event): event is MediaEvent => "media" in event)
+}
 
 test('chat completion URLs preserve explicit OpenAI-compatible prefixes', () => {
   assert.equal(chatCompletionsUrl('https://api.example.com'), 'https://api.example.com/v1/chat/completions')
@@ -134,7 +141,7 @@ test('generic provider emits structured image and video content parts', { concur
       }],
     })
   }
-  const events: any[] = []
+  const events: ChatEvent[] = []
   const result = await runTurn(
     'https://api.example.com/v1/chat/completions',
     'test-key',
@@ -146,16 +153,16 @@ test('generic provider emits structured image and video content parts', { concur
   )
 
   assert.equal(result.content, '媒体已生成')
-  assert.deepEqual(events.filter(event => event.media).map(event => event.media.type), ['image', 'video'])
-  assert.match(events.find(event => event.media?.type === 'image')?.media.url ?? '', /^data:image\/png;base64,/)
-  assert.match(events.find(event => event.media?.type === 'video')?.media.url ?? '', /^data:video\/mp4;base64,/)
+  assert.deepEqual(mediaEvents(events).map(event => event.media.type), ['image', 'video'])
+  assert.match(mediaEvents(events).find(event => event.media.type === 'image')?.media.url ?? '', /^data:image\/png;base64,/)
+  assert.match(mediaEvents(events).find(event => event.media.type === 'video')?.media.url ?? '', /^data:video\/mp4;base64,/)
   assert.deepEqual(mediaRequests, [{ authorization: '', redirect: 'manual' }])
 })
 
 test('generic agent loop shares a four-item remote media budget across rounds', async () => {
   let chatCalls = 0
   const mediaRequests: string[] = []
-  const events: any[] = []
+  const events: ChatEvent[] = []
   const makeMedia = (offset: number) => Array.from({ length: 4 }, (_, index) => ({
     type: 'image_url',
     image_url: { url: `https://media.example.com/${offset + index}.png` },
@@ -195,7 +202,7 @@ test('generic agent loop shares a four-item remote media budget across rounds', 
 
   assert.equal(chatCalls, 2)
   assert.deepEqual(mediaRequests, [0, 1, 2, 3].map(index => `https://media.example.com/${index}.png`))
-  assert.equal(events.filter(event => event.media).length, 4)
+  assert.equal(mediaEvents(events).length, 4)
 })
 
 test('generic provider accepts a structured image larger than the text response cap', { concurrency: false }, async t => {
@@ -208,7 +215,7 @@ test('generic provider accepts a structured image larger than the text response 
       message: { content: [{ type: 'output_image', b64_json: encoded }] },
     }],
   })
-  const events: any[] = []
+  const events: ChatEvent[] = []
   const result = await runTurn(
     'https://api.example.com/v1/chat/completions',
     'test-key',
@@ -220,6 +227,6 @@ test('generic provider accepts a structured image larger than the text response 
   )
 
   assert.equal(result.failed, false)
-  assert.equal(events.filter(event => event.media).length, 1)
-  assert.equal(events.find(event => event.media)?.media.url.length, encoded.length + 'data:image/png;base64,'.length)
+  assert.equal(mediaEvents(events).length, 1)
+  assert.equal(mediaEvents(events)[0]?.media.url.length, encoded.length + 'data:image/png;base64,'.length)
 })

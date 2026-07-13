@@ -44,6 +44,8 @@ export type GenerateMediaOptions = {
   timeoutMs?: number
   /** Supports platform reverse-proxy model IDs without media-name heuristics. */
   forceKind?: MediaOutputKind
+  /** Stable job-scoped key used only on provider creation requests. */
+  idempotencyKey?: string
 }
 
 export type MaterializeContext = Pick<

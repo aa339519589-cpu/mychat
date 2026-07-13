@@ -2,12 +2,10 @@ import { createClient } from "@/lib/supabase/client"
 import type { Conversation, Message } from "@/lib/chat-data"
 import { parseArtifact, artifactTitle } from "@/lib/artifact"
 import { normalizeGeneratedMediaList } from "@/lib/generated-media"
-import {
-  generationTerminalWarning,
-  normalizeMessageGeneration,
-} from "@/lib/generation-message"
+import { normalizeMessageGeneration } from "@/lib/generation-message"
 import { insertArtifactFromMessage } from "./artifacts"
 import { fmtDate } from "./shared"
+import { normalizeMessageRow, type ConversationRow, type MessageRow } from "./conversation-rows"
 import {
   MESSAGE_CACHE_WARM_LIMIT,
   REMOTE_MESSAGE_LIMIT,
@@ -59,36 +57,6 @@ async function saveMessageArtifact(userId: string, conversationId: string, msg: 
   })
 }
 
-function normalizeMessageRow(r: any): Message {
-  const stored = r.images as unknown
-  const generation = !Array.isArray(stored)
-    ? normalizeMessageGeneration((stored as any)?.generation)
-    : undefined
-  const images = Array.isArray(stored)
-    ? stored.filter((value): value is string => typeof value === "string")
-    : Array.isArray((stored as any)?.refs)
-      ? (stored as any).refs.filter((value: unknown): value is string => typeof value === "string")
-      : undefined
-  const imageSummary = !Array.isArray(stored) && typeof (stored as any)?.image_summary === "string"
-    ? (stored as any).image_summary as string
-    : undefined
-  const media = !Array.isArray(stored) ? normalizeGeneratedMediaList((stored as any)?.generated_media) : []
-  return {
-    id: r.id as string,
-    role: r.role as "user" | "assistant",
-    content: (r.content as string) ?? "",
-    thinking: (r.thinking as string) || undefined,
-    images: images?.length ? images : undefined,
-    imageSummary,
-    media: media.length ? media : undefined,
-    isError: generation?.status === "failed" ? true : undefined,
-    outputWarning: generationTerminalWarning(generation),
-    generation,
-    time: "",
-    ts: (r.created_at as string) || undefined,
-  }
-}
-
 async function fetchRemoteMessages(conversationId: string, limit = REMOTE_MESSAGE_LIMIT): Promise<Message[]> {
   const supabase = createClient()
   const { data, error } = await supabase
@@ -99,7 +67,7 @@ async function fetchRemoteMessages(conversationId: string, limit = REMOTE_MESSAG
     .limit(limit)
   if (error) throw new Error("消息同步暂时不可用", { cause: error })
   if (!data) throw new Error("消息同步响应无效")
-  const messages = data.map(normalizeMessageRow).reverse()
+  const messages = (data as MessageRow[]).map(normalizeMessageRow).reverse()
   if (typeof window !== "undefined") {
     for (const message of messages) {
       if (message.media?.length) {
@@ -136,13 +104,13 @@ export async function fetchConversations(): Promise<Conversation[]> {
       .select("id, title, updated_at, project_id")
       .order("updated_at", { ascending: false })
     if (!fallback) return []
-    const list = fallback.map(r => ({
-      id: r.id as string,
-      title: r.title as string,
+    const list = (fallback as ConversationRow[]).map(row => ({
+      id: row.id,
+      title: row.title,
       excerpt: "",
-      date: fmtDate(r.updated_at as string),
+      date: fmtDate(row.updated_at),
       messages: [],
-      projectId: (r.project_id as string) ?? null,
+      projectId: row.project_id,
       starred: false,
       pinned: false,
     }))
@@ -150,18 +118,20 @@ export async function fetchConversations(): Promise<Conversation[]> {
     return list
   }
 
-  const list = data.map(r => {
-    const m = (r as any).messages
-    const msgCount = Array.isArray(m) && m.length > 0 && typeof m[0]?.count === "number" ? (m[0].count as number) : undefined
+  const list = (data as ConversationRow[]).map(row => {
+    const messageCounts = row.messages
+    const msgCount = Array.isArray(messageCounts) && typeof messageCounts[0]?.count === "number"
+      ? messageCounts[0].count
+      : undefined
     return {
-      id: r.id as string,
-      title: r.title as string,
+      id: row.id,
+      title: row.title,
       excerpt: "",
-      date: fmtDate(r.updated_at as string),
+      date: fmtDate(row.updated_at),
       messages: [],
-      projectId: (r.project_id as string) ?? null,
-      starred: !!r.starred,
-      pinned: !!r.pinned,
+      projectId: row.project_id,
+      starred: Boolean(row.starred),
+      pinned: Boolean(row.pinned),
       msgCount,
     }
   })

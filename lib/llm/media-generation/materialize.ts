@@ -1,4 +1,5 @@
 import type { GeneratedMedia } from '@/lib/generated-media'
+import { isRecord } from '@/lib/unknown-value'
 import { normalizeOpenAIBaseUrl, safeModelEndpointFetch } from '../openai-compatible'
 import {
   MAX_IMAGE_BYTES,
@@ -160,20 +161,23 @@ export async function materializeOpenAICompatibleMedia(
 }
 
 export async function imageFromPayload(
-  payload: any,
+  payload: unknown,
   prompt: string,
   context: MaterializeContext,
 ): Promise<GeneratedMedia | null> {
-  const candidates = [
-    ...(Array.isArray(payload?.data) ? payload.data : []),
-    payload,
-    ...(Array.isArray(payload?.output) ? payload.output : []),
-    payload?.response,
-    ...(Array.isArray(payload?.response?.data) ? payload.response.data : []),
-    ...(Array.isArray(payload?.response?.output) ? payload.response.output : []),
+  const root = isRecord(payload) ? payload : {}
+  const response = isRecord(root.response) ? root.response : {}
+  const candidates: unknown[] = [
+    ...(Array.isArray(root.data) ? root.data : []),
+    root,
+    ...(Array.isArray(root.output) ? root.output : []),
+    response,
+    ...(Array.isArray(response.data) ? response.data : []),
+    ...(Array.isArray(response.output) ? response.output : []),
   ]
-  for (const candidate of candidates) {
-    if (!candidate || typeof candidate !== 'object') continue
+  for (const value of candidates) {
+    if (!isRecord(value)) continue
+    const candidate = value
     const b64 = candidate.b64_json ?? candidate.base64 ?? candidate.result
     if (typeof b64 === 'string' && b64.trim()) {
       const mimeType = typeof candidate.mime_type === 'string'
@@ -191,14 +195,16 @@ export async function imageFromPayload(
 }
 
 export async function videoUrlFromPayload(
-  payload: any,
+  payload: unknown,
   prompt: string,
   context: MaterializeContext,
 ): Promise<GeneratedMedia | null> {
-  const candidates = [payload, payload?.data, payload?.output, payload?.result]
+  const root = isRecord(payload) ? payload : {}
+  const candidates = [root, root.data, root.output, root.result]
     .flatMap(candidate => Array.isArray(candidate) ? candidate : [candidate])
-  for (const candidate of candidates) {
-    if (!candidate || typeof candidate !== 'object') continue
+  for (const value of candidates) {
+    if (!isRecord(value)) continue
+    const candidate = value
     const rawUrl = candidate.url ?? candidate.video_url ?? candidate.download_url
     if (typeof rawUrl === 'string') return materializeMediaUrl(rawUrl, 'video', prompt, context)
   }

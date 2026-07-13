@@ -1,10 +1,11 @@
-import type { Emit } from "@/lib/llm/events"
+import type { CodePlan, Emit } from "@/lib/llm/events"
+import type { SupabaseClient } from '@supabase/supabase-js'
 
 export type ToolStepKind = 'list' | 'read' | 'edit' | 'memory' | 'repo' | 'deploy'
 
 export type ToolEvent =
   | { step: { kind: ToolStepKind; label: string } }
-  | { plan: any }
+  | { plan: CodePlan }
 
 export type ToolState = {
   markUsedTool: () => void
@@ -28,7 +29,7 @@ export type CodeToolExecutorOptions = {
   token: string
   defaultBranch: string | null
   repoIsPrivate: boolean
-  supabase: any
+  supabase: SupabaseClient | null
   userId: string | null
   wsReady: boolean
   wsTaskId: string
@@ -70,4 +71,3 @@ export function buildCodeTools(options: {
   const unavailable = new Set(isWorkspace ? ['create_repo', 'enable_pages'] : ['apply_patch', 'publish'])
   return allTools.filter(tool => !unavailable.has(tool.function.name))
 }
-

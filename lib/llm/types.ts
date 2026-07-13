@@ -10,6 +10,30 @@ export type RawMsg = {
   ts?: string
 }
 
+export type ModelContentPart = {
+  type?: string
+  text?: string
+  image_url?: { url?: string }
+  [key: string]: unknown
+}
+
+export type ModelToolCall = {
+  id: string
+  type: 'function'
+  function: { name: string; arguments: string }
+}
+
+export type ModelMessage = {
+  role: string
+  content?: unknown
+  reasoning_content?: string
+  tool_call_id?: string
+  tool_calls?: ModelToolCall[]
+  [key: string]: unknown
+}
+
+export type ModelToolDefinition = Record<string, unknown>
+
 // 前端传来的一个附件。
 // - 文本 / 有文字层的 PDF：text 直接带文字
 // - 扫描件 PDF：前端把每页渲染成图片放进 pageImages，后端用小米 Omni OCR 成文字

@@ -20,10 +20,8 @@ import {
   type HistoryMessage,
   type RunChatStreamResult,
 } from "./chat-stream-service"
-import {
-  generateConversationTitle,
-  resumeConversationGeneration,
-} from "./generation-api"
+import { resumeConversationGeneration } from "./generation-api"
+import { generateConversationTitle } from "./generation-job-actions"
 import { cancelActiveGeneration } from "./generation-cancellation"
 import { toHistoryMessage } from "./message-history"
 import { regenerateFromUser, regenerateLastAssistant } from "./message-regeneration"

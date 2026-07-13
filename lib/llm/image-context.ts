@@ -3,9 +3,10 @@ import type { RawMsg } from './types'
 import { imageRefsFromMessage } from './context'
 import { summarizeImages } from '@/lib/mimo'
 import { log } from '@/lib/logger'
+import type { SupabaseClient } from '@supabase/supabase-js'
 
 type SummaryOptions = {
-  supabase: any
+  supabase: SupabaseClient | null
   userId: string | null
   emit: Emit
   signal?: AbortSignal

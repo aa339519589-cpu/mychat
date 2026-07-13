@@ -1,4 +1,5 @@
 import { validate } from '@/lib/validation'
+import type { ModelMessage } from '@/lib/llm/types'
 
 export type CodeChatMessage = {
   role: 'user' | 'assistant'
@@ -12,7 +13,7 @@ export type CodeChatRequest = {
   taskId: string | null
   responseId: string | null
   sessionId: string | null
-  resumeMessages?: unknown[]
+  resumeMessages?: ModelMessage[]
 }
 
 const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
@@ -63,6 +64,6 @@ export function parseCodeChatRequest(input: unknown): CodeChatRequest {
     taskId: taskId as string | null,
     responseId: responseId as string | null,
     sessionId: sessionId as string | null,
-    resumeMessages: Array.isArray(body.resumeMessages) ? body.resumeMessages : undefined,
+    resumeMessages: Array.isArray(body.resumeMessages) ? body.resumeMessages as ModelMessage[] : undefined,
   }
 }

@@ -1,4 +1,5 @@
 import { normalizeGeneratedMedia, type GeneratedMedia } from "@/lib/generated-media"
+import { isRecord } from '@/lib/unknown-value'
 
 export const MAX_GENERIC_ERROR_RESPONSE_BYTES = 64 * 1024
 // Structured image parts may legally contain a data URL close to the 16 MiB
@@ -16,7 +17,7 @@ export class GenericResponseLimitError extends Error {
 
 export function mediaFromContentPart(value: unknown): GeneratedMedia | null {
   if (!value || typeof value !== 'object') return null
-  const part = value as Record<string, any>
+  const part = value as Record<string, unknown>
   const marker = typeof part.type === 'string' ? part.type.toLowerCase() : ''
   const mediaType: GeneratedMedia['type'] | null = marker.includes('video') || part.video_url || part.video
     ? 'video'
@@ -26,7 +27,11 @@ export function mediaFromContentPart(value: unknown): GeneratedMedia | null {
   if (!mediaType) return null
 
   const nested = mediaType === 'image' ? part.image_url ?? part.image : part.video_url ?? part.video
-  let url = typeof nested === 'string' ? nested : typeof nested?.url === 'string' ? nested.url : ''
+  let url = typeof nested === 'string'
+    ? nested
+    : isRecord(nested) && typeof nested.url === 'string'
+      ? nested.url
+      : ''
   if (!url && typeof part.url === 'string') url = part.url
   const encoded = typeof part.b64_json === 'string'
     ? part.b64_json

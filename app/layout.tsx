@@ -1,9 +1,24 @@
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
+import { Noto_Serif_SC, Source_Serif_4 } from 'next/font/google'
 import './globals.css'
 import './dark-background.css'
 import './thinking-flow.css'
 import 'katex/dist/katex.min.css'
+
+const notoSerifSc = Noto_Serif_SC({
+  variable: '--font-noto-serif-sc',
+  weight: 'variable',
+  subsets: ['latin'],
+  display: 'swap',
+})
+
+const sourceSerif = Source_Serif_4({
+  variable: '--font-source-serif',
+  weight: 'variable',
+  subsets: ['latin'],
+  display: 'swap',
+})
 
 export const metadata: Metadata = {
   title: 'My Chat',
@@ -45,19 +60,7 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="zh-CN" className="bg-background">
-      <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link
-          rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@200..900&display=swap"
-        />
-        <link
-          rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,200..900&display=swap"
-        />
-      </head>
+    <html lang="zh-CN" className={`${notoSerifSc.variable} ${sourceSerif.variable} bg-background`}>
       <body className="font-sans antialiased">
         {children}
         {process.env.NODE_ENV === 'production' && <Analytics />}

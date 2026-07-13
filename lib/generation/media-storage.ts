@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
+  controlledGeneratedMediaUrl,
   isSafeGeneratedMediaUrl,
   MAX_GENERATED_MEDIA_ITEMS,
   normalizeGeneratedMedia,
@@ -15,7 +16,6 @@ import { materializeOpenAICompatibleMedia } from '@/lib/llm/media-generation/mat
 import { normalizeOpenAIBaseUrl } from '@/lib/llm/openai-compatible'
 import { createAdminClient } from '@/lib/supabase/admin'
 import {
-  drainGeneratedMediaCleanup,
   queueGeneratedMediaCleanup,
   removeQueuedGeneratedMedia,
 } from './media-cleanup'
@@ -23,6 +23,7 @@ import {
 const GENERATED_MEDIA_BUCKET = 'generated-media'
 const MAX_DURABLE_MEDIA_BYTES = 10 * 1024 * 1024
 const SAFE_SCOPE_SEGMENT = /^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,127})$/
+const UUID_SCOPE_SEGMENT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 type StorageError = { message?: string } | null
 
@@ -61,6 +62,42 @@ export type DurableMediaStorageDependencies = {
   fetcher?: ModelEndpointFetcher
   materializeMedia?: typeof materializeOpenAICompatibleMedia
   randomUUID?: () => string
+  publicAppUrl?: () => string | null
+  beforeUpload?: (input: {
+    scope: DurableMediaStorageScope
+    receipt: DurableMediaUploadReceipt
+    type: GeneratedMedia['type']
+    mimeType: string
+    bytes: number
+  }) => Promise<void>
+  afterUpload?: (input: {
+    scope: DurableMediaStorageScope
+    receipt: DurableMediaUploadReceipt
+    type: GeneratedMedia['type']
+    mimeType: string
+    bytes: number
+  }) => Promise<void>
+}
+
+function durableMediaUrl(
+  objectKey: string,
+  dependencies: DurableMediaStorageDependencies,
+): string {
+  const configured = dependencies.publicAppUrl?.()
+    ?? process.env.PUBLIC_APP_URL?.trim()
+    ?? process.env.AGENT_PUBLIC_URL?.trim()
+    ?? null
+  if (!configured) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new DurableMediaStorageError('媒体代理地址未配置', 'invalid_storage_url')
+    }
+    return controlledGeneratedMediaUrl(objectKey)
+  }
+  try {
+    return controlledGeneratedMediaUrl(objectKey, configured)
+  } catch (error) {
+    throw new DurableMediaStorageError('媒体代理地址无效', 'invalid_storage_url', { cause: error })
+  }
 }
 
 export class DurableMediaStorageError extends Error {
@@ -87,6 +124,14 @@ export class DurableMediaStorageError extends Error {
 function safeScopeSegment(value: string, label: string): string {
   const normalized = value.trim()
   if (normalized !== value || !SAFE_SCOPE_SEGMENT.test(normalized)) {
+    throw new DurableMediaStorageError(`${label} 无效`, 'invalid_scope')
+  }
+  return normalized
+}
+
+function safeUuidScopeSegment(value: string, label: string): string {
+  const normalized = value.trim()
+  if (normalized !== value || !UUID_SCOPE_SEGMENT.test(normalized)) {
     throw new DurableMediaStorageError(`${label} 无效`, 'invalid_scope')
   }
   return normalized
@@ -194,9 +239,9 @@ function safeScope(scope: DurableMediaStorageScope): {
   generationId: string
 } {
   return {
-    userId: safeScopeSegment(scope.userId, '用户 ID'),
-    conversationId: safeScopeSegment(scope.conversationId, '会话 ID'),
-    generationId: safeScopeSegment(scope.generationId, '生成 ID'),
+    userId: safeUuidScopeSegment(scope.userId, '用户 ID'),
+    conversationId: safeUuidScopeSegment(scope.conversationId, '会话 ID'),
+    generationId: safeUuidScopeSegment(scope.generationId, '生成 ID'),
   }
 }
 
@@ -253,7 +298,6 @@ export async function persistDurableGeneratedMedia(
   const originalProviderOrigin = providerOrigin(context.baseUrl)
 
   const client = serviceRoleClient(dependencies)
-  await drainGeneratedMediaCleanup(client)
   const materialize = dependencies.materializeMedia ?? materializeOpenAICompatibleMedia
   const materialized = await materialize(
     normalized,
@@ -266,6 +310,19 @@ export async function persistDurableGeneratedMedia(
     '媒体资源 ID',
   )
   const objectKey = `${userId}/${conversationId}/${generationId}/${assetId}.${extension}`
+  const receipt = { bucket: GENERATED_MEDIA_BUCKET, objectKey } as const
+  const uploadLifecycle = {
+    scope: { userId, conversationId, generationId },
+    receipt,
+    type: normalized.type,
+    mimeType,
+    bytes: bytes.byteLength,
+  }
+  try {
+    await dependencies.beforeUpload?.(uploadLifecycle)
+  } catch (error) {
+    throw new DurableMediaStorageError('媒体上传意图登记失败', 'upload_failed', { cause: error })
+  }
   const bucket = client.storage.from(GENERATED_MEDIA_BUCKET)
   let uploadError: StorageError
   try {
@@ -283,27 +340,28 @@ export async function persistDurableGeneratedMedia(
     await removeOrphan(client, { userId, conversationId, generationId }, objectKey)
     throw new DurableMediaStorageError('生成媒体上传失败', 'upload_failed')
   }
-
-  let publicUrl: string | undefined
   try {
-    publicUrl = bucket.getPublicUrl(objectKey).data?.publicUrl
+    await dependencies.afterUpload?.(uploadLifecycle)
   } catch (error) {
     await removeOrphan(client, { userId, conversationId, generationId }, objectKey)
-    throw new DurableMediaStorageError('媒体存储未返回持久化 URL', 'invalid_storage_url', { cause: error })
+    throw new DurableMediaStorageError('媒体上传凭据确认失败', 'upload_failed', { cause: error })
   }
-  if (!publicUrl || !/^https:\/\//i.test(publicUrl)
-    || !isSafeGeneratedMediaUrl(normalized.type, publicUrl)) {
+  let mediaUrl: string
+  try {
+    mediaUrl = durableMediaUrl(objectKey, dependencies)
+  } catch (error) {
     await removeOrphan(client, { userId, conversationId, generationId }, objectKey)
-    throw new DurableMediaStorageError('媒体存储未返回安全的持久化 URL', 'invalid_storage_url')
+    throw error
   }
+
   return {
     media: {
       type: normalized.type,
-      url: publicUrl,
+      url: mediaUrl,
       mimeType,
       ...(normalized.alt ? { alt: normalized.alt } : {}),
     },
-    receipt: { bucket: GENERATED_MEDIA_BUCKET, objectKey },
+    receipt,
   }
 }
 

@@ -3,6 +3,8 @@
 // ② 项目记忆（项目内）：remember_project / update_project_memory / forget_project → 写 project_memories 表
 import type { ToolDef, ToolContext, ToolOutcome, ToolSchema } from './types'
 import { log } from '@/lib/logger'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import { isRecord } from '@/lib/unknown-value'
 
 type MemoryResult = { action: 'create' | 'update' | 'delete' | 'duplicate'; id?: string; content?: string; ok: boolean; timestamp?: string }
 
@@ -27,18 +29,19 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 // 查询已有记忆，如果有高度相似的则返回那条记忆（用于更新），否则返回 null
 async function findSimilarMemory(
-  supabase: any, table: string, userId: string, content: string, projectId?: string | null,
+  supabase: SupabaseClient, table: string, userId: string, content: string, projectId?: string | null,
 ): Promise<{ id: string; content: string } | null> {
   try {
     let query = supabase.from(table).select('id, content').eq('user_id', userId)
     if (projectId && table === 'project_memories') query = query.eq('project_id', projectId)
     const { data } = await query
-    if (!data?.length) return null
+    if (!Array.isArray(data) || !data.length) return null
     let best: { id: string; content: string; score: number } | null = null
-    for (const row of data) {
-      const score = charBigramJaccard(content, row.content)
+    for (const rawRow of data) {
+      if (!isRecord(rawRow) || typeof rawRow.id !== 'string' || typeof rawRow.content !== 'string') continue
+      const score = charBigramJaccard(content, rawRow.content)
       if (score > DEDUP_THRESHOLD && (!best || score > best.score)) {
-        best = { id: row.id, content: row.content, score }
+        best = { id: rawRow.id, content: rawRow.content, score }
       }
     }
     return best ?? null
@@ -47,12 +50,13 @@ async function findSimilarMemory(
   }
 }
 
-async function runMemoryOp(ctx: ToolContext, opName: string, table: string, input: any): Promise<MemoryResult> {
+async function runMemoryOp(ctx: ToolContext, opName: string, table: string, input: unknown): Promise<MemoryResult> {
   const { supabase, userId, projectId } = ctx
   if (!supabase || !userId) return { action: 'create', ok: false }
+  const params = isRecord(input) ? input : {}
   try {
     if (opName === 'remember' || opName === 'remember_project') {
-      const content = String(input?.content ?? '').trim()
+      const content = String(params.content ?? '').trim()
       if (!content || content.length > MAX_MEMORY_CHARS) return { action: 'create', ok: false }
       if (table === 'project_memories' && !projectId) return { action: 'create', ok: false }
       const ts = new Date().toISOString()
@@ -80,8 +84,8 @@ async function runMemoryOp(ctx: ToolContext, opName: string, table: string, inpu
       return { action: 'create', id, content, ok: !error, timestamp: ts }
     }
     if (opName === 'update_memory' || opName === 'update_project_memory') {
-      const id = String(input?.id ?? '')
-      const content = String(input?.content ?? '').trim()
+      const id = String(params.id ?? '')
+      const content = String(params.content ?? '').trim()
       if (!UUID_RE.test(id) || !content || content.length > MAX_MEMORY_CHARS) return { action: 'update', id, content, ok: false }
       const ts = new Date().toISOString()
       let query = supabase.from(table).update({ content, updated_at: ts }).eq('id', id).eq('user_id', userId)
@@ -91,7 +95,7 @@ async function runMemoryOp(ctx: ToolContext, opName: string, table: string, inpu
       return { action: 'update', id, content, ok: !error, timestamp: ts }
     }
     if (opName === 'forget' || opName === 'forget_project') {
-      const id = String(input?.id ?? '')
+      const id = String(params.id ?? '')
       if (!UUID_RE.test(id)) return { action: 'delete', id, ok: false }
       let query = supabase.from(table).delete().eq('id', id).eq('user_id', userId)
       if (table === 'project_memories') query = query.eq('project_id', projectId)

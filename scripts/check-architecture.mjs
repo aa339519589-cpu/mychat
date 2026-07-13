@@ -8,7 +8,7 @@ import ts from "typescript"
 
 const SOURCE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]
 const SOURCE_DIRECTORIES = ["app", "components", "lib"]
-const ROOT_ENTRY_STEMS = ["proxy", "middleware", "instrumentation", "instrumentation-client", "next.config"]
+const ROOT_ENTRY_STEMS = ["proxy", "middleware", "instrumentation", "instrumentation-client", "job-worker", "next.config"]
 const NODE_BUILTINS = new Set([
   ...builtinModules,
   ...builtinModules.map((name) => `node:${name}`),
@@ -193,8 +193,6 @@ function isDeclaredServerOnly(path) {
     || path === "lib/model-endpoint-secret.ts"
     || path === "lib/quota.ts"
     || path === "lib/rate-limit.ts"
-    || path === "lib/generation/persist.ts"
-    || path === "lib/generation/runtime.ts"
 }
 
 function isDeclaredBrowserOnly(path) {
@@ -310,6 +308,36 @@ function inspect(root, config) {
     graph.set(file.path, [...new Set(resolvedImports
       .filter((entry) => !entry.typeOnly && entry.target && filePaths.has(entry.target))
       .map((entry) => entry.target))])
+  }
+
+  // Library modules must be reachable from a runtime delivery surface. Tests do
+  // not count as owners: a module referenced only by tests is production dead
+  // code and should be removed with its obsolete test.
+  const runtimeRoots = files
+    .map(file => file.path)
+    .filter(path => path.startsWith('app/') || path.startsWith('components/') || isServerRoot(path))
+  const reachable = new Set(runtimeRoots)
+  const pending = [...runtimeRoots]
+  while (pending.length > 0) {
+    const current = pending.pop()
+    const ownedDependencies = (imports.get(current) ?? [])
+      .map(entry => entry.target)
+      .filter(target => target && filePaths.has(target))
+    for (const dependency of ownedDependencies) {
+      if (reachable.has(dependency)) continue
+      reachable.add(dependency)
+      pending.push(dependency)
+    }
+  }
+  for (const file of files) {
+    if (file.path.startsWith('lib/') && !reachable.has(file.path)) {
+      violations.push(violation(
+        'unused-runtime-module',
+        file.path,
+        undefined,
+        'library module is not reachable from an app, component, or runtime entry',
+      ))
+    }
   }
 
   const serverOnly = new Set(files

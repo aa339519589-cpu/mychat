@@ -46,22 +46,17 @@ const BLOCKED_PATTERNS: { pattern: RegExp; reason: string }[] = [
 
 // ── 允许命令白名单模式（更安全）──
 
-const ALLOWED_PREFIXES = [
-  "git status", "git diff", "git branch", "git log", "git stash",
-  "git add", "git checkout", "git commit", "git merge",
-  "git remote", "git config", "git rev-parse", "git show",
-  "git restore", "git reset", "git switch",
-  "node --version", "node -v", "node --check", "node -e",
-  "node ", "npm --version", "npm -v", "npm install", "npm ci",
-  "npm run build", "npm test", "npm run lint", "npm run dev",
-  "npm run typecheck", "npm run start",
-  "pnpm --version", "pnpm install", "pnpm build", "pnpm test", "pnpm lint",
-  "yarn --version", "yarn -v", "yarn install", "yarn build", "yarn test",
-  "python --version", "python -V", "python3 --version", "python3 -V",
-  "python3 -c", "python -c",
-  "ls ", "cat ", "grep ", "rg ", "find ", "head ", "tail ", "wc ", "echo ",
-  "sort ", "uniq ", "cut ", "which ", "whereis ", "du ", "df ",
-  "npm run ", "npx ",
+const ALLOWED_COMMANDS: RegExp[] = [
+  /^git\s+(status|diff|branch|log|stash|add|checkout|commit|merge|remote|config|rev-parse|show|restore|reset|switch)(?:\s|$)/i,
+  /^node\s+(--version|-v)(?:\s|$)/i,
+  /^node\s+--check\s+[^\s]+(?:\s|$)/i,
+  /^npm\s+(--version|-v|ci|install|test)(?:\s|$)/i,
+  /^npm\s+run\s+(build|lint|typecheck|test|start|dev)(?:\s|$)/i,
+  /^pnpm\s+(--version|install|build|test|lint|typecheck)(?:\s|$)/i,
+  /^yarn\s+(--version|-v|install|build|test|lint|typecheck)(?:\s|$)/i,
+  /^npx\s+(tsc|eslint|vitest|jest|next|prettier)(?:\s|$)/i,
+  /^(python|python3)\s+(--version|-V)(?:\s|$)/,
+  /^(ls|cat|grep|rg|find|head|tail|wc|echo|sort|uniq|cut|which|whereis|du|df)(?:\s|$)/i,
 ]
 
 // ── 判断函数 ──
@@ -76,6 +71,17 @@ export function checkCommand(command: string): SecurityVerdict {
   }
 
   const trimmed = command.trim()
+  if (trimmed.length > 4_000) return { allowed: false, reason: "命令过长" }
+
+  // Commands are executed through a shell in both backends. Shell grammar is
+  // therefore closed entirely: one argv command, no chaining, redirection,
+  // substitutions, variable expansion, or multiline payloads.
+  if (/[\0\r\n;&|><`$()]/.test(trimmed)) {
+    return { allowed: false, reason: "禁止 shell 连接、重定向或表达式展开" }
+  }
+  if (/(^|\s)\.\.\//.test(trimmed) || /(^|\s)\/[A-Za-z]/.test(trimmed)) {
+    return { allowed: false, reason: "禁止命令参数逃逸 workspace" }
+  }
 
   // 检查黑名单（危险模式）
   for (const rule of BLOCKED_PATTERNS) {
@@ -85,9 +91,7 @@ export function checkCommand(command: string): SecurityVerdict {
   }
 
   // 检查白名单（安全前缀）
-  const allowed = ALLOWED_PREFIXES.some(prefix =>
-    trimmed.toLowerCase().startsWith(prefix.toLowerCase())
-  )
+  const allowed = ALLOWED_COMMANDS.some(pattern => pattern.test(trimmed))
 
   if (!allowed) {
     return { allowed: false, reason: `命令不在允许列表中：${trimmed.slice(0, 60)}` }

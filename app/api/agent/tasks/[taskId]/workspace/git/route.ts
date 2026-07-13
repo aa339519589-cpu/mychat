@@ -1,84 +1,36 @@
-// GET  /api/agent/tasks/[taskId]/workspace/git — git status
-// POST /api/agent/tasks/[taskId]/workspace/git — publish (one-shot)
+import { type NextRequest } from 'next/server'
+import { resolveAuth } from '@/lib/api/guard'
+import { json } from '@/lib/api/response'
+import { readWorkspaceAuthorityView } from '@/lib/agent/workspace-authority-view'
 
-import { NextRequest } from "next/server"
-import { json } from "@/lib/api/response"
-import { requireWorkspace } from "@/lib/agent/workspace-route"
-import {
-  getWorkspaceGitStatus,
-  publishWorkspaceToPullRequest,
-} from "@/lib/agent/git-publish"
-import { classifyPublishRisk } from "@/lib/agent/risk"
-import { createConfirmationRequest, getConfirmation, clearConfirmation } from "@/lib/agent/permissions"
-import { getGitHubSession } from "@/lib/github-session"
-import { readJson, requestErrorResponse } from "@/lib/api/request"
-
-async function getContext(taskId: string) {
-  const ctx = await requireWorkspace(taskId)
-  if ("error" in ctx) return ctx
-
-  const session = await getGitHubSession()
-  if (!session || session.userId !== ctx.userId) return { error: json({ error: "未连接 GitHub 或账号会话已变化" }, 401) }
-
-  return { ...ctx, ghToken: session.token }
-}
-
-// ─── GET：git status ───
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
+export async function GET(_request: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
+  const auth = await resolveAuth()
+  if (!auth.supabase || !auth.userId) return json({ error: '未登录' }, 401)
   const { taskId } = await params
-  const ctx = await getContext(taskId)
-  if ("error" in ctx) return ctx.error
-
-  const status = getWorkspaceGitStatus(taskId, ctx.userId)
-  return json(status)
-}
-
-// ─── POST：publish（commit → push → PR）───
-export async function POST(req: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
-  const { taskId } = await params
-  const ctx = await getContext(taskId)
-  if ("error" in ctx) return ctx.error
-
-  let body: Record<string, unknown> = {}
   try {
-    body = await readJson(req, { maxBytes: 32 * 1024 })
+    const [{ data: task }, view] = await Promise.all([
+      auth.supabase.from('agent_tasks').select('agent_branch').eq('id', taskId)
+        .eq('user_id', auth.userId).maybeSingle(),
+      readWorkspaceAuthorityView(auth.supabase, auth.userId, taskId),
+    ])
+    if (!view) return json({ ok: true, hasChanges: false, changedFiles: [], commitSha: null })
+    return json({
+      ok: true,
+      currentBranch: task?.agent_branch ?? null,
+      changedFiles: view.manifest.entries.map(entry => ({
+        path: entry.path,
+        status: entry.kind === 'deleted' ? 'D' : entry.kind === 'file' || entry.kind === 'symlink' ? 'M' : 'M',
+      })),
+      hasChanges: view.manifest.entries.length > 0,
+      commitSha: view.authority.head,
+      authoritySnapshotId: view.authority.snapshotId,
+      authorityVersion: view.authority.version,
+    })
   } catch (error) {
-    if (req.headers.get("content-length") === "0" || !req.body) body = {}
-    else return requestErrorResponse(error)
+    return json({ error: error instanceof Error ? error.message : 'Workspace authority 不可用' }, 503)
   }
+}
 
-  const action = body.action ?? "publish"
-
-  if (action !== "publish") return json({ error: "不支持的 Git 操作" }, 400)
-
-  // default: publish all — risk gate first
-  if (action === "publish") {
-    const status = getWorkspaceGitStatus(taskId, ctx.userId)
-    const changedFiles = status.changedFiles?.map(f => f.path) ?? []
-    const risk = classifyPublishRisk(changedFiles, status.currentBranch ?? "")
-
-    if (risk.blocked) return json({ error: risk.reason, blocked: true }, 403)
-
-    if (risk.needsConfirmation) {
-      const existing = await getConfirmation(ctx.supabase, ctx.userId, taskId)
-      if (existing?.status === "confirmed" && existing.operation === "publish") {
-        await clearConfirmation(ctx.supabase, ctx.userId, taskId)
-      } else if (existing?.status === "pending") {
-        return json({ needsConfirmation: true, confirmationId: existing.id, risk }, 409)
-      } else {
-        if (existing) await clearConfirmation(ctx.supabase, ctx.userId, taskId)
-        const req = await createConfirmationRequest(ctx.supabase, ctx.userId, taskId, risk, "creating_pr")
-        return json({ needsConfirmation: true, confirmationId: req.id, risk }, 409)
-      }
-    }
-  }
-
-  const result = await publishWorkspaceToPullRequest(taskId, ctx.userId, ctx.ghToken, ctx.supabase, {
-    message: typeof body.message === "string" ? body.message.slice(0, 500) : undefined,
-    title: typeof body.title === "string" ? body.title.slice(0, 250) : undefined,
-    body: typeof body.body === "string" ? body.body.slice(0, 20_000) : undefined,
-  })
-
-  if (!result.ok) return json(result, 400)
-  return json(result)
+export async function POST() {
+  return json({ error: 'HTTP 直发已停用；请通过 /api/code/apply 创建确认绑定的耐久发布 Job。' }, 410)
 }

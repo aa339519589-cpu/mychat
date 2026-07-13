@@ -15,6 +15,7 @@ import {
   failForResponse,
   mediaCreationRequest,
   mediaEndpoint,
+  mediaIdempotencyHeaders,
   parseImageSsePayloads,
   parseMediaJson,
 } from './transport'
@@ -56,6 +57,7 @@ export async function generateOpenAICompatibleImage(options: GenerateMediaOption
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json, text/event-stream',
+        ...mediaIdempotencyHeaders(options.idempotencyKey),
         ...endpointAuthHeaders(apiKey, authType),
       },
       body: JSON.stringify(body),

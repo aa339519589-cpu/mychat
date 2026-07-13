@@ -1,6 +1,7 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react"
 
 import { type Tier } from "@/lib/chat-data"
+import { errorMessage, isRecord } from "@/lib/unknown-value"
 import {
   createCodeSession,
   insertCodeMessage,
@@ -9,7 +10,9 @@ import {
   type CodeMessage,
   type PlanAction,
 } from "@/lib/code-data"
-import { initialCodeStreamState, parseCodeSseChunk, reduceCodeStreamEvent } from "./stream"
+import { enqueueJob, streamJobEvents } from "@/components/literary-chat/job-stream-client"
+import { initialCodeStreamState, type CodeStreamState } from "./stream"
+import { applyCodeJobEnvelope } from './job-events'
 import type { RunCodeSendOptions } from "./use-task-recovery"
 
 type CodeSendContext = {
@@ -32,15 +35,24 @@ type CodeSendContext = {
   setPendingPlan: Dispatch<SetStateAction<PlanAction[]>>
   applyPlan: (plan: PlanAction[], assistantId: string, messages: CodeMessage[]) => Promise<void>
   syncWorkspaceState: (taskId: string, messages: CodeMessage[]) => Promise<void>
-  scheduleTaskRecovery: (
-    taskId: string,
-    repo: string,
-    messages: CodeMessage[],
-    sessionId: string | null,
-    resumeWaiting?: boolean,
-    attempt?: number,
-    responseId?: string,
-  ) => void
+}
+
+function renderState(
+  context: CodeSendContext,
+  assistantId: string,
+  previous: CodeStreamState,
+  state: CodeStreamState,
+) {
+  if (state.taskId !== previous.taskId) context.setCurrentTaskId(state.taskId)
+  context.setMessages(current => current.map(message => message.id === assistantId ? {
+    ...message,
+    content: state.fullText,
+    steps: state.steps,
+    plan: state.plan,
+    taskId: state.taskId ?? undefined,
+    isError: state.hadError || undefined,
+  } : message))
+  if (state.publishPending && !previous.publishPending) context.setPublishPending(true)
 }
 
 export async function executeCodeSend(
@@ -79,110 +91,52 @@ export async function executeCodeSend(
         }
       }
     }
-    if (sessionId && !options?.internal) {
-      void insertCodeMessage(context.userId, sessionId, userMessage)
-    }
-  } catch {
-    // Persistence failure degrades history only; it must not swallow the message.
+    if (!sessionId) throw new Error("无法创建代码会话")
+    await insertCodeMessage(context.userId, sessionId, userMessage)
+  } catch (error) {
+    const message = errorMessage(error, "代码消息持久化失败")
+    context.setMessages(current => current.map(item => item.id === assistantId ? {
+      ...item, content: `请求失败：${message}`, isError: true,
+    } : item))
+    context.setStreaming(false)
+    return
   }
 
   let taskId: string | null = options?.taskId ?? context.currentTaskId
-  if (!taskId && activeRepo) {
-    try {
-      const goal = baseMessages.find(message => message.role === "user")?.content ?? text
-      const response = await fetch("/api/agent/tasks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ goal, mode: "auto", repo: activeRepo }),
-      })
-      if (response.ok) {
-        const task = await response.json()
-        if (task.id) {
-          taskId = task.id
-          context.setCurrentTaskId(taskId)
-        }
-      } else {
-        console.error("[CodeConsole] POST /api/agent/tasks failed", response.status)
-      }
-    } catch (error) {
-      console.error("[CodeConsole] POST /api/agent/tasks exception", error)
-    }
-  }
 
   const history = toCodeModelMessages([...baseMessages, userMessage])
   let streamState = initialCodeStreamState(taskId)
-  let interrupted = false
   const controller = new AbortController()
   context.abortRef.current = controller
 
   try {
-    const response = await fetch("/api/code/chat", {
-      method: "POST",
-      signal: controller.signal,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        repo: activeRepo,
-        tier: context.tier,
-        messages: history,
-        taskId,
-        responseId: assistantId,
-        sessionId,
-      }),
-    })
-    if (!response.ok) {
-      const error = await response.json().catch(() => null)
-      throw new Error(error?.error ?? `请求失败（${response.status}）`)
+    const accepted = await enqueueJob("/api/code/chat", {
+      repo: activeRepo,
+      tier: context.tier,
+      messages: history,
+      taskId,
+      responseId: assistantId,
+      sessionId,
+    }, controller.signal)
+    for await (const envelope of streamJobEvents(accepted, controller.signal)) {
+      const previous = streamState
+      streamState = applyCodeJobEnvelope(streamState, envelope)
+      taskId = streamState.taskId
+      renderState(context, assistantId, previous, streamState)
     }
-    if (!response.body) throw new Error("无响应体")
-
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ""
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      const parsed = parseCodeSseChunk(buffer, decoder.decode(value, { stream: true }))
-      buffer = parsed.remainder
-      for (const event of parsed.events) {
-        const previous = streamState
-        streamState = reduceCodeStreamEvent(streamState, event)
-        if (streamState.taskId !== previous.taskId) {
-          taskId = streamState.taskId
-          context.setCurrentTaskId(taskId)
-        } else if (streamState.steps !== previous.steps) {
-          context.setMessages(current => current.map(message =>
-            message.id === assistantId ? { ...message, steps: streamState.steps } : message))
-        } else if (streamState.plan !== previous.plan) {
-          context.setMessages(current => current.map(message =>
-            message.id === assistantId ? { ...message, plan: streamState.plan } : message))
-        } else if (streamState.fullText !== previous.fullText || streamState.hadError !== previous.hadError) {
-          context.setMessages(current => current.map(message => message.id === assistantId ? {
-            ...message,
-            content: streamState.fullText,
-            isError: streamState.hadError || undefined,
-          } : message))
-        }
-        if (streamState.publishPending && !previous.publishPending) context.setPublishPending(true)
-      }
+    if (!streamState.streamDone) {
+      throw new Error("作业事件流在终态前结束")
     }
-    if (!streamState.streamDone) throw new Error("后台连接意外中断")
-  } catch (error: any) {
-    if (error?.name === "AbortError") {
+  } catch (error) {
+    const name = isRecord(error) && typeof error.name === "string" ? error.name : ""
+    const message = errorMessage(error, "未知错误")
+    if (name === "AbortError") {
       if (!streamState.fullText) streamState = { ...streamState, fullText: "已停止。" }
     } else {
-      interrupted = error?.name === "TypeError"
-        || /连接|network|fetch|load failed|请求失败（5\d\d）/i.test(String(error?.message ?? error))
-      if (interrupted && taskId && activeRepo) {
-        streamState = {
-          ...streamState,
-          fullText: `${streamState.fullText ? `${streamState.fullText}\n\n` : ""}连接短暂中断，后台仍在继续执行，我正在自动接回结果……`,
-        }
-      } else {
-        streamState = {
-          ...streamState,
-          hadError: true,
-          fullText: `${streamState.fullText ? `${streamState.fullText}\n\n` : ""}请求失败：${error?.message ?? String(error)}`,
-        }
+      streamState = {
+        ...streamState,
+        hadError: true,
+        fullText: `${streamState.fullText ? `${streamState.fullText}\n\n` : ""}请求失败：${message}`,
       }
     }
     context.setMessages(current => current.map(message => message.id === assistantId ? {
@@ -191,7 +145,8 @@ export async function executeCodeSend(
       isError: streamState.hadError || undefined,
     } : message))
   } finally {
-    if (!(taskId && activeRepo && interrupted)) context.setStreaming(false)
+    context.setStreaming(false)
+    context.abortRef.current = null
     const completedAssistant: CodeMessage = {
       id: assistantId,
       role: "assistant",
@@ -206,7 +161,6 @@ export async function executeCodeSend(
       : [...baseMessages, userMessage, completedAssistant]
 
     if (sessionId) {
-      void insertCodeMessage(context.userId, sessionId, completedAssistant).catch(() => {})
       void touchCodeSession(sessionId).catch(() => {})
     }
     if (streamState.plan.length && !streamState.hadError && !taskId) {
@@ -215,20 +169,6 @@ export async function executeCodeSend(
     }
     if (taskId && !streamState.hadError) {
       void context.syncWorkspaceState(taskId, completedMessages)
-    }
-    if (taskId && activeRepo && interrupted) {
-      const interruptedAssistant: CodeMessage = {
-        id: assistantId,
-        role: "assistant",
-        content: streamState.fullText,
-        steps: streamState.steps.length ? streamState.steps : undefined,
-        taskId,
-        isError: true,
-      }
-      const recoveryMessages = options?.internal
-        ? [...baseMessages, interruptedAssistant]
-        : [...baseMessages, userMessage, interruptedAssistant]
-      context.scheduleTaskRecovery(taskId, activeRepo, recoveryMessages, sessionId, false, 0, assistantId)
     }
   }
 }

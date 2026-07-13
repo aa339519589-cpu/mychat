@@ -5,6 +5,7 @@ import type { Memory } from "@/lib/memory-data"
 import type { ModelEndpointSummary } from "@/lib/model-endpoints"
 import type { ProjectContext } from "@/lib/project-data"
 import type { SearchMode } from "@/lib/search-mode"
+import { errorMessage, isRecord } from "@/lib/unknown-value"
 import type { ClientGenerationPatch, ClientGenerationState } from "@/lib/generation-client"
 import {
   isGenerationTerminalSnapshot,
@@ -15,9 +16,9 @@ import {
   normalizeGeneratedMedia,
   type GeneratedMedia,
 } from "@/lib/generated-media"
-import { parseSseEvent, splitSseEvents } from "./stream-events"
 import { takeAcknowledgedGenerationTerminal } from "./generation-terminal-registry"
 import { finalizeChatStream } from "./chat-stream-finalizer"
+import { enqueueJob, streamJobEvents } from "./job-stream-client"
 
 export type HistoryMessage = {
   id?: string
@@ -127,11 +128,9 @@ export async function runChatStream(options: RunChatStreamOptions): Promise<RunC
   }
 
   try {
-    const response = await fetch("/api/chat", {
-      method: "POST",
-      signal: controller.signal,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const userMessageId = [...messages].reverse()
+      .find(message => message.role === "user" && typeof message.id === "string")?.id
+    const accepted = await enqueueJob("/api/chat", {
         tier,
         ...(endpoint ? { endpointId: endpoint.id } : {}),
         messages,
@@ -142,42 +141,49 @@ export async function runChatStream(options: RunChatStreamOptions): Promise<RunC
         historyRetrieval,
         project: projectContext,
         conversationId,
+        ...(userMessageId ? { userMessageId } : {}),
         generationId,
         assistantMessageId,
         generateImage: !endpointId && tier === "绘影",
         generateVideo: !endpointId && tier === "录像",
-      }),
+      }, controller.signal)
+    terminalProtocolExpected = true
+    markGeneration(conversationId, {
+      status: "running",
+      generationId: accepted.jobId,
+      assistantMessageId,
     })
 
-    if (!response.ok) {
-      const error = await response.json().catch(() => null)
-      throw new Error(error?.error ?? `请求失败（${response.status}）`)
-    }
-    if (!response.body) throw new Error("无响应体")
+    streamLoop: for await (const jobEvent of streamJobEvents(accepted, controller.signal)) {
+        const data: Record<string, unknown> = jobEvent.payload
 
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ""
+        if (jobEvent.kind === "job.retry_scheduled"
+          || (jobEvent.kind === "job.leased" && typeof data.attempt === "number" && data.attempt > 1)) {
+          fullReply = ""
+          fullThinking = ""
+          fullMedia.splice(0, fullMedia.length)
+          cancelScheduledRender()
+          flushStreamMessage()
+          continue
+        }
 
-    streamLoop: while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      const split = splitSseEvents(buffer + decoder.decode(value, { stream: true }))
-      buffer = split.rest
-
-      for (const eventText of split.events) {
-        const event = parseSseEvent(eventText)
-        if (!event || event.kind === "done") continue
-        const data = event.data as Record<string, any>
-
-        if ("terminal" in data) {
-          if (!isGenerationTerminalSnapshot(data.terminal)) {
+        if (jobEvent.kind === "job.terminal") {
+          const result = isRecord(data.result) ? data.result : {}
+          const status = data.status
+          const terminal = {
+            status,
+            content: typeof result.content === "string" ? result.content : fullReply,
+            thinking: typeof result.thinking === "string" ? result.thinking : fullThinking,
+            sequence: jobEvent.seq,
+            error: typeof data.errorCode === "string" ? data.errorCode : null,
+            media: Array.isArray(result.media) ? result.media : [],
+          }
+          if (!isGenerationTerminalSnapshot(terminal)) {
             terminalError = "生成终态响应无效，请重新载入会话"
             cancelScheduledRender()
-            await reader.cancel().catch(() => undefined)
             break streamLoop
           }
-          authoritativeTerminal = data.terminal
+          authoritativeTerminal = terminal
           fullReply = authoritativeTerminal.content
           fullThinking = authoritativeTerminal.thinking
           fullMedia.splice(0, fullMedia.length, ...authoritativeTerminal.media)
@@ -185,20 +191,17 @@ export async function runChatStream(options: RunChatStreamOptions): Promise<RunC
           continue
         }
 
-        if (data.generationId && data.assistantMessageId) {
-          terminalProtocolExpected = true
-          markGeneration(conversationId, {
-            status: "running",
-            generationId: data.generationId,
-            assistantMessageId: data.assistantMessageId,
-          })
-        }
-        if (data.memory) {
+        if (isRecord(data.memory)
+          && (data.memory.action === "create" || data.memory.action === "update" || data.memory.action === "delete")
+          && typeof data.memory.ok === "boolean") {
           const memory = data.memory
+          const memoryId = typeof memory.id === "string" ? memory.id : undefined
+          const memoryContent = typeof memory.content === "string" ? memory.content : undefined
+          const memoryTimestamp = typeof memory.timestamp === "string" ? memory.timestamp : undefined
           const note = memory.action === "create"
-            ? (memory.ok ? `记住了：${memory.content}` : "记忆保存失败")
+            ? (memory.ok ? `记住了：${memoryContent ?? ""}` : "记忆保存失败")
             : memory.action === "update"
-              ? (memory.ok ? `更新了记忆：${memory.content}` : "记忆更新失败")
+              ? (memory.ok ? `更新了记忆：${memoryContent ?? ""}` : "记忆更新失败")
               : (memory.ok ? "忘记了一条记忆" : "记忆删除失败")
           setConversations(previous => previous.map(conversation => conversation.id !== conversationId ? conversation : {
             ...conversation,
@@ -208,29 +211,37 @@ export async function runChatStream(options: RunChatStreamOptions): Promise<RunC
             }),
           }))
           if (memory.ok && !projectContext) {
-            if (memory.action === "create" && memory.id) {
-              setMemories(previous => [...previous, { id: memory.id, content: memory.content ?? "", timestamp: memory.timestamp }])
-            } else if (memory.action === "update" && memory.id) {
-              setMemories(previous => previous.map(item => item.id === memory.id
-                ? { ...item, content: memory.content ?? item.content, timestamp: memory.timestamp ?? item.timestamp }
+            if (memory.action === "create" && memoryId) {
+              setMemories(previous => [...previous, { id: memoryId, content: memoryContent ?? "", timestamp: memoryTimestamp }])
+            } else if (memory.action === "update" && memoryId) {
+              setMemories(previous => previous.map(item => item.id === memoryId
+                ? { ...item, content: memoryContent ?? item.content, timestamp: memoryTimestamp ?? item.timestamp }
                 : item))
-            } else if (memory.action === "delete" && memory.id) {
-              setMemories(previous => previous.filter(item => item.id !== memory.id))
+            } else if (memory.action === "delete" && memoryId) {
+              setMemories(previous => previous.filter(item => item.id !== memoryId))
             }
           }
           continue
         }
-        if (data.search) {
+        if (isRecord(data.search) && typeof data.search.query === "string" && Array.isArray(data.search.results)) {
+          const results = data.search.results.flatMap(result => isRecord(result)
+            && typeof result.title === "string"
+            && typeof result.url === "string"
+            ? [{ title: result.title, url: result.url }]
+            : [])
+          const search = { query: data.search.query, results }
           setConversations(previous => previous.map(conversation => conversation.id !== conversationId ? conversation : {
             ...conversation,
             messages: conversation.messages.map(message => message.id !== assistantMessageId ? message : {
               ...message,
-              searchNotes: [...(message.searchNotes ?? []), data.search],
+              searchNotes: [...(message.searchNotes ?? []), search],
             }),
           }))
           continue
         }
-        if (data.imageSummary) {
+        if (isRecord(data.imageSummary)
+          && typeof data.imageSummary.messageId === "string"
+          && typeof data.imageSummary.summary === "string") {
           const { messageId, summary } = data.imageSummary
           setConversations(previous => previous.map(conversation => conversation.id !== conversationId ? conversation : {
             ...conversation,
@@ -251,25 +262,23 @@ export async function runChatStream(options: RunChatStreamOptions): Promise<RunC
         if (data.error) {
           terminalError = typeof data.error === "string" ? data.error : "模型生成失败"
           cancelScheduledRender()
-          await reader.cancel().catch(() => undefined)
           break streamLoop
         }
-        if (data.text) {
+        if (typeof data.text === "string" && data.text) {
           if (typeof window !== "undefined" && window.localStorage?.getItem("mychat_debug_md") === "1") {
             console.debug("[mychat/md] stream delta", JSON.stringify(data.text))
           }
           fullReply += data.text
           scheduleStreamMessage()
         }
-        if (data.thinking) {
+        if (typeof data.thinking === "string" && data.thinking) {
           fullThinking += data.thinking
           scheduleStreamMessage()
         }
-      }
     }
-  } catch (error: any) {
-    if (error?.name === "AbortError" || controller.signal.aborted) aborted = true
-    else terminalError = error?.message ?? String(error)
+  } catch (error) {
+    if ((isRecord(error) && error.name === "AbortError") || controller.signal.aborted) aborted = true
+    else terminalError = errorMessage(error, "模型生成失败")
   } finally {
     const acknowledgedTerminal = generationId
       ? takeAcknowledgedGenerationTerminal(generationId)

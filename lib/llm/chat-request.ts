@@ -2,6 +2,7 @@ import type { Memory } from "@/lib/memory-data"
 import type { ProjectContext } from "@/lib/project-data"
 import type { Attachment, RawMsg } from "./types"
 import { RequestError } from "@/lib/api/request"
+import { isRecord } from '@/lib/unknown-value'
 
 const MAX_MESSAGES = 500
 const MAX_MESSAGE_CHARS = 100_000
@@ -23,6 +24,8 @@ export type ChatRequestBody = {
   deepResearch?: boolean
   project?: ProjectContext
   conversationId?: string
+  /** Canonical user message that caused this generation. */
+  userMessageId?: string
   historyRetrieval?: boolean
   endpointId?: string
   /** Durable generation id (server continues after client disconnect). */
@@ -36,14 +39,14 @@ export type ChatRequestBody = {
 
 export type DurableChatRequestBody = ChatRequestBody & Required<Pick<
   ChatRequestBody,
-  'conversationId' | 'generationId' | 'assistantMessageId'
+  'conversationId' | 'userMessageId' | 'generationId' | 'assistantMessageId'
 >>
 
 function textLength(content: unknown): number {
   if (typeof content === "string") return content.length
   if (!Array.isArray(content)) return 0
-  return content.reduce((sum, part) => {
-    const text = typeof part?.text === "string" ? part.text : ""
+  return content.reduce((sum: number, part: unknown) => {
+    const text = isRecord(part) && typeof part.text === "string" ? part.text : ""
     return sum + text.length
   }, 0)
 }
@@ -56,7 +59,7 @@ export function validateChatRequest(value: unknown): ChatRequestBody {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new RequestError(400, "请求体格式错误")
   }
-  const body = value as Record<string, any>
+  const body = value as Record<string, unknown>
   if (!Array.isArray(body.messages) || body.messages.length === 0) {
     throw new RequestError(400, "messages 不能为空")
   }
@@ -64,8 +67,10 @@ export function validateChatRequest(value: unknown): ChatRequestBody {
 
   let totalMessageChars = 0
   let totalImageChars = 0
-  for (const message of body.messages) {
-    if (!message || (message.role !== "user" && message.role !== "assistant")) {
+  for (const value of body.messages) {
+    if (!isRecord(value)) throw new RequestError(400, "消息格式无效")
+    const message = value
+    if (message.role !== "user" && message.role !== "assistant") {
       throw new RequestError(400, "消息角色无效")
     }
     if (typeof message.content !== "string" && !Array.isArray(message.content)) {
@@ -73,12 +78,14 @@ export function validateChatRequest(value: unknown): ChatRequestBody {
     }
     if (Array.isArray(message.content)) {
       if (message.content.length > 20) throw new RequestError(400, "消息内容分段过多")
-      for (const part of message.content) {
-        if (!part || typeof part !== "object") throw new RequestError(400, "消息内容分段无效")
+      for (const value of message.content) {
+        if (!isRecord(value)) throw new RequestError(400, "消息内容分段无效")
+        const part = value
         if (part.type === "text" && typeof part.text === "string") continue
-        if (part.type === "image_url" && validImageRef(part.image_url?.url)) {
-          if (part.image_url.url.length > MAX_IMAGE_CHARS) throw new RequestError(413, "单张图片过大")
-          totalImageChars += part.image_url.url.length
+        const image = isRecord(part.image_url) ? part.image_url : null
+        if (part.type === "image_url" && validImageRef(image?.url)) {
+          if (image.url.length > MAX_IMAGE_CHARS) throw new RequestError(413, "单张图片过大")
+          totalImageChars += image.url.length
           continue
         }
         throw new RequestError(400, "消息内容包含不支持的分段")
@@ -107,14 +114,16 @@ export function validateChatRequest(value: unknown): ChatRequestBody {
   let scanPages = 0
   if (attachments !== undefined) {
     if (!Array.isArray(attachments) || attachments.length > 8) throw new RequestError(400, "附件数量无效")
-    for (const attachment of attachments) {
-      if (!attachment || typeof attachment.name !== "string" || attachment.name.length > 255) {
+    for (const value of attachments) {
+      if (!isRecord(value)) throw new RequestError(400, "附件格式无效")
+      const attachment = value
+      if (typeof attachment.name !== "string" || attachment.name.length > 255) {
         throw new RequestError(400, "附件名称无效")
       }
       if (attachment.text !== undefined && typeof attachment.text !== "string") {
         throw new RequestError(400, "附件文本格式无效")
       }
-      const attachmentLength = attachment.text?.length ?? 0
+      const attachmentLength = typeof attachment.text === 'string' ? attachment.text.length : 0
       if (attachmentLength > MAX_ATTACHMENT_TEXT_CHARS) throw new RequestError(413, "单个附件文本过大")
       totalAttachmentText += attachmentLength
       if (attachment.pageImages !== undefined) {
@@ -135,29 +144,32 @@ export function validateChatRequest(value: unknown): ChatRequestBody {
 
   if (body.memories !== undefined) {
     if (!Array.isArray(body.memories) || body.memories.length > 200) throw new RequestError(400, "记忆数据无效")
-    if (body.memories.some((memory: any) => !memory || typeof memory.id !== "string" || typeof memory.content !== "string" || memory.content.length > 10_000 || (memory.timestamp !== undefined && typeof memory.timestamp !== "string"))) {
+    if (body.memories.some((memory: unknown) => !isRecord(memory) || typeof memory.id !== "string" || typeof memory.content !== "string" || memory.content.length > 10_000 || (memory.timestamp !== undefined && typeof memory.timestamp !== "string"))) {
       throw new RequestError(400, "记忆内容无效")
     }
   }
   if (body.project !== undefined) {
-    const project = body.project
+    const project = isRecord(body.project) ? body.project : null
     if (!project || typeof project.id !== "string" || project.id.length > 128) throw new RequestError(400, "项目数据无效")
     if (typeof project.instructions === "string" && project.instructions.length > 50_000) throw new RequestError(413, "项目指令过长")
     const files = Array.isArray(project.files) ? project.files : []
-    if (files.some((file: any) => !file || typeof file.name !== "string" || file.name.length > 255 || typeof file.content !== "string" || file.content.length > 200_000)) {
+    if (files.some((file: unknown) => !isRecord(file) || typeof file.name !== "string" || file.name.length > 255 || typeof file.content !== "string" || file.content.length > 200_000)) {
       throw new RequestError(400, "项目资料格式无效")
     }
-    if (files.length > 30 || files.reduce((sum: number, file: any) => sum + file.content.length, 0) > 800_000) {
+    if (files.length > 30 || files.reduce((sum: number, file: unknown) => sum + (isRecord(file) && typeof file.content === 'string' ? file.content.length : 0), 0) > 800_000) {
       throw new RequestError(413, "项目资料过大")
     }
     const projectMemories = Array.isArray(project.projectMemories) ? project.projectMemories : []
-    if (projectMemories.length > 200 || projectMemories.some((memory: any) => !memory || typeof memory.id !== "string" || typeof memory.content !== "string" || memory.content.length > 10_000)) {
+    if (projectMemories.length > 200 || projectMemories.some((memory: unknown) => !isRecord(memory) || typeof memory.id !== "string" || typeof memory.content !== "string" || memory.content.length > 10_000)) {
       throw new RequestError(400, "项目记忆格式无效")
     }
   }
 
   if (body.conversationId !== undefined && (typeof body.conversationId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(body.conversationId))) {
     throw new RequestError(400, "conversationId 无效")
+  }
+  if (body.userMessageId !== undefined && (typeof body.userMessageId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(body.userMessageId))) {
+    throw new RequestError(400, "userMessageId 无效")
   }
   if (body.endpointId !== undefined && (typeof body.endpointId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(body.endpointId))) {
     throw new RequestError(400, "endpointId 无效")
@@ -174,8 +186,8 @@ export function validateChatRequest(value: unknown): ChatRequestBody {
   if (body.generateVideo !== undefined && typeof body.generateVideo !== "boolean") {
     throw new RequestError(400, "generateVideo 无效")
   }
-  if (body.tier !== undefined && !["绝句", "正构", "鸿篇", "观照", "绘影", "录像"].includes(body.tier)) throw new RequestError(400, "tier 无效")
-  if (body.searchMode !== undefined && !["off", "web", "deep"].includes(body.searchMode)) throw new RequestError(400, "searchMode 无效")
+  if (body.tier !== undefined && (typeof body.tier !== 'string' || !["绝句", "正构", "鸿篇", "观照", "绘影", "录像"].includes(body.tier))) throw new RequestError(400, "tier 无效")
+  if (body.searchMode !== undefined && (typeof body.searchMode !== 'string' || !["off", "web", "deep"].includes(body.searchMode))) throw new RequestError(400, "searchMode 无效")
   for (const field of ["deepResearch", "historyRetrieval"] as const) {
     if (body[field] !== undefined && typeof body[field] !== "boolean") throw new RequestError(400, `${field} 无效`)
   }
@@ -189,10 +201,10 @@ export function validateChatRequest(value: unknown): ChatRequestBody {
 export function requireDurableChatIdentity(
   body: ChatRequestBody,
 ): asserts body is DurableChatRequestBody {
-  if (!body.conversationId || !body.generationId || !body.assistantMessageId) {
+  if (!body.conversationId || !body.userMessageId || !body.generationId || !body.assistantMessageId) {
     throw new RequestError(
       400,
-      'conversationId、generationId 和 assistantMessageId 必须同时提供',
+      'conversationId、userMessageId、generationId 和 assistantMessageId 必须同时提供',
     )
   }
 }

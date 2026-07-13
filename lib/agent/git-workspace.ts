@@ -8,6 +8,7 @@ import { existsSync } from "fs"
 import { join } from "path"
 import { log } from "@/lib/logger"
 import { WORKSPACE_ROOT as ROOT } from "./workspace-paths"
+import { errorMessage, recordText } from '@/lib/unknown-value'
 
 const execFileAsync = promisify(execFile)
 
@@ -81,8 +82,8 @@ export async function cloneWorkspace(
   // 建目录
   try {
     await mkdir(base, { recursive: true })
-  } catch (e: any) {
-    const msg = `创建 workspace 目录失败: ${base} (${e?.message ?? e})`
+  } catch (error) {
+    const msg = `创建 workspace 目录失败: ${base} (${errorMessage(error)})`
     log.error("gitWorkspace", msg)
     return { error: msg }
   }
@@ -116,8 +117,8 @@ export async function cloneWorkspace(
     // git clone 的输出通常在 stderr
     const out = stderr.trim()
     log.info("gitWorkspace", `Clone completed for ${repo}`, { output: out.slice(0, 200) })
-  } catch (e: any) {
-    const msg = e?.stderr?.trim() || e?.message || String(e)
+  } catch (error) {
+    const msg = recordText(error, 'stderr').trim() || errorMessage(error)
     // 彻底删除失败残留，不打日志暴露 token
     const cleanMsg = msg.replace(/https:\/\/[^@]+@/g, "https://***@")
       .replace(/x-access-token:[^@\s]+/g, "x-access-token:***")
@@ -132,8 +133,8 @@ export async function cloneWorkspace(
       cwd: base, timeout: GIT_TIMEOUT_MS, env: gitEnv(),
     })
     log.info("gitWorkspace", `Created agent branch ${branch}`, { repo })
-  } catch (e: any) {
-    const msg = e?.stderr?.trim() || e?.message || String(e)
+  } catch (error) {
+    const msg = recordText(error, 'stderr').trim() || errorMessage(error)
     log.warn("gitWorkspace", `Agent branch creation failed: ${msg.slice(0, 200)}`)
     // branch 已存在则切换
     try { await execFileAsync("git", ["checkout", branch], { cwd: base, timeout: GIT_TIMEOUT_MS, env: gitEnv() }) }
@@ -158,7 +159,7 @@ export async function getGitInfo(path: string): Promise<{ branch: string; commit
       // 清除 remote URL 中的 token
       remote: rem.stdout.trim().replace(/https:\/\/[^@]+@/g, "https://***@"),
     }
-  } catch (e: any) {
-    return { error: e?.stderr?.trim() || e?.message || "git info failed" }
+  } catch (error) {
+    return { error: recordText(error, 'stderr').trim() || errorMessage(error, "git info failed") }
   }
 }

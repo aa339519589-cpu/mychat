@@ -2,7 +2,39 @@ import type { AgentArtifact, AgentTask, AgentTaskStep, AgentToolCall, AgentWorks
 
 // ───────────── 内部映射 ─────────────
 
-export function mapTask(row: any): AgentTask {
+type TaskRow = {
+  id: string; user_id: string; goal: string; mode: AgentTask['mode']; repo?: string | null
+  branch?: string | null; status: AgentTask['status']; error?: string | null
+  meta?: Record<string, unknown> | null; created_at: string; updated_at: string
+  started_at?: string | null; finished_at?: string | null; agent_branch?: string | null
+  pull_request_url?: string | null; pull_request_number?: number | null; commit_sha?: string | null
+}
+
+type StepRow = {
+  id: string; task_id: string; user_id: string; kind: AgentTaskStep['kind']
+  label?: string | null; detail?: string | null; seq: number; created_at: string
+}
+
+type ToolCallRow = {
+  id: string; task_id: string; user_id: string; step_id?: string | null; tool_name: string
+  input?: Record<string, unknown> | null; output?: Record<string, unknown> | null
+  error?: string | null; status: AgentToolCall['status']; started_at?: string | null
+  finished_at?: string | null; duration_ms?: number | null; seq: number; created_at: string
+}
+
+type WorkspaceRow = {
+  id: string; task_id: string; user_id: string; repo: string; branch?: string | null
+  commit_sha?: string | null; path?: string | null; status: AgentWorkspace['status']
+  created_at: string; updated_at: string
+}
+
+type ArtifactRow = {
+  id: string; task_id: string; user_id: string; kind: AgentArtifact['kind']
+  title?: string | null; content?: string | null; url?: string | null
+  meta?: Record<string, unknown> | null; created_at: string
+}
+
+export function mapTask(row: TaskRow): AgentTask {
   return {
     id: row.id,
     userId: row.user_id,
@@ -24,7 +56,7 @@ export function mapTask(row: any): AgentTask {
   }
 }
 
-export function mapStep(row: any): AgentTaskStep {
+export function mapStep(row: StepRow): AgentTaskStep {
   return {
     id: row.id,
     taskId: row.task_id,
@@ -37,7 +69,7 @@ export function mapStep(row: any): AgentTaskStep {
   }
 }
 
-export function mapToolCall(row: any): AgentToolCall {
+export function mapToolCall(row: ToolCallRow): AgentToolCall {
   return {
     id: row.id,
     taskId: row.task_id,
@@ -56,7 +88,7 @@ export function mapToolCall(row: any): AgentToolCall {
   }
 }
 
-export function mapWorkspace(row: any): AgentWorkspace {
+export function mapWorkspace(row: WorkspaceRow): AgentWorkspace {
   return {
     id: row.id,
     taskId: row.task_id,
@@ -71,7 +103,7 @@ export function mapWorkspace(row: any): AgentWorkspace {
   }
 }
 
-export function mapArtifact(row: any): AgentArtifact {
+export function mapArtifact(row: ArtifactRow): AgentArtifact {
   return {
     id: row.id,
     taskId: row.task_id,
@@ -84,4 +116,3 @@ export function mapArtifact(row: any): AgentArtifact {
     createdAt: row.created_at,
   }
 }
-

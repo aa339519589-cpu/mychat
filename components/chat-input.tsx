@@ -1,7 +1,9 @@
 "use client"
 
 import { useRef, useState, useEffect } from "react"
+import Image from "next/image"
 import { cn } from "@/lib/utils"
+import { errorMessage } from "@/lib/unknown-value"
 import { ChevronDown, X, Loader2, Plus, Paperclip, FileText, Globe, ArrowUp, Square, Check, Microscope, Search, Telescope, Server, Image as ImageIcon, Video } from "lucide-react"
 import { MODEL_SHEET_TIERS, TIER_MAP, type Tier } from "@/lib/chat-data"
 import { prepareFile, type AttachedFile } from "@/lib/file-extract"
@@ -134,8 +136,8 @@ export function ChatInput({
         try {
           const prepared = await prepareFile(file)
           setFiles(prev => [...prev, prepared])
-        } catch (e: any) {
-          setFileError(e?.message ?? "文件解析失败")
+        } catch (error) {
+          setFileError(errorMessage(error, "文件解析失败"))
         }
       }
     } finally {
@@ -170,7 +172,7 @@ export function ChatInput({
         <div className="mb-2 flex flex-wrap gap-2 px-1">
           {images.map((img, i) => (
             <div key={i} className="relative">
-              <img src={img} alt="" className="size-16 rounded-xl object-cover border border-border/50" />
+              <Image src={img} alt="" width={64} height={64} unoptimized className="size-16 rounded-xl object-cover border border-border/50" />
               <button onClick={() => setImages(prev => prev.filter((_, j) => j !== i))} className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full bg-foreground text-background shadow"><X className="size-3" /></button>
             </div>
           ))}

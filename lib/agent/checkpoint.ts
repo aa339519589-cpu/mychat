@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { mergeTaskMeta } from "./meta"
 import { workspacePath } from "./workspace-paths"
 import { redactSensitive } from "./path-security"
+import { errorMessage, isRecord, recordText } from '@/lib/unknown-value'
 
 const MAX_DIFF_BYTES = 2 * 1024 * 1024
 const MAX_COMPRESSED_BYTES = 1024 * 1024
@@ -37,8 +38,8 @@ function checkpointDiff(userId: string, taskId: string): string {
         timeout: 30_000,
         maxBuffer: MAX_DIFF_BYTES,
       })
-    } catch (caught: any) {
-      if (caught?.status !== 1 || typeof caught?.stdout !== "string") throw caught
+    } catch (caught) {
+      if (!isRecord(caught) || caught.status !== 1 || typeof caught.stdout !== "string") throw caught
       diff += `${diff ? "\n" : ""}${caught.stdout}`
     }
   }
@@ -99,7 +100,7 @@ export async function restoreLatestWorkspaceCheckpoint(
       maxBuffer: 4 * 1024 * 1024,
     })
     return { ok: true, restored: true }
-  } catch (caught: any) {
-    return { ok: false, error: caught?.stderr?.toString() || caught?.message || "恢复后台检查点失败" }
+  } catch (caught) {
+    return { ok: false, error: recordText(caught, 'stderr') || errorMessage(caught, "恢复后台检查点失败") }
   }
 }

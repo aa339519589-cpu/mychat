@@ -8,22 +8,20 @@ import {
 } from '../lib/api/guard'
 import type { RateLimitResult } from '../lib/rate-limit'
 
-test('chat performs maintenance, auth and distributed rate limiting before reading the large body', () => {
+test('chat authenticates and applies distributed rate limiting before reading the large body', () => {
   const route = readFileSync(new URL('../app/api/chat/route.ts', import.meta.url), 'utf8')
-  const maintenance = route.indexOf('generationMaintenanceResponse()')
   const auth = route.indexOf('await resolveAuth()')
-  const rate = route.indexOf('await enforceRequestRateLimit(auth, req)')
-  const body = route.indexOf('await readJson(req, { maxBytes: 48 * 1024 * 1024 })')
-  const quota = route.indexOf('await enforceQuotaLimit(auth, { quota: endpointId === undefined })')
+  const rate = route.indexOf('await enforceRequestRateLimit(auth, request)')
+  const body = route.indexOf('await readJson(request, { maxBytes: 48 * 1024 * 1024 })')
+  const quota = route.indexOf('await enforceQuotaLimit(auth, { quota: body.endpointId === undefined })')
 
-  assert.ok(maintenance >= 0)
-  assert.ok(maintenance < auth)
+  assert.ok(auth >= 0)
   assert.ok(auth < rate)
   assert.ok(rate < body)
   assert.ok(body < quota)
   assert.equal(route.match(/await resolveAuth\(\)/g)?.length, 1)
-  assert.equal(route.match(/await enforceRequestRateLimit\(auth, req\)/g)?.length, 1)
-  assert.equal(route.includes('enforceLimits(auth, req'), false)
+  assert.equal(route.match(/await enforceRequestRateLimit\(auth, request\)/g)?.length, 1)
+  assert.equal(route.includes('enforceLimits(auth, request'), false)
 })
 
 test('staged rate and quota gates consume each dependency exactly once', async () => {

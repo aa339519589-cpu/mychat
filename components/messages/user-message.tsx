@@ -1,6 +1,7 @@
 "use client"
 
 import { Check, FileText, Pencil, RefreshCw, X } from "lucide-react"
+import Image from "next/image"
 
 import type { Message } from "@/lib/chat-data"
 import { cn } from "@/lib/utils"
@@ -37,7 +38,15 @@ export function UserMessage({
       {message.images && message.images.length > 0 && (
         <div className="mb-2 flex flex-wrap justify-end gap-2">
           {message.images.map((image, index) => (
-            <img key={index} src={image} alt="" className="max-h-48 max-w-[240px] rounded-2xl border border-border/30 object-cover" />
+            <Image
+              key={index}
+              src={image}
+              alt=""
+              width={240}
+              height={192}
+              unoptimized
+              className="max-h-48 max-w-[240px] rounded-2xl border border-border/30 object-cover"
+            />
           ))}
         </div>
       )}

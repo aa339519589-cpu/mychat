@@ -1,4 +1,5 @@
 import type { EndpointAuthType } from '@/lib/model-endpoints'
+import type { ModelMessage, ModelToolDefinition } from './types'
 
 export type ProviderAdapterId = 'deepseek-openai' | 'mimo-openai' | 'generic-openai'
 
@@ -7,8 +8,8 @@ export type ReasoningEffort = 'none' | 'low' | 'medium' | 'high'
 
 type RequestOptions = {
   model: string
-  messages: any[]
-  tools: any[]
+  messages: ModelMessage[]
+  tools: ModelToolDefinition[]
   thinking: boolean
   apiKey: string
   authType?: EndpointAuthType

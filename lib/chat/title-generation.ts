@@ -53,6 +53,7 @@ export async function generateTitleText(options: {
   request: TitleGenerationRequest
   selection: ChatModelSelection
   signal: AbortSignal
+  idempotencyNamespace?: string
 }, dependencies: TitleDependencies = { runAgentLoop }): Promise<{ title: string; totalTokens: number }> {
   if (options.selection.outputKind !== 'chat') {
     throw new RequestError(400, '标题生成只支持聊天模型')
@@ -82,6 +83,7 @@ export async function generateTitleText(options: {
       timeoutMs: 30_000,
       authType: options.selection.authType,
       maxOutputTokens: 64,
+      idempotencyNamespace: options.idempotencyNamespace,
     },
   })
   const title = normalizeGeneratedTitle(output)

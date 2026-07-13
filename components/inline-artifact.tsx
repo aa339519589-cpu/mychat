@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import Image from "next/image"
 import { sanitizeSvg } from "@/lib/artifact"
 import { Maximize2, X } from "lucide-react"
 
@@ -71,9 +72,12 @@ export function InlineArtifact({ svg, done }: { svg: string; done: boolean }) {
     <>
       {/* 桌面端限制最大宽度，手机端按屏幕高度动态收缩 */}
       <div className="group/svg relative my-3 flex w-full min-w-0 justify-center overflow-hidden animate-in fade-in duration-300 md:max-w-2xl">
-        <img
+        <Image
           src={src}
           alt="生成的图形"
+          width={1024}
+          height={aspect ? Math.max(1, Math.round(1024 / aspect)) : 1024}
+          unoptimized
           style={{ width: fitWidth }}
           className="block h-auto min-w-0 max-h-[42dvh] max-w-full object-contain md:max-h-[62dvh]"
         />
@@ -102,7 +106,14 @@ export function InlineArtifact({ svg, done }: { svg: string; done: boolean }) {
             className="max-h-full w-full max-w-4xl"
             onClick={e => e.stopPropagation()}
           >
-            <img src={src} alt="生成的图形（放大）" className="mx-auto block h-auto max-h-[88dvh] max-w-full object-contain" />
+            <Image
+              src={src}
+              alt="生成的图形（放大）"
+              width={1024}
+              height={aspect ? Math.max(1, Math.round(1024 / aspect)) : 1024}
+              unoptimized
+              className="mx-auto block h-auto max-h-[88dvh] max-w-full object-contain"
+            />
           </div>
         </div>
       )}

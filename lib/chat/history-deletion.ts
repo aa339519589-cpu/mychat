@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { normalizeGeneratedMediaList } from '@/lib/generated-media'
+import { generatedMediaObjectKey, normalizeGeneratedMedia } from '@/lib/generated-media'
 import { log } from '@/lib/logger'
 import {
   drainGeneratedMediaCleanup,
@@ -47,23 +47,29 @@ function validObjectKey(key: string, userId: string, conversationId: string): bo
     && ASSET.test(parts[3])
 }
 
-/** Extract only our exact public Storage keys; arbitrary provider URLs are never deleted. */
+/** Extract only canonical BFF references or our exact legacy Storage origin. */
 export function generatedMediaObjectKeys(
   messages: readonly StoredMessage[],
   userId: string,
   storageOrigin: string,
 ): string[] {
   const keys = new Set<string>()
-  const prefix = '/storage/v1/object/public/generated-media/'
   for (const message of messages) {
     const imageObject = message.images && typeof message.images === 'object' && !Array.isArray(message.images)
       ? message.images as Record<string, unknown>
       : null
-    for (const media of normalizeGeneratedMediaList(imageObject?.generated_media)) {
+    const storedMedia = Array.isArray(imageObject?.generated_media) ? imageObject.generated_media : []
+    for (const stored of storedMedia) {
+      const media = normalizeGeneratedMedia(stored)
+      const storedUrl = stored && typeof stored === 'object' && !Array.isArray(stored)
+        ? (stored as { url?: unknown }).url
+        : null
+      if (!media || typeof storedUrl !== 'string') continue
       try {
-        const url = new URL(media.url)
-        if (url.origin !== storageOrigin || !url.pathname.startsWith(prefix)) continue
-        const key = decodeURIComponent(url.pathname.slice(prefix.length))
+        const controlled = storedUrl.startsWith('/api/v1/media/')
+        if (!controlled && new URL(storedUrl).origin !== storageOrigin) continue
+        const key = generatedMediaObjectKey(storedUrl)
+        if (!key) continue
         if (validObjectKey(key, userId, message.conversation_id)) keys.add(key)
       } catch {
         // Invalid or non-storage media is intentionally outside this cleanup scope.

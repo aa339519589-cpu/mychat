@@ -1,5 +1,6 @@
 import { createHash } from "crypto"
 import { log } from "@/lib/logger"
+import { isRecord } from '@/lib/unknown-value'
 
 const CHUNK_MESSAGE_COUNT = 8
 const CHUNK_OVERLAP = 2
@@ -38,7 +39,7 @@ export function hash(text: string): string {
 
 function imageSummaryFromStoredImages(images: unknown): string {
   if (!images || Array.isArray(images)) return ''
-  const summary = (images as any)?.image_summary
+  const summary = isRecord(images) ? images.image_summary : undefined
   return typeof summary === 'string' ? summary.trim() : ''
 }
 
@@ -95,7 +96,9 @@ export async function embed(input: string, parentSignal?: AbortSignal): Promise<
       return null
     }
     const json = await res.json()
-    const vector = json?.data?.[0]?.embedding
+    const record = isRecord(json) ? json : null
+    const first = Array.isArray(record?.data) && isRecord(record.data[0]) ? record.data[0] : null
+    const vector = first?.embedding
     return Array.isArray(vector) ? vector : null
   } catch (e) {
     if (parentSignal?.aborted) throw e

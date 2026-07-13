@@ -1,27 +1,65 @@
-import type { Dispatch, SetStateAction } from "react"
-import type { Conversation } from "@/lib/chat-data"
+import type { Dispatch, SetStateAction } from 'react'
+import type { Conversation } from '@/lib/chat-data'
 import {
   applyConversationGenerationSnapshot,
-  mergeGenerationStreamText,
   normalizeConversationGenerationSnapshot,
   toClientGenerationStatus,
   toGenerationTerminalSnapshot,
   type ClientGenerationPatch,
   type ConversationGenerationSnapshot,
-} from "@/lib/generation-client"
-import type { ModelEndpointSummary } from "@/lib/model-endpoints"
-import { cacheGenerationTerminal, updateConversationTitle } from "@/lib/data"
-import { normalizeGeneratedMediaList } from "@/lib/generated-media"
-import { isGenerationTerminalSnapshot, type GenerationTerminalSnapshot } from "@/lib/generation/types"
-import { parseSseEvent, splitSseEvents } from "./stream-events"
+} from '@/lib/generation-client'
+import { cacheGenerationTerminal } from '@/lib/data'
+import { normalizeGeneratedMedia, normalizeGeneratedMediaList, type GeneratedMedia } from '@/lib/generated-media'
+import { isRecord } from '@/lib/unknown-value'
+import { streamJobEvents } from './job-stream-client'
 
 type ConversationSetter = Dispatch<SetStateAction<Conversation[]>>
 type MarkGeneration = (conversationId: string, patch: ClientGenerationPatch) => void
 
-const MAX_RESUME_ATTEMPTS = 3
+type ResumeJob = {
+  id: string
+  status: string
+  subject: Record<string, unknown>
+  progress: Record<string, unknown>
+  result: unknown
+  errorCode: string | null
+  eventSequence: number
+}
 
-function delay(ms: number) {
-  return new Promise(resolve => setTimeout(resolve, ms))
+function parseJob(value: unknown): ResumeJob | null {
+  if (!isRecord(value) || typeof value.id !== 'string' || typeof value.status !== 'string'
+    || !isRecord(value.subject) || !isRecord(value.progress)
+    || !Number.isSafeInteger(value.eventSequence)
+    || (value.errorCode !== null && typeof value.errorCode !== 'string')) return null
+  return {
+    id: value.id,
+    status: value.status,
+    subject: value.subject,
+    progress: value.progress,
+    result: value.result,
+    errorCode: value.errorCode,
+    eventSequence: Number(value.eventSequence),
+  }
+}
+
+function terminal(status: string): status is 'completed' | 'failed' | 'cancelled' {
+  return status === 'completed' || status === 'failed' || status === 'cancelled'
+}
+
+function snapshotFromJob(job: ResumeJob, conversationId: string): ConversationGenerationSnapshot | null {
+  const result = isRecord(job.result) ? job.result : {}
+  const source = { ...job.progress, ...result }
+  return normalizeConversationGenerationSnapshot({
+    id: job.id,
+    conversationId,
+    assistantMessageId: job.subject.assistantMessageId,
+    status: terminal(job.status) ? job.status : job.status === 'queued' ? 'queued' : 'running',
+    content: typeof source.content === 'string' ? source.content : '',
+    thinking: typeof source.thinking === 'string' ? source.thinking : '',
+    media: Array.isArray(source.media) ? source.media : [],
+    sequence: job.eventSequence,
+    error: job.errorCode,
+  })
 }
 
 function applySnapshot(
@@ -29,37 +67,32 @@ function applySnapshot(
   conversationId: string,
   snapshot: ConversationGenerationSnapshot,
 ) {
-  setConversations(previous => applyConversationGenerationSnapshot(
-    previous,
-    conversationId,
-    snapshot,
-  ))
+  setConversations(previous => applyConversationGenerationSnapshot(previous, conversationId, snapshot))
 }
 
-async function applyTerminalSnapshot(options: {
+async function applyTerminal(options: {
   conversationId: string
   snapshot: ConversationGenerationSnapshot
   setConversations: ConversationSetter
   markGeneration: MarkGeneration
 }) {
-  const { conversationId, snapshot, setConversations, markGeneration } = options
-  const terminal = toGenerationTerminalSnapshot(snapshot)
-  if (!terminal) return false
-  applySnapshot(setConversations, conversationId, snapshot)
-  await cacheGenerationTerminal(conversationId, snapshot.assistantMessageId, {
-    ...terminal,
-    generationId: snapshot.id,
+  const terminalSnapshot = toGenerationTerminalSnapshot(options.snapshot)
+  if (!terminalSnapshot) return false
+  applySnapshot(options.setConversations, options.conversationId, options.snapshot)
+  await cacheGenerationTerminal(options.conversationId, options.snapshot.assistantMessageId, {
+    ...terminalSnapshot,
+    generationId: options.snapshot.id,
   }).catch(() => undefined)
-  markGeneration(conversationId, {
-    status: toClientGenerationStatus(snapshot.status),
-    generationId: snapshot.id,
-    assistantMessageId: snapshot.assistantMessageId,
+  options.markGeneration(options.conversationId, {
+    status: toClientGenerationStatus(options.snapshot.status),
+    generationId: options.snapshot.id,
+    assistantMessageId: options.snapshot.assistantMessageId,
     authoritativeTerminal: true,
   })
   return true
 }
 
-function markCoordinationWarning(
+function markWarning(
   setConversations: ConversationSetter,
   conversationId: string,
   assistantMessageId: string,
@@ -70,37 +103,8 @@ function markCoordinationWarning(
       ...conversation,
       messages: conversation.messages.map(message => message.id !== assistantMessageId
         ? message
-        : {
-          ...message,
-          outputWarning: "连接暂时中断，后台任务仍在继续；重新打开会话会自动恢复。",
-        }),
+        : { ...message, outputWarning: '连接暂时中断，后台任务仍在继续；重新打开会话会自动恢复。' }),
     }))
-}
-
-function snapshotFromStreamEvent(
-  active: ConversationGenerationSnapshot,
-  event: Record<string, unknown>,
-): ConversationGenerationSnapshot | null {
-  const terminal = event.terminal
-  if (terminal && typeof terminal === "object" && !Array.isArray(terminal)) {
-    return normalizeConversationGenerationSnapshot({
-      id: active.id,
-      conversationId: active.conversationId,
-      assistantMessageId: active.assistantMessageId,
-      ...(terminal as Record<string, unknown>),
-    })
-  }
-  return normalizeConversationGenerationSnapshot({
-    id: event.generationId ?? active.id,
-    conversationId: event.conversationId ?? active.conversationId,
-    assistantMessageId: event.assistantMessageId ?? active.assistantMessageId,
-    status: event.status ?? active.status,
-    content: event.content ?? active.content,
-    thinking: event.thinking ?? active.thinking,
-    media: event.media ?? active.media,
-    sequence: event.sequence ?? active.sequence,
-    error: event.error ?? null,
-  })
 }
 
 export async function resumeConversationGeneration(options: {
@@ -111,228 +115,110 @@ export async function resumeConversationGeneration(options: {
   clearAbort: (conversationId: string, controller: AbortController) => void
   onReconciled?: (available: boolean) => void
 }) {
-  const {
-    conversationId,
-    setConversations,
-    markGeneration,
-    registerAbort,
-    clearAbort,
-    onReconciled,
-  } = options
-  let lastActive: ConversationGenerationSnapshot | null = null
-  let reconciliationReported = false
-  const reportReconciliation = (available: boolean) => {
-    if (reconciliationReported) return
-    reconciliationReported = true
-    onReconciled?.(available)
+  const { conversationId, setConversations, markGeneration, registerAbort, clearAbort } = options
+  let controller: AbortController | null = null
+  let activeIdentity: { id: string; assistantMessageId: string } | null = null
+  let reconciled = false
+  const report = (available: boolean) => {
+    if (reconciled) return
+    reconciled = true
+    options.onReconciled?.(available)
   }
+  try {
+    const response = await fetch(`/api/v1/conversations/${encodeURIComponent(conversationId)}/generation`)
+    if (!response.ok) throw new Error(`generation_query_${response.status}`)
+    const body: unknown = await response.json()
+    if (!isRecord(body)) throw new Error('generation_query_invalid')
+    if (body.job === null && body.streamUrl === null) {
+      report(true)
+      return
+    }
+    const job = parseJob(body.job)
+    if (!job || typeof body.streamUrl !== 'string') throw new Error('generation_job_invalid')
+    const initial = snapshotFromJob(job, conversationId)
+    if (!initial || initial.conversationId !== conversationId) throw new Error('generation_identity_invalid')
+    activeIdentity = { id: job.id, assistantMessageId: initial.assistantMessageId }
+    if (terminal(job.status)) {
+      await applyTerminal({ conversationId, snapshot: initial, setConversations, markGeneration })
+      report(true)
+      return
+    }
 
-  for (let attempt = 0; attempt < MAX_RESUME_ATTEMPTS; attempt += 1) {
-    let controller: AbortController | null = null
-    try {
-      const response = await fetch(`/api/generations/running?conversationId=${encodeURIComponent(conversationId)}`)
-      if (!response.ok) throw new Error(`resume_snapshot_${response.status}`)
-      const data = await response.json() as Record<string, unknown>
-      const rawGenerations = Array.isArray(data.generations) ? data.generations : []
-      const generations = rawGenerations
-        .map(normalizeConversationGenerationSnapshot)
-        .filter((snapshot): snapshot is ConversationGenerationSnapshot => (
-          snapshot?.conversationId === conversationId
-        ))
-      const latest = data.latest === null || data.latest === undefined
-        ? null
-        : normalizeConversationGenerationSnapshot(data.latest)
-      if (data.latest !== null && data.latest !== undefined && !latest) {
-        throw new Error("resume_snapshot_invalid")
+    markGeneration(conversationId, {
+      status: 'running',
+      generationId: job.id,
+      assistantMessageId: initial.assistantMessageId,
+      begin: true,
+    })
+    report(true)
+    controller = new AbortController()
+    registerAbort(conversationId, controller)
+    let content = ''
+    let thinking = ''
+    const media: GeneratedMedia[] = []
+    for await (const event of streamJobEvents({
+      jobId: job.id,
+      status: job.status,
+      streamUrl: body.streamUrl,
+    }, controller.signal)) {
+      if (event.kind === 'job.retry_scheduled'
+        || (event.kind === 'job.leased'
+          && typeof event.payload.attempt === 'number' && event.payload.attempt > 1)) {
+        content = ''
+        thinking = ''
+        media.splice(0, media.length)
       }
-      const matchingLatest = latest?.conversationId === conversationId ? latest : null
-      const active = generations.find(snapshot => snapshot.status === "running" || snapshot.status === "queued")
-        ?? (matchingLatest?.status === "running" || matchingLatest?.status === "queued" ? matchingLatest : null)
-
-      if (!active) {
-        if (matchingLatest) {
-          await applyTerminalSnapshot({ conversationId, snapshot: matchingLatest, setConversations, markGeneration })
+      if (event.kind === 'text.delta' && typeof event.payload.text === 'string') {
+        content += event.payload.text
+      } else if (event.kind === 'thinking.delta' && typeof event.payload.thinking === 'string') {
+        thinking += event.payload.thinking
+      } else if (event.kind === 'media.uploaded') {
+        const item = normalizeGeneratedMedia(event.payload.media)
+        if (item && !media.some(existing => existing.type === item.type && existing.url === item.url)) media.push(item)
+      }
+      if (event.kind === 'job.terminal') {
+        const result = isRecord(event.payload.result) ? event.payload.result : {}
+        const snapshot = normalizeConversationGenerationSnapshot({
+          id: job.id,
+          conversationId,
+          assistantMessageId: initial.assistantMessageId,
+          status: event.payload.status,
+          content: typeof result.content === 'string' ? result.content : content,
+          thinking: typeof result.thinking === 'string' ? result.thinking : thinking,
+          media: Array.isArray(result.media) ? normalizeGeneratedMediaList(result.media) : media,
+          sequence: event.seq,
+          error: typeof event.payload.errorCode === 'string' ? event.payload.errorCode : null,
+        })
+        if (!snapshot || !(await applyTerminal({ conversationId, snapshot, setConversations, markGeneration }))) {
+          throw new Error('generation_terminal_invalid')
         }
-        reportReconciliation(true)
         return
       }
-
-      lastActive = active
-      applySnapshot(setConversations, conversationId, active)
-      markGeneration(conversationId, {
-        status: "running",
-        generationId: active.id,
-        assistantMessageId: active.assistantMessageId,
-        begin: true,
+      applySnapshot(setConversations, conversationId, {
+        ...initial,
+        status: 'running',
+        content,
+        thinking,
+        media: [...media],
+        sequence: event.seq,
+        error: null,
       })
-      reportReconciliation(true)
-
-      controller = new AbortController()
-      registerAbort(conversationId, controller)
-      console.info("[mychat/generation] task resumed", {
-        conversationId,
-        generationId: active.id,
-        assistantMessageId: active.assistantMessageId,
-        afterSequence: active.sequence,
-        attempt: attempt + 1,
-      })
-      const streamResponse = await fetch(
-        `/api/generations/${active.id}/stream?afterSequence=${active.sequence}`,
-        { signal: controller.signal },
-      )
-      if (!streamResponse.ok || !streamResponse.body) {
-        throw new Error(`resume_stream_${streamResponse.status}`)
-      }
-
-      const reader = streamResponse.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ""
-      let current = active
-      let retry = true
-
-      streamLoop: while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        const split = splitSseEvents(buffer + decoder.decode(value, { stream: true }))
-        buffer = split.rest
-        for (const eventText of split.events) {
-          const parsed = parseSseEvent(eventText)
-          if (!parsed || parsed.kind === "done") continue
-          const event = parsed.data as Record<string, unknown>
-          if (event.heartbeat === true) continue
-          const snapshot = snapshotFromStreamEvent(current, event)
-          if (!snapshot || snapshot.id !== active.id || snapshot.conversationId !== conversationId) {
-            break streamLoop
-          }
-
-          if (toGenerationTerminalSnapshot(snapshot)) {
-            await applyTerminalSnapshot({ conversationId, snapshot, setConversations, markGeneration })
-            retry = false
-            break streamLoop
-          }
-          if (event.type === "error" || event.recoverable === true) break streamLoop
-
-          const merged = mergeGenerationStreamText(
-            { content: current.content, thinking: current.thinking },
-            event,
-          )
-          const media = Array.isArray(event.media)
-            ? normalizeGeneratedMediaList(event.media)
-            : current.media
-          current = {
-            ...snapshot,
-            status: snapshot.status === "queued" ? "queued" : "running",
-            content: merged.content,
-            thinking: merged.thinking,
-            media,
-            error: null,
-          }
-          lastActive = current
-          applySnapshot(setConversations, conversationId, current)
-        }
-      }
-      await reader.cancel().catch(() => undefined)
-      if (!retry) return
-    } catch (error: unknown) {
-      if (controller?.signal.aborted || (error instanceof Error && error.name === "AbortError")) return
-      console.warn("resumeGenerationIfNeeded", error instanceof Error ? error.message : "unknown")
-    } finally {
-      if (controller) clearAbort(conversationId, controller)
     }
-
-    if (attempt + 1 < MAX_RESUME_ATTEMPTS) await delay(350 * (attempt + 1))
-  }
-
-  if (lastActive) {
-    markGeneration(conversationId, {
-      status: "running",
-      generationId: lastActive.id,
-      assistantMessageId: lastActive.assistantMessageId,
-    })
-    markCoordinationWarning(setConversations, conversationId, lastActive.assistantMessageId)
-  }
-  reportReconciliation(false)
-}
-
-type CancellationFetcher = (
-  input: RequestInfo | URL,
-  init?: RequestInit,
-) => Promise<Response>
-
-export async function requestClientGenerationCancellation(
-  generationId: string,
-  options: { fetcher?: CancellationFetcher; timeoutMs?: number } = {},
-): Promise<GenerationTerminalSnapshot> {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 10_000)
-  try {
-    const response = await (options.fetcher ?? fetch)(
-      `/api/generations/${generationId}/cancel`,
-      { method: "POST", signal: controller.signal },
-    )
-    if (!response.ok) throw new Error(`generation_cancel_${response.status}`)
-    const data = await response.json() as { terminal?: unknown }
-    if (!isGenerationTerminalSnapshot(data.terminal)) {
-      throw new Error("generation_cancel_invalid_response")
-    }
-    return data.terminal
-  } finally {
-    clearTimeout(timeout)
-  }
-}
-
-export async function applyClientGenerationTerminal(options: {
-  conversationId: string
-  assistantMessageId: string
-  generationId: string
-  terminal: GenerationTerminalSnapshot
-  setConversations: ConversationSetter
-  markGeneration: MarkGeneration
-}) {
-  const snapshot = normalizeConversationGenerationSnapshot({
-    id: options.generationId,
-    conversationId: options.conversationId,
-    assistantMessageId: options.assistantMessageId,
-    ...options.terminal,
-  })
-  if (!snapshot) return false
-  return applyTerminalSnapshot({
-    conversationId: options.conversationId,
-    snapshot,
-    setConversations: options.setConversations,
-    markGeneration: options.markGeneration,
-  })
-}
-
-export async function generateConversationTitle(options: {
-  conversationId: string
-  userText: string
-  assistantText: string
-  endpoint: ModelEndpointSummary | null
-  setConversations: ConversationSetter
-}) {
-  const { conversationId, userText, assistantText, endpoint, setConversations } = options
-  try {
-    const response = await fetch("/api/chat/title", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        conversationId,
-        userText: userText.slice(0, 2_000),
-        assistantText: assistantText.slice(0, 2_000),
-        ...(endpoint ? { endpointId: endpoint.id } : {}),
-      }),
-    })
-    if (!response.ok) return
-    const payload = await response.json() as { title?: unknown }
-    const cleanTitle = typeof payload.title === "string" ? payload.title : ""
-    if (cleanTitle) {
-      setConversations(previous => previous.map(conversation => conversation.id === conversationId
-        ? { ...conversation, title: cleanTitle }
-        : conversation))
-      updateConversationTitle(conversationId, cleanTitle)
-    }
+    throw new Error('generation_terminal_missing')
   } catch (error) {
-    console.warn("generateConversationTitle", error instanceof Error ? error.name : "unknown")
+    if (controller?.signal.aborted || (error instanceof Error && error.name === 'AbortError')) return
+    const response = error instanceof Error ? error.message : 'unknown'
+    console.warn('resumeConversationGeneration', response)
+    if (activeIdentity) {
+      markGeneration(conversationId, {
+        status: 'running',
+        generationId: activeIdentity.id,
+        assistantMessageId: activeIdentity.assistantMessageId,
+      })
+      markWarning(setConversations, conversationId, activeIdentity.assistantMessageId)
+    }
+    report(false)
+  } finally {
+    if (controller) clearAbort(conversationId, controller)
   }
 }

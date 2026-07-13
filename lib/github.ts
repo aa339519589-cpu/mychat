@@ -1,8 +1,15 @@
 // GitHub API 共享库：列仓库、列文件树、读文件、校验写权限、建分支+提交+开 PR。
-// access token 只在服务端使用（从 gh_access_token Cookie 取），绝不下发前端。
+// access token 只在服务端从加密连接存储读取，绝不写入 Cookie 或下发前端。
 // Code 的 agentic loop（/api/code/chat）与执行端点（/api/code/apply）都复用这一份，杜绝重复实现。
+import { isRecord, type UnknownRecord } from '@/lib/unknown-value'
 
 const GH = 'https://api.github.com'
+
+async function responseRecord(response: Response | null | undefined): Promise<UnknownRecord | null> {
+  if (!response) return null
+  const value = await response.json().catch(() => null)
+  return isRecord(value) ? value : null
+}
 
 function boundedFetch(input: string, init: RequestInit = {}, timeoutMs = 30_000): Promise<Response> {
   const signals = [init.signal, AbortSignal.timeout(timeoutMs)].filter(Boolean) as AbortSignal[]
@@ -26,12 +33,16 @@ export async function listRepos(token: string): Promise<RepoItem[]> {
   const res = await boundedFetch(`${GH}/user/repos?sort=updated&per_page=50&affiliation=owner,collaborator`, { headers: ghHeaders(token) }).catch(() => null)
   if (!res?.ok) return []
   const data = await res.json()
-  return (data as any[]).map(r => ({
-    name: r.name as string,
-    full_name: r.full_name as string,
-    private: r.private as boolean,
-    description: (r.description ?? '') as string,
-  }))
+  return (Array.isArray(data) ? data : []).filter(isRecord).flatMap(row => (
+    typeof row.name === 'string' && typeof row.full_name === 'string'
+      ? [{
+          name: row.name,
+          full_name: row.full_name,
+          private: row.private === true,
+          description: typeof row.description === 'string' ? row.description : '',
+        }]
+      : []
+  ))
 }
 
 export type RepoMeta = { defaultBranch: string; canPush: boolean; isPrivate: boolean }
@@ -40,10 +51,12 @@ export type RepoMeta = { defaultBranch: string; canPush: boolean; isPrivate: boo
 export async function repoMeta(token: string, repo: string): Promise<RepoMeta | null> {
   const res = await boundedFetch(`${GH}/repos/${repo}`, { headers: ghHeaders(token) }).catch(() => null)
   if (!res?.ok) return null
-  const data = await res.json()
+  const data = await responseRecord(res)
+  if (!data || typeof data.default_branch !== 'string') return null
+  const permissions = isRecord(data.permissions) ? data.permissions : null
   return {
-    defaultBranch: data.default_branch as string,
-    canPush: !!(data.permissions as any)?.push,
+    defaultBranch: data.default_branch,
+    canPush: permissions?.push === true,
     isPrivate: !!data.private,
   }
 }
@@ -52,9 +65,13 @@ export async function repoMeta(token: string, repo: string): Promise<RepoMeta | 
 export async function listTree(token: string, repo: string, branch: string, limit = 400): Promise<{ paths: string[]; truncated: boolean }> {
   const res = await boundedFetch(`${GH}/repos/${repo}/git/trees/${branch}?recursive=1`, { headers: ghHeaders(token) }).catch(() => null)
   if (!res?.ok) return { paths: [], truncated: false }
-  const data = await res.json()
-  const blobs = (data.tree as any[]).filter(item => item.type === 'blob').map(item => item.path as string)
-  return { paths: blobs.slice(0, limit), truncated: blobs.length > limit || !!data.truncated }
+  const data = await responseRecord(res)
+  if (!data) return { paths: [], truncated: false }
+  const blobs = (Array.isArray(data.tree) ? data.tree : [])
+    .filter(isRecord)
+    .filter(item => item.type === 'blob' && typeof item.path === 'string')
+    .map(item => item.path as string)
+  return { paths: blobs.slice(0, limit), truncated: blobs.length > limit || data.truncated === true }
 }
 
 export type FileContent = { content: string; sha: string }
@@ -63,11 +80,13 @@ export type FileContent = { content: string; sha: string }
 export async function readFile(token: string, repo: string, path: string, maxBytes = 120_000): Promise<FileContent | { error: string }> {
   const res = await boundedFetch(`${GH}/repos/${repo}/contents/${encodeURIComponent(path).replace(/%2F/g, '/')}`, { headers: ghHeaders(token) }).catch(() => null)
   if (!res?.ok) return { error: res?.status === 404 ? '文件不存在' : '文件读取失败' }
-  const data = await res.json()
-  if (Array.isArray(data)) return { error: '这是一个目录，不是文件' }
-  if ((data.size as number) > maxBytes) return { error: `文件过大（${Math.round((data.size as number) / 1024)}KB，超过 ${Math.round(maxBytes / 1024)}KB 上限）` }
+  const payload: unknown = await res.json().catch(() => null)
+  if (Array.isArray(payload)) return { error: '这是一个目录，不是文件' }
+  if (!isRecord(payload)) return { error: '文件响应格式无效' }
+  const data = payload
+  if (typeof data.size === 'number' && data.size > maxBytes) return { error: `文件过大（${Math.round(data.size / 1024)}KB，超过 ${Math.round(maxBytes / 1024)}KB 上限）` }
   const content = Buffer.from(String(data.content ?? '').replace(/\n/g, ''), 'base64').toString('utf-8')
-  return { content, sha: data.sha as string }
+  return typeof data.sha === 'string' ? { content, sha: data.sha } : { error: '文件响应缺少版本标识' }
 }
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
@@ -94,15 +113,13 @@ export async function createRepo(token: string, name: string, description: strin
       return { error: `网络错误：${e instanceof Error ? e.message : '无法连接到 GitHub'}` }
     }
     if (res.ok) {
-      const d = await res.json()
-      return { fullName: d.full_name as string, defaultBranch: d.default_branch as string, htmlUrl: d.html_url as string }
+      const data = await responseRecord(res)
+      if (data && typeof data.full_name === 'string' && typeof data.default_branch === 'string' && typeof data.html_url === 'string') {
+        return { fullName: data.full_name, defaultBranch: data.default_branch, htmlUrl: data.html_url }
+      }
+      return { error: 'GitHub 返回的仓库信息不完整' }
     }
-    let err: any = null
-    try {
-      err = await res.json()
-    } catch {
-      err = { message: `HTTP ${res.status} ${res.statusText || ''}`.trim() }
-    }
+    const err = await responseRecord(res) ?? { message: `HTTP ${res.status} ${res.statusText || ''}`.trim() }
     const raw = JSON.stringify(err ?? {})
     // 重名 → 换个后缀再试
     if (res.status === 422 && /already exists/i.test(raw)) continue
@@ -111,7 +128,11 @@ export async function createRepo(token: string, name: string, description: strin
       return { error: '当前 GitHub 授权没有创建仓库的权限。请点右上角 @用户名 → 断开 GitHub，再重新连接（会重新授权完整权限）。' }
     }
     // 其他错误
-    const msg = (err as any)?.message || (err as any)?.errors?.[0]?.message || `HTTP ${res.status}`
+    const errors = Array.isArray(err.errors) ? err.errors : []
+    const firstError = isRecord(errors[0]) ? errors[0] : null
+    const msg = typeof err.message === 'string'
+      ? err.message
+      : typeof firstError?.message === 'string' ? firstError.message : `HTTP ${res.status}`
     return { error: `创建仓库失败：${msg}` }
   }
   return { error: '同名仓库已存在多个，请换一个项目名再试。' }
@@ -121,7 +142,11 @@ export async function createRepo(token: string, name: string, description: strin
 async function getHeadSha(token: string, repo: string, branch: string, retries = 0): Promise<string | null> {
   for (let i = 0; i <= retries; i++) {
     const res = await boundedFetch(`${GH}/repos/${repo}/git/ref/heads/${branch}`, { headers: ghHeaders(token) }).catch(() => null)
-    if (res?.ok) { const sha = ((await res.json()).object as any)?.sha; if (sha) return sha }
+    if (res?.ok) {
+      const data = await responseRecord(res)
+      const object = isRecord(data?.object) ? data.object : null
+      if (typeof object?.sha === 'string') return object.sha
+    }
     if (i < retries) await sleep(600)
   }
   return null
@@ -139,10 +164,13 @@ export async function commitFiles(token: string, repo: string, branch: string, f
   // 基树
   const commitRes = await boundedFetch(`${GH}/repos/${repo}/git/commits/${baseSha}`, { headers: ghHeaders(token) }).catch(() => null)
   if (!commitRes?.ok) return { error: '获取基树失败' }
-  const baseTreeSha = ((await commitRes.json()).tree as any).sha as string
+  const commit = await responseRecord(commitRes)
+  const baseTree = isRecord(commit?.tree) ? commit.tree : null
+  if (typeof baseTree?.sha !== 'string') return { error: '基树响应格式无效' }
+  const baseTreeSha = baseTree.sha
 
   // 为写入的文件创建 blob；删除项 sha 置 null
-  const treeItems: any[] = []
+  const treeItems: Array<{ path: string; mode: '100644'; type: 'blob'; sha: string | null }> = []
   for (const f of files) {
     if (f.content === null) {
       treeItems.push({ path: f.path, mode: '100644', type: 'blob', sha: null })
@@ -153,7 +181,9 @@ export async function commitFiles(token: string, repo: string, branch: string, f
       body: JSON.stringify({ content: Buffer.from(f.content, 'utf-8').toString('base64'), encoding: 'base64' }),
     }).catch(() => null)
     if (!blobRes?.ok) return { error: `创建 blob 失败 (${f.path})` }
-    treeItems.push({ path: f.path, mode: '100644', type: 'blob', sha: (await blobRes.json()).sha })
+    const blob = await responseRecord(blobRes)
+    if (typeof blob?.sha !== 'string') return { error: `Blob 响应格式无效 (${f.path})` }
+    treeItems.push({ path: f.path, mode: '100644', type: 'blob', sha: blob.sha })
   }
 
   // 新树
@@ -162,7 +192,9 @@ export async function commitFiles(token: string, repo: string, branch: string, f
     body: JSON.stringify({ base_tree: baseTreeSha, tree: treeItems }),
   }).catch(() => null)
   if (!treeRes?.ok) return { error: '创建树失败' }
-  const newTreeSha = (await treeRes.json()).sha as string
+  const tree = await responseRecord(treeRes)
+  if (typeof tree?.sha !== 'string') return { error: '新树响应格式无效' }
+  const newTreeSha = tree.sha
 
   // 新提交
   const newCommitRes = await boundedFetch(`${GH}/repos/${repo}/git/commits`, {
@@ -170,7 +202,9 @@ export async function commitFiles(token: string, repo: string, branch: string, f
     body: JSON.stringify({ message: message || 'Claude 代码改动', tree: newTreeSha, parents: [baseSha] }),
   }).catch(() => null)
   if (!newCommitRes?.ok) return { error: '创建提交失败' }
-  const newCommitSha = (await newCommitRes.json()).sha as string
+  const newCommit = await responseRecord(newCommitRes)
+  if (typeof newCommit?.sha !== 'string') return { error: '提交响应格式无效' }
+  const newCommitSha = newCommit.sha
 
   // 推进分支引用
   const refRes = await boundedFetch(`${GH}/repos/${repo}/git/refs/heads/${branch}`, {
@@ -178,8 +212,8 @@ export async function commitFiles(token: string, repo: string, branch: string, f
     body: JSON.stringify({ sha: newCommitSha, force: false }),
   }).catch(() => null)
   if (!refRes?.ok) {
-    const err = await refRes?.json().catch(() => null)
-    return { error: `推送失败：${(err as any)?.message ?? '未知错误'}` }
+    const err = await responseRecord(refRes)
+    return { error: `推送失败：${typeof err?.message === 'string' ? err.message : '未知错误'}` }
   }
   return { commitSha: newCommitSha }
 }
@@ -276,8 +310,8 @@ export async function enablePages(
   const name = repo.split('/')[1]
   let url = `https://${owner}.github.io/${name}/`
   if (!res?.ok && res?.status !== 409) {
-    const err = await res?.json().catch(() => null)
-    return { status: 'failed', url, error: `开启 Pages 失败：${(err as any)?.message ?? '未知错误'}` }
+    const err = await responseRecord(res)
+    return { status: 'failed', url, error: `开启 Pages 失败：${typeof err?.message === 'string' ? err.message : '未知错误'}` }
   }
   if (res.status === 409) {
     const update = await boundedFetch(`${GH}/repos/${repo}/pages`, {
@@ -285,8 +319,8 @@ export async function enablePages(
       body: JSON.stringify({ source: { branch, path: '/' } }),
     }).catch(() => null)
     if (!update?.ok) {
-      const err = await update?.json().catch(() => null)
-      return { status: 'failed', url, error: `更新 Pages 失败：${(err as any)?.message ?? '未知错误'}` }
+      const err = await responseRecord(update)
+      return { status: 'failed', url, error: `更新 Pages 失败：${typeof err?.message === 'string' ? err.message : '未知错误'}` }
     }
   }
   try {

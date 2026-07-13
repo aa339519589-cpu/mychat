@@ -1,47 +1,90 @@
-import { execFileSync, execSync } from "child_process"
-import { existsSync, readFileSync, unlinkSync } from "fs"
-import { join } from "path"
+import { execFileSync } from "child_process"
+import { chmodSync, lstatSync, mkdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "fs"
+import type { Stats } from "fs"
+import { dirname } from "path"
 import type { SupabaseClient } from "@supabase/supabase-js"
-import { validatePath } from "../path-security"
+import { errorMessage } from "@/lib/unknown-value"
 import type { RestoreResult } from "../types"
 import { workspaceRoot } from "../workspace-paths"
 import { fetchSnapshotFromArtifact } from "./artifact"
-import { snapshotDir } from "./paths"
+import { resolveSnapshotPath } from "./cas-capture"
+import { sha256, verifyBundle } from "./cas-integrity"
+import { loadLocalBundle } from "./cas-local"
+import type { SnapshotBundle, SnapshotEntry } from "./cas-types"
 
-function restoreFilesFromHead(root: string, files: Iterable<string>): { restored: number; failed: number } {
-  let restored = 0
-  let failed = 0
-  for (const file of files) {
-    try {
-      execFileSync("git", ["checkout", "HEAD", "--", file], {
-        cwd: root,
-        timeout: 10_000,
-        encoding: "utf-8",
-      })
-      restored++
-    } catch {
-      const checked = validatePath(root, file)
-      if (checked.ok && existsSync(checked.absolute!)) {
-        try {
-          unlinkSync(checked.absolute!)
-          restored++
-        } catch {
-          failed++
-        }
-      }
-    }
-  }
-  return { restored, failed }
+function git(root: string, args: string[]): string {
+  return execFileSync("git", args, {
+    cwd: root,
+    timeout: 60_000,
+    maxBuffer: 8 * 1024 * 1024,
+    encoding: "utf-8",
+  })
 }
 
-function patchFiles(patch: string): Set<string> {
-  const files = new Set<string>()
-  const filePattern = /^[-]{3} a\/(.+?)$/gm
-  let match: RegExpExecArray | null
-  while ((match = filePattern.exec(patch)) !== null) {
-    if (match[1] !== "/dev/null") files.add(match[1])
+function lstatOrNull(path: string): Stats | null {
+  try { return lstatSync(path) as Stats } catch { return null }
+}
+
+function applyEntry(root: string, entry: SnapshotEntry, blobs: Map<string, Buffer>): void {
+  const absolute = resolveSnapshotPath(root, entry.path)
+  if (entry.kind === "deleted") {
+    rmSync(absolute, { recursive: true, force: true })
+    return
   }
-  return files
+  const blob = entry.digest ? blobs.get(entry.digest) : undefined
+  if (!blob || !entry.digest || sha256(blob) !== entry.digest || blob.byteLength !== entry.size) {
+    throw new Error(`Snapshot blob 在应用前校验失败：${entry.path}`)
+  }
+  mkdirSync(dirname(absolute), { recursive: true })
+  rmSync(absolute, { recursive: true, force: true })
+  if (entry.kind === "symlink") {
+    const target = blob.toString("utf-8")
+    if (!target || target.includes("\0")) throw new Error(`Snapshot 符号链接内容无效：${entry.path}`)
+    symlinkSync(target, absolute)
+    return
+  }
+  writeFileSync(absolute, blob, { flag: "wx" })
+  chmodSync(absolute, entry.mode ?? 0o644)
+}
+
+function verifyRestoredEntry(root: string, entry: SnapshotEntry): boolean {
+  const absolute = resolveSnapshotPath(root, entry.path)
+  const stat = lstatOrNull(absolute)
+  if (entry.kind === "deleted") return stat === null
+  if (!stat || !entry.digest) return false
+  let blob: Buffer
+  if (entry.kind === "symlink") {
+    if (!stat.isSymbolicLink()) return false
+    blob = Buffer.from(readlinkSync(absolute), "utf-8")
+  } else {
+    if (!stat.isFile()) return false
+    blob = readFileSync(absolute)
+    if ((stat.mode & 0o777) !== entry.mode) return false
+  }
+  return blob.byteLength === entry.size && sha256(blob) === entry.digest
+}
+
+function applyBundle(root: string, bundle: SnapshotBundle): { restored: number; failed: number } {
+  const verified = verifyBundle(bundle)
+  if (!verified.ok) throw new Error(verified.error)
+  const currentHead = git(root, ["rev-parse", "--verify", "HEAD"]).trim()
+  if (currentHead !== bundle.manifest.head) {
+    throw new Error(`Workspace HEAD 与 snapshot 不一致（当前 ${currentHead}，snapshot ${bundle.manifest.head}）`)
+  }
+  // Source integrity and HEAD are checked before the first destructive operation.
+  git(root, ["reset", "--hard", "HEAD"])
+  git(root, ["clean", "-ffd"])
+  let restored = 0
+  for (const entry of bundle.manifest.entries) {
+    applyEntry(root, entry, bundle.blobs)
+    restored++
+  }
+  let failed = 0
+  for (const entry of bundle.manifest.entries) {
+    if (!verifyRestoredEntry(root, entry)) failed++
+  }
+  if (failed) throw new Error(`Snapshot 恢复后逐项 SHA-256 校验失败：${failed} 个路径`)
+  return { restored, failed: 0 }
 }
 
 export async function restoreWorkspaceSnapshot(
@@ -51,106 +94,39 @@ export async function restoreWorkspaceSnapshot(
   supabase?: SupabaseClient,
 ): Promise<RestoreResult> {
   const root = workspaceRoot(taskId, userId)
-  if (!existsSync(root)) {
+  if (!lstatOrNull(root)) {
     return { ok: false, restoredFiles: 0, failedFiles: 0, usedSource: "none", error: "Workspace 不存在" }
   }
 
-  let source: RestoreResult["usedSource"] = "none"
-  let patch: string | null = null
-
-  const localPatchPath = join(snapshotDir(taskId, userId), `${snapshotId}.patch`)
-  if (existsSync(localPatchPath)) {
-    try {
-      patch = readFileSync(localPatchPath, "utf-8")
-      source = "local_patch"
-    } catch {
-      // Continue to artifact recovery.
+  const local = loadLocalBundle(taskId, userId, snapshotId)
+  const localError = local.ok ? "" : local.error
+  let bundle: SnapshotBundle | null = local.ok ? local.bundle : null
+  let source: RestoreResult["usedSource"] = local.ok ? "local_cas" : "none"
+  let artifactError = ""
+  if (!bundle && supabase) {
+    const artifact = await fetchSnapshotFromArtifact(supabase, userId, taskId, snapshotId)
+    if (artifact.ok) {
+      bundle = artifact.bundle
+      source = "artifact_cas"
+    } else {
+      artifactError = artifact.error
     }
   }
-
-  if (patch === null && supabase) {
-    const fetched = await fetchSnapshotFromArtifact(supabase, userId, taskId, snapshotId)
-    if (fetched.ok) {
-      patch = fetched.patchContent
-      source = "artifact_patch"
-    }
-  }
-
-  if (patch === null) {
-    let fileList: string[] = []
-    if (supabase) {
-      const fetched = await fetchSnapshotFromArtifact(supabase, userId, taskId, snapshotId)
-      if (fetched.ok) fileList = fetched.record.changedFiles
-    }
-
-    if (fileList.length) {
-      const result = restoreFilesFromHead(root, fileList)
-      return {
-        ok: true,
-        snapshotId,
-        restoredFiles: result.restored,
-        failedFiles: result.failed,
-        usedSource: "git_fallback",
-      }
-    }
-
+  if (!bundle) {
+    const details = [localError, artifactError].filter(Boolean).join("；")
     return {
-      ok: false,
-      restoredFiles: 0,
-      failedFiles: 0,
-      usedSource: "none",
-      error: `Snapshot 不存在（本地和 artifact 均未找到）：${snapshotId}`,
+      ok: false, snapshotId, restoredFiles: 0, failedFiles: 0, usedSource: "none",
+      error: `Snapshot 没有完整且通过摘要校验的副本：${details}`,
     }
   }
 
-  let restoredFiles = 0
   try {
-    execFileSync("git", ["reset", "--hard", "HEAD"], {
-      cwd: root,
-      timeout: 30_000,
-      maxBuffer: 4 * 1024 * 1024,
-      encoding: "utf-8",
-    })
-    execFileSync("git", ["clean", "-fd"], {
-      cwd: root,
-      timeout: 30_000,
-      maxBuffer: 4 * 1024 * 1024,
-      encoding: "utf-8",
-    })
-
-    if (patch.trim()) {
-      try {
-        const stat = execSync("git apply --stat", {
-          cwd: root,
-          timeout: 30_000,
-          maxBuffer: 512 * 1024,
-          encoding: "utf-8",
-          input: patch,
-        })
-        restoredFiles = stat.trim().split("\n").filter(Boolean).length
-      } catch {
-        // Applying the patch still provides the authoritative result.
-      }
-      execSync("git apply", {
-        cwd: root,
-        timeout: 60_000,
-        maxBuffer: 4 * 1024 * 1024,
-        encoding: "utf-8",
-        input: patch,
-      })
-    }
-
-    if (!restoredFiles) restoredFiles = (patch.match(/^diff --git/gm) ?? []).length
-    return { ok: true, snapshotId, restoredFiles, failedFiles: 0, usedSource: source }
-  } catch (error: any) {
-    const result = restoreFilesFromHead(root, patchFiles(patch))
+    const result = applyBundle(root, bundle)
+    return { ok: true, snapshotId, restoredFiles: result.restored, failedFiles: 0, usedSource: source }
+  } catch (error) {
     return {
-      ok: result.restored > 0,
-      snapshotId,
-      restoredFiles: result.restored,
-      failedFiles: result.failed,
-      usedSource: result.restored > 0 ? "git_fallback" : "none",
-      error: result.restored === 0 ? `恢复失败：${error?.stderr ?? error?.message}` : undefined,
+      ok: false, snapshotId, restoredFiles: 0, failedFiles: bundle.manifest.entries.length,
+      usedSource: "none", error: `恢复失败（未降级到无摘要 patch）：${errorMessage(error)}`,
     }
   }
 }

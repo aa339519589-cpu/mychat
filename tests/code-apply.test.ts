@@ -19,19 +19,19 @@ test('code apply request normalizes a valid workspace publish', () => {
 
 test('code apply request validates actions before external work', () => {
   assert.throws(
-    () => parseCodeApplyRequest({ actions: [{ kind: 'write_file', path: 'index.html' }] }),
+    () => parseCodeApplyRequest({ taskId: '123e4567-e89b-42d3-a456-426614174000', actions: [{ kind: 'write_file', path: 'index.html' }] }),
     /文件内容无效/,
   )
   assert.throws(
-    () => parseCodeApplyRequest({ repo: '../escape', actions: [] }),
+    () => parseCodeApplyRequest({ taskId: '123e4567-e89b-42d3-a456-426614174000', repo: '../escape', actions: [] }),
     /仓库参数无效/,
   )
   assert.throws(
-    () => parseCodeApplyRequest({ actions: [{ kind: 'unknown' }] }),
+    () => parseCodeApplyRequest({ taskId: '123e4567-e89b-42d3-a456-426614174000', actions: [{ kind: 'unknown' }] }),
     /kind 无效/,
   )
   assert.throws(
-    () => parseCodeApplyRequest({ actions: [{ kind: 'delete_file', path: '../secret' }] }),
+    () => parseCodeApplyRequest({ taskId: '123e4567-e89b-42d3-a456-426614174000', actions: [{ kind: 'delete_file', path: '../secret' }] }),
     /path 无效/,
   )
 })

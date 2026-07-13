@@ -6,7 +6,10 @@ DB="mychat_generation_migration_test"
 PSQL=(psql -v ON_ERROR_STOP=1)
 
 cleanup() {
-  "${PSQL[@]}" -d postgres -c "drop database if exists ${DB}" >/dev/null
+  "${PSQL[@]}" -d postgres >/dev/null 2>&1 <<SQL || true
+select pg_terminate_backend(pid) from pg_stat_activity where datname = '${DB}';
+drop database if exists ${DB};
+SQL
 }
 trap cleanup EXIT
 
@@ -561,5 +564,188 @@ begin
 end;
 $$;
 SQL
+
+# Exercise the atomic limiter under real cross-session contention. Exactly the
+# configured limit may pass, regardless of how the 40 transactions interleave.
+RATE_LIMIT_KEY="$(printf 'c%.0s' {1..64})"
+"${PSQL[@]}" -d "$DB" -c "delete from public.api_rate_limits where key_hash='${RATE_LIMIT_KEY}'" >/dev/null
+RATE_LIMIT_RESULTS="$({
+  for _ in $(seq 1 40); do
+    "${PSQL[@]}" -At -d "$DB" -c \
+      "select allowed::integer from public.consume_api_rate_limit('${RATE_LIMIT_KEY}', 10, 60000)" &
+  done
+  wait
+})"
+RATE_LIMIT_ALLOWED="$(printf '%s\n' "$RATE_LIMIT_RESULTS" | grep -c '^1$')"
+RATE_LIMIT_STORED="$("${PSQL[@]}" -At -d "$DB" -c \
+  "select request_count from public.api_rate_limits where key_hash='${RATE_LIMIT_KEY}'")"
+if [[ "$RATE_LIMIT_ALLOWED" != "10" || "$RATE_LIMIT_STORED" != "11" ]]; then
+  echo "Concurrent rate-limit verification failed: allowed=${RATE_LIMIT_ALLOWED}, stored=${RATE_LIMIT_STORED}" >&2
+  exit 1
+fi
+
+# Unified job control plane: apply the migration against the same PostgreSQL 16
+# baseline, then exercise identity binding, fencing, terminal CAS, ledger/outbox
+# atomicity, resumable-vs-unsafe stale leases, and tenant RLS.
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713070000_unified_job_control_plane.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713070000_unified_job_control_plane.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/tests/job-control-plane-pg16.sql" >/dev/null
+
+# GitHub credentials remain encrypted behind audited service-role-only RPCs.
+# Re-applying the expand migration must remain safe before live traffic moves.
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713080000_github_connections.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713080000_github_connections.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/tests/github-connection-pg16.sql" >/dev/null
+
+# Fenced object receipts close the storage/terminal crash window; quota reads
+# are derived from the same append-only ledger committed by finalize_job.
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713090000_job_assets_and_ledger_quota.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713090000_job_assets_and_ledger_quota.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/tests/job-assets-ledger-pg16.sql" >/dev/null
+
+# Outbox delivery and object cleanup use their own generation fence so a late
+# acknowledgement can never cross an expired/reclaimed delivery lease.
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713100000_job_outbox_dispatch.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713100000_job_outbox_dispatch.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/tests/job-outbox-pg16.sql" >/dev/null
+
+# Generated media is private and served only through the application proxy;
+# the final readiness contract includes the outbox and private-storage plane.
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713110000_private_generated_media.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713110000_private_generated_media.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/tests/private-generated-media-pg16.sql" >/dev/null
+
+# High-risk Agent actions require a database-authoritative, exact-plan-bound,
+# expiring token whose approval can be consumed exactly once.
+"${PSQL[@]}" -d "$DB" -c \
+  "grant select on public.agent_tasks to authenticated, service_role" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713120000_agent_confirmation_gates.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713120000_agent_confirmation_gates.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/tests/agent-confirmation-gates-pg16.sql" >/dev/null
+
+# The focused baseline supplies the legacy artifact table that exists in every
+# production deployment before the content-addressed snapshot expand phase.
+"${PSQL[@]}" -d "$DB" <<'SQL'
+create table if not exists public.agent_artifacts (
+  id uuid primary key default gen_random_uuid(),
+  task_id uuid not null references public.agent_tasks(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  kind text not null default 'other',
+  title text,
+  content text,
+  url text,
+  meta jsonb,
+  created_at timestamptz not null default now()
+);
+alter table public.agent_artifacts enable row level security;
+drop policy if exists agent_artifacts_select on public.agent_artifacts;
+create policy agent_artifacts_select on public.agent_artifacts for select
+  using (auth.uid() = user_id);
+drop policy if exists agent_artifacts_insert on public.agent_artifacts;
+create policy agent_artifacts_insert on public.agent_artifacts for insert
+  with check (auth.uid() = user_id and exists (
+    select 1 from public.agent_tasks task where task.id = task_id and task.user_id = auth.uid()
+  ));
+drop policy if exists agent_artifacts_update on public.agent_artifacts;
+create policy agent_artifacts_update on public.agent_artifacts for update
+  using (auth.uid() = user_id) with check (auth.uid() = user_id);
+drop policy if exists agent_artifacts_delete on public.agent_artifacts;
+create policy agent_artifacts_delete on public.agent_artifacts for delete
+  using (auth.uid() = user_id);
+grant select, insert, update, delete on public.agent_artifacts to authenticated, service_role;
+SQL
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713130000_agent_snapshot_cas.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713130000_agent_snapshot_cas.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/tests/agent-snapshot-cas-pg16.sql" >/dev/null
+
+# Operational signals must be derived from the shared system of record rather
+# than any one web/worker process. Re-apply the trigger/rollup migration, then
+# verify exact backfill, monotonic terminal counters, bounded labels and SLOs.
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713140000_authoritative_job_observability.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713140000_authoritative_job_observability.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/tests/authoritative-job-observability-pg16.sql" >/dev/null
+
+# Durable Agent publish, workspace current-head and paid-balance settlement are
+# replayed twice against a production-shaped legacy Agent schema.
+"${PSQL[@]}" -d "$DB" <<'SQL'
+alter table public.agent_tasks
+  add column if not exists goal text not null default 'test task',
+  add column if not exists mode text not null default 'auto',
+  add column if not exists repo text,
+  add column if not exists branch text not null default 'main',
+  add column if not exists meta jsonb,
+  add column if not exists agent_branch text,
+  add column if not exists pull_request_url text,
+  add column if not exists pull_request_number integer,
+  add column if not exists commit_sha text;
+create table if not exists public.agent_workspaces (
+  id uuid primary key default gen_random_uuid(),
+  task_id uuid not null references public.agent_tasks(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  repo text not null,
+  branch text not null default 'main',
+  path text,
+  status text not null default 'ready',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.agent_workspaces enable row level security;
+alter table public.profiles add column if not exists quota_version bigint not null default 0;
+grant select,insert,update,delete on public.agent_tasks,public.agent_workspaces,public.agent_artifacts
+  to authenticated,service_role;
+SQL
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713150000_durable_agent_operations.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713150000_durable_agent_operations.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713160000_agent_workspace_authority.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713160000_agent_workspace_authority.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713170000_agent_atomicity_and_balance.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713170000_agent_atomicity_and_balance.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/tests/agent-durable-control-plane-pg16.sql" >/dev/null
+
+# Two independent workers racing the only ready row must produce exactly one
+# successful claim. The loser must also be unable to append with the winner's
+# fencing version.
+JOB_CLAIM_RESULTS="$({
+  "${PSQL[@]}" -qAt -d "$DB" -c \
+    "set role service_role; select public.claim_next_job('pg16-concurrent-a',array['ideal_concurrent'],120)->>'acquired'" &
+  "${PSQL[@]}" -qAt -d "$DB" -c \
+    "set role service_role; select public.claim_next_job('pg16-concurrent-b',array['ideal_concurrent'],120)->>'acquired'" &
+  wait
+})"
+JOB_CLAIM_WINNERS="$(printf '%s\n' "$JOB_CLAIM_RESULTS" | grep -c '^true$')"
+if [[ "$JOB_CLAIM_WINNERS" != "1" ]]; then
+  echo "Concurrent job claim verification failed: ${JOB_CLAIM_RESULTS}" >&2
+  exit 1
+fi
+
+JOB_WINNER="$("${PSQL[@]}" -qAt -d "$DB" -c \
+  "select lease_owner from public.jobs where id='83000000-0000-4000-8000-000000000004'")"
+if [[ "$JOB_WINNER" == "pg16-concurrent-a" ]]; then
+  JOB_LOSER="pg16-concurrent-b"
+else
+  JOB_LOSER="pg16-concurrent-a"
+fi
+STALE_APPEND="$("${PSQL[@]}" -qAt -d "$DB" -c \
+  "set role service_role; select public.append_job_events('83000000-0000-4000-8000-000000000004','${JOB_LOSER}',1,'[{\"kind\":\"job.progress\",\"payload\":{}}]'::jsonb)->>'appended'")"
+if [[ "$STALE_APPEND" != "false" ]]; then
+  echo "Stale job fence unexpectedly appended an event" >&2
+  exit 1
+fi
+
+# Per-conversation message sequence allocation locks the conversation row, so
+# concurrent inserts receive adjacent unique positions without max(seq) races.
+{
+  "${PSQL[@]}" -q -d "$DB" -c \
+    "insert into public.messages(id,conversation_id,user_id,role,content) values ('84000000-0000-4000-8000-000000000001','80000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000001','user','first')" &
+  "${PSQL[@]}" -q -d "$DB" -c \
+    "insert into public.messages(id,conversation_id,user_id,role,content) values ('84000000-0000-4000-8000-000000000002','80000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000001','assistant','second')" &
+  wait
+}
+MESSAGE_SEQUENCE_SHAPE="$("${PSQL[@]}" -qAt -d "$DB" -c \
+  "select count(distinct seq)::text || ':' || (max(seq)-min(seq))::text from public.messages where id in ('84000000-0000-4000-8000-000000000001','84000000-0000-4000-8000-000000000002')")"
+if [[ "$MESSAGE_SEQUENCE_SHAPE" != "2:1" ]]; then
+  echo "Concurrent message sequence verification failed: ${MESSAGE_SEQUENCE_SHAPE}" >&2
+  exit 1
+fi
 
 echo "PostgreSQL generation migration verification passed"
