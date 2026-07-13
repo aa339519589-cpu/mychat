@@ -1,11 +1,23 @@
-import { createHash } from 'crypto'
 import type { SupabaseServer } from '@/lib/api/guard'
-import type { RawMsg } from '@/lib/llm/types'
 import { log } from '@/lib/logger'
+import {
+  chunkMessages,
+  embed,
+  embeddingEnabled,
+  estimateTokens,
+  hash,
+  normalizeMessage,
+  type MessageRow,
+} from '@/lib/llm/retrieval-indexing'
+import {
+  dedupeHits,
+  keywordScore,
+  textSearchQuery,
+  type RetrievalHit,
+} from '@/lib/llm/retrieval-ranking'
 
-const CHUNK_MESSAGE_COUNT = 8
-const CHUNK_OVERLAP = 2
-const MAX_CHUNK_CHARS = 4200
+export { latestUserQuery } from '@/lib/llm/retrieval-query'
+
 const RETRIEVAL_TOP_K = 12
 const INJECT_TOP_K = 8
 const INJECT_CHAR_BUDGET = 18_000
@@ -28,153 +40,12 @@ const RETRIEVAL_CONFIG: Record<HistoryRetrievalMode, RetrievalConfig> = {
   deep: { anchorLimit: 10, before: 5, after: 6, semantic: true, keyword: true },
 }
 
-type MessageRow = {
-  id: string
-  role: 'user' | 'assistant'
-  content: string | null
-  images?: unknown
-  created_at?: string | null
-  conversation_id?: string | null
-}
 
 type ConversationRow = {
   id: string
   title: string | null
   project_id: string | null
   updated_at?: string | null
-}
-
-type RetrievalHit = {
-  id: string
-  conversation_id: string
-  conversation_title: string | null
-  project_id: string | null
-  message_start_id: string | null
-  message_end_id: string | null
-  content: string
-  similarity: number
-  created_at: string | null
-}
-
-function embeddingConfig() {
-  return {
-    apiKey: process.env.EMBEDDING_API_KEY || process.env.OPENAI_API_KEY || '',
-    baseUrl: (process.env.EMBEDDING_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, ''),
-    model: process.env.EMBEDDING_MODEL || 'text-embedding-3-small',
-    dimensions: process.env.EMBEDDING_DIMENSIONS ? Number(process.env.EMBEDDING_DIMENSIONS) : undefined,
-  }
-}
-
-function embeddingEnabled(): boolean {
-  const cfg = embeddingConfig()
-  return !!cfg.apiKey && !!cfg.model
-}
-
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 3)
-}
-
-function hash(text: string): string {
-  return createHash('sha256').update(text).digest('hex')
-}
-
-function imageSummaryFromStoredImages(images: unknown): string {
-  if (!images || Array.isArray(images)) return ''
-  const summary = (images as any)?.image_summary
-  return typeof summary === 'string' ? summary.trim() : ''
-}
-
-function normalizeMessage(m: MessageRow): string {
-  const speaker = m.role === 'user' ? '用户' : '模型'
-  const content = (m.content ?? '').trim()
-  const imageSummary = imageSummaryFromStoredImages(m.images)
-  const body = [content, imageSummary ? `图片摘要：${imageSummary}` : ''].filter(Boolean).join('\n')
-  return `【${speaker}】${body || '（空）'}`
-}
-
-function chunkMessages(messages: MessageRow[]) {
-  const chunks: { start: MessageRow; end: MessageRow; content: string }[] = []
-  if (!messages.length) return chunks
-
-  for (let i = 0; i < messages.length; i += Math.max(1, CHUNK_MESSAGE_COUNT - CHUNK_OVERLAP)) {
-    const part: MessageRow[] = []
-    let chars = 0
-    for (let j = i; j < messages.length && part.length < CHUNK_MESSAGE_COUNT; j++) {
-      const text = normalizeMessage(messages[j])
-      if (part.length > 0 && chars + text.length > MAX_CHUNK_CHARS) break
-      part.push(messages[j])
-      chars += text.length
-    }
-    if (part.length < 2) continue
-    const content = part.map(normalizeMessage).join('\n\n').trim()
-    if (!content) continue
-    chunks.push({ start: part[0], end: part[part.length - 1], content })
-  }
-
-  return chunks
-}
-
-async function embed(input: string, parentSignal?: AbortSignal): Promise<number[] | null> {
-  const cfg = embeddingConfig()
-  if (!cfg.apiKey) return null
-
-  try {
-    const body: Record<string, unknown> = { model: cfg.model, input }
-    if (Number.isFinite(cfg.dimensions)) body.dimensions = cfg.dimensions
-
-    const signals = [parentSignal, AbortSignal.timeout(30_000)].filter(Boolean) as AbortSignal[]
-    const res = await fetch(`${cfg.baseUrl}/embeddings`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
-      body: JSON.stringify(body),
-      signal: signals.length === 1 ? signals[0] : AbortSignal.any(signals),
-    })
-    if (!res.ok) {
-      log.warn('activeRetrieval', 'Embedding request failed', { status: res.status, body: await res.text().catch(() => '') })
-      return null
-    }
-    const json = await res.json()
-    const vector = json?.data?.[0]?.embedding
-    return Array.isArray(vector) ? vector : null
-  } catch (e) {
-    if (parentSignal?.aborted) throw e
-    log.warn('activeRetrieval', 'Embedding skipped', e)
-    return null
-  }
-}
-
-function rawMessageText(m: RawMsg): string {
-  const anyMsg = m as any
-  if (typeof anyMsg?.content === 'string') return anyMsg.content.trim()
-  if (Array.isArray(anyMsg?.content)) {
-    return anyMsg.content.map((x: any) => typeof x?.text === 'string' ? x.text : '').join('\n').trim()
-  }
-  return ''
-}
-
-export function latestUserQuery(messages: RawMsg[]): string {
-  let lastUser = ''
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i] as any
-    if (m?.role !== 'user') continue
-    const text = rawMessageText(messages[i])
-    if (text) { lastUser = text; break }
-  }
-
-  const recent = messages
-    .slice(-8)
-    .map((m: any) => {
-      const text = rawMessageText(m).slice(0, 900)
-      if (!text) return ''
-      return `${m.role === 'assistant' ? '模型' : '用户'}：${text}`
-    })
-    .filter(Boolean)
-    .join('\n')
-
-  return [
-    lastUser ? `【当前用户问题】${lastUser}` : '',
-    recent ? `【最近几轮上下文】\n${recent}` : '',
-  ].filter(Boolean).join('\n\n')
 }
 
 function inScope(hitProjectId: string | null | undefined, projectId: string | null | undefined): boolean {
@@ -245,45 +116,6 @@ export async function ensureConversationIndexed(supabase: SupabaseServer | null,
     if (signal?.aborted) throw e
     log.warn('activeRetrieval', 'Indexing skipped', e)
   }
-}
-
-function queryTerms(query: string): string[] {
-  const base = query.toLowerCase()
-    .replace(/[()&|!:*'"<>【】\[\]{}]/g, ' ')
-    .split(/[\s,，。.!?！？、/\\|：:]+/)
-    .map(w => w.trim())
-    .filter(w => w.length >= 2)
-
-  const extra: string[] = []
-  if (query.includes('中午') || query.includes('午饭') || query.includes('午餐')) extra.push('中午', '午饭', '午餐', '吃')
-  if (query.includes('吃')) extra.push('吃', '饭', '吃了')
-  if (query.includes('今晚') || query.includes('今天晚上')) extra.push('今晚', '今天晚上', '晚上')
-  if (query.includes('干什么') || query.includes('做什么')) extra.push('干什么', '做什么', '安排')
-
-  return Array.from(new Set([...base, ...extra])).slice(0, 28)
-}
-
-function keywordScore(query: string, content: string): number {
-  const words = queryTerms(query)
-  if (!words.length) return 0
-  const lower = content.toLowerCase()
-  return words.reduce((acc, w) => acc + (lower.includes(w.toLowerCase()) ? 0.05 : 0), 0)
-}
-
-function textSearchQuery(query: string): string {
-  return queryTerms(query).slice(0, 12).join(' | ')
-}
-
-function dedupeHits(hits: RetrievalHit[]): RetrievalHit[] {
-  const seen = new Set<string>()
-  const out: RetrievalHit[] = []
-  for (const hit of hits) {
-    const key = `${hit.conversation_id}:${hit.message_start_id}:${hit.message_end_id}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    out.push(hit)
-  }
-  return out
 }
 
 function renderAnchoredContext(anchor: MessageRow, rows: MessageRow[], config: RetrievalConfig): string {

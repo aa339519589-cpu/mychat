@@ -7,7 +7,7 @@ import { mkdir, rm } from "fs/promises"
 import { existsSync } from "fs"
 import { join } from "path"
 import { log } from "@/lib/logger"
-import { WORKSPACE_ROOT as ROOT } from "./workspace"
+import { WORKSPACE_ROOT as ROOT } from "./workspace-paths"
 
 const execFileAsync = promisify(execFile)
 

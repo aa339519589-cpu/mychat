@@ -230,6 +230,68 @@ test("rejects an invalid upstream HTTP status without crashing the process", { c
   )
 })
 
+test("model discovery blocks redirects before following an untrusted location", { concurrency: false }, async t => {
+  const mutableEnv = process.env as Record<string, string | undefined>
+  const previousNodeEnv = mutableEnv.NODE_ENV
+  mutableEnv.NODE_ENV = "test"
+  t.after(() => {
+    if (previousNodeEnv === undefined) delete mutableEnv.NODE_ENV
+    else mutableEnv.NODE_ENV = previousNodeEnv
+  })
+
+  let requests = 0
+  const server = createServer((_request, response) => {
+    requests++
+    response.writeHead(302, { Location: "http://169.254.169.254/latest/meta-data" })
+    response.end()
+  })
+  server.listen(0, "127.0.0.1")
+  await once(server, "listening")
+  t.after(() => server.close())
+  const address = server.address()
+  assert.ok(address && typeof address === "object")
+
+  await assert.rejects(
+    discoverOpenAIModels({
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      authType: "none",
+    }),
+    (error: unknown) => error instanceof ModelEndpointError && error.code === "redirect_blocked",
+  )
+  assert.equal(requests, 1)
+})
+
+test("model discovery rejects oversized responses from declared length", { concurrency: false }, async t => {
+  const mutableEnv = process.env as Record<string, string | undefined>
+  const previousNodeEnv = mutableEnv.NODE_ENV
+  mutableEnv.NODE_ENV = "test"
+  t.after(() => {
+    if (previousNodeEnv === undefined) delete mutableEnv.NODE_ENV
+    else mutableEnv.NODE_ENV = previousNodeEnv
+  })
+
+  const server = createServer((_request, response) => {
+    response.writeHead(200, {
+      "Content-Type": "application/json",
+      "Content-Length": String(3 * 1024 * 1024),
+    })
+    response.end("{}")
+  })
+  server.listen(0, "127.0.0.1")
+  await once(server, "listening")
+  t.after(() => server.close())
+  const address = server.address()
+  assert.ok(address && typeof address === "object")
+
+  await assert.rejects(
+    discoverOpenAIModels({
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      authType: "none",
+    }),
+    (error: unknown) => error instanceof ModelEndpointError && error.code === "response_too_large",
+  )
+})
+
 test("manual media endpoints remain configurable when the service has no model list", { concurrency: false }, async t => {
   const mutableEnv = process.env as Record<string, string | undefined>
   const previousNodeEnv = mutableEnv.NODE_ENV
