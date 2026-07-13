@@ -1,0 +1,25 @@
+name: Keep Render Runtime Active
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: render-keepalive
+  cancel-in-progress: true
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Keep the free web and embedded worker process active
+        run: >-
+          curl --fail --silent --show-error
+          --retry 4 --retry-all-errors --retry-delay 10
+          --connect-timeout 20 --max-time 90
+          https://mychat-nm6x.onrender.com/api/live
