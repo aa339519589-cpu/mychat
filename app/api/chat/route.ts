@@ -11,8 +11,11 @@ import { createDurableChatGenerationResponse } from '@/lib/chat/durable-generati
 import { createMediaGenerationResponse } from '@/lib/chat/media-response'
 import { ChatModelSelectionError, resolveChatModelSelection } from '@/lib/chat/model-selection'
 import { latestUserPrompt, latestUserSourceImages } from '@/lib/chat/request-context'
+import { generationMaintenanceResponse } from '@/lib/generation/maintenance'
 
 export async function POST(req: NextRequest) {
+  const maintenance = generationMaintenanceResponse()
+  if (maintenance) return maintenance
   let body
   try { body = validateChatRequest(await readJson(req, { maxBytes: 48 * 1024 * 1024 })) }
   catch (e) { return requestErrorResponse(e) }
