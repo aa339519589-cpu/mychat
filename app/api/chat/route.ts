@@ -10,6 +10,7 @@ import { requireDurableChatIdentity, validateChatRequest } from '@/lib/llm/chat-
 import { normalizeSearchMode } from '@/lib/search-mode'
 import { isJobRuntimeError } from '@/lib/jobs/errors'
 import { JobPayloadStorageError } from '@/lib/jobs/payload-storage'
+import { expensiveWriteMaintenanceResponse } from '@/lib/api/maintenance'
 
 function configurationError(request: Request, message: string): Response {
   return apiErrorResponseV1(request, {
@@ -22,6 +23,8 @@ function configurationError(request: Request, message: string): Response {
 }
 
 export async function POST(request: NextRequest) {
+  const maintenance = expensiveWriteMaintenanceResponse(request)
+  if (maintenance) return maintenance
   const auth = await resolveAuth()
   const rate = await enforceRequestRateLimit(auth, request)
   if (rate.response) return rate.response

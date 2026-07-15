@@ -7,6 +7,7 @@ import { getCurrentGitHubConnectionStatus } from '@/lib/github-session'
 import { sha256JobValue } from '@/lib/jobs/canonical'
 import type { JsonObject } from '@/lib/jobs/contracts'
 import { jobMetrics } from '@/lib/observability/job-metrics'
+import { expensiveWriteMaintenanceResponse } from '@/lib/api/maintenance'
 
 function latestGoal(messages: Array<{ role: string; content: string }>): string {
   return [...messages].reverse().find(message => message.role === 'user')?.content.slice(0, 10_000)
@@ -14,6 +15,8 @@ function latestGoal(messages: Array<{ role: string; content: string }>): string 
 }
 
 export async function POST(request: NextRequest) {
+  const maintenance = expensiveWriteMaintenanceResponse(request)
+  if (maintenance) return maintenance
   const auth = await resolveAuth()
   const rate = await enforceRequestRateLimit(auth, request)
   if (rate.response) return rate.response

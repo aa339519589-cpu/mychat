@@ -5,9 +5,12 @@ import { readJson, requestErrorResponse, requestId } from '@/lib/api/request'
 import { applyCodeChanges } from '@/lib/code-agent/apply'
 import { parseCodeApplyRequest } from '@/lib/code-agent/apply-request'
 import { getCurrentGitHubConnectionStatus } from '@/lib/github-session'
+import { expensiveWriteMaintenanceResponse } from '@/lib/api/maintenance'
 
 /** DB-only transport: authenticate, strictly validate and atomically enqueue. */
 export async function POST(request: NextRequest) {
+  const maintenance = expensiveWriteMaintenanceResponse(request)
+  if (maintenance) return maintenance
   const auth = await resolveAuth()
   const rate = await enforceRequestRateLimit(auth, request)
   if (rate.response) return rate.response

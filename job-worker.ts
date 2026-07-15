@@ -12,6 +12,7 @@ import { log } from '@/lib/logger'
 import { jobMetrics, type JobMetricType } from '@/lib/observability/job-metrics'
 import { normalizeJobError } from '@/lib/jobs/errors'
 import type { JobHandler } from '@/lib/jobs/worker'
+import { jobMaintenanceMode } from '@/lib/jobs/maintenance'
 
 function concurrency(name: string, fallback: number): number {
   const configured = Number(process.env[name] ?? fallback)
@@ -24,6 +25,7 @@ function concurrency(name: string, fallback: number): number {
 const baseWorkerId = process.env.JOB_WORKER_ID?.trim()
   || `${hostname()}:${process.pid}:${crypto.randomUUID()}`
 const shutdown = new AbortController()
+const maintenanceMode = jobMaintenanceMode()
 
 function metricType(job: { type: string; input: unknown }): JobMetricType {
   if (job.type === 'chat.title') return 'title'
@@ -99,6 +101,16 @@ const outbox = new JobOutboxDispatcher({
 
 async function main(): Promise<void> {
   assertProductionAgentSandbox()
+  if (maintenanceMode === 'drain') {
+    log.warn('jobs', 'Maintenance drain is active; Job and outbox claims are disabled', {
+      workerId: baseWorkerId,
+    })
+    if (shutdown.signal.aborted) return
+    await new Promise<void>(resolve => {
+      shutdown.signal.addEventListener('abort', () => resolve(), { once: true })
+    })
+    return
+  }
   log.info('jobs', 'Worker pool started', { workerId: baseWorkerId, workers: workerSpecs })
   await Promise.all([
     ...workers.map(worker => worker.run(shutdown.signal)),
