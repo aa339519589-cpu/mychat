@@ -51,6 +51,7 @@ test('release images are digest-pinned, attested, and generated only after verif
   assert.match(verify, /publish:[\s\S]*?if: github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'/)
   assert.match(verify, /needs:[\s\S]*?- verify[\s\S]*?- container/)
   assert.match(verify, /gh run list --workflow security\.yml --commit "\$GITHUB_SHA"/)
+  assert.match(verify, /--repo "\$GITHUB_REPOSITORY" --event push/)
   assert.match(verify, /ref:\s*\$\{\{ github\.sha \}\}[\s\S]*?persist-credentials:\s*false/)
   assert.match(verify, /MYCHAT_BUILD_REVISION=\$\{\{ github\.sha \}\}/)
   assert.match(verify, /org\.opencontainers\.image\.revision=\$\{\{ github\.sha \}\}/)

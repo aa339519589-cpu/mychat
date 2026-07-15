@@ -112,7 +112,7 @@ jobs:
           fi
           for attempt in {1..150}; do
             state="$(gh run list --workflow security.yml --commit "$GITHUB_SHA" \
-              --event push --limit 1 --json status,conclusion \
+              --repo "$GITHUB_REPOSITORY" --event push --limit 1 --json status,conclusion \
               --jq 'if length == 0 then "missing:" else .[0].status + ":" + (.conclusion // "") end')"
             case "$state" in
               completed:success) exit 0 ;;
