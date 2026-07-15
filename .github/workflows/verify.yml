@@ -10,13 +10,17 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
       postgres:
-        image: postgres:16
+        image: postgres:16@sha256:eb4759788a2182f08257135e61a34f2cfc3c2914079f3465d64ee62350f4d081
         env:
           POSTGRES_PASSWORD: postgres
         ports:
@@ -33,22 +37,213 @@ jobs:
       PGPASSWORD: postgres
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           cache: npm
 
       - name: Install dependencies
-        run: npm ci --legacy-peer-deps
+        run: npm ci --ignore-scripts --legacy-peer-deps
 
       - name: Install browser runtime
         run: npx playwright install --with-deps chromium
 
-      - name: Verify PostgreSQL 16 migrations
-        run: npm run test:migrations
-
       - name: Lint, typecheck, test, build, and smoke test
         run: npm run verify
+
+  container:
+    name: Container runtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build production image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          load: true
+          push: false
+          build-args: |
+            MYCHAT_BUILD_REVISION=${{ github.sha }}
+          tags: mychat:verify-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+          sbom: false
+
+      - name: Inspect and smoke test production image
+        env:
+          IMAGE_TAG: mychat:verify-${{ github.sha }}
+          VERIFIED_SHA: ${{ github.sha }}
+        run: bash scripts/smoke-production-container.sh "$IMAGE_TAG" "$VERIFIED_SHA"
+
+  publish:
+    name: Publish verified image
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs:
+      - verify
+      - container
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    permissions:
+      actions: read
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    steps:
+      - name: Require Security for this revision
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [[ ! "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Push did not supply a full immutable commit SHA" >&2
+            exit 1
+          fi
+          for attempt in {1..150}; do
+            state="$(gh run list --workflow security.yml --commit "$GITHUB_SHA" \
+              --event push --limit 1 --json status,conclusion \
+              --jq 'if length == 0 then "missing:" else .[0].status + ":" + (.conclusion // "") end')"
+            case "$state" in
+              completed:success) exit 0 ;;
+              completed:*) echo "Security failed for $GITHUB_SHA: $state" >&2; exit 1 ;;
+            esac
+            sleep 10
+          done
+          echo "Security did not complete for $GITHUB_SHA" >&2
+          exit 1
+
+      - name: Checkout verified push revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Confirm checkout identity
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve canonical image name
+        id: image
+        run: |
+          name="$(printf '%s' "ghcr.io/$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          if [[ ! "$name" =~ ^ghcr\.io/[a-z0-9._-]+/[a-z0-9._-]+$ ]]; then
+            echo "Invalid GHCR image name" >&2
+            exit 1
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      - name: Build and publish verified image
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          push: true
+          build-args: |
+            MYCHAT_BUILD_REVISION=${{ github.sha }}
+          tags: ${{ steps.image.outputs.name }}:sha-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
+
+      - name: Smoke test the published digest
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_NAME: ${{ steps.image.outputs.name }}
+          VERIFIED_SHA: ${{ github.sha }}
+        run: |
+          if [[ ! "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Build did not produce an immutable image digest" >&2
+            exit 1
+          fi
+          published_image="$IMAGE_NAME@$IMAGE_DIGEST"
+          docker pull "$published_image" >/dev/null
+          bash scripts/smoke-production-container.sh "$published_image" "$VERIFIED_SHA"
+
+      - name: Reject high and critical OS vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.image.outputs.name }}@${{ steps.build.outputs.digest }}
+          format: table
+          scanners: vuln
+          vuln-type: os
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: '1'
+
+      # This runs on push, so the official SLSA workflow predicate binds the
+      # subject to the same source SHA that Verify checked and built.
+      - name: Attest published image
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-name: ${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Create immutable release manifest
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_NAME: ${{ steps.image.outputs.name }}
+          VERIFIED_SHA: ${{ github.sha }}
+        run: |
+          if [[ ! "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] \
+            || [[ ! "$VERIFIED_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            || [[ ! "$GITHUB_RUN_ID" =~ ^[0-9]+$ ]] \
+            || [[ ! "$GITHUB_RUN_ATTEMPT" =~ ^[0-9]+$ ]]; then
+            echo "Release identity is malformed" >&2
+            exit 1
+          fi
+          manifest_dir="$RUNNER_TEMP/verified-image-manifest"
+          mkdir --parents "$manifest_dir"
+          jq --compact-output --null-input --sort-keys \
+            --arg image "$IMAGE_NAME" \
+            --arg digest "$IMAGE_DIGEST" \
+            --arg revision "$VERIFIED_SHA" \
+            --argjson runId "$GITHUB_RUN_ID" \
+            --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            '{
+              schemaVersion: 1,
+              image: $image,
+              digest: $digest,
+              revision: $revision,
+              runId: $runId,
+              runAttempt: $runAttempt
+            }' > "$manifest_dir/manifest.json"
+          (
+            cd "$manifest_dir"
+            sha256sum manifest.json > manifest.sha256
+          )
+
+      - name: Upload immutable release manifest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: verified-image-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/verified-image-manifest
+          if-no-files-found: error
+          compression-level: 0
+          overwrite: false
+          include-hidden-files: false
+          retention-days: 1

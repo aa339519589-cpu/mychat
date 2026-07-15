@@ -1,0 +1,533 @@
+name: Activate Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Full current-main commit SHA to activate
+        required: true
+        type: string
+      drain_release_run_id:
+        description: Successful Release Image run that staged this SHA in drain
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  deployments: read
+
+concurrency:
+  group: production-release-main
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate drain release evidence
+    if: >-
+      github.repository == 'aa339519589-cpu/mychat' &&
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      digest: ${{ steps.manifest.outputs.digest }}
+      drain_deployment_id: ${{ steps.manifest.outputs.drain_deployment_id }}
+      image: ${{ steps.manifest.outputs.image }}
+      render_deploy_id: ${{ steps.manifest.outputs.render_deploy_id }}
+      revision: ${{ steps.release.outputs.revision }}
+    steps:
+      - name: Resolve exact successful drain release
+        id: release
+        env:
+          DRAIN_RELEASE_RUN_ID: ${{ inputs.drain_release_run_id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REQUESTED_REVISION: ${{ inputs.revision }}
+        run: |
+          if [[ ! "$REQUESTED_REVISION" =~ ^[0-9a-f]{40}$ ]] \
+            || [[ ! "$DRAIN_RELEASE_RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "Activation inputs are malformed" >&2
+            exit 1
+          fi
+          current_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          if [[ "$REQUESTED_REVISION" != "$current_main" ]]; then
+            echo "Requested activation revision is not current main" >&2
+            exit 1
+          fi
+
+          run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$DRAIN_RELEASE_RUN_ID")"
+          jq --exit-status \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg revision "$REQUESTED_REVISION" \
+            --argjson runId "$DRAIN_RELEASE_RUN_ID" \
+            '.id == $runId and .name == "Release Image" and
+             .event == "workflow_run" and .status == "completed" and
+             .conclusion == "success" and .head_branch == "main" and
+             .head_sha == $revision and .repository.full_name == $repository' \
+            <<<"$run" >/dev/null
+          run_attempt="$(jq -er '.run_attempt' <<<"$run")"
+          jobs="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$DRAIN_RELEASE_RUN_ID/jobs?per_page=100")"
+          jq --exit-status '
+            def succeeded($name): any(.jobs[];
+              .name == $name and .status == "completed" and .conclusion == "success");
+            succeeded("Resolve verified image") and
+            succeeded("Deploy production drain")
+          ' <<<"$jobs" >/dev/null
+
+          artifact_name="production-drain-$REQUESTED_REVISION-$DRAIN_RELEASE_RUN_ID-$run_attempt"
+          artifacts="$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$DRAIN_RELEASE_RUN_ID/artifacts?per_page=100&name=$artifact_name")"
+          count="$(jq --arg name "$artifact_name" \
+            '[.artifacts[] | select(.name == $name and .expired == false)] | length' \
+            <<<"$artifacts")"
+          if [[ "$count" != "1" ]]; then
+            echo "Expected one immutable drain manifest artifact, found $count" >&2
+            exit 1
+          fi
+          echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
+          echo "release_run_attempt=$run_attempt" >> "$GITHUB_OUTPUT"
+          echo "revision=$REQUESTED_REVISION" >> "$GITHUB_OUTPUT"
+
+      - name: Download immutable drain release manifest
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ steps.release.outputs.artifact_name }}
+          path: production-drain-manifest
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.drain_release_run_id }}
+
+      - name: Validate release, verification, security, and deployment evidence
+        id: manifest
+        env:
+          DRAIN_RELEASE_RUN_ATTEMPT: ${{ steps.release.outputs.release_run_attempt }}
+          DRAIN_RELEASE_RUN_ID: ${{ inputs.drain_release_run_id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_SHA: ${{ steps.release.outputs.revision }}
+        run: |
+          manifest_dir="$GITHUB_WORKSPACE/production-drain-manifest"
+          manifest="$manifest_dir/manifest.json"
+          checksum="$manifest_dir/manifest.sha256"
+          test -f "$manifest" -a ! -L "$manifest"
+          test -f "$checksum" -a ! -L "$checksum"
+          test "$(find "$manifest_dir" -type f | wc -l | tr -d ' ')" = "2"
+          test -z "$(find "$manifest_dir" -type l -print -quit)"
+          (
+            cd "$manifest_dir"
+            sha256sum --check --strict manifest.sha256
+          )
+          test "$(jq --compact-output --sort-keys . "$manifest")" = "$(cat "$manifest")"
+
+          expected_image="$(printf '%s' "ghcr.io/$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          jq --exit-status \
+            --arg image "$expected_image" \
+            --arg revision "$TARGET_SHA" \
+            --argjson releaseAttempt "$DRAIN_RELEASE_RUN_ATTEMPT" \
+            --argjson releaseRunId "$DRAIN_RELEASE_RUN_ID" \
+            'type == "object" and .schemaVersion == 1 and
+             .image == $image and .revision == $revision and
+             .releaseRunId == $releaseRunId and
+             .releaseRunAttempt == $releaseAttempt and
+             (.digest | test("^sha256:[0-9a-f]{64}$")) and
+             (.verifyRunId | type == "number") and
+             (.verifyRunAttempt | type == "number") and
+             (.securityRunId | type == "number") and
+             (.renderDeployId | test("^dep-[a-z0-9]+$"))' \
+            "$manifest" >/dev/null
+
+          verify_run_id="$(jq -er '.verifyRunId' "$manifest")"
+          security_run_id="$(jq -er '.securityRunId' "$manifest")"
+          for record in "Verify:$verify_run_id:push" "Security:$security_run_id:push"; do
+            IFS=: read -r expected_name run_id expected_event <<<"$record"
+            run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
+            jq --exit-status \
+              --arg event "$expected_event" --arg name "$expected_name" \
+              --arg repository "$GITHUB_REPOSITORY" --arg revision "$TARGET_SHA" \
+              '.name == $name and .event == $event and .status == "completed" and
+               .conclusion == "success" and .head_branch == "main" and
+               .head_sha == $revision and .repository.full_name == $repository' \
+              <<<"$run" >/dev/null
+          done
+
+          verify_jobs="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$verify_run_id/jobs?per_page=100")"
+          jq --exit-status '
+            def succeeded($name): any(.jobs[];
+              .name == $name and .status == "completed" and .conclusion == "success");
+            succeeded("verify") and succeeded("Container runtime") and
+            succeeded("Publish verified image")
+          ' <<<"$verify_jobs" >/dev/null
+          security_jobs="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$security_run_id/jobs?per_page=100")"
+          jq --exit-status '
+            def succeeded($name): any(.jobs[];
+              .name == $name and .status == "completed" and .conclusion == "success");
+            succeeded("CodeQL") and succeeded("Secret scan")
+          ' <<<"$security_jobs" >/dev/null
+
+          deployments="$(gh api \
+            "repos/$GITHUB_REPOSITORY/deployments?sha=$TARGET_SHA&environment=Production-Drain&per_page=20")"
+          drain_deployment_id="$(jq -er '.[0].id' <<<"$deployments")"
+          status="$(gh api \
+            "repos/$GITHUB_REPOSITORY/deployments/$drain_deployment_id/statuses?per_page=1" \
+            --jq '.[0].state')"
+          if [[ "$status" != "success" ]]; then
+            echo "Production-Drain deployment is not successful" >&2
+            exit 1
+          fi
+
+          echo "digest=$(jq -er '.digest' "$manifest")" >> "$GITHUB_OUTPUT"
+          echo "image=$(jq -er '.image' "$manifest")" >> "$GITHUB_OUTPUT"
+          echo "render_deploy_id=$(jq -er '.renderDeployId' "$manifest")" >> "$GITHUB_OUTPUT"
+          echo "drain_deployment_id=$drain_deployment_id" >> "$GITHUB_OUTPUT"
+
+  activate:
+    name: Activate exact production revision
+    needs: validate
+    runs-on: ubuntu-latest
+    environment:
+      name: Production
+      url: https://mychat-nm6x.onrender.com
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      deployments: write
+    env:
+      PRODUCTION_READY_URL: https://mychat-nm6x.onrender.com/api/ready
+      TARGET_SHA: ${{ needs.validate.outputs.revision }}
+    steps:
+      - name: Checkout exact activation revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.validate.outputs.revision }}
+          persist-credentials: false
+
+      - name: Use the production Node runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+
+      - name: Revalidate target and current production phase
+        id: phase
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          current_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          test "$current_main" = "$TARGET_SHA"
+          if EXPECTED_REVISION="$TARGET_SHA" EXPECTED_WORKER_DRAINING=false \
+            HEALTH_CHECK_ATTEMPTS=1 HEALTH_CHECK_TIMEOUT_MS=20000 \
+            node scripts/check-production-health.mjs "$PRODUCTION_READY_URL"; then
+            echo "already_active=true" >> "$GITHUB_OUTPUT"
+          else
+            EXPECTED_REVISION="$TARGET_SHA" EXPECTED_WORKER_DRAINING=true \
+              HEALTH_CHECK_ATTEMPTS=3 HEALTH_CHECK_RETRY_MS=5000 \
+              HEALTH_CHECK_TIMEOUT_MS=20000 \
+              node scripts/check-production-health.mjs "$PRODUCTION_READY_URL"
+            echo "already_active=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create auditable production activation
+        id: audit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_DIGEST: ${{ needs.validate.outputs.digest }}
+          IMAGE_NAME: ${{ needs.validate.outputs.image }}
+        run: |
+          request="$(jq -nc \
+            --arg ref "$TARGET_SHA" \
+            --arg image "$IMAGE_NAME@$IMAGE_DIGEST" \
+            --arg digest "$IMAGE_DIGEST" \
+            '{
+              ref: $ref,
+              task: "deploy",
+              auto_merge: false,
+              required_contexts: [],
+              environment: "Production",
+              description: "Activate verified MyChat release",
+              payload: {
+                image: $image,
+                imageDigest: $digest,
+                promotion: "render-api-exact-commit-activation"
+              }
+            }')"
+          deployment_id="$(printf '%s' "$request" | gh api \
+            --method POST "repos/$GITHUB_REPOSITORY/deployments" \
+            --input - --jq '.id')"
+          test "$deployment_id" -gt 0
+          echo "deployment_id=$deployment_id" >> "$GITHUB_OUTPUT"
+
+      - name: Record production activation in progress
+        env:
+          GH_DEPLOYMENT_ID: ${{ steps.audit.outputs.deployment_id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          jq -nc --arg log_url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" '{
+            state: "in_progress",
+            environment: "Production",
+            log_url: $log_url,
+            description: "Production activation is starting"
+          }' | gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/deployments/$GH_DEPLOYMENT_ID/statuses" \
+            --input - >/dev/null
+
+      - name: Disable drain in Render configuration
+        if: steps.phase.outputs.already_active != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          if [[ -z "$RENDER_API_KEY" ]] \
+            || [[ ! "$RENDER_SERVICE_ID" =~ ^srv-[a-z0-9]+$ ]]; then
+            echo "RENDER_API_KEY and RENDER_SERVICE_ID must be configured" >&2
+            exit 1
+          fi
+          render_api() {
+            curl --fail-with-body --silent --show-error \
+              --retry 4 --retry-all-errors --connect-timeout 10 --max-time 60 \
+              --header "Authorization: Bearer $RENDER_API_KEY" \
+              --header 'Content-Type: application/json' \
+              "$@"
+          }
+          render_api --request PUT --data '{"value":"off"}' \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/MYCHAT_MAINTENANCE_MODE" >/dev/null
+          render_api \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/MYCHAT_MAINTENANCE_MODE" \
+            | jq --exit-status '.value == "off"' >/dev/null
+          current_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          test "$current_main" = "$TARGET_SHA"
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+
+      - name: Deploy the exact active revision once
+        id: render
+        if: steps.phase.outputs.already_active != 'true'
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          response="$(curl --fail-with-body --silent --show-error \
+            --connect-timeout 10 --max-time 60 \
+            --header "Authorization: Bearer $RENDER_API_KEY" \
+            --header 'Content-Type: application/json' \
+            --request POST \
+            --data "$(jq -nc --arg commitId "$TARGET_SHA" '{commitId: $commitId}')" \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys")"
+          render_deploy_id="$(jq -er '.id' <<<"$response")"
+          [[ "$render_deploy_id" =~ ^dep-[a-z0-9]+$ ]]
+          echo "deploy_id=$render_deploy_id" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for exact active Render deploy
+        if: steps.phase.outputs.already_active != 'true'
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_DEPLOY_ID: ${{ steps.render.outputs.deploy_id }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          for attempt in {1..180}; do
+            response="$(curl --fail-with-body --silent --show-error \
+              --retry 4 --retry-all-errors --connect-timeout 10 --max-time 60 \
+              --header "Authorization: Bearer $RENDER_API_KEY" \
+              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys/$RENDER_DEPLOY_ID")"
+            status="$(jq -er '.status' <<<"$response")"
+            commit="$(jq -r '.commit.id // empty' <<<"$response")"
+            [[ -z "$commit" || "$commit" == "$TARGET_SHA" ]]
+            case "$status" in
+              live) test "$commit" = "$TARGET_SHA"; exit 0 ;;
+              build_failed|update_failed|pre_deploy_failed|canceled|deactivated)
+                echo "Render activation failed with status $status" >&2; exit 1 ;;
+            esac
+            sleep 10
+          done
+          echo "Render activation did not become live" >&2
+          exit 1
+
+      - name: Confirm strict active production readiness
+        env:
+          EXPECTED_REVISION: ${{ needs.validate.outputs.revision }}
+          EXPECTED_WORKER_DRAINING: 'false'
+          HEALTH_CHECK_ATTEMPTS: '10'
+          HEALTH_CHECK_RETRY_MS: '10000'
+          HEALTH_CHECK_TIMEOUT_MS: '20000'
+        run: node scripts/check-production-health.mjs "$PRODUCTION_READY_URL"
+
+      - name: Verify protected production release metrics
+        env:
+          METRICS_BEARER_TOKEN: ${{ secrets.METRICS_BEARER_TOKEN }}
+        run: |
+          test -n "$METRICS_BEARER_TOKEN"
+          metrics_file="$(mktemp)"
+          trap 'rm -f "$metrics_file"' EXIT
+          status="$(curl --silent --show-error --output "$metrics_file" --write-out '%{http_code}' \
+            --header "Authorization: Bearer $METRICS_BEARER_TOKEN" \
+            https://mychat-nm6x.onrender.com/api/metrics)"
+          test "$status" = 200
+          grep --quiet '^mychat_authoritative_worker_fleet_ready 1$' "$metrics_file"
+          grep --quiet '^mychat_authoritative_billing_healthy 1$' "$metrics_file"
+          grep --quiet '^mychat_authoritative_billing_release_ready 1$' "$metrics_file"
+          grep --quiet '^mychat_authoritative_billing_release_blockers 0$' "$metrics_file"
+          grep --quiet '^mychat_authoritative_billing_mismatches_total 0$' "$metrics_file"
+
+      - name: Revalidate activation authority
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          current_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          test "$current_main" = "$TARGET_SHA"
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+
+      - name: Record successful production activation
+        env:
+          DRAIN_DEPLOYMENT_ID: ${{ needs.validate.outputs.drain_deployment_id }}
+          GH_DEPLOYMENT_ID: ${{ steps.audit.outputs.deployment_id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          log_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          jq -nc --arg log_url "$log_url" --arg environment_url "${PRODUCTION_READY_URL%/api/ready}" '{
+            state: "success",
+            environment: "Production",
+            environment_url: $environment_url,
+            log_url: $log_url,
+            description: "Verified revision is active and strictly ready"
+          }' | gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/deployments/$GH_DEPLOYMENT_ID/statuses" \
+            --input - >/dev/null
+          jq -nc --arg log_url "$log_url" '{
+            state: "inactive",
+            environment: "Production-Drain",
+            log_url: $log_url,
+            description: "Drain stage was superseded by successful activation"
+          }' | gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/deployments/$DRAIN_DEPLOYMENT_ID/statuses" \
+            --input - >/dev/null
+
+      - name: Record failed production activation
+        if: ${{ failure() && steps.audit.outputs.deployment_id != '' }}
+        continue-on-error: true
+        env:
+          GH_DEPLOYMENT_ID: ${{ steps.audit.outputs.deployment_id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          jq -nc --arg log_url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" '{
+            state: "failure",
+            environment: "Production",
+            log_url: $log_url,
+            description: "Production activation failed; automatic drain recovery follows"
+          }' | gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/deployments/$GH_DEPLOYMENT_ID/statuses" \
+            --input - >/dev/null
+
+  restore-drain:
+    name: Restore drain after failed activation
+    needs:
+      - validate
+      - activate
+    if: ${{ always() && needs.validate.result == 'success' && needs.activate.result != 'success' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: Production-Recovery
+      url: https://mychat-nm6x.onrender.com
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      PRODUCTION_READY_URL: https://mychat-nm6x.onrender.com/api/ready
+      TARGET_SHA: ${{ needs.validate.outputs.revision }}
+    steps:
+      - name: Checkout exact recovery revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.validate.outputs.revision }}
+          persist-credentials: false
+
+      - name: Use the production Node runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+
+      - name: Detect an already recovered drain
+        id: phase
+        run: |
+          if EXPECTED_REVISION="$TARGET_SHA" EXPECTED_WORKER_DRAINING=true \
+            HEALTH_CHECK_ATTEMPTS=1 HEALTH_CHECK_TIMEOUT_MS=20000 \
+            node scripts/check-production-health.mjs "$PRODUCTION_READY_URL"; then
+            echo "already_drained=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already_drained=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Restore Render drain configuration
+        if: steps.phase.outputs.already_drained != 'true'
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          if [[ -z "$RENDER_API_KEY" ]] \
+            || [[ ! "$RENDER_SERVICE_ID" =~ ^srv-[a-z0-9]+$ ]]; then
+            echo "Production recovery credentials are unavailable" >&2
+            exit 1
+          fi
+          render_api() {
+            curl --fail-with-body --silent --show-error \
+              --retry 4 --retry-all-errors --connect-timeout 10 --max-time 60 \
+              --header "Authorization: Bearer $RENDER_API_KEY" \
+              --header 'Content-Type: application/json' \
+              "$@"
+          }
+          render_api --request PUT --data '{"value":"drain"}' \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/MYCHAT_MAINTENANCE_MODE" >/dev/null
+          render_api \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/MYCHAT_MAINTENANCE_MODE" \
+            | jq --exit-status '.value == "drain"' >/dev/null
+
+      - name: Redeploy exact revision once in drain
+        id: render
+        if: steps.phase.outputs.already_drained != 'true'
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          response="$(curl --fail-with-body --silent --show-error \
+            --connect-timeout 10 --max-time 60 \
+            --header "Authorization: Bearer $RENDER_API_KEY" \
+            --header 'Content-Type: application/json' \
+            --request POST \
+            --data "$(jq -nc --arg commitId "$TARGET_SHA" '{commitId: $commitId}')" \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys")"
+          render_deploy_id="$(jq -er '.id' <<<"$response")"
+          [[ "$render_deploy_id" =~ ^dep-[a-z0-9]+$ ]]
+          echo "deploy_id=$render_deploy_id" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for exact drain recovery deploy
+        if: steps.phase.outputs.already_drained != 'true'
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_DEPLOY_ID: ${{ steps.render.outputs.deploy_id }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          for attempt in {1..180}; do
+            response="$(curl --fail-with-body --silent --show-error \
+              --retry 4 --retry-all-errors --connect-timeout 10 --max-time 60 \
+              --header "Authorization: Bearer $RENDER_API_KEY" \
+              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys/$RENDER_DEPLOY_ID")"
+            status="$(jq -er '.status' <<<"$response")"
+            commit="$(jq -r '.commit.id // empty' <<<"$response")"
+            [[ -z "$commit" || "$commit" == "$TARGET_SHA" ]]
+            case "$status" in
+              live) test "$commit" = "$TARGET_SHA"; exit 0 ;;
+              build_failed|update_failed|pre_deploy_failed|canceled|deactivated)
+                echo "Drain recovery failed with status $status" >&2; exit 1 ;;
+            esac
+            sleep 10
+          done
+          echo "Drain recovery did not become live" >&2
+          exit 1
+
+      - name: Confirm exact revision recovered in drain
+        env:
+          EXPECTED_REVISION: ${{ needs.validate.outputs.revision }}
+          EXPECTED_WORKER_DRAINING: 'true'
+          HEALTH_CHECK_ATTEMPTS: '10'
+          HEALTH_CHECK_RETRY_MS: '10000'
+          HEALTH_CHECK_TIMEOUT_MS: '20000'
+        run: node scripts/check-production-health.mjs "$PRODUCTION_READY_URL"
+
+      - name: Report successful automatic recovery
+        run: echo "::warning::Production activation failed; exact revision was restored in drain mode."

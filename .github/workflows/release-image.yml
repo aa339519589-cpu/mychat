@@ -1,0 +1,495 @@
+name: Release Image
+
+on:
+  workflow_run:
+    workflows:
+      - Verify
+    branches:
+      - main
+    types:
+      - completed
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: production-release-main
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: Resolve verified image
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.sha == github.event.workflow_run.head_sha
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VERIFIED_SHA: ${{ github.event.workflow_run.head_sha }}
+    outputs:
+      digest: ${{ steps.manifest.outputs.digest }}
+      image: ${{ steps.manifest.outputs.image }}
+    permissions:
+      actions: read
+      attestations: read
+      contents: read
+      packages: read
+    steps:
+      - name: Validate verified revision is current main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [[ ! "$VERIFIED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Verify did not supply a full immutable commit SHA" >&2
+            exit 1
+          fi
+          current_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          if [[ "$current_main" != "$VERIFIED_SHA" ]]; then
+            echo "Verified revision was superseded on main" >&2
+            exit 1
+          fi
+
+      - name: Checkout verified revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      - name: Confirm checkout identity
+        run: test "$(git rev-parse HEAD)" = "$VERIFIED_SHA"
+
+      - name: Require Security for the verified revision
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for attempt in {1..90}; do
+            state="$(gh run list --workflow security.yml --commit "$VERIFIED_SHA" \
+              --event push --limit 1 --json status,conclusion \
+              --jq 'if length == 0 then "missing:" else .[0].status + ":" + (.conclusion // "") end')"
+            case "$state" in
+              completed:success) exit 0 ;;
+              completed:*) echo "Security failed for $VERIFIED_SHA: $state" >&2; exit 1 ;;
+            esac
+            sleep 10
+          done
+          echo "Security did not complete for $VERIFIED_SHA" >&2
+          exit 1
+
+      - name: Locate the upstream immutable manifest
+        id: artifact-record
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPSTREAM_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          UPSTREAM_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          if [[ ! "$UPSTREAM_RUN_ID" =~ ^[0-9]+$ ]] \
+            || [[ ! "$UPSTREAM_RUN_ATTEMPT" =~ ^[0-9]+$ ]]; then
+            echo "Upstream workflow identity is malformed" >&2
+            exit 1
+          fi
+          run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$UPSTREAM_RUN_ID")"
+          jq --exit-status \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg revision "$VERIFIED_SHA" \
+            --argjson attempt "$UPSTREAM_RUN_ATTEMPT" \
+            --argjson runId "$UPSTREAM_RUN_ID" \
+            '.id == $runId and .run_attempt == $attempt and
+             .event == "push" and .conclusion == "success" and
+             .head_branch == "main" and .head_sha == $revision and
+             .head_repository.full_name == $repository' <<<"$run" >/dev/null
+
+          artifact_name="verified-image-$UPSTREAM_RUN_ID-$UPSTREAM_RUN_ATTEMPT"
+          artifacts="$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$UPSTREAM_RUN_ID/artifacts?per_page=100&name=$artifact_name")"
+          count="$(jq --arg name "$artifact_name" \
+            '[.artifacts[] | select(.name == $name and .expired == false)] | length' \
+            <<<"$artifacts")"
+          if [[ "$count" != "1" ]]; then
+            echo "Expected one unexpired immutable manifest artifact, found $count" >&2
+            exit 1
+          fi
+          jq --exit-status --arg name "$artifact_name" \
+            '.artifacts[] | select(
+              .name == $name and .expired == false and
+              (.id | type == "number") and (.size_in_bytes > 0)
+            )' <<<"$artifacts" >/dev/null
+          echo "name=$artifact_name" >> "$GITHUB_OUTPUT"
+
+      - name: Download the upstream immutable manifest
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ steps.artifact-record.outputs.name }}
+          path: verified-image-manifest
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Validate the immutable release manifest
+        id: manifest
+        env:
+          UPSTREAM_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          UPSTREAM_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          manifest_dir="$GITHUB_WORKSPACE/verified-image-manifest"
+          manifest="$manifest_dir/manifest.json"
+          checksum="$manifest_dir/manifest.sha256"
+          test -f "$manifest" -a ! -L "$manifest"
+          test -f "$checksum" -a ! -L "$checksum"
+          test "$(find "$manifest_dir" -type f | wc -l | tr -d ' ')" = "2"
+          test -z "$(find "$manifest_dir" -type l -print -quit)"
+          grep --extended-regexp --line-regexp \
+            '[0-9a-f]{64}  manifest\.json' "$checksum" >/dev/null
+          (
+            cd "$manifest_dir"
+            sha256sum --check --strict manifest.sha256
+          )
+          if [[ "$(jq --compact-output --sort-keys . "$manifest")" != "$(cat "$manifest")" ]]; then
+            echo "Release manifest is not canonical JSON" >&2
+            exit 1
+          fi
+
+          expected_image="$(printf '%s' "ghcr.io/$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          jq --exit-status \
+            --arg image "$expected_image" \
+            --arg revision "$VERIFIED_SHA" \
+            --argjson attempt "$UPSTREAM_RUN_ATTEMPT" \
+            --argjson runId "$UPSTREAM_RUN_ID" \
+            'type == "object" and
+             keys == ["digest","image","revision","runAttempt","runId","schemaVersion"] and
+             .schemaVersion == 1 and .image == $image and
+             .revision == $revision and .runId == $runId and
+             .runAttempt == $attempt and
+             (.digest | test("^sha256:[0-9a-f]{64}$"))' \
+            "$manifest" >/dev/null
+          image="$(jq --raw-output '.image' "$manifest")"
+          digest="$(jq --raw-output '.digest' "$manifest")"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull and inspect the verified artifact
+        env:
+          IMAGE_DIGEST: ${{ steps.manifest.outputs.digest }}
+          IMAGE_NAME: ${{ steps.manifest.outputs.image }}
+        run: |
+          docker pull "$IMAGE_NAME@$IMAGE_DIGEST" >/dev/null
+          revision="$(docker image inspect \
+            --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+            "$IMAGE_NAME@$IMAGE_DIGEST")"
+          if [[ "$revision" != "$VERIFIED_SHA" ]]; then
+            echo "OCI revision does not match the verified commit" >&2
+            exit 1
+          fi
+          docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' \
+            "$IMAGE_NAME@$IMAGE_DIGEST" \
+            | grep --fixed-strings --line-regexp "MYCHAT_BUILD_REVISION=$VERIFIED_SHA"
+
+      - name: Verify published image attestation
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_DIGEST: ${{ steps.manifest.outputs.digest }}
+          IMAGE_NAME: ${{ steps.manifest.outputs.image }}
+        run: gh attestation verify "oci://$IMAGE_NAME@$IMAGE_DIGEST" --repo "$GITHUB_REPOSITORY"
+
+  promote:
+    name: Deploy production drain
+    needs: resolve
+    if: >-
+      needs.resolve.result == 'success' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    environment:
+      name: Production-Drain
+      url: https://mychat-nm6x.onrender.com
+    timeout-minutes: 45
+    permissions:
+      attestations: read
+      contents: read
+      deployments: write
+    env:
+      IMAGE_DIGEST: ${{ needs.resolve.outputs.digest }}
+      IMAGE_NAME: ${{ needs.resolve.outputs.image }}
+      PRODUCTION_READY_URL: https://mychat-nm6x.onrender.com/api/ready
+      VERIFIED_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Checkout verified revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      - name: Use the production Node runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+
+      - name: Revalidate production release authority
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$VERIFIED_SHA"
+          current_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          if [[ "$current_main" != "$VERIFIED_SHA" ]]; then
+            echo "Verified revision was superseded while awaiting production promotion" >&2
+            exit 1
+          fi
+
+      - name: Require the existing production revision to be drained
+        env:
+          EXPECTED_WORKER_DRAINING: 'true'
+          HEALTH_CHECK_ATTEMPTS: '1'
+          HEALTH_CHECK_TIMEOUT_MS: '20000'
+        run: node scripts/check-production-health.mjs "$PRODUCTION_READY_URL"
+
+      # Render does not permit changing an existing service runtime from node
+      # to image. This deployment record binds the attested image digest to the
+      # exact Git commit promoted through the Git-backed Render API instead.
+      - name: Create auditable production deployment
+        id: audit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          request="$(jq -nc \
+            --arg ref "$VERIFIED_SHA" \
+            --arg image "$IMAGE_NAME@$IMAGE_DIGEST" \
+            --arg digest "$IMAGE_DIGEST" \
+            '{
+              ref: $ref,
+              task: "deploy",
+              auto_merge: false,
+              required_contexts: [],
+              environment: "Production-Drain",
+              description: "Stage verified MyChat release in drain mode",
+              payload: {
+                image: $image,
+                imageDigest: $digest,
+                promotion: "render-api-exact-commit-drain"
+              }
+            }')"
+          deployment_id="$(printf '%s' "$request" | gh api \
+            --method POST "repos/$GITHUB_REPOSITORY/deployments" \
+            --input - --jq '.id')"
+          if [[ ! "$deployment_id" =~ ^[0-9]+$ ]]; then
+            echo "GitHub did not create a deployment record" >&2
+            exit 1
+          fi
+          echo "deployment_id=$deployment_id" >> "$GITHUB_OUTPUT"
+
+      - name: Record production deployment in progress
+        env:
+          GH_DEPLOYMENT_ID: ${{ steps.audit.outputs.deployment_id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          jq -nc --arg log_url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" '{
+            state: "in_progress",
+            environment: "Production-Drain",
+            log_url: $log_url,
+            description: "Render drain staging is starting"
+          }' | gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/deployments/$GH_DEPLOYMENT_ID/statuses" \
+            --input - >/dev/null
+
+      # Required repository secrets: RENDER_API_KEY and RENDER_SERVICE_ID.
+      # Keep the Render service's own auto-deploy setting disabled.
+      - name: Promote the exact verified revision to Render
+        id: render
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          if [[ -z "$RENDER_API_KEY" ]] \
+            || [[ ! "$RENDER_SERVICE_ID" =~ ^srv-[a-z0-9]+$ ]]; then
+            echo "RENDER_API_KEY and RENDER_SERVICE_ID must be configured" >&2
+            exit 1
+          fi
+
+          render_api() {
+            curl --fail-with-body --silent --show-error \
+              --retry 4 --retry-all-errors --connect-timeout 10 --max-time 60 \
+              --header "Authorization: Bearer $RENDER_API_KEY" \
+              --header 'Content-Type: application/json' \
+              "$@"
+          }
+
+          render_api --request PATCH \
+            --data '{"autoDeploy":"no"}' \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID" >/dev/null
+
+          current_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          if [[ "$current_main" != "$VERIFIED_SHA" ]] || [[ "$(git rev-parse HEAD)" != "$VERIFIED_SHA" ]]; then
+            echo "Production release authority changed before the Render deploy" >&2
+            exit 1
+          fi
+
+          # Render's deploy creation endpoint is not documented as idempotent.
+          # Send exactly one request so a lost response cannot create retries.
+          response="$(curl --fail-with-body --silent --show-error \
+            --connect-timeout 10 --max-time 60 \
+            --header "Authorization: Bearer $RENDER_API_KEY" \
+            --header 'Content-Type: application/json' \
+            --request POST \
+            --data "$(jq -nc --arg commitId "$VERIFIED_SHA" '{commitId: $commitId}')" \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys")"
+          render_deploy_id="$(printf '%s' "$response" | jq -er '.id')"
+          if [[ ! "$render_deploy_id" =~ ^dep-[a-z0-9]+$ ]]; then
+            echo "Render did not return a valid deploy ID" >&2
+            exit 1
+          fi
+          echo "deploy_id=$render_deploy_id" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the exact Render deploy
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_DEPLOY_ID: ${{ steps.render.outputs.deploy_id }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          for attempt in {1..180}; do
+            response="$(curl --fail-with-body --silent --show-error \
+              --retry 4 --retry-all-errors --connect-timeout 10 --max-time 60 \
+              --header "Authorization: Bearer $RENDER_API_KEY" \
+              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys/$RENDER_DEPLOY_ID")"
+            status="$(printf '%s' "$response" | jq -er '.status')"
+            commit="$(printf '%s' "$response" | jq -r '.commit.id // empty')"
+            if [[ -n "$commit" && "$commit" != "$VERIFIED_SHA" ]]; then
+              echo "Render resolved a different commit" >&2
+              exit 1
+            fi
+            case "$status" in
+              live)
+                if [[ "$commit" != "$VERIFIED_SHA" ]]; then
+                  echo "Live Render deploy did not report the verified commit" >&2
+                  exit 1
+                fi
+                exit 0
+                ;;
+              build_failed|update_failed|pre_deploy_failed|canceled|deactivated)
+                echo "Render deploy failed with status $status" >&2
+                exit 1
+                ;;
+            esac
+            sleep 10
+          done
+          echo "Render deploy did not become live before the deadline" >&2
+          exit 1
+
+      - name: Confirm exact revision is ready in drain mode
+        env:
+          EXPECTED_REVISION: ${{ github.event.workflow_run.head_sha }}
+          EXPECTED_WORKER_DRAINING: 'true'
+          HEALTH_CHECK_ATTEMPTS: '10'
+          HEALTH_CHECK_RETRY_MS: '10000'
+          HEALTH_CHECK_TIMEOUT_MS: '20000'
+        run: node scripts/check-production-health.mjs "$PRODUCTION_READY_URL"
+
+      - name: Revalidate staged revision is current main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          current_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          test "$current_main" = "$VERIFIED_SHA"
+          test "$(git rev-parse HEAD)" = "$VERIFIED_SHA"
+
+      - name: Create immutable drain release manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RENDER_DEPLOY_ID: ${{ steps.render.outputs.deploy_id }}
+          UPSTREAM_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          UPSTREAM_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          security_run_id="$(gh run list --workflow security.yml --commit "$VERIFIED_SHA" \
+            --event push --limit 10 --json databaseId,status,conclusion \
+            --jq '[.[] | select(.status == "completed" and .conclusion == "success")][0].databaseId // empty')"
+          if [[ ! "$security_run_id" =~ ^[0-9]+$ ]] \
+            || [[ ! "$RENDER_DEPLOY_ID" =~ ^dep-[a-z0-9]+$ ]]; then
+            echo "Drain release evidence is incomplete" >&2
+            exit 1
+          fi
+          manifest_dir="$RUNNER_TEMP/production-drain-manifest"
+          mkdir --parents "$manifest_dir"
+          jq --compact-output --null-input --sort-keys \
+            --arg checkedAt "$(date --utc +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg digest "$IMAGE_DIGEST" \
+            --arg image "$IMAGE_NAME" \
+            --arg renderDeployId "$RENDER_DEPLOY_ID" \
+            --arg revision "$VERIFIED_SHA" \
+            --argjson releaseRunAttempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson releaseRunId "$GITHUB_RUN_ID" \
+            --argjson securityRunId "$security_run_id" \
+            --argjson verifyRunAttempt "$UPSTREAM_RUN_ATTEMPT" \
+            --argjson verifyRunId "$UPSTREAM_RUN_ID" \
+            '{
+              schemaVersion: 1,
+              revision: $revision,
+              image: $image,
+              digest: $digest,
+              verifyRunId: $verifyRunId,
+              verifyRunAttempt: $verifyRunAttempt,
+              securityRunId: $securityRunId,
+              releaseRunId: $releaseRunId,
+              releaseRunAttempt: $releaseRunAttempt,
+              renderDeployId: $renderDeployId,
+              checkedAt: $checkedAt
+            }' > "$manifest_dir/manifest.json"
+          (
+            cd "$manifest_dir"
+            sha256sum manifest.json > manifest.sha256
+          )
+
+      - name: Upload immutable drain release manifest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: production-drain-${{ github.event.workflow_run.head_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/production-drain-manifest
+          if-no-files-found: error
+          compression-level: 0
+          overwrite: false
+          include-hidden-files: false
+          retention-days: 30
+
+      - name: Record successful drain deployment
+        env:
+          GH_DEPLOYMENT_ID: ${{ steps.audit.outputs.deployment_id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RENDER_DEPLOY_ID: ${{ steps.render.outputs.deploy_id }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          log_url="https://dashboard.render.com/web/$RENDER_SERVICE_ID/deploys/$RENDER_DEPLOY_ID"
+          jq -nc --arg log_url "$log_url" --arg environment_url "${PRODUCTION_READY_URL%/api/ready}" '{
+            state: "success",
+            environment: "Production-Drain",
+            environment_url: $environment_url,
+            log_url: $log_url,
+            description: "Verified revision is staged on Render in drain mode"
+          }' | gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/deployments/$GH_DEPLOYMENT_ID/statuses" \
+            --input - >/dev/null
+
+      - name: Record failed drain deployment
+        if: ${{ failure() && steps.audit.outputs.deployment_id != '' }}
+        continue-on-error: true
+        env:
+          GH_DEPLOYMENT_ID: ${{ steps.audit.outputs.deployment_id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          jq -nc --arg log_url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" '{
+            state: "failure",
+            environment: "Production-Drain",
+            log_url: $log_url,
+            description: "Production drain staging failed"
+          }' | gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/deployments/$GH_DEPLOYMENT_ID/statuses" \
+            --input - >/dev/null

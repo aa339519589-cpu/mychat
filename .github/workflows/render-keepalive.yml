@@ -17,9 +17,33 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      - name: Keep the free web and embedded worker process active
-        run: >-
-          curl --fail --silent --show-error
-          --retry 4 --retry-all-errors --retry-delay 10
-          --connect-timeout 20 --max-time 90
-          https://mychat-nm6x.onrender.com/api/live
+      - name: Checkout readiness verifier
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Use the production Node runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+
+      - name: Keep the free web and embedded worker process ready
+        env:
+          EXPECTED_REVISION: ${{ github.sha }}
+          HEALTH_CHECK_ATTEMPTS: '5'
+          HEALTH_CHECK_RETRY_MS: '10000'
+          HEALTH_CHECK_TIMEOUT_MS: '20000'
+        run: node scripts/check-production-health.mjs https://mychat-nm6x.onrender.com/api/ready
+
+      - name: Verify protected authoritative metrics
+        env:
+          METRICS_BEARER_TOKEN: ${{ secrets.METRICS_BEARER_TOKEN }}
+        run: |
+          test -n "$METRICS_BEARER_TOKEN"
+          metrics_file="$(mktemp)"
+          trap 'rm -f "$metrics_file"' EXIT
+          status="$(curl --silent --show-error --output "$metrics_file" --write-out '%{http_code}' \
+            --header "Authorization: Bearer $METRICS_BEARER_TOKEN" \
+            https://mychat-nm6x.onrender.com/api/metrics)"
+          test "$status" = 200
+          grep --quiet '^mychat_authoritative_worker_fleet_ready 1$' "$metrics_file"
+          grep --quiet '^mychat_authoritative_billing_healthy 1$' "$metrics_file"
+          grep --quiet '^mychat_authoritative_billing_release_ready 1$' "$metrics_file"
