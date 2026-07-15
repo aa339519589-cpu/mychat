@@ -175,6 +175,22 @@ test("workspace commit blocks protected branches and sensitive files", async t =
   writeFileSync(`${secretRoot}/.env.production`, "SECRET=value\n")
   const secret = await commitWorkspaceChanges(secretTask, userId, "unsafe", dataClient(secretTask).client)
   assert.match(secret.error ?? "", /禁止提交高危文件/)
+
+  const contentTask = `secret-content-${crypto.randomUUID()}`
+  const contentRoot = initializeRepository(contentTask)
+  t.after(() => rmSync(contentRoot, { recursive: true, force: true }))
+  writeFileSync(`${contentRoot}/config.ts`, `export const token = "ghp_${"a".repeat(36)}"\n`)
+  const content = await commitWorkspaceChanges(
+    contentTask,
+    userId,
+    "unsafe",
+    dataClient(contentTask).client,
+  )
+  assert.match(content.error ?? "", /密钥或凭据/)
+  assert.equal(execFileSync("git", ["diff", "--cached", "--name-only"], {
+    cwd: contentRoot,
+    encoding: "utf8",
+  }), "")
 })
 
 test("workspace commit records the real SHA and persistence receipts", async t => {

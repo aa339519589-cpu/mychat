@@ -17,7 +17,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ job
   if (!isUuid(jobId)) return apiErrorResponseV1(request, {
     status: 400, code: 'INVALID_REQUEST', message: 'jobId 无效', retryable: false,
   })
-  const result = await readOwnedJob(auth.supabase, auth.userId, jobId)
+  const result = await readOwnedJob(auth.supabase, auth.userId, jobId, request.signal)
   if (!result.ok) return apiErrorResponseV1(request, result.kind === 'not_found' ? {
     status: 404, code: 'NOT_FOUND', message: '作业不存在', retryable: false,
   } : {

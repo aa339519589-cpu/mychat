@@ -28,7 +28,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ job
   if (!Number.isSafeInteger(fromSequence)) return apiErrorResponseV1(request, {
     status: 400, code: 'INVALID_REQUEST', message: 'from_seq 无效', retryable: false,
   })
-  const result = await readOwnedJob(auth.supabase, auth.userId, jobId)
+  const result = await readOwnedJob(auth.supabase, auth.userId, jobId, request.signal)
   if (!result.ok) return apiErrorResponseV1(request, result.kind === 'not_found' ? {
     status: 404, code: 'NOT_FOUND', message: '作业不存在', retryable: false,
   } : {
@@ -39,6 +39,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ job
     principalId: auth.userId,
     jobId,
     address: clientAddress(request),
+    signal: request.signal,
   })
   if (!admission.acquired) return apiErrorResponseV1(request, {
     status: admission.kind === 'capacity' ? 429 : 503,

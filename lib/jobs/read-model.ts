@@ -1,6 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { isJobStatus, isJsonValue, type JobStatus, type JsonObject, type JsonValue } from './contracts'
 
+const READ_TIMEOUT_MS = 8_000
+
 export type PublicJobSnapshot = {
   id: string
   type: string
@@ -57,6 +59,11 @@ function nullableString(value: unknown): string | null | undefined {
   return value === null ? null : typeof value === 'string' ? value : undefined
 }
 
+function boundedReadSignal(signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(READ_TIMEOUT_MS)
+  return signal ? AbortSignal.any([signal, timeout]) : timeout
+}
+
 function publicJob(value: unknown): PublicJobSnapshot | null {
   const row = object(value)
   if (!row) return null
@@ -106,12 +113,14 @@ export async function readOwnedJob(
   client: SupabaseClient,
   principalId: string,
   jobId: string,
+  signal?: AbortSignal,
 ): Promise<ReadResult<PublicJobSnapshot>> {
   const { data, error } = await client.from('jobs').select([
     'id', 'type', 'queue', 'subject', 'status', 'attempt', 'max_attempts', 'priority',
     'available_at', 'cancel_requested_at', 'progress', 'result', 'error_class',
     'error_code', 'event_sequence', 'created_at', 'updated_at', 'started_at', 'terminal_at',
   ].join(','))
+    .abortSignal(boundedReadSignal(signal))
     .eq('id', jobId).eq('principal_id', principalId).maybeSingle()
   if (error) return { ok: false, kind: 'unavailable' }
   if (!data) return { ok: false, kind: 'not_found' }
@@ -123,6 +132,7 @@ export async function readLatestOwnedConversationJob(
   client: SupabaseClient,
   principalId: string,
   conversationId: string,
+  signal?: AbortSignal,
 ): Promise<ReadResult<PublicJobSnapshot | null>> {
   const { data, error } = await client.from('jobs').select([
     'id', 'type', 'queue', 'subject', 'status', 'attempt', 'max_attempts', 'priority',
@@ -134,6 +144,7 @@ export async function readLatestOwnedConversationJob(
     .contains('subject', { conversationId })
     .order('created_at', { ascending: false })
     .limit(1)
+    .abortSignal(boundedReadSignal(signal))
     .maybeSingle()
   if (error) return { ok: false, kind: 'unavailable' }
   if (!data) return { ok: true, value: null }
@@ -147,11 +158,13 @@ export async function readOwnedJobEvents(
   jobId: string,
   afterSequence: number,
   limit = 200,
+  signal?: AbortSignal,
 ): Promise<ReadResult<PublicJobEvent[]>> {
   const { data, error } = await client.from('job_events')
     .select('id,job_id,seq,kind,schema_version,payload,created_at')
     .eq('job_id', jobId).eq('principal_id', principalId)
     .gt('seq', afterSequence).order('seq', { ascending: true }).limit(limit)
+    .abortSignal(boundedReadSignal(signal))
   if (error) return { ok: false, kind: 'unavailable' }
   const events: PublicJobEvent[] = []
   for (const value of data ?? []) {

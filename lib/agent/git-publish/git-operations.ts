@@ -5,6 +5,7 @@ import { addArtifact, addStep, getTaskDetail, updateTaskStatus } from "../data"
 import { redactSensitive } from "../path-security"
 import { isProtectedBranch } from "../risk"
 import { workspaceRoot } from "../workspace"
+import { assessInitialRepositoryPublication } from "../publication-safety"
 import { runGit } from "./git-command"
 import {
   checkRiskFiles,
@@ -42,6 +43,10 @@ function changedFilesFromPorcelain(output: string): Array<{ path: string; status
     if (code.includes("R") || code.includes("C")) index++
   }
   return files
+}
+
+function nulSeparated(output: string): string[] {
+  return output.split("\0").filter(Boolean)
 }
 
 export async function getWorkspaceGitStatus(
@@ -150,16 +155,15 @@ export async function commitWorkspaceChanges(
   let changedFiles: string[] = []
   try {
     const [tracked, untrackedOutput] = await Promise.all([
-      runGit(["diff", "--name-only", "HEAD"], {
+      runGit(["diff", "--name-only", "-z", "HEAD"], {
         cwd: root, timeoutMs: 10_000, maxBuffer: 128 * 1024, signal,
       }),
-      runGit(["ls-files", "--others", "--exclude-standard"], {
+      runGit(["ls-files", "--others", "--exclude-standard", "-z"], {
         cwd: root, timeoutMs: 5000, maxBuffer: 64 * 1024, signal,
       }),
     ])
-    changedFiles = tracked.trim().split("\n").filter(Boolean)
-    const untracked = untrackedOutput.trim()
-    if (untracked) changedFiles.push(...untracked.split("\n").filter(Boolean))
+    changedFiles = nulSeparated(tracked)
+    changedFiles.push(...nulSeparated(untrackedOutput))
   } catch {
     throwIfAborted(signal)
     // The staged-file check below is authoritative.
@@ -202,13 +206,15 @@ export async function commitWorkspaceChanges(
 
     let stagedFiles: string[] = []
     try {
-      stagedFiles = (await runGit(["diff", "--cached", "--name-only"], {
+      stagedFiles = nulSeparated(await runGit([
+        "diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z",
+      ], {
         cwd: root,
         timeoutMs: 10_000,
         maxBuffer: 128 * 1024,
         env: commitEnv,
         signal,
-      })).trim().split("\n").filter(Boolean)
+      }))
     } catch {
       throwIfAborted(signal)
       // An empty list is handled by git commit below.
@@ -222,6 +228,37 @@ export async function commitWorkspaceChanges(
         signal,
       })
       return { ok: false, error: `禁止提交高危文件：${stagedBlocked.join("、")}` }
+    }
+
+    try {
+      for (const path of stagedFiles) {
+        const content = await runGit(["show", `:${path}`], {
+          cwd: root,
+          timeoutMs: 10_000,
+          maxBuffer: 2 * 1024 * 1024 + 1,
+          env: commitEnv,
+          signal,
+        })
+        const safety = assessInitialRepositoryPublication([{ path, content }])
+        if (!safety.ok) {
+          await runGit(["reset", "HEAD", "--", "."], {
+            cwd: root,
+            timeoutMs: 10_000,
+            env: commitEnv,
+            signal,
+          })
+          return { ok: false, error: safety.reason }
+        }
+      }
+    } catch {
+      throwIfAborted(signal)
+      await runGit(["reset", "HEAD", "--", "."], {
+        cwd: root,
+        timeoutMs: 10_000,
+        env: commitEnv,
+        signal,
+      }).catch(() => undefined)
+      return { ok: false, error: "无法完整扫描暂存内容，已拒绝提交" }
     }
 
     await runGit(["commit", "-m", safeMessage], {

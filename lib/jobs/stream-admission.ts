@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { awaitAbortableRequest, type AbortableRequest } from './abortable-request'
 
 const RPC_TIMEOUT_MS = 2_000
 const LEASE_SECONDS = 45
@@ -18,7 +19,7 @@ export type JobEventStreamLease = {
   id: string
   hardExpiresAt: string
   maxDurationMs: number
-  renew: () => Promise<boolean>
+  renew: (signal?: AbortSignal) => Promise<boolean>
   release: () => Promise<void>
 }
 
@@ -39,21 +40,19 @@ async function rpc(
   name: string,
   args: Record<string, unknown>,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<Record<string, unknown> | null> {
-  let timeout: ReturnType<typeof setTimeout> | undefined
   try {
-    const response = await Promise.race([
-      Promise.resolve(client.rpc(name, args) as unknown as PromiseLike<RpcResponse>),
-      new Promise<null>(resolve => {
-        timeout = setTimeout(() => resolve(null), timeoutMs)
-      }),
-    ])
-    if (!response || response.error) return null
+    const request = client.rpc(name, args) as unknown as AbortableRequest<RpcResponse>
+    const response = await awaitAbortableRequest(request, {
+      timeoutMs,
+      timeoutMessage: `Job stream admission RPC timed out: ${name}`,
+      signal,
+    })
+    if (response.error) return null
     return record(response.data)
   } catch {
     return null
-  } finally {
-    if (timeout) clearTimeout(timeout)
   }
 }
 
@@ -78,7 +77,7 @@ export function jobEventStreamAddressHash(address: string, key: string): string 
 }
 
 export async function acquireJobEventStreamLease(
-  input: { principalId: string; jobId: string; address: string },
+  input: { principalId: string; jobId: string; address: string; signal?: AbortSignal },
   dependencyOverrides: Partial<Dependencies> = {},
 ): Promise<JobEventStreamAdmission> {
   const dependencies: Dependencies = {
@@ -100,7 +99,7 @@ export async function acquireJobEventStreamLease(
     input_address_hash: jobEventStreamAddressHash(input.address, dependencies.addressHashKey),
     input_lease_seconds: LEASE_SECONDS,
     input_max_seconds: MAX_STREAM_SECONDS,
-  }, dependencies.rpcTimeoutMs)
+  }, dependencies.rpcTimeoutMs, input.signal)
   if (!result) return { acquired: false, kind: 'unavailable', retryAfterSeconds: 5 }
   const retryAfter = Number.isSafeInteger(result.retryAfterSeconds)
     ? Math.max(1, Math.min(60, Number(result.retryAfterSeconds)))
@@ -122,12 +121,12 @@ export async function acquireJobEventStreamLease(
       id,
       hardExpiresAt: result.hardExpiresAt,
       maxDurationMs: MAX_STREAM_SECONDS * 1_000,
-      renew: async () => {
+      renew: async signal => {
         if (released) return false
         const renewed = await rpc(client, 'renew_job_event_stream', {
           input_stream_id: id,
           input_lease_seconds: LEASE_SECONDS,
-        }, dependencies.rpcTimeoutMs)
+        }, dependencies.rpcTimeoutMs, signal)
         return renewed?.renewed === true
       },
       release: async () => {

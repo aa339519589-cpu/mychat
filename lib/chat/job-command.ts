@@ -7,6 +7,9 @@ import { persistJobPayload, removeJobPayload } from '@/lib/jobs/payload-storage'
 import { createAdminClient } from '@/lib/supabase/admin'
 import type { JsonObject } from '@/lib/jobs/contracts'
 import { jobMetrics } from '@/lib/observability/job-metrics'
+import { log } from '@/lib/logger'
+import { isRecord } from '@/lib/unknown-value'
+import type { JobRepository } from '@/lib/jobs/repository'
 
 const CHAT_POLICY_VERSION = '2026-07-13'
 
@@ -32,7 +35,34 @@ export type EnqueueChatJobInput = {
   requestedAt?: string
 }
 
-export async function enqueueChatJob(input: EnqueueChatJobInput) {
+type EnqueueChatJobDependencies = {
+  persistPayload: typeof persistJobPayload
+  removePayload: typeof removeJobPayload
+  createRepository: () => Pick<JobRepository, 'enqueue'>
+  createAdminClient: typeof createAdminClient
+}
+
+const DEFAULT_DEPENDENCIES: EnqueueChatJobDependencies = {
+  persistPayload: persistJobPayload,
+  removePayload: removeJobPayload,
+  createRepository: () => new SupabaseJobRepository(),
+  createAdminClient,
+}
+
+function referencesPayload(value: unknown, objectKey: string): boolean | null {
+  if (value === null) return false
+  if (!isRecord(value) || !isRecord(value.payload)) return null
+  const reference = value.payload.payloadRef
+  if (reference === objectKey) return true
+  if (isRecord(reference) && reference.objectKey === objectKey) return true
+  return false
+}
+
+export async function enqueueChatJob(
+  input: EnqueueChatJobInput,
+  dependencyOverrides: Partial<EnqueueChatJobDependencies> = {},
+) {
+  const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides }
   const { body } = input
   const outputKind = input.outputKind === 'chat' ? 'text' : input.outputKind
   const attachments = sanitizedAttachments(body.attachments)
@@ -49,13 +79,13 @@ export async function enqueueChatJob(input: EnqueueChatJobInput) {
     ...(body.endpointId ? { endpointId: body.endpointId } : {}),
     ...(attachments ? { attachments } : {}),
   }
-  const reference = await persistJobPayload({
+  const reference = await dependencies.persistPayload({
     userId: input.userId,
     jobId: body.generationId,
     payload: command,
   })
   const queue = outputKind === 'text' ? 'chat' : 'media'
-  const repository = new SupabaseJobRepository()
+  const repository = dependencies.createRepository()
   let result
   try {
     result = await repository.enqueue({
@@ -97,14 +127,26 @@ export async function enqueueChatJob(input: EnqueueChatJobInput) {
   } catch (error) {
     // Preserve a payload if the database accepted the job but the response was
     // lost. Only compensate a proven non-enqueue; otherwise cleanup owns it.
-    const admin = createAdminClient()
-    const accepted = admin
-      ? await admin.from('jobs').select('id').eq('id', body.generationId).maybeSingle()
-      : null
-    if (accepted && !accepted.error && !accepted.data) {
-      await removeJobPayload(reference, {
-        userId: input.userId, jobId: body.generationId,
-      }).catch(() => undefined)
+    const admin = dependencies.createAdminClient()
+    let accepted: { data: unknown; error: unknown } | null = null
+    try {
+      accepted = admin
+        ? await admin.from('jobs').select('id,payload').eq('id', body.generationId).maybeSingle()
+        : null
+    } catch {
+      accepted = null
+    }
+    if (accepted && !accepted.error && referencesPayload(accepted.data, reference.objectKey) === false) {
+      try {
+        await dependencies.removePayload(reference, {
+          userId: input.userId, jobId: body.generationId,
+        })
+      } catch (cleanupError) {
+        log.warn('jobs', 'Immediate orphan payload compensation failed', {
+          jobId: body.generationId,
+          name: cleanupError instanceof Error ? cleanupError.name : 'unknown',
+        })
+      }
     }
     throw error
   }

@@ -85,7 +85,7 @@ export function createJobEventStream(input: {
   initialStatus: JobStatus
   requestSignal: AbortSignal
   maxDurationMs?: number
-  renewAdmission?: () => Promise<boolean>
+  renewAdmission?: (signal?: AbortSignal) => Promise<boolean>
   onClosed?: () => void | Promise<void>
 }, dependencyOverrides: Partial<JobEventStreamDependencies> = {}): ReadableStream<Uint8Array> {
   const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides }
@@ -119,7 +119,7 @@ export function createJobEventStream(input: {
         while (!signal.aborted) {
           if (input.renewAdmission
             && dependencies.now() - lastAdmissionRenewal >= dependencies.admissionRenewIntervalMs) {
-            if (!await input.renewAdmission()) break
+            if (!await input.renewAdmission(signal)) break
             lastAdmissionRenewal = dependencies.now()
           }
           const result = await dependencies.readEvents(
@@ -127,6 +127,8 @@ export function createJobEventStream(input: {
             input.principalId,
             input.jobId,
             sequence,
+            200,
+            signal,
           )
           if (!result.ok) {
             await send(`event: stream.error\ndata: ${JSON.stringify({
@@ -153,7 +155,12 @@ export function createJobEventStream(input: {
           const now = dependencies.now()
           if (result.value.length === 0
             && now - lastStatusRefresh >= dependencies.statusRefreshIntervalMs) {
-            const snapshot = await dependencies.readJob(input.client, input.principalId, input.jobId)
+            const snapshot = await dependencies.readJob(
+              input.client,
+              input.principalId,
+              input.jobId,
+              signal,
+            )
             if (!snapshot.ok) break
             status = snapshot.value.status
             lastStatusRefresh = now

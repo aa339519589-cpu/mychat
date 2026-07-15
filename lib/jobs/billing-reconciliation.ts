@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { log } from '@/lib/logger'
+import { awaitAbortableRequest, type AbortableRequest } from './abortable-request'
 import { defaultJobSleep } from './worker-config'
 
 const DEFAULT_INTERVAL_MS = 5 * 60_000
@@ -55,7 +56,7 @@ export class BillingReconciliationMonitor {
   async run(signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
       try {
-        const snapshot = await this.runOnce()
+        const snapshot = await this.runOnce(signal)
         if (!snapshot.releaseReady) {
           log.error('billing', 'Billing reconciliation detected release blockers', {
             releaseBlockers: snapshot.releaseBlockers,
@@ -72,7 +73,7 @@ export class BillingReconciliationMonitor {
     }
   }
 
-  async runOnce(): Promise<{
+  async runOnce(signal?: AbortSignal): Promise<{
     healthy: boolean
     releaseReady: boolean
     totalMismatches: number
@@ -80,17 +81,14 @@ export class BillingReconciliationMonitor {
   }> {
     const client = this.createClient()
     if (!client) throw new Error('Billing reconciliation database is unavailable')
-    let timeout: ReturnType<typeof setTimeout> | undefined
-    const { data, error } = await Promise.race([
-      Promise.resolve(client.rpc('refresh_billing_reconciliation_v1')),
-      new Promise<never>((_resolve, reject) => {
-        timeout = setTimeout(
-          () => reject(new Error('Billing reconciliation refresh timed out')),
-          this.rpcTimeoutMs,
-        )
-      }),
-    ]).finally(() => {
-      if (timeout) clearTimeout(timeout)
+    const request = client.rpc('refresh_billing_reconciliation_v1') as unknown as AbortableRequest<{
+      data: unknown
+      error: unknown
+    }>
+    const { data, error } = await awaitAbortableRequest(request, {
+      timeoutMs: this.rpcTimeoutMs,
+      timeoutMessage: 'Billing reconciliation refresh timed out',
+      signal,
     })
     const normalized = Array.isArray(data) ? data[0] : data
     if (error || !validSnapshot(normalized)) {

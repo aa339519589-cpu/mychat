@@ -9,6 +9,7 @@ const MAX_MESSAGE_HISTORY_BYTES = 512 * 1024
 const MAX_AUTHORITATIVE_CONTEXT_BYTES = 1024 * 1024
 const MAX_MEMORIES = 200
 const MAX_PROJECT_FILES = 30
+const CONTEXT_PAGE_SIZE = 8
 
 export type MessageRow = {
   id: string
@@ -68,6 +69,38 @@ function assertContextBudget(value: unknown): void {
   }
 }
 
+type PageResult = { data: unknown; error: unknown }
+
+async function loadBoundedCollection<T>(input: {
+  maxRows: number
+  fetchPage: (from: number, to: number) => PromiseLike<PageResult>
+  map: (value: unknown) => T
+  unavailableMessage: string
+}): Promise<T[]> {
+  const values: T[] = []
+  let bytes = 2
+  for (let offset = 0; offset < input.maxRows; offset += CONTEXT_PAGE_SIZE) {
+    const pageSize = Math.min(CONTEXT_PAGE_SIZE, input.maxRows - offset)
+    const result = await input.fetchPage(offset, offset + pageSize - 1)
+    if (result.error || !Array.isArray(result.data)) {
+      throw new AuthoritativeContextError('CONTEXT_UNAVAILABLE', input.unavailableMessage)
+    }
+    for (const row of result.data) {
+      const mapped = input.map(row)
+      bytes += jsonBytes(mapped) + 1
+      if (bytes > MAX_AUTHORITATIVE_CONTEXT_BYTES) {
+        throw new AuthoritativeContextError(
+          'CONTEXT_TOO_LARGE',
+          '权威对话、项目或记忆上下文超过处理上限',
+        )
+      }
+      values.push(mapped)
+    }
+    if (result.data.length < pageSize) break
+  }
+  return values
+}
+
 function rawMessage(row: MessageRow): RawMsg {
   const authoritativeRefs = Array.isArray(row.media_refs)
     ? row.media_refs.filter((value): value is string => typeof value === 'string')
@@ -99,56 +132,131 @@ async function loadProjectContext(
   userId: string,
   projectId: string,
 ): Promise<ProjectContext> {
-  const [projectResult, filesResult, memoriesResult] = await Promise.all([
-    client.from('projects').select('id, instructions').eq('id', projectId)
-      .eq('user_id', userId).maybeSingle(),
-    client.from('project_files').select('name, content').eq('project_id', projectId)
-      .eq('user_id', userId).order('created_at').limit(MAX_PROJECT_FILES),
-    client.from('project_memories').select('id, content').eq('project_id', projectId)
-      .eq('user_id', userId).order('created_at').limit(MAX_MEMORIES),
-  ])
-  if (projectResult.error || filesResult.error || memoriesResult.error || !projectResult.data) {
+  const projectResult = await client.from('projects').select('id, instructions').eq('id', projectId)
+    .eq('user_id', userId).maybeSingle()
+  if (projectResult.error || !projectResult.data) {
     throw new AuthoritativeContextError('CONTEXT_UNAVAILABLE', '项目上下文暂时不可用')
   }
-  return {
+  const base = {
     id: projectId,
     instructions: typeof projectResult.data.instructions === 'string'
       ? projectResult.data.instructions
       : '',
-    files: (filesResult.data ?? []).map(file => ({
-      name: typeof file.name === 'string' ? file.name : '',
-      content: typeof file.content === 'string' ? file.content : '',
-    })),
-    projectMemories: (memoriesResult.data ?? []).map(memory => ({
-      id: String(memory.id),
-      content: typeof memory.content === 'string' ? memory.content : '',
-    })),
   }
+  assertContextBudget(base)
+  const [files, projectMemories] = await Promise.all([
+    loadBoundedCollection({
+      maxRows: MAX_PROJECT_FILES,
+      fetchPage: (from, to) => client.from('project_files').select('name, content')
+        .eq('project_id', projectId).eq('user_id', userId).order('created_at').range(from, to),
+      map: value => {
+        const file = isRecord(value) ? value : {}
+        return {
+          name: typeof file.name === 'string' ? file.name : '',
+          content: typeof file.content === 'string' ? file.content : '',
+        }
+      },
+      unavailableMessage: '项目文件上下文暂时不可用',
+    }),
+    loadBoundedCollection({
+      maxRows: MAX_MEMORIES,
+      fetchPage: (from, to) => client.from('project_memories').select('id, content')
+        .eq('project_id', projectId).eq('user_id', userId).order('created_at').range(from, to),
+      map: value => {
+        const memory = isRecord(value) ? value : {}
+        return {
+          id: String(memory.id),
+          content: typeof memory.content === 'string' ? memory.content : '',
+        }
+      },
+      unavailableMessage: '项目记忆上下文暂时不可用',
+    }),
+  ])
+  return { ...base, files, projectMemories }
 }
 
 async function loadGlobalMemories(
   client: SupabaseClient,
   userId: string,
 ): Promise<{ enabled: boolean; memories: Memory[] }> {
-  const [profileResult, memoriesResult] = await Promise.all([
-    client.from('profiles').select('memory_enabled').eq('user_id', userId).maybeSingle(),
-    client.from('memories').select('id, content, created_at, updated_at').eq('user_id', userId)
-      .order('created_at').limit(MAX_MEMORIES),
-  ])
-  if (profileResult.error || memoriesResult.error) {
+  const profileResult = await client.from('profiles').select('memory_enabled')
+    .eq('user_id', userId).maybeSingle()
+  if (profileResult.error) {
     throw new AuthoritativeContextError('CONTEXT_UNAVAILABLE', '记忆上下文暂时不可用')
   }
   const enabled = profileResult.data?.memory_enabled !== false
+  if (!enabled) return { enabled, memories: [] }
+  const memories = await loadBoundedCollection<Memory>({
+    maxRows: MAX_MEMORIES,
+    fetchPage: (from, to) => client.from('memories')
+      .select('id, content, created_at, updated_at').eq('user_id', userId)
+      .order('created_at').range(from, to),
+    map: value => {
+      const memory = isRecord(value) ? value : {}
+      return {
+        id: String(memory.id),
+        content: typeof memory.content === 'string' ? memory.content : '',
+        timestamp: typeof memory.updated_at === 'string'
+          ? memory.updated_at
+          : typeof memory.created_at === 'string' ? memory.created_at : undefined,
+      }
+    },
+    unavailableMessage: '记忆上下文暂时不可用',
+  })
   return {
     enabled,
-    memories: enabled ? (memoriesResult.data ?? []).map(memory => ({
-      id: String(memory.id),
-      content: typeof memory.content === 'string' ? memory.content : '',
-      timestamp: typeof memory.updated_at === 'string'
-        ? memory.updated_at
-        : typeof memory.created_at === 'string' ? memory.created_at : undefined,
-    })) : [],
+    memories,
   }
+}
+
+async function loadMessageHistory(input: {
+  client: SupabaseClient
+  conversationId: string
+  userId: string
+  userMessageId: string
+  userSequence: number | null
+}): Promise<RawMsg[]> {
+  const compiled: RawMsg[] = []
+  let bytes = 0
+  let foundUserMessage = false
+  let budgetReached = false
+  for (let offset = 0; offset < MAX_CONTEXT_MESSAGES; offset += CONTEXT_PAGE_SIZE) {
+    const pageSize = Math.min(CONTEXT_PAGE_SIZE, MAX_CONTEXT_MESSAGES - offset)
+    let query = input.client.from('messages')
+      .select('id, role, content, content_parts, media_refs, images, created_at, seq')
+      .eq('conversation_id', input.conversationId)
+      .eq('user_id', input.userId)
+      .in('role', ['user', 'assistant'])
+    query = input.userSequence === null
+      ? query.order('created_at', { ascending: false })
+      : query.lte('seq', input.userSequence).order('seq', { ascending: false })
+    const result = await query.range(offset, offset + pageSize - 1)
+    if (result.error || !Array.isArray(result.data)) {
+      throw new AuthoritativeContextError('CONTEXT_UNAVAILABLE', '消息上下文暂时不可用')
+    }
+    for (const value of result.data) {
+      const row = value as MessageRow
+      const message = rawMessage(row)
+      const messageBytes = jsonBytes(message)
+      if (row.id === input.userMessageId && row.role === 'user') {
+        foundUserMessage = true
+        if (messageBytes > MAX_MESSAGE_HISTORY_BYTES) {
+          throw new AuthoritativeContextError('CONTEXT_TOO_LARGE', '当前消息超过模型上下文上限')
+        }
+      }
+      if (bytes + messageBytes > MAX_MESSAGE_HISTORY_BYTES) {
+        budgetReached = true
+        break
+      }
+      compiled.push(message)
+      bytes += messageBytes
+    }
+    if (budgetReached || result.data.length < pageSize) break
+  }
+  if (!foundUserMessage) {
+    throw new AuthoritativeContextError('USER_MESSAGE_NOT_FOUND', '用户消息不在权威历史中')
+  }
+  return compiled.reverse()
 }
 
 /**
@@ -184,26 +292,14 @@ export async function loadAuthoritativeChatContext(input: {
     throw new AuthoritativeContextError('USER_MESSAGE_NOT_FOUND', '用户消息不存在')
   }
 
-  let historyQuery = client.from('messages')
-    .select('id, role, content, content_parts, media_refs, images, created_at, seq')
-    .eq('conversation_id', conversationId)
-    .eq('user_id', userId)
-    .in('role', ['user', 'assistant'])
   const userSequence = Number(userMessageResult.data.seq)
-  if (Number.isSafeInteger(userSequence) && userSequence > 0) {
-    historyQuery = historyQuery.lte('seq', userSequence).order('seq', { ascending: false })
-  } else {
-    historyQuery = historyQuery.order('created_at', { ascending: false })
-  }
-  const historyResult = await historyQuery.limit(MAX_CONTEXT_MESSAGES)
-  if (historyResult.error) {
-    throw new AuthoritativeContextError('CONTEXT_UNAVAILABLE', '消息上下文暂时不可用')
-  }
-  const rows = (historyResult.data ?? []) as MessageRow[]
-  if (!rows.some(row => row.id === userMessageId && row.role === 'user')) {
-    throw new AuthoritativeContextError('USER_MESSAGE_NOT_FOUND', '用户消息不在权威历史中')
-  }
-  const messages = compileAuthoritativeMessages(rows, userMessageId)
+  const messages = await loadMessageHistory({
+    client,
+    conversationId,
+    userId,
+    userMessageId,
+    userSequence: Number.isSafeInteger(userSequence) && userSequence > 0 ? userSequence : null,
+  })
 
   const projectId = typeof conversationResult.data.project_id === 'string'
     ? conversationResult.data.project_id

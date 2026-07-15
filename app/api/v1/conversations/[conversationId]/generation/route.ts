@@ -23,7 +23,12 @@ export async function GET(
   if (!isUuid(conversationId)) return apiErrorResponseV1(request, {
     status: 400, code: 'INVALID_REQUEST', message: 'conversationId 无效', retryable: false,
   })
-  const result = await readLatestOwnedConversationJob(auth.supabase, auth.userId, conversationId)
+  const result = await readLatestOwnedConversationJob(
+    auth.supabase,
+    auth.userId,
+    conversationId,
+    request.signal,
+  )
   if (!result.ok) return apiErrorResponseV1(request, {
     status: 503,
     code: 'DEPENDENCY_UNAVAILABLE',
