@@ -132,7 +132,17 @@ test("active retrieval short-circuits each missing boundary independently", asyn
   }), "")
 })
 
-test("active retrieval keeps Project history isolated and defaults unknown modes", async () => {
+test("active retrieval keeps Project history isolated and defaults unknown modes", { concurrency: false }, async t => {
+  const previousEmbedding = process.env.EMBEDDING_API_KEY
+  const previousOpenAi = process.env.OPENAI_API_KEY
+  delete process.env.EMBEDDING_API_KEY
+  delete process.env.OPENAI_API_KEY
+  t.after(() => {
+    if (previousEmbedding === undefined) delete process.env.EMBEDDING_API_KEY
+    else process.env.EMBEDDING_API_KEY = previousEmbedding
+    if (previousOpenAi === undefined) delete process.env.OPENAI_API_KEY
+    else process.env.OPENAI_API_KEY = previousOpenAi
+  })
   const projectId = "30000000-0000-4000-8000-000000000001"
   const { client } = retrievalClient(projectId)
   const project = await retrieveHistoryContext({

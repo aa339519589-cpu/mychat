@@ -8,8 +8,11 @@ import { SupabaseJobRepository } from '@/lib/jobs/supabase-repository'
 import { sha256JobValue } from '@/lib/jobs/canonical'
 import type { JsonObject } from '@/lib/jobs/contracts'
 import { jobMetrics } from '@/lib/observability/job-metrics'
+import { expensiveWriteMaintenanceResponse } from '@/lib/api/maintenance'
 
 export async function POST(request: NextRequest) {
+  const maintenance = expensiveWriteMaintenanceResponse(request)
+  if (maintenance) return maintenance
   const auth = await resolveAuth()
   if (auth.authUnavailable) return apiErrorResponseV1(request, {
     status: 503, code: 'AUTH_DEPENDENCY_UNAVAILABLE', message: '认证服务暂时不可用', retryable: true,
