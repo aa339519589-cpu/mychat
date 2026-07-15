@@ -5,14 +5,35 @@ import { POST as chat } from '../app/api/chat/route'
 import { POST as title } from '../app/api/chat/title/route'
 import { POST as codeChat } from '../app/api/code/chat/route'
 import { POST as codeApply } from '../app/api/code/apply/route'
+import { expensiveWriteMaintenanceResponse } from '../lib/api/maintenance'
 import { jobMaintenanceMode } from '../lib/jobs/maintenance'
 
 test('maintenance configuration is strict and keeps the legacy bridge alias', () => {
   assert.equal(jobMaintenanceMode({}), 'off')
+  assert.equal(jobMaintenanceMode({ MYCHAT_MAINTENANCE_MODE: ' off ' }), 'off')
+  assert.equal(jobMaintenanceMode({ MYCHAT_MAINTENANCE_MODE: 'false' }), 'off')
+  assert.equal(jobMaintenanceMode({ MYCHAT_MAINTENANCE_MODE: '0' }), 'off')
   assert.equal(jobMaintenanceMode({ MYCHAT_MAINTENANCE_MODE: 'drain' }), 'drain')
+  assert.equal(jobMaintenanceMode({ MYCHAT_MAINTENANCE_MODE: 'TRUE' }), 'drain')
+  assert.equal(jobMaintenanceMode({ MYCHAT_MAINTENANCE_MODE: '1' }), 'drain')
   assert.equal(jobMaintenanceMode({ GENERATION_MAINTENANCE_MODE: 'true' }), 'drain')
+  assert.equal(jobMaintenanceMode({ GENERATION_MAINTENANCE_MODE: 'false' }), 'off')
   assert.throws(() => jobMaintenanceMode({ MYCHAT_MAINTENANCE_MODE: 'maybe' }))
   assert.throws(() => jobMaintenanceMode({ GENERATION_MAINTENANCE_MODE: 'maybe' }))
+})
+
+test('maintenance admission helper is a no-op when the bridge is off', { concurrency: false }, t => {
+  const current = process.env.MYCHAT_MAINTENANCE_MODE
+  const legacy = process.env.GENERATION_MAINTENANCE_MODE
+  process.env.MYCHAT_MAINTENANCE_MODE = 'off'
+  process.env.GENERATION_MAINTENANCE_MODE = 'false'
+  t.after(() => {
+    if (current === undefined) delete process.env.MYCHAT_MAINTENANCE_MODE
+    else process.env.MYCHAT_MAINTENANCE_MODE = current
+    if (legacy === undefined) delete process.env.GENERATION_MAINTENANCE_MODE
+    else process.env.GENERATION_MAINTENANCE_MODE = legacy
+  })
+  assert.equal(expensiveWriteMaintenanceResponse(new Request('http://localhost/api/chat')), null)
 })
 
 test('maintenance rejects every Job admission before parsing an invalid body', { concurrency: false }, async t => {
