@@ -119,6 +119,12 @@ test('release promotion ties one verified SHA to the image digest and exact Rend
   assert.match(release, /RENDER_API_KEY:\s*\$\{\{ secrets\.RENDER_API_KEY \}\}/)
   assert.match(release, /RENDER_SERVICE_ID:\s*\$\{\{ secrets\.RENDER_SERVICE_ID \}\}/)
   assert.match(release, /--data '\{"autoDeploy":"no"\}'/)
+  assert.match(release, /--request PUT --data '\{"value":"drain"\}'/)
+  assert.match(release, /services\/\$RENDER_SERVICE_ID\/restart/)
+  assert.ok(
+    release.indexOf('- name: Put the existing production revision into drain')
+      < release.indexOf('- name: Require the existing production revision to be drained'),
+  )
   assert.match(release, /Render's deploy creation endpoint is not documented as idempotent/)
   assert.doesNotMatch(release, /render_api --request POST/)
   assert.ok(
