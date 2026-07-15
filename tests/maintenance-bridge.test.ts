@@ -75,10 +75,14 @@ test('maintenance drain branches before any Worker or outbox run loop', () => {
 })
 
 test('maintenance drain Worker stays alive and exits cleanly on SIGTERM', { timeout: 10_000 }, async t => {
+  const childEnvironment = { ...process.env }
+  delete childEnvironment.NODE_TEST_CONTEXT
+  delete childEnvironment.NODE_TEST_WORKER_ID
+  childEnvironment.NODE_V8_COVERAGE = ''
   const child = spawn(process.execPath, ['--import', 'tsx', 'job-worker.ts'], {
     cwd: resolve(import.meta.dirname, '..'),
     env: {
-      ...process.env,
+      ...childEnvironment,
       NODE_ENV: 'test',
       MYCHAT_MAINTENANCE_MODE: 'drain',
       GENERATION_MAINTENANCE_MODE: 'false',
