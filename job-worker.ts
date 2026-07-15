@@ -26,6 +26,21 @@ const baseWorkerId = process.env.JOB_WORKER_ID?.trim()
   || `${hostname()}:${process.pid}:${crypto.randomUUID()}`
 const shutdown = new AbortController()
 const maintenanceMode = jobMaintenanceMode()
+const MAINTENANCE_KEEPALIVE_MS = 60_000
+
+function waitForMaintenanceShutdown(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve()
+  return new Promise(resolve => {
+    const keepAlive = setInterval(() => undefined, MAINTENANCE_KEEPALIVE_MS)
+    const stop = () => {
+      clearInterval(keepAlive)
+      signal.removeEventListener('abort', stop)
+      resolve()
+    }
+    signal.addEventListener('abort', stop, { once: true })
+    if (signal.aborted) stop()
+  })
+}
 
 function metricType(job: { type: string; input: unknown }): JobMetricType {
   if (job.type === 'chat.title') return 'title'
@@ -105,10 +120,7 @@ async function main(): Promise<void> {
     log.warn('jobs', 'Maintenance drain is active; Job and outbox claims are disabled', {
       workerId: baseWorkerId,
     })
-    if (shutdown.signal.aborted) return
-    await new Promise<void>(resolve => {
-      shutdown.signal.addEventListener('abort', () => resolve(), { once: true })
-    })
+    await waitForMaintenanceShutdown(shutdown.signal)
     return
   }
   log.info('jobs', 'Worker pool started', { workerId: baseWorkerId, workers: workerSpecs })
