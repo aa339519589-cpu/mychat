@@ -95,7 +95,7 @@ test('CI loads and starts the exact revision-bearing production container', () =
   assert.match(smoke, /http:\/\/127\.0\.0\.1:3000\/api\/live/)
   assert.match(smoke, /verified_sha:0:12/)
   assert.match(smoke, /docker top "\$container" -eo pid,args/)
-  assert.match(smoke, /node_modules\/next\/dist\/bin\/next start/)
+  assert.match(smoke, /grep --fixed-strings 'next-server'/)
   assert.match(smoke, /--import tsx job-worker\.ts/)
   assert.match(smoke, /for attempt in \{1\.\.6\}/)
   assert.equal(verify.match(/npm run test:migrations/g)?.length ?? 0, 0)

@@ -32,7 +32,7 @@ assert_runtime() {
     return 1
   fi
   processes="$(docker top "$container" -eo pid,args)"
-  if ! grep --fixed-strings 'node_modules/next/dist/bin/next start' <<<"$processes" >/dev/null; then
+  if ! grep --fixed-strings 'next-server' <<<"$processes" >/dev/null; then
     echo "Next.js process is missing from the production container" >&2
     printf '%s\n' "$processes" >&2
     return 1
