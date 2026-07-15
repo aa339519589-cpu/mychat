@@ -36,6 +36,7 @@ test('release images are digest-pinned, attested, and generated only after verif
   assert.match(release, /VERIFIED_SHA:\s*\$\{\{ github\.event\.workflow_run\.head_sha \}\}/)
   assert.doesNotMatch(release, /\$\{\{ github\.sha \}\}/)
   assert.match(release, /gh run list --workflow security\.yml --commit "\$VERIFIED_SHA"/)
+  assert.match(release, /\.\[0\]\.status \+ ":" \+ \(\.\[0\]\.conclusion \/\/ ""\)/)
   assert.match(release, /completed:success/)
   assert.doesNotMatch(release, /value=latest/)
   assert.match(release, /github\.sha == github\.event\.workflow_run\.head_sha/)

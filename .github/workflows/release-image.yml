@@ -69,7 +69,7 @@ jobs:
           for attempt in {1..90}; do
             state="$(gh run list --workflow security.yml --commit "$VERIFIED_SHA" \
               --event push --limit 1 --json status,conclusion \
-              --jq 'if length == 0 then "missing:" else .[0].status + ":" + (.conclusion // "") end')"
+              --jq 'if length == 0 then "missing:" else .[0].status + ":" + (.[0].conclusion // "") end')"
             case "$state" in
               completed:success) exit 0 ;;
               completed:*) echo "Security failed for $VERIFIED_SHA: $state" >&2; exit 1 ;;
