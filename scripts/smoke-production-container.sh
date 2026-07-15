@@ -31,7 +31,7 @@ assert_runtime() {
     docker logs "$container" >&2
     return 1
   fi
-  processes="$(docker top "$container" -eo args)"
+  processes="$(docker top "$container" -eo pid,args)"
   grep --fixed-strings 'node_modules/next/dist/bin/next start' <<<"$processes" >/dev/null
   grep --fixed-strings -- '--import tsx job-worker.ts' <<<"$processes" >/dev/null
 }
