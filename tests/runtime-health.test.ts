@@ -12,6 +12,10 @@ test('health revision is allow-listed, shortened, and prefers Render', () => {
     RENDER_GIT_COMMIT: 'ABCDEF0123456789ABCDEF0123456789ABCDEF01',
     VERCEL_GIT_COMMIT_SHA: '1111111111111111111111111111111111111111',
   }), 'abcdef012345')
+  assert.equal(safeRevision({
+    VERCEL_GIT_COMMIT_SHA: '1111111111111111111111111111111111111111',
+  }), '111111111111')
+  assert.equal(safeRevision({}), 'unknown')
   assert.equal(safeRevision({ RENDER_GIT_COMMIT: 'not a safe revision' }), 'unknown')
 })
 
@@ -28,6 +32,23 @@ test('database readiness requires a successful migration-aware RPC', async () =>
   assert.equal(await probeDatabase({
     rpc: async () => ({ data: null, error: { code: 'missing_function' } }),
   }, 2_000, { NODE_ENV: 'production' }), false)
+})
+
+test('database readiness accepts only explicit ready envelopes and contains RPC failures', async () => {
+  for (const data of [[true], { ready: true }]) {
+    assert.equal(await probeDatabase({ rpc: async () => ({ data, error: null }) }), true)
+  }
+  for (const data of [false, [false], { ready: false }, {}, null]) {
+    assert.equal(await probeDatabase({ rpc: async () => ({ data, error: null }) }, 2_000, {
+      NODE_ENV: 'production',
+    }), false)
+  }
+  assert.equal(await probeDatabase({
+    rpc: async () => { throw new Error('offline') },
+  }, 2_000, { NODE_ENV: 'production' }), false)
+  assert.equal(await probeDatabase({
+    rpc: () => new Promise(() => undefined),
+  }, 1, { NODE_ENV: 'production' }), false)
 })
 
 test('production readiness never falls back to an older infrastructure contract', async () => {
@@ -79,6 +100,14 @@ test('runtime health reports only safe configured and ready state', async () => 
   assert.equal(serialized.includes('private-project.example'), false)
 })
 
+test('runtime health exposes a closed configuration state without dependencies', async () => {
+  const health = await getRuntimeHealth({ NODE_ENV: 'production' }, null)
+  assert.equal(health.ready, false)
+  assert.deepEqual(health.checks.auth, { configured: false, ready: false })
+  assert.deepEqual(health.checks.database, { configured: false, ready: false })
+  assert.deepEqual(health.checks.queue, { configured: false, ready: false })
+})
+
 test('an injected queue probe participates in strict readiness and fails closed', async () => {
   const environment = {
     NODE_ENV: 'production',
@@ -95,6 +124,28 @@ test('an injected queue probe participates in strict readiness and fails closed'
 
   assert.equal(health.ready, false)
   assert.deepEqual(health.checks.queue, { configured: true, ready: false })
+})
+
+test('queue readiness rejects disabled and throwing adapters', async () => {
+  const environment = {
+    NODE_ENV: 'production',
+    SUPABASE_URL: 'https://private-project.example',
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: 'public-anon-value',
+    SUPABASE_SERVICE_ROLE_KEY: 'super-secret-service-key',
+    E2B_API_KEY: 'e2b-secret-key',
+  }
+  const client = { rpc: async () => ({ data: { ready: true }, error: null }) }
+  const disabled = await getRuntimeHealth(environment, client, {
+    queue: { configured: false, check: () => true },
+  })
+  assert.equal(disabled.ready, false)
+  assert.deepEqual(disabled.checks.queue, { configured: false, ready: false })
+
+  const throwing = await getRuntimeHealth(environment, client, {
+    queue: { configured: true, check: () => { throw new Error('queue offline') } },
+  })
+  assert.equal(throwing.ready, false)
+  assert.deepEqual(throwing.checks.queue, { configured: true, ready: false })
 })
 
 test('production readiness fails closed without an isolated agent sandbox', async () => {
