@@ -23,9 +23,11 @@ test('release images are digest-pinned, attested, and generated only after verif
   const release = read('.github/workflows/release-image.yml')
   const verify = read('.github/workflows/verify.yml')
   assert.equal(
-    dockerfile.match(/FROM node:24-bookworm-slim@sha256:[0-9a-f]{64}/g)?.length,
+    dockerfile.match(/FROM node:24-alpine3\.23@sha256:[0-9a-f]{64}/g)?.length,
     2,
   )
+  assert.match(dockerfile, /apk add --no-cache ca-certificates git/)
+  assert.doesNotMatch(dockerfile, /apt-get/)
   assert.match(release, /workflow_run:/)
   assert.match(release, /github\.event\.workflow_run\.conclusion == 'success'/)
   assert.match(release, /github\.event\.workflow_run\.event == 'push'/)

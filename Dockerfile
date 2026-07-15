@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 ARG MYCHAT_BUILD_REVISION=unknown
-FROM node:24-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d AS build
+FROM node:24-alpine3.23@sha256:595398b0081eacda8e1c4c5b97b76cd1020e4d58a8ebcb4843b9bca1e79e7436 AS build
 
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -11,7 +11,7 @@ COPY . .
 RUN npm run build \
     && npm prune --ignore-scripts --omit=dev --legacy-peer-deps
 
-FROM node:24-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d AS runtime
+FROM node:24-alpine3.23@sha256:595398b0081eacda8e1c4c5b97b76cd1020e4d58a8ebcb4843b9bca1e79e7436 AS runtime
 
 ARG MYCHAT_BUILD_REVISION
 LABEL org.opencontainers.image.revision=$MYCHAT_BUILD_REVISION
@@ -21,9 +21,7 @@ ENV NODE_ENV=production \
     MYCHAT_BUILD_REVISION=$MYCHAT_BUILD_REVISION
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates git \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache ca-certificates git
 
 COPY --from=build --chown=node:node /app/package.json /app/package-lock.json ./
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
