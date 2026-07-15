@@ -8,11 +8,37 @@ import { weightedTokenUsage } from '@/lib/quota'
 import { log } from '@/lib/logger'
 import type { ModelMessage } from '@/lib/llm/types'
 import type { JobHandler } from '../worker'
+import type { JobAccounting } from '../repository'
 import { JobRuntimeError } from '../errors'
 import { JobEventWriter, jsonResult } from '../event-writer'
+import { BILLING_PRICE_VERSION, platformModelCostMicros } from '../pricing'
 import { loadAgentJob } from './agent-input'
 import { createAgentRuntime } from './agent-runtime'
-import { restoredTrajectory, trajectoryCheckpoint } from './chat-text-runtime'
+import {
+  restoredHistoricalTokens,
+  restoredTrajectory,
+  trajectoryCheckpoint,
+} from './chat-text-runtime'
+
+export function agentTokenAccounting(
+  input: Pick<Awaited<ReturnType<typeof loadAgentJob>>, 'model' | 'thinking' | 'usingBalance'>,
+  jobId: string,
+  attemptTokens: number,
+): JobAccounting[] {
+  if (attemptTokens <= 0) return []
+  const weightedTokens = weightedTokenUsage(attemptTokens, input.model, input.thinking)
+  return [{
+    idempotencyKey: `${jobId}:model-usage`,
+    reason: 'agent_model_usage',
+    direction: 'debit',
+    weightedTokens,
+    rawTokens: attemptTokens,
+    model: input.model,
+    provider: 'deepseek',
+    costMicros: platformModelCostMicros(weightedTokens),
+    metadata: { usingBalance: input.usingBalance, priceVersion: BILLING_PRICE_VERSION },
+  }]
+}
 
 export const handleAgentTask: JobHandler = async context => {
   const input = await loadAgentJob(context)
@@ -22,9 +48,16 @@ export const handleAgentTask: JobHandler = async context => {
   const system = buildCodeSystem(input.repo, input.login, input.memories, true, canExecute)
   const messages: ModelMessage[] = [{ role: 'system', content: system }, ...toOpenAI(input.messages)]
   const baseLength = messages.length
-  const restored = restoredTrajectory(context.job.checkpoint)
+  if (context.job.checkpoint && !context.job.checkpoint.resumable) {
+    throw new JobRuntimeError('JOB_RETRY_UNSAFE', 'Agent checkpoint is explicitly non-resumable', {
+      class: 'internal', retryable: false,
+    })
+  }
+  const restored = restoredTrajectory(context.job.checkpoint?.data)
   if (restored.length) messages.push(...restored)
-  let totalTokens = 0
+  const historicalTokens = restoredHistoricalTokens(context.job)
+  let attemptTokens = 0
+  let totalTokens = historicalTokens
   let checkpointRound = 0
   try {
     if (!process.env.DEEPSEEK_API_KEY?.trim()) {
@@ -50,7 +83,14 @@ export const handleAgentTask: JobHandler = async context => {
         maxContinuations: 20,
         prompt: () => codeContinuationPrompt(progress.snapshot(true)),
       },
-      onUsage: total => { totalTokens = total },
+      onUsage: async total => {
+        attemptTokens = total
+        totalTokens = historicalTokens + attemptTokens
+        for (const entry of agentTokenAccounting(input, context.job.id, attemptTokens)) {
+          context.reportAccounting(entry)
+        }
+        await context.flushAccounting()
+      },
       onTurn: ({ phase, round, turn }) => log.info('jobs', 'Agent model turn', {
         jobId: context.job.id, phase, round: round ?? null,
         finishReason: turn.finishReason, tools: turn.toolCalls.map(call => call.name),
@@ -75,8 +115,9 @@ export const handleAgentTask: JobHandler = async context => {
         idempotencyNamespace: context.job.id,
       },
     })
-    const content = events.flushLeadText()
+    events.flushLeadText()
     await writer.drain()
+    const content = writer.text()
     const state = progress.snapshot(true)
     const taskStatus = finalCodeTaskStatus(false, state)
     if (taskStatus === 'running') throw new JobRuntimeError('JOB_INTERNAL', 'Agent stopped before a durable completion point')
@@ -95,12 +136,7 @@ export const handleAgentTask: JobHandler = async context => {
         taskStatus,
         progress: state,
       }),
-      ledgerEntries: totalTokens > 0 ? [{
-        idempotencyKey: `${context.job.id}:model-usage`, reason: 'agent_model_usage', direction: 'debit',
-        weightedTokens: weightedTokenUsage(totalTokens, input.model, input.thinking),
-        rawTokens: totalTokens, model: input.model, provider: 'deepseek',
-        metadata: { usingBalance: input.usingBalance },
-      }] : [],
+      ledgerEntries: agentTokenAccounting(input, context.job.id, attemptTokens),
     }
   } catch (error) {
     if (error instanceof JobRuntimeError) throw error

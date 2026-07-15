@@ -66,7 +66,7 @@ test("agent loop retries generic gateways without tools and reports cumulative u
   const result = await runAgentLoop({
     ...baseOptions(messages, fetcher),
     maxRounds: 1,
-    onUsage: total => usage.push(total),
+    onUsage: total => { usage.push(total) },
   })
   assert.equal(result.totalTokens, 7)
   assert.equal(Array.isArray(bodies[0]?.tools), true)
@@ -109,6 +109,36 @@ test("agent loop executes valid tools, rejects malformed arguments, and emits fi
   assert.ok(messages.some(message => message.role === "tool" && message.content === "tool result"))
   assert.deepEqual(phases, ["round", "final-text"])
   assert.equal(checkpoints.length, 2)
+})
+
+test("agent loop awaits usage durability before exposing a checkpoint", async () => {
+  const messages: ModelMessage[] = [{ role: "user", content: "use tool" }]
+  const order: string[] = []
+  let calls = 0
+  const fetcher: typeof fetch = async () => {
+    calls++
+    return calls === 1
+      ? completion({
+          finishReason: "tool_calls",
+          tokens: 3,
+          toolCalls: [{ id: "call-1", name: "lookup", args: "{}" }],
+        })
+      : completion({ content: "done", tokens: 1 })
+  }
+  await runAgentLoop({
+    ...baseOptions(messages, fetcher),
+    maxRounds: 1,
+    onUsage: async total => {
+      order.push(`usage-start:${total}`)
+      await new Promise<void>(resolve => setImmediate(resolve))
+      order.push(`usage-durable:${total}`)
+    },
+    onCheckpoint: () => {
+      order.push("checkpoint")
+      assert.equal(order.includes("usage-durable:3"), true)
+    },
+  })
+  assert.ok(order.indexOf("usage-durable:3") < order.indexOf("checkpoint"))
 })
 
 test("agent loop idle continuation adds a caller-owned prompt and resumes", async () => {

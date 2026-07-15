@@ -9,27 +9,32 @@ import {
   assertJobFence,
   isIsoTimestamp,
   isJobIdentifier,
-  isJobStatus,
+  isJobName,
   isJsonValue,
+  isTerminalJobStatus,
   type JobAuthClass,
   type JobBudget,
-  type JobErrorClass,
-  type JobFailure,
+  type JobCheckpoint,
   type JobRecord,
-  type JobStatus,
+  type JobUsage,
   type JsonObject,
-  type JsonValue,
 } from './contracts'
 import { JobRuntimeError } from './errors'
 import type { JobRepository } from './repository'
 import type {
   JobClaimResult,
   JobEventsMutationResult,
-  JobFencedMutationResult,
   JobFinalizeResult,
   JobRenewResult,
 } from './repository-types'
 import { retrySupabaseJob } from './supabase-retry'
+import { resumeSupabaseJob } from './supabase-resume'
+import { recordSupabaseJobAccounting } from './supabase-accounting'
+import { checkpointSupabaseJobWithAccounting } from './supabase-checkpoint'
+import {
+  failureOf, integerOf, jsonObjectOf, jsonOf, malformed,
+  nullableInteger, objectOf, statusOf,
+} from './supabase-parsing'
 
 const DEFAULT_RPC_TIMEOUT_MS = 8_000
 
@@ -49,61 +54,58 @@ type RpcRequest = PromiseLike<RpcResponse> & {
   abortSignal?: (signal: AbortSignal) => PromiseLike<RpcResponse>
 }
 
-function objectOf(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null
-}
-
 function rpcObject(value: unknown): Record<string, unknown> | null {
   return objectOf(Array.isArray(value) ? value[0] : value)
 }
 
-function integerOf(value: unknown): number | null {
-  return Number.isSafeInteger(value) ? Number(value) : null
-}
-
-function nullableInteger(value: unknown): number | null {
-  return value == null ? null : integerOf(value)
-}
-
-function statusOf(value: unknown): JobStatus | null {
-  return isJobStatus(value) ? value : null
-}
-
-function jsonOf(value: unknown, fallback: JsonValue): JsonValue {
-  return isJsonValue(value) ? value : fallback
-}
-
-function jsonObjectOf(value: unknown): JsonObject {
-  const parsed = jsonOf(value, {})
-  return !Array.isArray(parsed) && parsed !== null && typeof parsed === 'object' ? parsed : {}
-}
-
-function failureOf(source: Record<string, unknown>): JobFailure | null {
-  const nested = objectOf(source.error)
-  const code = nested?.code ?? source.errorCode
-  const errorClass = nested?.class ?? nested?.errorClass ?? source.errorClass
-  if (typeof code !== 'string' || code.length === 0) return null
-  const validClass: JobErrorClass = errorClass === 'retryable' || errorClass === 'user'
-    || errorClass === 'provider' || errorClass === 'policy' || errorClass === 'internal'
-    ? errorClass
-    : 'internal'
+function checkpointOf(value: unknown, rpcName: string): JobCheckpoint | null {
+  if (value == null) return null
+  const source = objectOf(value)
+  const version = integerOf(source?.version)
+  const leaseVersion = integerOf(source?.leaseVersion)
+  const data = source ? objectOf(source.data) : null
+  const progress = source ? objectOf(source.progress) : null
+  if (!source || version === null || version < 1 || leaseVersion === null || leaseVersion < 1
+    || !isJobName(source.phase, 128) || !data || !progress
+    || typeof source.resumable !== 'boolean' || !isIsoTimestamp(source.updatedAt)
+    || !isJsonValue(data) || !isJsonValue(progress)) return malformed(rpcName)
   return {
-    code,
-    message: typeof nested?.message === 'string' ? nested.message : code,
-    retryable: typeof nested?.retryable === 'boolean'
-      ? nested.retryable
-      : validClass === 'retryable' || validClass === 'provider',
-    class: validClass,
-    details: jsonObjectOf(nested?.details),
+    version,
+    phase: source.phase,
+    data: data as JsonObject,
+    progress: progress as JsonObject,
+    resumable: source.resumable,
+    leaseVersion,
+    updatedAt: source.updatedAt,
   }
 }
 
-function malformed(name: string): never {
-  throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'Job repository returned malformed data', {
-    details: { rpc: name },
-  })
+function usageOf(value: unknown, rpcName: string): JobUsage {
+  if (value == null) return {
+    wallTimeMs: 0,
+    rawTokens: 0,
+    weightedTokens: 0,
+    costMicros: 0,
+    sandboxTimeMs: 0,
+    toolCalls: 0,
+  }
+  const source = objectOf(value)
+  const wallTimeMs = integerOf(source?.wallTimeMs)
+  const rawTokens = integerOf(source?.rawTokens)
+  const weightedTokens = integerOf(source?.weightedTokens)
+  const costMicros = integerOf(source?.costMicros)
+  const sandboxTimeMs = integerOf(source?.sandboxTimeMs)
+  const toolCalls = integerOf(source?.toolCalls)
+  if (!source || [wallTimeMs, rawTokens, weightedTokens, costMicros, sandboxTimeMs, toolCalls]
+    .some(entry => entry === null || entry < 0)) return malformed(rpcName)
+  return {
+    wallTimeMs: wallTimeMs as number,
+    rawTokens: rawTokens as number,
+    weightedTokens: weightedTokens as number,
+    costMicros: costMicros as number,
+    sandboxTimeMs: sandboxTimeMs as number,
+    toolCalls: toolCalls as number,
+  }
 }
 
 function parseJob(value: unknown, rpcName: string): JobRecord {
@@ -144,7 +146,8 @@ function parseJob(value: unknown, rpcName: string): JobRecord {
     priority,
     availableAt: source.availableAt,
     budget: jsonObjectOf(source.budget) as JobBudget,
-    checkpoint: source.checkpoint == null ? null : jsonOf(source.checkpoint, null),
+    usage: usageOf(source.usage, rpcName),
+    checkpoint: checkpointOf(source.checkpoint, rpcName),
     result: source.result == null ? null : jsonOf(source.result, null),
     error: failureOf(source),
     lease: hasLease ? {
@@ -307,23 +310,18 @@ export class SupabaseJobRepository implements JobRepository {
     }
   }
 
-  async checkpoint(input: Parameters<JobRepository['checkpoint']>[0]): Promise<JobFencedMutationResult> {
-    assertJobFence(input)
-    const result = await this.rpc('checkpoint_job', {
-      input_job_id: input.jobId,
-      input_worker_id: input.workerId,
-      input_lease_version: input.leaseVersion,
-      input_phase: input.phase,
-      input_checkpoint: input.checkpoint,
-      input_progress: input.progress ?? {},
-      input_resumable: input.resumable,
-      input_status: input.status ?? 'running',
-    })
-    return {
-      accepted: result.checkpointed === true,
-      status: statusOf(result.status),
-      cancelRequested: result.cancelRequested === true,
-    }
+  async checkpointWithAccounting(
+    input: Parameters<JobRepository['checkpointWithAccounting']>[0],
+  ) {
+    return checkpointSupabaseJobWithAccounting(input, (name, args) => this.rpc(name, args))
+  }
+
+  async recordAccounting(input: Parameters<JobRepository['recordAccounting']>[0]) {
+    return recordSupabaseJobAccounting(input, (name, args) => this.rpc(name, args))
+  }
+
+  async resume(input: Parameters<JobRepository['resume']>[0]) {
+    return resumeSupabaseJob(input, (name, args) => this.rpc(name, args))
   }
 
   async finalize(input: Parameters<JobRepository['finalize']>[0]): Promise<JobFinalizeResult> {
@@ -340,7 +338,7 @@ export class SupabaseJobRepository implements JobRepository {
       input_outbox: input.outbox ?? [],
     })
     const status = statusOf(result.status)
-    if (!status) return malformed('finalize_job')
+    if (!isTerminalJobStatus(status)) return malformed('finalize_job')
     return {
       accepted: result.finalized === true,
       replayed: result.replayed === true,

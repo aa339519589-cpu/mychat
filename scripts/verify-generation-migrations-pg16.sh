@@ -6,6 +6,21 @@ DB="mychat_generation_migration_test"
 PSQL=(psql -v ON_ERROR_STOP=1)
 
 cleanup() {
+  if [[ -n "${CUTOVER_PID:-}" ]] && kill -0 "$CUTOVER_PID" >/dev/null 2>&1; then
+    kill -9 "$CUTOVER_PID" >/dev/null 2>&1 || true
+    wait "$CUTOVER_PID" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${CHAOS_PID:-}" ]] && kill -0 "$CHAOS_PID" >/dev/null 2>&1; then
+    kill -9 "$CHAOS_PID" >/dev/null 2>&1 || true
+    wait "$CHAOS_PID" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${BILLING_LOCK_PID:-}" ]] && kill -0 "$BILLING_LOCK_PID" >/dev/null 2>&1; then
+    kill -9 "$BILLING_LOCK_PID" >/dev/null 2>&1 || true
+    wait "$BILLING_LOCK_PID" >/dev/null 2>&1 || true
+  fi
+  [[ -z "${CUTOVER_LOG:-}" ]] || rm -f "$CUTOVER_LOG"
+  [[ -z "${CHAOS_LOG:-}" ]] || rm -f "$CHAOS_LOG"
+  [[ -z "${BILLING_LOCK_LOG:-}" ]] || rm -f "$BILLING_LOCK_LOG"
   "${PSQL[@]}" -d postgres >/dev/null 2>&1 <<SQL || true
 select pg_terminate_backend(pid) from pg_stat_activity where datname = '${DB}';
 drop database if exists ${DB};
@@ -701,6 +716,410 @@ SQL
 "${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713170000_agent_atomicity_and_balance.sql" >/dev/null
 "${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713170000_agent_atomicity_and_balance.sql" >/dev/null
 "${PSQL[@]}" -d "$DB" -f "$ROOT/tests/agent-durable-control-plane-pg16.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713180000_checkpoint_recovery_contract.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713180000_checkpoint_recovery_contract.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/tests/checkpoint-recovery-pg16.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713190000_agent_publication_safety.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713190000_agent_publication_safety.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/tests/agent-publication-safety-pg16.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713200000_job_worker_heartbeats.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713200000_job_worker_heartbeats.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/tests/job-worker-heartbeat-pg16.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713210000_job_outbox_redrive.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713210000_job_outbox_redrive.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/tests/outbox-redrive-pg16.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713220000_job_budget_accounting.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713220000_job_budget_accounting.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/tests/job-budget-accounting-pg16.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713230000_awaiting_job_resume.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713230000_awaiting_job_resume.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/tests/awaiting-job-resume-pg16.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713240000_admission_and_reservations.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713240000_admission_and_reservations.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/tests/job-admission-reservations-pg16.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713250000_terminal_projection_and_effect_recovery.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713250000_terminal_projection_and_effect_recovery.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/tests/terminal-projection-effect-recovery-pg16.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" <<'SQL'
+create table if not exists public.projects (
+  id uuid primary key,
+  user_id uuid not null references auth.users(id),
+  name text not null default '',
+  instructions text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create table if not exists public.project_files (
+  id uuid primary key,
+  project_id uuid not null references public.projects(id) on delete cascade,
+  user_id uuid not null references auth.users(id),
+  name text not null,
+  content text,
+  created_at timestamptz not null default now()
+);
+alter table storage.objects add column if not exists metadata jsonb;
+insert into public.projects(id, user_id, name) values (
+  '96200000-0000-4000-8000-000000000001',
+  '00000000-0000-4000-8000-000000000001',
+  'stream lifecycle cutover'
+);
+insert into storage.objects(bucket_id, name, metadata) values (
+  'job-payloads',
+  '00000000-0000-4000-8000-000000000001/96200000-0000-4000-8000-000000000004/'
+    || repeat('c', 64) || '.json',
+  '{"size":"64"}'::jsonb
+);
+SQL
+
+# Hold an old-version write transaction open while the migration reaches its
+# trigger DDL. The migration must wait, then include every committed row in its
+# authoritative backfill; a scan-before-trigger implementation misses these.
+CUTOVER_LOG="$(mktemp)"
+PGAPPNAME=mychat-stream-cutover-writer "${PSQL[@]}" -d "$DB" >"$CUTOVER_LOG" 2>&1 <<'SQL' &
+begin;
+insert into public.project_files(id, project_id, user_id, name, content) values (
+  '96200000-0000-4000-8000-000000000002',
+  '96200000-0000-4000-8000-000000000001',
+  '00000000-0000-4000-8000-000000000001',
+  'cutover.txt', 'committed while migration waits'
+);
+insert into public.messages(id, conversation_id, user_id, role, content) values (
+  '96200000-0000-4000-8000-000000000003',
+  '80000000-0000-4000-8000-000000000002',
+  '00000000-0000-4000-8000-000000000001',
+  'user', 'committed while lifecycle counters cut over'
+);
+set local role service_role;
+select public.enqueue_job(
+  '96200000-0000-4000-8000-000000000004',
+  'cutover.payload', 'cutover_payload',
+  '00000000-0000-4000-8000-000000000001', 'registered', '{}'::jsonb,
+  'stream-lifecycle-cutover-payload', repeat('c', 64),
+  jsonb_build_object(
+    'billingClass', 'customer',
+    'payloadRef', jsonb_build_object(
+      'bucket', 'job-payloads',
+      'objectKey',
+        '00000000-0000-4000-8000-000000000001/96200000-0000-4000-8000-000000000004/'
+          || repeat('c', 64) || '.json',
+      'sha256', repeat('c', 64), 'bytes', 64,
+      'contentType', 'application/json'
+    )
+  ),
+  '{"wallTimeMs":60000}'::jsonb
+);
+select pg_sleep(2);
+commit;
+SQL
+CUTOVER_PID=$!
+CUTOVER_READY=0
+for _ in {1..100}; do
+  if [[ "$("${PSQL[@]}" -qAt -d "$DB" -c \
+    "select count(*) from pg_stat_activity where application_name='mychat-stream-cutover-writer' and wait_event='PgSleep'")" == "1" ]]; then
+    CUTOVER_READY=1
+    break
+  fi
+  sleep 0.05
+done
+if [[ "$CUTOVER_READY" != "1" ]]; then
+  cat "$CUTOVER_LOG" >&2
+  echo "Stream lifecycle cutover writer did not reach its overlap point" >&2
+  exit 1
+fi
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713260000_stream_and_asset_lifecycle.sql" >/dev/null
+if ! wait "$CUTOVER_PID"; then
+  cat "$CUTOVER_LOG" >&2
+  echo "Stream lifecycle cutover writer failed" >&2
+  exit 1
+fi
+unset CUTOVER_PID
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713260000_stream_and_asset_lifecycle.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/tests/stream-asset-lifecycle-pg16.sql" >/dev/null
+
+# Supply the production-shaped tenant graph that is outside this focused
+# migration baseline. Vector columns are irrelevant to relational validation.
+"${PSQL[@]}" -d "$DB" <<'SQL'
+alter table public.conversations
+  add column if not exists project_id uuid references public.projects(id) on delete set null,
+  add column if not exists summary_until_message_id uuid references public.messages(id) on delete set null;
+
+create table if not exists public.project_memories (
+  id uuid primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  project_id uuid not null references public.projects(id) on delete cascade,
+  content text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz default now()
+);
+
+create table if not exists public.conversation_chunks (
+  id uuid primary key,
+  user_id uuid not null,
+  conversation_id uuid not null references public.conversations(id) on delete cascade,
+  project_id uuid references public.projects(id) on delete set null,
+  conversation_title text,
+  message_start_id uuid references public.messages(id) on delete set null,
+  message_end_id uuid references public.messages(id) on delete set null,
+  content text not null,
+  content_hash text not null,
+  token_count integer not null default 0,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.artifacts (
+  id uuid primary key,
+  user_id uuid not null,
+  conversation_id uuid references public.conversations(id) on delete cascade,
+  message_id uuid references public.messages(id) on delete cascade,
+  project_id uuid references public.projects(id) on delete set null,
+  title text not null default 'test artifact',
+  raw text not null default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.agent_task_steps (
+  id uuid primary key,
+  task_id uuid not null references public.agent_tasks(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  kind text not null default 'info',
+  label text,
+  detail text,
+  seq integer not null default 0,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.agent_tool_calls (
+  id uuid primary key,
+  task_id uuid not null references public.agent_tasks(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  step_id uuid references public.agent_task_steps(id) on delete set null,
+  tool_name text not null,
+  input jsonb,
+  output jsonb,
+  error text,
+  status text not null default 'pending',
+  started_at timestamptz,
+  finished_at timestamptz,
+  duration_ms integer,
+  seq integer not null default 0,
+  created_at timestamptz not null default now()
+);
+SQL
+
+# Installing the latest health gate before the tenant expand is intentionally
+# allowed, but it must fail closed until every required migration contract is
+# present and validated.
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713280000_revision_scoped_worker_readiness.sql" >/dev/null
+PRE_TENANT_HEALTH="$("${PSQL[@]}" -qAt -d "$DB" -c \
+  "set role service_role; select public.runtime_healthcheck_v12()")"
+if [[ "$PRE_TENANT_HEALTH" != "f" ]]; then
+  echo "Runtime v12 accepted a database that skipped tenant integrity" >&2
+  exit 1
+fi
+
+# A legacy single-column FK permits this ownership mismatch. The hardening
+# migration must stop before contract, leaving evidence and the legacy FK in
+# place while retaining its replayable NOT VALID expand work.
+"${PSQL[@]}" -d "$DB" <<'SQL'
+insert into public.projects(id, user_id, name) values (
+  'a7ff0000-0000-4000-8000-000000000002',
+  '00000000-0000-4000-8000-000000000002',
+  'cross-tenant migration fixture'
+);
+insert into public.project_files(id, project_id, user_id, name, content) values (
+  'a7ff0000-0000-4000-8000-000000000001',
+  'a7ff0000-0000-4000-8000-000000000002',
+  '00000000-0000-4000-8000-000000000001',
+  'must-survive-failed-migration.txt',
+  'operator-visible evidence'
+);
+SQL
+if "${PSQL[@]}" -d "$DB" \
+  -f "$ROOT/supabase/migrations/20260713270000_tenant_relational_integrity.sql" \
+  >/dev/null 2>&1; then
+  echo "Tenant integrity migration accepted cross-tenant legacy data" >&2
+  exit 1
+fi
+TENANT_DIRTY_ROW_COUNT="$("${PSQL[@]}" -qAt -d "$DB" -c \
+  "select count(*) from public.project_files where id='a7ff0000-0000-4000-8000-000000000001' and user_id='00000000-0000-4000-8000-000000000001' and project_id='a7ff0000-0000-4000-8000-000000000002'")"
+if [[ "$TENANT_DIRTY_ROW_COUNT" != "1" ]]; then
+  echo "Failed tenant migration silently changed cross-tenant evidence" >&2
+  exit 1
+fi
+TENANT_FAILED_EXPAND_STATE="$("${PSQL[@]}" -qAt -d "$DB" -c \
+  "select public.runtime_healthcheck_v12()::text || ':' || (select count(*) from pg_constraint where conrelid='public.project_files'::regclass and conname='project_files_tenant_project_fkey' and not convalidated) || ':' || (select count(*) from pg_constraint where conrelid='public.project_files'::regclass and conname='project_files_project_id_fkey' and convalidated)")"
+if [[ "$TENANT_FAILED_EXPAND_STATE" != "false:1:1" ]]; then
+  echo "Failed tenant expand was not replay-safe: ${TENANT_FAILED_EXPAND_STATE}" >&2
+  exit 1
+fi
+
+# Fixture cleanup is explicit and outside the migration. A clean database must
+# accept the migration repeatedly and enforce every relationship in PostgreSQL.
+"${PSQL[@]}" -q -d "$DB" <<'SQL'
+delete from public.project_files where id = 'a7ff0000-0000-4000-8000-000000000001';
+delete from public.projects where id = 'a7ff0000-0000-4000-8000-000000000002';
+SQL
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713270000_tenant_relational_integrity.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713270000_tenant_relational_integrity.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/tests/tenant-relational-integrity-pg16.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713280000_revision_scoped_worker_readiness.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713280000_revision_scoped_worker_readiness.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/tests/revision-scoped-worker-readiness-pg16.sql" >/dev/null
+
+# Two independent commands racing on the same account serialize on the profile
+# row. The full reservation fits once, never twice, and the loser leaves no job.
+ADMISSION_RESULTS="$({
+  "${PSQL[@]}" -qAt -d "$DB" -c \
+    "set role service_role; select public.pg16_admission_attempt('89910000-0000-4000-8000-000000000001','89900000-0000-4000-8000-000000000001','admission-race-a')" &
+  "${PSQL[@]}" -qAt -d "$DB" -c \
+    "set role service_role; select public.pg16_admission_attempt('89910000-0000-4000-8000-000000000002','89900000-0000-4000-8000-000000000002','admission-race-b')" &
+  wait
+})"
+ADMISSION_WINNERS="$(printf '%s\n' "$ADMISSION_RESULTS" | grep -c '^admitted$')"
+ADMISSION_REJECTIONS="$(printf '%s\n' "$ADMISSION_RESULTS" | grep -c '^rejected$')"
+ADMISSION_HELD_STATE="$("${PSQL[@]}" -qAt -d "$DB" -c \
+  "select balance::text || ':' || (select count(*) from public.job_admission_reservations where principal_id=profiles.user_id and status='held') from public.profiles where user_id='00000000-0000-4000-8000-000000000002'")"
+if [[ "$ADMISSION_WINNERS" != "1" || "$ADMISSION_REJECTIONS" != "1" || "$ADMISSION_HELD_STATE" != "5424:1" ]]; then
+  echo "Concurrent admission verification failed: results=${ADMISSION_RESULTS}, state=${ADMISSION_HELD_STATE}" >&2
+  exit 1
+fi
+
+# Settle 100 weighted tokens against the held maximum. The ledger trigger must
+# not debit twice and terminal settlement must refund exactly the unused 24,476.
+"${PSQL[@]}" -q -d "$DB" <<'SQL'
+set role service_role;
+do $$
+declare
+  v_job_id uuid;
+  v_claim jsonb;
+  v_result jsonb;
+begin
+  v_claim := public.claim_next_job('admission-settlement-worker',array['admission_race'],120);
+  if coalesce(v_claim->'job'->>'id', '')
+       not in ('89910000-0000-4000-8000-000000000001',
+               '89910000-0000-4000-8000-000000000002') then
+    raise exception 'reserved job was not claimable: %', v_claim;
+  end if;
+  v_job_id := (v_claim->'job'->>'id')::uuid;
+  v_result := public.record_job_accounting(
+    v_job_id,'admission-settlement-worker',1,1,
+    jsonb_build_array(jsonb_build_object(
+      'idempotencyKey',v_job_id::text || ':attempt:1:admission-usage',
+      'reason','admission_test_usage','direction','debit',
+      'weightedTokens',100,'rawTokens',100,'costEstimate',0.0003,
+      'currency','USD','metadata',jsonb_build_object('attempt',1,'usingBalance',false)
+    ))
+  );
+  if v_result->>'recorded' <> 'true' then raise exception 'usage was not recorded: %', v_result; end if;
+  v_result := public.finalize_job(
+    v_job_id,'admission-settlement-worker',1,'failed','{}'::jsonb,
+    'internal','admission_test_terminal'
+  );
+  if v_result->>'status' <> 'failed' then raise exception 'fixture did not finalize: %', v_result; end if;
+end;
+$$;
+SQL
+ADMISSION_SETTLED_STATE="$("${PSQL[@]}" -qAt -d "$DB" -c \
+  "select profile.balance::text || ':' || reservation.status || ':' || reservation.actual_tokens::text || ':' || reservation.released_tokens::text || ':' || settlement.debited_tokens::text from public.profiles profile join public.job_admission_reservations reservation on reservation.principal_id=profile.user_id join public.ledger_entries entry on entry.job_id=reservation.job_id join public.ledger_balance_settlements settlement on settlement.ledger_entry_id=entry.id where profile.user_id='00000000-0000-4000-8000-000000000002'")"
+if [[ "$ADMISSION_SETTLED_STATE" != "29900:settled:100:24476:100" ]]; then
+  echo "Admission settlement verification failed: ${ADMISSION_SETTLED_STATE}" >&2
+  exit 1
+fi
+
+# Two concurrent deliveries of the same resume command must serialize on the
+# job row: one commits the state transition, the other observes the durable
+# idempotency receipt without adding a second checkpoint/event/audit mutation.
+AWAITING_RESUME_RESULTS="$({
+  "${PSQL[@]}" -qAt -d "$DB" -c \
+    "set role service_role; set request.jwt.claim.role='service_role'; select (result->>'resumed') || ':' || (result->>'replayed') || ':' || coalesce(result->>'reason','ok') from (select public.resume_awaiting_job('89800000-0000-4000-8000-000000000005','00000000-0000-4000-8000-000000000001',1,'resume-request-concurrent','{\"answer\":\"continue\"}'::jsonb) result) response" &
+  "${PSQL[@]}" -qAt -d "$DB" -c \
+    "set role service_role; set request.jwt.claim.role='service_role'; select (result->>'resumed') || ':' || (result->>'replayed') || ':' || coalesce(result->>'reason','ok') from (select public.resume_awaiting_job('89800000-0000-4000-8000-000000000005','00000000-0000-4000-8000-000000000001',1,'resume-request-concurrent','{\"answer\":\"continue\"}'::jsonb) result) response" &
+  wait
+})"
+AWAITING_RESUME_WINNERS="$(printf '%s\n' "$AWAITING_RESUME_RESULTS" | grep -c '^true:false:ok$')"
+AWAITING_RESUME_REPLAYS="$(printf '%s\n' "$AWAITING_RESUME_RESULTS" | grep -c '^true:true:ok$')"
+AWAITING_RESUME_STATE="$("${PSQL[@]}" -qAt -d "$DB" -c \
+  "select status || ':' || (select version from public.job_checkpoints where job_id=jobs.id) || ':' || (select count(*) from public.job_events where job_id=jobs.id and kind='job.resumed') || ':' || (select count(*) from public.audit_log where job_id=jobs.id and action='job.resumed') from public.jobs where id='89800000-0000-4000-8000-000000000005'")"
+if [[ "$AWAITING_RESUME_WINNERS" != "1" || "$AWAITING_RESUME_REPLAYS" != "1" || "$AWAITING_RESUME_STATE" != "queued:2:1:1" ]]; then
+  echo "Concurrent awaiting resume verification failed: results=${AWAITING_RESUME_RESULTS}, state=${AWAITING_RESUME_STATE}" >&2
+  exit 1
+fi
+
+# Two operators racing the same dead letter with the same source generation
+# are serialized by the row lock and CAS. Exactly one request may create the
+# new delivery round and its matching audit record.
+OUTBOX_REDRIVE_RESULTS="$({
+  "${PSQL[@]}" -qAt -d "$DB" -c \
+    "set role service_role; select (result->>'redriven') || ':' || (result->>'replayed') || ':' || coalesce(result->>'reason','ok') from (select public.redrive_job_outbox('84d00000-0000-4000-8000-000000000002',11,'pg16-redrive-race-request-a','pg16-operator-a','concurrent recovery',0) result) response" &
+  "${PSQL[@]}" -qAt -d "$DB" -c \
+    "set role service_role; select (result->>'redriven') || ':' || (result->>'replayed') || ':' || coalesce(result->>'reason','ok') from (select public.redrive_job_outbox('84d00000-0000-4000-8000-000000000002',11,'pg16-redrive-race-request-b','pg16-operator-b','concurrent recovery',0) result) response" &
+  wait
+})"
+OUTBOX_REDRIVE_WINNERS="$(printf '%s\n' "$OUTBOX_REDRIVE_RESULTS" | grep -c '^true:false:ok$')"
+OUTBOX_REDRIVE_LOSERS="$(printf '%s\n' "$OUTBOX_REDRIVE_RESULTS" | grep -c '^false:false:stale_lock$')"
+OUTBOX_REDRIVE_STATE="$("${PSQL[@]}" -qAt -d "$DB" -c \
+  "select replay_count || ':' || lock_version || ':' || (select count(*) from public.audit_log where resource_id='84d00000-0000-4000-8000-000000000002' and action='outbox.redriven') from public.job_outbox where id='84d00000-0000-4000-8000-000000000002'")"
+if [[ "$OUTBOX_REDRIVE_WINNERS" != "1" || "$OUTBOX_REDRIVE_LOSERS" != "1" || "$OUTBOX_REDRIVE_STATE" != "1:12:1" ]]; then
+  echo "Concurrent outbox redrive verification failed: results=${OUTBOX_REDRIVE_RESULTS}, state=${OUTBOX_REDRIVE_STATE}" >&2
+  exit 1
+fi
+
+# Prove lease recovery across an actual ungraceful worker death. The first
+# command commits the claim before the same psql process blocks; SIGKILL then
+# leaves the row leased until its real timeout, after which a replacement
+# worker must reclaim with a new fence and the dead worker's fence must fail.
+"${PSQL[@]}" -qAt -d "$DB" -c \
+  "set role service_role; select public.enqueue_job('89700000-0000-4000-8000-000000000001','cleanup.chaos_kill','chaos_kill','00000000-0000-4000-8000-000000000001','registered','{}'::jsonb,'chaos-kill-intent',repeat('7',64))->>'jobId'" >/dev/null
+CHAOS_LOG="$(mktemp -t mychat-chaos-worker.XXXXXX)"
+"${PSQL[@]}" -qAt -d "$DB" \
+  -c "set role service_role; select public.claim_next_job('pg16-sigkill-worker',array['chaos_kill'],15)->>'acquired'" \
+  -c "select pg_sleep(60)" >"$CHAOS_LOG" 2>&1 &
+CHAOS_PID=$!
+
+CHAOS_CLAIMED="false"
+for _ in $(seq 1 50); do
+  CHAOS_CLAIMED="$("${PSQL[@]}" -qAt -d "$DB" -c \
+    "select (lease_owner='pg16-sigkill-worker' and lease_version=1)::text from public.jobs where id='89700000-0000-4000-8000-000000000001'")"
+  [[ "$CHAOS_CLAIMED" == "true" ]] && break
+  sleep 0.1
+done
+if [[ "$CHAOS_CLAIMED" != "true" ]]; then
+  echo "SIGKILL fixture was not claimed by the worker" >&2
+  exit 1
+fi
+
+kill -9 "$CHAOS_PID"
+wait "$CHAOS_PID" >/dev/null 2>&1 || true
+unset CHAOS_PID
+
+CHAOS_EXPIRED="false"
+for _ in $(seq 1 40); do
+  CHAOS_EXPIRED="$("${PSQL[@]}" -qAt -d "$DB" -c \
+    "select (lease_expires_at <= clock_timestamp())::text from public.jobs where id='89700000-0000-4000-8000-000000000001'")"
+  [[ "$CHAOS_EXPIRED" == "true" ]] && break
+  sleep 0.5
+done
+if [[ "$CHAOS_EXPIRED" != "true" ]]; then
+  echo "SIGKILL fixture lease did not expire on schedule" >&2
+  exit 1
+fi
+
+CHAOS_RECOVERY="$("${PSQL[@]}" -qAt -d "$DB" -c \
+  "set role service_role; select (result->>'acquired') || ':' || (result->'job'->>'leaseVersion') from (select public.claim_next_job('pg16-recovery-worker',array['chaos_kill'],15) result) claimed")"
+if [[ "$CHAOS_RECOVERY" != "true:2" ]]; then
+  echo "SIGKILL lease recovery failed: ${CHAOS_RECOVERY}" >&2
+  exit 1
+fi
+
+CHAOS_STALE_APPEND="$("${PSQL[@]}" -qAt -d "$DB" -c \
+  "set role service_role; select public.append_job_events('89700000-0000-4000-8000-000000000001','pg16-sigkill-worker',1,'[{\"kind\":\"job.progress\",\"payload\":{}}]'::jsonb)->>'appended'")"
+if [[ "$CHAOS_STALE_APPEND" != "false" ]]; then
+  echo "SIGKILL worker's stale fence unexpectedly appended an event" >&2
+  exit 1
+fi
+rm -f "$CHAOS_LOG"
+unset CHAOS_LOG
 
 # Two independent workers racing the only ready row must produce exactly one
 # successful claim. The loser must also be unable to append with the winner's
@@ -745,6 +1164,120 @@ MESSAGE_SEQUENCE_SHAPE="$("${PSQL[@]}" -qAt -d "$DB" -c \
   "select count(distinct seq)::text || ':' || (max(seq)-min(seq))::text from public.messages where id in ('84000000-0000-4000-8000-000000000001','84000000-0000-4000-8000-000000000002')")"
 if [[ "$MESSAGE_SEQUENCE_SHAPE" != "2:1" ]]; then
   echo "Concurrent message sequence verification failed: ${MESSAGE_SEQUENCE_SHAPE}" >&2
+  exit 1
+fi
+
+# Install the immutable billing evidence contract only after the legacy control
+# plane fixtures have exercised their pre-cutover behavior. Apply it twice
+# before the fixture, then once more after new append-only history exists.
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713290000_billing_reconciliation_contract.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713290000_billing_reconciliation_contract.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -v BILLING_SETUP=1 \
+  -f "$ROOT/tests/billing-reconciliation-pg16.sql" >/dev/null
+
+# Hold the Job row before finalization, then start direct settlement from a
+# second session. The historical reservation-first order deadlocks here: the
+# direct path holds reservation while waiting for Job, and the deferred trigger
+# holds Job while waiting for reservation. Job-first settlement lets finalization
+# commit, after which the direct call can only observe the immutable replay.
+BILLING_LOCK_LOG="$(mktemp)"
+PGAPPNAME=mychat-billing-job-lock-order "${PSQL[@]}" -qAt -d "$DB" -c \
+  "set role service_role; select public.pg16_billing_finalize_after_job_lock()" \
+  >"$BILLING_LOCK_LOG" &
+BILLING_LOCK_PID=$!
+BILLING_JOB_LOCK_READY=0
+for _ in {1..100}; do
+  if [[ "$("${PSQL[@]}" -qAt -d "$DB" -c \
+    "select count(*) from pg_stat_activity where application_name='mychat-billing-job-lock-order' and wait_event='PgSleep'")" == "1" ]]; then
+    BILLING_JOB_LOCK_READY=1
+    break
+  fi
+  sleep 0.05
+done
+if [[ "$BILLING_JOB_LOCK_READY" != "1" ]]; then
+  echo "Billing Job-lock fixture did not reach its overlap point" >&2
+  exit 1
+fi
+BILLING_SETTLEMENT_REPLAY="$(PGAPPNAME=mychat-billing-direct-settlement \
+  "${PSQL[@]}" -qAt -d "$DB" -c \
+  "set role service_role; select (result->>'settled') || ':' || (result->>'replayed') || ':' || coalesce(result->>'status','null') from (select public.settle_job_admission('b1291000-0000-4000-8000-000000000001','pg16.concurrent') as result) receipt")"
+wait "$BILLING_LOCK_PID"
+unset BILLING_LOCK_PID
+BILLING_FINALIZE_RESULT="$(tr -d '[:space:]' < "$BILLING_LOCK_LOG")"
+rm -f "$BILLING_LOCK_LOG"
+unset BILLING_LOCK_LOG
+if [[ "$BILLING_FINALIZE_RESULT" != "true:false:failed" \
+   || "$BILLING_SETTLEMENT_REPLAY" != "true:true:settled" ]]; then
+  echo "Billing Job-first lock order failed: finalize=${BILLING_FINALIZE_RESULT} settlement=${BILLING_SETTLEMENT_REPLAY}" >&2
+  exit 1
+fi
+
+# Activation order can race, but its row-CAS head must converge on the greatest
+# version and can never leave the lower version current.
+BILLING_ACTIVATION_RESULTS="$({
+  "${PSQL[@]}" -qAt -d "$DB" -c \
+    "set role service_role; select public.pg16_activate_billing_price(2)" &
+  "${PSQL[@]}" -qAt -d "$DB" -c \
+    "set role service_role; select public.pg16_activate_billing_price(3)" &
+  wait
+})"
+BILLING_ACTIVATION_INVALID="$(printf '%s\n' "$BILLING_ACTIVATION_RESULTS" \
+  | grep -Ev '^(activated|rejected)$' || true)"
+if [[ -n "$BILLING_ACTIVATION_INVALID" ]] \
+   || [[ "$(printf '%s\n' "$BILLING_ACTIVATION_RESULTS" | grep -c '^activated$')" -lt 1 ]]; then
+  echo "Concurrent price activation returned an invalid result: ${BILLING_ACTIVATION_RESULTS}" >&2
+  exit 1
+fi
+
+# A refresh already in flight is rejected immediately. The cached snapshot
+# remains the constant-time readiness source while the bounded scan owns lock.
+PGAPPNAME=mychat-billing-reconciliation-lock "${PSQL[@]}" -q -d "$DB" -c \
+  "begin; select pg_advisory_xact_lock(5720260713290000); select pg_sleep(2); commit" \
+  >/dev/null &
+BILLING_LOCK_PID=$!
+BILLING_LOCK_READY=0
+for _ in {1..100}; do
+  if [[ "$("${PSQL[@]}" -qAt -d "$DB" -c \
+    "select count(*) from pg_stat_activity where application_name='mychat-billing-reconciliation-lock' and wait_event='PgSleep'")" == "1" ]]; then
+    BILLING_LOCK_READY=1
+    break
+  fi
+  sleep 0.05
+done
+if [[ "$BILLING_LOCK_READY" != "1" ]]; then
+  echo "Billing reconciliation lock fixture did not reach its overlap point" >&2
+  exit 1
+fi
+BILLING_BUSY_RESULT="$("${PSQL[@]}" -qAt -d "$DB" -c \
+  "set role service_role; select public.pg16_refresh_billing_snapshot()")"
+if [[ "$BILLING_BUSY_RESULT" != "busy" ]]; then
+  echo "Concurrent billing reconciliation was not rejected: ${BILLING_BUSY_RESULT}" >&2
+  exit 1
+fi
+wait "$BILLING_LOCK_PID"
+unset BILLING_LOCK_PID
+
+"${PSQL[@]}" -d "$DB" -v BILLING_VERIFY=1 \
+  -f "$ROOT/tests/billing-reconciliation-pg16.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713290000_billing_reconciliation_contract.sql" >/dev/null
+BILLING_REPLAY_HEALTH="$("${PSQL[@]}" -qAt -d "$DB" -c \
+  "set role service_role; select public.runtime_healthcheck_v13()")"
+if [[ "$BILLING_REPLAY_HEALTH" != "t" ]]; then
+  echo "Billing contract replay did not preserve release readiness" >&2
+  exit 1
+fi
+
+# Bind every recovery checkpoint to its pending immutable accounting delta. The
+# fixture proves replay/conflict behavior, rollback atomicity, exact two-attempt
+# settlement, and max-attempt SIGKILL settlement before a final migration replay.
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713300000_atomic_checkpoint_accounting.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713300000_atomic_checkpoint_accounting.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/tests/atomic-checkpoint-accounting-pg16.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713300000_atomic_checkpoint_accounting.sql" >/dev/null
+ATOMIC_CHECKPOINT_REPLAY_HEALTH="$("${PSQL[@]}" -qAt -d "$DB" -c \
+  "set role service_role; select public.runtime_healthcheck_v14()")"
+if [[ "$ATOMIC_CHECKPOINT_REPLAY_HEALTH" != "t" ]]; then
+  echo "Atomic checkpoint/accounting replay did not preserve v14 readiness" >&2
   exit 1
 fi
 

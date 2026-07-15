@@ -88,7 +88,10 @@ test("workspace status keeps the first filename intact and npm install does not 
   const changed = getChangedFiles(taskId, userId)
   assert.equal(changed.ok, true)
   if (changed.ok) assert.equal(changed.data.files[0]?.path, "README.md")
-  assert.equal(detectProjectCommands(taskId, userId).installCommand, "npm install --no-package-lock")
+  assert.equal(
+    detectProjectCommands(taskId, userId).installCommand,
+    "npm install --ignore-scripts --no-package-lock",
+  )
 })
 
 test("a clean pre-change snapshot can undo the first workspace edit", async t => {

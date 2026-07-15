@@ -26,14 +26,20 @@ export async function publishWorkspaceToPullRequest(
   userId: string,
   githubToken: string,
   supabase: SupabaseClient,
-  options: { message?: string; title?: string; body?: string; base?: string } = {},
+  options: {
+    message?: string
+    title?: string
+    body?: string
+    base?: string
+    signal?: AbortSignal
+  } = {},
 ): Promise<PublishResult> {
   const taskDetail = await getTaskDetail(supabase, userId, taskId)
   if (!("workspace" in taskDetail)) {
     return { ok: false, error: "任务不存在", stage: "task" }
   }
 
-  const status = getWorkspaceGitStatus(taskId, userId)
+  const status = await getWorkspaceGitStatus(taskId, userId, options.signal)
   if (!status.ok) return { ok: false, error: status.error, stage: "status" }
   const canResume = canResumeCommittedPublish(status, taskDetail)
   if (!status.hasChanges && !canResume) {
@@ -76,14 +82,14 @@ export async function publishWorkspaceToPullRequest(
       changedFiles: [],
     }
   } else {
-    commit = await commitWorkspaceChanges(taskId, userId, message, supabase)
+    commit = await commitWorkspaceChanges(taskId, userId, message, supabase, options.signal)
     if (!commit.ok) {
       await updateTaskStatus(supabase, userId, taskId, "failed", { error: commit.error })
       return { ok: false, error: commit.error, stage: "commit", status, commit }
     }
   }
 
-  const push = await pushAgentBranch(taskId, userId, githubToken, supabase)
+  const push = await pushAgentBranch(taskId, userId, githubToken, supabase, options.signal)
   if (!push.ok) {
     await updateTaskStatus(supabase, userId, taskId, "failed", { error: push.error })
     return { ok: false, error: push.error, stage: "push", status, commit, push }
@@ -94,7 +100,12 @@ export async function publishWorkspaceToPullRequest(
     userId,
     githubToken,
     supabase,
-    { title: options.title, body: options.body, base: options.base },
+    {
+      title: options.title,
+      body: options.body,
+      base: options.base,
+      signal: options.signal,
+    },
   )
   if (!pullRequest.ok) {
     await updateTaskStatus(supabase, userId, taskId, "failed", { error: pullRequest.error })

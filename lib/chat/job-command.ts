@@ -80,11 +80,12 @@ export async function enqueueChatJob(input: EnqueueChatJobInput) {
       payloadBytes: reference.bytes,
       payloadContentType: reference.contentType,
       outputKind,
+      billingClass: body.endpointId ? 'customer' : 'platform',
       requestId: input.requestId,
     },
     budget: outputKind === 'text' ? {
       wallTimeMs: 10 * 60_000,
-      tokenLimit: 200_000,
+      tokenLimit: 160_000,
       toolCallLimit: 64,
     } : {
       wallTimeMs: 15 * 60_000,

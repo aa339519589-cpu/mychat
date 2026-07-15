@@ -40,8 +40,10 @@ async function runCommand(
   taskId: string,
   command: string,
   timeoutMs = 120_000,
+  repoIsPrivate = false,
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut: boolean }> {
   const result = await runInWorkspace(supabase, userId, taskId, command, {
+    repoIsPrivate,
     timeoutMs,
     maxOutputChars: 100_000,
   })
@@ -63,6 +65,8 @@ export async function runVerification(
     install?: boolean
     steps?: ("lint" | "typecheck" | "test" | "build")[]
     timeoutPerStep?: number
+    totalTimeoutMs?: number
+    repoIsPrivate?: boolean
   } = {},
 ): Promise<VerifyResult> {
   const root = workspaceRoot(taskId, userId)
@@ -73,6 +77,12 @@ export async function runVerification(
   const detected = detectProjectCommands(taskId, userId)
   const stepNames = options.steps ?? ["lint", "typecheck", "test", "build"]
   const timeout = options.timeoutPerStep ?? 120_000
+  const deadline = options.totalTimeoutMs === undefined
+    ? null
+    : Date.now() + Math.max(1, options.totalTimeoutMs)
+  const remainingTimeout = (maximum: number) => deadline === null
+    ? maximum
+    : Math.max(1, Math.min(maximum, deadline - Date.now()))
 
   // 写入 detected commands artifact
   await addArtifact(supabase, userId, {
@@ -102,7 +112,14 @@ export async function runVerification(
       label: `安装依赖：${detected.installCommand}`,
       detail: detected.packageManager,
     })
-    const ir = await runCommand(supabase, userId, taskId, detected.installCommand, 180_000)
+    const ir = await runCommand(
+      supabase,
+      userId,
+      taskId,
+      detected.installCommand,
+      remainingTimeout(180_000),
+      options.repoIsPrivate === true,
+    )
     if (ir.exitCode !== 0) {
       return {
         ok: false,
@@ -156,7 +173,14 @@ export async function runVerification(
     })
 
     const start = Date.now()
-    const r = await runCommand(supabase, userId, taskId, command, timeout)
+    const r = await runCommand(
+      supabase,
+      userId,
+      taskId,
+      command,
+      remainingTimeout(timeout),
+      options.repoIsPrivate === true,
+    )
     const duration = Date.now() - start
 
     const parsed = parseAllErrors(r.stdout, r.stderr, command)

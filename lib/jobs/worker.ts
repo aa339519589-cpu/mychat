@@ -1,17 +1,22 @@
 import { log } from '@/lib/logger'
 import {
   JOB_LIMITS,
-  assertJobFence,
   isJobIdentifier,
   isJobName,
   type JobFence,
   type JobRecord,
 } from './contracts'
 import { JobRuntimeError, isJobRuntimeError, normalizeJobError } from './errors'
-import type { JobFinalizeResult, JobRepository } from './repository'
+import type { JobRepository } from './repository'
 import { decideJobRetry } from './retry-policy'
+import { JobBudgetController } from './budget'
 import { boundedJobInteger, defaultJobSleep, nextJobBackoff } from './worker-config'
 import { createActiveExecution, type ActiveExecution } from './worker-execution'
+import {
+  createJobExecutionContext,
+  observeJobFinalization,
+  persistJobAccounting,
+} from './worker-context'
 import type { JobExecutionContext, JobHandler, JobWorkerOptions } from './worker-types'
 
 export type { JobExecutionContext, JobHandler, JobHandlerResult, JobWorkerOptions } from './worker-types'
@@ -171,37 +176,70 @@ export class JobWorker {
   private async execute(job: JobRecord): Promise<void> {
     const startedAt = this.now()
     const { execution, fence } = createActiveExecution(job, this.workerId)
+    const budget = new JobBudgetController(job, this.now, error => {
+      if (!execution.controller.signal.aborted) execution.controller.abort(error)
+    })
     this.active.set(job.id, execution)
-    const context = this.context(job, fence, execution)
+    const context = createJobExecutionContext({
+      job, fence, execution, budget, repository: this.repository, now: this.now,
+    })
     const renewal = this.renewLease(fence, execution)
     try {
+      budget.armWallTimer()
+      budget.assertWithinLimits()
       const handler = this.handlers[job.type]
       if (!handler) throw new JobRuntimeError(
         'JOB_HANDLER_UNAVAILABLE',
         `No handler is registered for job type ${job.type}`,
       )
       const outcome = await handler(context)
+      if ('ledgerEntries' in outcome) {
+        // Merge usage before the authority assertion. If the handler crossed a
+        // wall/token boundary at return time, the over-limit usage still has to
+        // reach the attempt ledger before the job is failed.
+        for (const entry of outcome.ledgerEntries ?? []) budget.reportAccounting(entry)
+      }
       context.assertAuthority()
       if (outcome.status === 'awaiting_input') {
-        await this.mutate(context, this.repository.checkpoint({
-          ...fence,
+        await context.checkpoint({
           phase: outcome.phase,
           checkpoint: outcome.checkpoint,
           progress: outcome.progress,
           resumable: outcome.resumable,
           status: outcome.status,
-        }))
+        })
       } else {
+        let cancelRequested: boolean
+        try {
+          cancelRequested = await persistJobAccounting({
+            context, budget, repository: this.repository, execution,
+          })
+        } catch (accountingError) {
+          log.error('jobs', 'Job accounting failed closed before state transition', {
+            jobId: context.job.id,
+            workerId: this.workerId,
+            leaseVersion: context.fence.leaseVersion,
+            code: normalizeJobError(accountingError).code,
+          })
+          return
+        }
+        if (cancelRequested) throw new JobRuntimeError(
+          'JOB_CANCEL_REQUESTED',
+          'Job cancellation was requested',
+        )
         const finalization = await this.repository.finalize({
           ...fence,
           status: outcome.status,
           result: 'result' in outcome ? outcome.result : undefined,
           error: outcome.status === 'failed' ? outcome.error : undefined,
-          ledgerEntries: outcome.status === 'completed' ? outcome.ledgerEntries : undefined,
           outbox: outcome.status === 'completed' ? outcome.outbox : undefined,
         })
-        if (this.observeFinalization(context, finalization)) {
-          this.onFinalized?.({ job, status: outcome.status, durationMs: Math.max(0, this.now() - startedAt) })
+        if (observeJobFinalization({ context, result: finalization, execution })) {
+          this.onFinalized?.({
+            job,
+            status: finalization.status,
+            durationMs: Math.max(0, this.now() - startedAt),
+          })
         }
       }
     } catch (error) {
@@ -211,57 +249,10 @@ export class JobWorker {
         startedAt,
       )
     } finally {
+      budget.dispose()
       execution.renewStop.abort()
       await renewal
       this.active.delete(job.id)
-    }
-  }
-
-  private context(job: JobRecord, fence: JobFence, execution: ActiveExecution): JobExecutionContext {
-    const assertAuthority = () => {
-      assertJobFence(fence)
-      if (!execution.controller.signal.aborted && this.now() >= execution.leaseDeadline) {
-        execution.controller.abort(new JobRuntimeError('JOB_LEASE_STALE', 'Job lease expired'))
-      }
-      if (execution.controller.signal.aborted) throw execution.controller.signal.reason
-    }
-    const context: JobExecutionContext = {
-      job,
-      fence,
-      signal: execution.controller.signal,
-      assertAuthority,
-      appendEvents: async events => {
-        assertAuthority()
-        await this.mutate(context, this.repository.appendEvents({ ...fence, events }))
-      },
-      checkpoint: async input => {
-        assertAuthority()
-        await this.mutate(context, this.repository.checkpoint({
-          ...fence,
-          ...input,
-          status: 'running',
-        }))
-      },
-    }
-    return context
-  }
-
-  private async mutate(
-    context: JobExecutionContext,
-    operation: Promise<{ accepted: boolean; cancelRequested: boolean }>,
-  ): Promise<void> {
-    const result = await operation
-    if (result.cancelRequested) {
-      const error = new JobRuntimeError('JOB_CANCEL_REQUESTED', 'Job cancellation was requested')
-      const execution = this.active.get(context.job.id)
-      execution?.controller.abort(error)
-      throw error
-    }
-    if (!result.accepted) {
-      const error = new JobRuntimeError('JOB_LEASE_STALE', 'Job fencing token was rejected')
-      const execution = this.active.get(context.job.id)
-      execution?.controller.abort(error)
-      throw error
     }
   }
 
@@ -306,27 +297,13 @@ export class JobWorker {
     }
   }
 
-  private observeFinalization(context: JobExecutionContext, result: JobFinalizeResult): boolean {
-    if (result.accepted) return true
-    if (result.replayed) {
-      log.info('jobs', 'Job terminal finalization replayed', {
-        jobId: context.job.id,
-        status: result.status,
-      })
-      return true
-    }
-    const error = new JobRuntimeError('JOB_LEASE_STALE', 'Job finalization fencing token was rejected')
-    this.active.get(context.job.id)?.controller.abort(error)
-    throw error
-  }
-
   private async handleExecutionError(
     context: JobExecutionContext,
     error: unknown,
     startedAt: number,
   ): Promise<void> {
-    const normalized = normalizeJobError(error)
-    if (normalized.code === 'JOB_LEASE_STALE' || normalized.code === 'JOB_WORKER_SHUTDOWN') {
+    let normalized = normalizeJobError(error)
+    if (normalized.code === 'JOB_LEASE_STALE') {
       log.warn('jobs', 'Job execution stopped without finalization', {
         jobId: context.job.id,
         workerId: this.workerId,
@@ -335,6 +312,30 @@ export class JobWorker {
       })
       return
     }
+    const budget = context.budget
+    try {
+      const execution = this.active.get(context.job.id)
+      if (!execution) throw new JobRuntimeError('JOB_LEASE_STALE', 'Job execution is no longer active')
+      const cancelRequested = await persistJobAccounting({
+        context,
+        budget: budget as JobBudgetController,
+        repository: this.repository,
+        execution,
+      })
+      if (cancelRequested) normalized = new JobRuntimeError(
+        'JOB_CANCEL_REQUESTED',
+        'Job cancellation was requested',
+      )
+    } catch (accountingError) {
+      log.error('jobs', 'Job accounting failed closed; retry and finalization were suppressed', {
+        jobId: context.job.id,
+        workerId: this.workerId,
+        leaseVersion: context.fence.leaseVersion,
+        code: normalizeJobError(accountingError).code,
+      })
+      return
+    }
+    if (this.stopping || normalized.code === 'JOB_WORKER_SHUTDOWN') return
     let terminalError = normalized
     let poisonReason: string | null = null
     if (normalized.code !== 'JOB_CANCEL_REQUESTED' && normalized.retryable) {
@@ -350,7 +351,8 @@ export class JobWorker {
       poisonReason = retry.poisonReason
     }
     try {
-      if (terminalError.code !== 'JOB_CANCEL_REQUESTED') context.assertAuthority()
+      if (terminalError.code !== 'JOB_CANCEL_REQUESTED'
+        && terminalError.code !== 'JOB_BUDGET_EXCEEDED') context.assertAuthority()
       const finalization = await this.repository.finalize({
         ...context.fence,
         status: terminalError.code === 'JOB_CANCEL_REQUESTED' ? 'cancelled' : 'failed',
@@ -367,10 +369,12 @@ export class JobWorker {
           },
         }] : undefined,
       })
-      if (this.observeFinalization(context, finalization)) {
+      const execution = this.active.get(context.job.id)
+      if (!execution) throw new JobRuntimeError('JOB_LEASE_STALE', 'Job execution is no longer active')
+      if (observeJobFinalization({ context, result: finalization, execution })) {
         this.onFinalized?.({
           job: context.job,
-          status: terminalError.code === 'JOB_CANCEL_REQUESTED' ? 'cancelled' : 'failed',
+          status: finalization.status,
           durationMs: Math.max(0, this.now() - startedAt),
         })
       }

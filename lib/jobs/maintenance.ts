@@ -9,7 +9,10 @@ function normalized(value: string | undefined): string {
   return value?.trim().toLowerCase() ?? ''
 }
 
-/** Keep the legacy generation flag as an alias during the maintenance bridge. */
+/**
+ * One maintenance switch covers admission and execution. The legacy
+ * GENERATION_MAINTENANCE_MODE flag remains an alias for safe rolling upgrades.
+ */
 export function jobMaintenanceMode(
   environment: JobMaintenanceEnvironment = {
     MYCHAT_MAINTENANCE_MODE: process.env.MYCHAT_MAINTENANCE_MODE,

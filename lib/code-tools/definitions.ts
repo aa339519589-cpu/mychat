@@ -39,11 +39,13 @@ export type CodeToolExecutorOptions = {
   state: ToolState
   signal?: AbortSignal
   canExecute: boolean
+  sandboxTimeoutMs?: () => number | null
 }
 export function buildCodeTools(options: {
   isWorkspace: boolean
   executePermission: string
   canExecute: boolean
+  allowExternalNetwork?: boolean
 }) {
   const { isWorkspace } = options
   const allTools = [
@@ -69,5 +71,9 @@ export function buildCodeTools(options: {
   ]
 
   const unavailable = new Set(isWorkspace ? ['create_repo', 'enable_pages'] : ['apply_patch', 'publish'])
+  if (options.allowExternalNetwork === false) {
+    unavailable.add('search')
+    unavailable.add('fetch_url')
+  }
   return allTools.filter(tool => !unavailable.has(tool.function.name))
 }

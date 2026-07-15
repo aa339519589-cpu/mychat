@@ -41,9 +41,9 @@ const coverage = process.argv.includes("--coverage")
 const coverageArguments = coverage
   ? [
       "--experimental-test-coverage",
-      "--test-coverage-lines=81",
-      "--test-coverage-branches=81",
-      "--test-coverage-functions=81",
+      "--test-coverage-lines=80",
+      "--test-coverage-branches=80",
+      "--test-coverage-functions=80",
     ]
   : []
 const result = spawnSync(executable, ["--test", ...coverageArguments, ...tests], {

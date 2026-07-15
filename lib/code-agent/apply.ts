@@ -9,6 +9,7 @@ import { prepareAgentOperation } from './operation-plan'
 export async function applyCodeChanges(input: {
   request: CodeApplyRequest
   client: SupabaseClient
+  commandClient: SupabaseClient
   userId: string
   authClass: 'anonymous' | 'registered'
 }): Promise<CodeApplyOutcome & { headers?: Record<string, string> }> {
@@ -17,6 +18,7 @@ export async function applyCodeChanges(input: {
   const prepared = await prepareAgentOperation(client, userId, request)
   return requestOrEnqueueAgentOperation({
     client,
+    commandClient: input.commandClient,
     userId,
     authClass: input.authClass,
     prepared,

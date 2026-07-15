@@ -93,6 +93,26 @@ function storedResult(result: string): { reference: JsonObject; replaySafe: bool
   }
 }
 
+function replayedSucceededResult(effect: ToolEffectResult): string {
+  const result = effect.resultRef?.result
+  if (typeof result !== 'string') {
+    throw new JobRuntimeError(
+      'JOB_RETRY_UNSAFE',
+      'A completed tool effect has no replayable result; refusing to execute it again',
+      { class: 'internal', retryable: false },
+    )
+  }
+  const bytes = new TextEncoder().encode(result)
+  if (effect.resultRef?.sha256 !== sha256JobBytes(bytes)) {
+    throw new JobRuntimeError(
+      'JOB_RETRY_UNSAFE',
+      'A completed tool effect result failed its integrity check',
+      { class: 'internal', retryable: false },
+    )
+  }
+  return result
+}
+
 export async function executeFencedToolEffect(input: {
   client: SupabaseClient
   fence: JobFence
@@ -118,9 +138,15 @@ export async function executeFencedToolEffect(input: {
     replaySafe: input.replaySafe,
     metadata: { argsHash },
   })
-  if (reserved.replayed && reserved.status === 'succeeded'
-    && typeof reserved.resultRef?.result === 'string') {
-    return { result: reserved.resultRef.result, replayed: true }
+  if (reserved.replayed && reserved.status === 'succeeded') {
+    return { result: replayedSucceededResult(reserved), replayed: true }
+  }
+  if (reserved.replayed && reserved.status && reserved.status !== 'reserved') {
+    throw new JobRuntimeError(
+      'JOB_RETRY_UNSAFE',
+      `Tool effect is already ${reserved.status}; refusing an ambiguous replay`,
+      { class: 'internal', retryable: false },
+    )
   }
   await recordEffect({ ...common, status: 'running', replaySafe: input.replaySafe })
   try {

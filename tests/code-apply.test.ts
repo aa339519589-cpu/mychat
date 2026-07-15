@@ -34,6 +34,35 @@ test('code apply request validates actions before external work', () => {
     () => parseCodeApplyRequest({ taskId: '123e4567-e89b-42d3-a456-426614174000', actions: [{ kind: 'delete_file', path: '../secret' }] }),
     /path 无效/,
   )
+  assert.throws(
+    () => parseCodeApplyRequest({
+      taskId: '123e4567-e89b-42d3-a456-426614174000',
+      actions: [{ kind: 'write_file', path: '.env', newContent: 'SAFE=value' }],
+    }),
+    /关键安全文件/,
+  )
+  assert.throws(
+    () => parseCodeApplyRequest({
+      taskId: '123e4567-e89b-42d3-a456-426614174000',
+      actions: [{
+        kind: 'write_file',
+        path: 'src/config.ts',
+        newContent: 'export const token = "ghp_abcdefghijklmnopqrstuvwxyzABCDEFGHIJ"',
+      }],
+    }),
+    /密钥或凭据/,
+  )
+  assert.throws(
+    () => parseCodeApplyRequest({
+      taskId: '123e4567-e89b-42d3-a456-426614174000',
+      actions: [{
+        kind: 'write_file',
+        path: 'cert.txt',
+        newContent: '-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----',
+      }],
+    }),
+    /密钥或凭据/,
+  )
 })
 
 test('workspace publishing cannot override the task-bound repository', () => {

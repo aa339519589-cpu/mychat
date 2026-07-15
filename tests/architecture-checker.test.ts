@@ -123,6 +123,51 @@ test("architecture checker prevents generic LLM code from depending on agents", 
   assert.match(result.stderr, /domain-direction/)
 })
 
+test("architecture checker prevents API routes from running a complete LLM loop", () => {
+  const result = runFixture({
+    "lib/llm/agent-loop.ts": "export const runAgentLoop = async () => undefined\n",
+    "app/api/chat/route.ts": "import { runAgentLoop } from '@/lib/llm/agent-loop'\nexport const POST = runAgentLoop\n",
+  })
+
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /api-execution-boundary/)
+  assert.match(result.stderr, /lib\/llm\/agent-loop\.ts/)
+})
+
+test("architecture checker keeps deep provider transports behind worker-owned facades", () => {
+  const result = runFixture({
+    "lib/llm/openai-compatible/safe-fetch.ts": "export const safeModelEndpointFetch = fetch\n",
+    "app/api/chat/route.ts": "import { safeModelEndpointFetch } from '@/lib/llm/openai-compatible/safe-fetch'\nexport const POST = safeModelEndpointFetch\n",
+  })
+
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /api-execution-boundary/)
+  assert.match(result.stderr, /openai-compatible\/safe-fetch\.ts/)
+})
+
+test("architecture checker rejects process and E2B execution imports in API routes", async t => {
+  for (const specifier of ["node:child_process", "child_process", "e2b", "e2b/sandbox"]) {
+    await t.test(specifier, () => {
+      const result = runFixture({
+        "app/api/chat/route.ts": `import runtime from '${specifier}'\nexport const POST = runtime\n`,
+      })
+
+      assert.equal(result.status, 1)
+      assert.match(result.stderr, /api-execution-boundary/)
+      assert.match(result.stderr, new RegExp(specifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
+    })
+  }
+})
+
+test("architecture checker allows API routes to enqueue through a command facade", () => {
+  const result = runFixture({
+    "lib/chat/job-command.ts": "export const enqueueChatJob = async () => ({ id: 'job' })\n",
+    "app/api/chat/route.ts": "import { enqueueChatJob } from '@/lib/chat/job-command'\nexport const POST = enqueueChatJob\n",
+  })
+
+  assert.equal(result.status, 0, result.stderr)
+})
+
 test("architecture checker rejects new runtime cycles", () => {
   const result = runFixture({
     "lib/one.ts": "import { two } from './two'\nexport const one = two\n",

@@ -4,7 +4,7 @@ import { isJsonValue, type JsonObject } from './contracts'
 import { canonicalJobJson, sha256JobBytes } from './canonical'
 
 const JOB_PAYLOAD_BUCKET = 'job-payloads' as const
-const MAX_JOB_PAYLOAD_BYTES = 48 * 1024 * 1024
+const MAX_JOB_PAYLOAD_BYTES = 8 * 1024 * 1024
 const SCOPE = /^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,127})$/
 
 export type JobPayloadReference = {

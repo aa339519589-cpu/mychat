@@ -10,23 +10,29 @@ import type {
 } from './contracts'
 import type {
   JobAccounting,
+  JobAccountingMutationResult,
   JobClaimResult,
+  JobCheckpointAccountingMutationResult,
   JobEventsMutationResult,
-  JobFencedMutationResult,
   JobFinalizeResult,
   JobOutboxInput,
   JobRenewResult,
+  JobResumeResult,
   JobRetryResult,
 } from './repository-types'
 
 export type {
   JobAccounting,
+  JobAccountingMutationResult,
   JobClaimResult,
+  JobCheckpointAccountingReason,
+  JobCheckpointAccountingMutationResult,
   JobEventsMutationResult,
   JobFencedMutationResult,
   JobFinalizeResult,
   JobOutboxInput,
   JobRenewResult,
+  JobResumeResult,
   JobRetryResult,
 } from './repository-types'
 
@@ -45,13 +51,28 @@ export interface JobRepository {
   appendEvents(input: JobFence & {
     events: readonly JobEventDraft[]
   }): Promise<JobEventsMutationResult>
-  checkpoint(input: JobFence & {
+  checkpointWithAccounting(input: JobFence & {
+    attempt: number
+    expectedCheckpointVersion: number
+    checkpointKey: string
     phase: string
     checkpoint: import('./contracts').JsonObject
     progress?: import('./contracts').JsonObject
     resumable: boolean
     status?: Extract<JobStatus, 'running' | 'awaiting_input'>
-  }): Promise<JobFencedMutationResult>
+    ledgerEntries: readonly JobAccounting[]
+  }): Promise<JobCheckpointAccountingMutationResult>
+  recordAccounting(input: JobFence & {
+    attempt: number
+    ledgerEntries: readonly JobAccounting[]
+  }): Promise<JobAccountingMutationResult>
+  resume(input: {
+    jobId: string
+    principalId: string
+    expectedCheckpointVersion: number
+    idempotencyKey: string
+    resumeInput: import('./contracts').JsonObject
+  }): Promise<JobResumeResult>
   finalize(input: JobFence & {
     status: JobTerminalStatus
     result?: JsonValue

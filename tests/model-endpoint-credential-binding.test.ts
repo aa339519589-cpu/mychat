@@ -144,6 +144,25 @@ test("plaintext, v1, and v2 secrets require reconnect while an empty v3 no-auth 
   assert.equal(endpointSummary(row("legacy-plaintext")).needsReconnect, true)
 })
 
+test("model endpoint credential rotation accepts only the explicit previous key", { concurrency: false }, t => {
+  const current = process.env.AGENT_CREDENTIAL_KEY
+  const previous = process.env.AGENT_CREDENTIAL_KEY_PREVIOUS
+  process.env.AGENT_CREDENTIAL_KEY = SECRET_A
+  const sealed = sealModelEndpointKey("rotating-endpoint-key", context())
+  process.env.AGENT_CREDENTIAL_KEY = SECRET_B
+  process.env.AGENT_CREDENTIAL_KEY_PREVIOUS = SECRET_A
+  t.after(() => {
+    if (current === undefined) delete process.env.AGENT_CREDENTIAL_KEY
+    else process.env.AGENT_CREDENTIAL_KEY = current
+    if (previous === undefined) delete process.env.AGENT_CREDENTIAL_KEY_PREVIOUS
+    else process.env.AGENT_CREDENTIAL_KEY_PREVIOUS = previous
+  })
+
+  assert.equal(openModelEndpointKey(sealed, context()), "rotating-endpoint-key")
+  delete process.env.AGENT_CREDENTIAL_KEY_PREVIOUS
+  assert.equal(openModelEndpointKey(sealed, context()), null)
+})
+
 test("automatic chat authentication stores the first actually working auth type", { concurrency: false }, async t => {
   const mutableEnv = process.env as Record<string, string | undefined>
   const previousNodeEnv = mutableEnv.NODE_ENV

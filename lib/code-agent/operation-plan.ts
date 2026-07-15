@@ -11,6 +11,10 @@ import { sha256JobValue } from '@/lib/jobs/canonical'
 import type { JsonObject } from '@/lib/jobs/contracts'
 import type { PlanAction } from '@/lib/code-data'
 import type { CodeApplyRequest } from './apply-request'
+import {
+  assessInitialRepositoryPublication,
+  type PublicationFile,
+} from '@/lib/agent/publication-safety'
 
 export type AgentOperationKind = 'initial_repository' | 'workspace_publish'
 
@@ -76,6 +80,13 @@ function normalizeInitialActions(actions: PlanAction[]): PlanAction[] {
   if (creates.length !== 1) throw new Error('新项目必须且只能包含一个 create_repo 操作')
   if (pages.length > 1) throw new Error('enable_pages 不能重复')
   if (actions.length > 22) throw new Error('单次最多包含 20 个文件改动')
+
+  const safety = assessInitialRepositoryPublication(actions.flatMap<PublicationFile>(action => {
+    if (action.kind === 'write_file') return [{ path: action.path, content: action.newContent }]
+    if (action.kind === 'delete_file') return [{ path: action.path, content: null }]
+    return []
+  }))
+  if (!safety.ok) throw new Error(safety.reason)
 
   const seen = new Set<string>()
   let totalBytes = 0

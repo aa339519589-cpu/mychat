@@ -19,6 +19,12 @@ const USER_B = '22222222-2222-4222-8222-222222222222'
 const CONNECTION_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const TOKEN = 'synthetic-github-oauth-token-that-must-never-reach-a-cookie-or-database'
 
+test('GitHub OAuth does not request workflow administration by default', () => {
+  const route = readFileSync(join(process.cwd(), 'app/api/auth/github/route.ts'), 'utf8')
+  assert.match(route, /scope: 'repo read:user'/)
+  assert.doesNotMatch(route, /scope: '[^']*workflow/)
+})
+
 type RpcResult = { data: unknown; error: null | { message: string } }
 
 function rpcClient(
@@ -66,6 +72,25 @@ test('GitHub credentials are encrypted before persistence and AAD-bound to user/
   assert.equal(openGitHubCredential(ciphertext as string, { userId: USER_B, login: 'octocat' }), null)
   assert.equal(openGitHubCredential(ciphertext as string, { userId: USER_A, login: 'other-user' }), null)
   assert.deepEqual(captured.args.input_scopes, ['repo', 'workflow'])
+})
+
+test('GitHub credential rotation decrypts with only the explicit previous key', { concurrency: false }, t => {
+  const current = process.env.AGENT_CREDENTIAL_KEY
+  const previous = process.env.AGENT_CREDENTIAL_KEY_PREVIOUS
+  process.env.AGENT_CREDENTIAL_KEY = SECRET
+  const ciphertext = sealGitHubCredential(TOKEN, { userId: USER_A, login: 'octocat' })
+  process.env.AGENT_CREDENTIAL_KEY = `${SECRET}-rotated`
+  process.env.AGENT_CREDENTIAL_KEY_PREVIOUS = SECRET
+  t.after(() => {
+    if (current === undefined) delete process.env.AGENT_CREDENTIAL_KEY
+    else process.env.AGENT_CREDENTIAL_KEY = current
+    if (previous === undefined) delete process.env.AGENT_CREDENTIAL_KEY_PREVIOUS
+    else process.env.AGENT_CREDENTIAL_KEY_PREVIOUS = previous
+  })
+
+  assert.equal(openGitHubCredential(ciphertext, { userId: USER_A, login: 'octocat' }), TOKEN)
+  delete process.env.AGENT_CREDENTIAL_KEY_PREVIOUS
+  assert.equal(openGitHubCredential(ciphertext, { userId: USER_A, login: 'octocat' }), null)
 })
 
 test('workers retrieve by explicit user id and user access additionally requires the opaque connection id', { concurrency: false }, async t => {

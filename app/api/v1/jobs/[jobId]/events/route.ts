@@ -3,6 +3,8 @@ import { apiErrorResponseV1 } from '@/lib/api/errors'
 import { resolveAuth } from '@/lib/api/guard'
 import { createJobEventStream } from '@/lib/jobs/event-stream'
 import { readOwnedJob } from '@/lib/jobs/read-model'
+import { acquireJobEventStreamLease } from '@/lib/jobs/stream-admission'
+import { clientAddress } from '@/lib/api/request'
 import { isUuid } from '@/lib/validation'
 
 const SEQUENCE = /^(?:0|[1-9][0-9]{0,15})$/
@@ -33,6 +35,18 @@ export async function GET(request: NextRequest, context: { params: Promise<{ job
     status: 503, code: 'DEPENDENCY_UNAVAILABLE', message: '作业事件暂时不可用', retryable: true,
     headers: { 'Retry-After': '1' },
   })
+  const admission = await acquireJobEventStreamLease({
+    principalId: auth.userId,
+    jobId,
+    address: clientAddress(request),
+  })
+  if (!admission.acquired) return apiErrorResponseV1(request, {
+    status: admission.kind === 'capacity' ? 429 : 503,
+    code: admission.kind === 'capacity' ? 'RATE_LIMITED' : 'DEPENDENCY_UNAVAILABLE',
+    message: admission.kind === 'capacity' ? '作业事件连接数已达上限' : '作业事件服务暂时不可用',
+    retryable: true,
+    headers: { 'Retry-After': String(admission.retryAfterSeconds) },
+  })
   const stream = createJobEventStream({
     client: auth.supabase,
     principalId: auth.userId,
@@ -40,6 +54,9 @@ export async function GET(request: NextRequest, context: { params: Promise<{ job
     fromSequence,
     initialStatus: result.value.status,
     requestSignal: request.signal,
+    maxDurationMs: admission.lease.maxDurationMs,
+    renewAdmission: admission.lease.renew,
+    onClosed: admission.lease.release,
   })
   return new Response(stream, { headers: {
     'Content-Type': 'text/event-stream; charset=utf-8',

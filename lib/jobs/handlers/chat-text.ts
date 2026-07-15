@@ -21,6 +21,7 @@ import { executeFencedToolEffect } from '../tool-effects'
 import { JobRuntimeError } from '../errors'
 import {
   chatTokenAccounting,
+  restoredHistoricalTokens,
   restoredTrajectory,
   trajectoryCheckpoint,
 } from './chat-text-runtime'
@@ -81,7 +82,9 @@ export async function runChatTextJob(
     if ('media' in event) pendingMedia.push(event.media)
     else writer.emit(event)
   }
-  let totalTokens = 0
+  const historicalTokens = restoredHistoricalTokens(context.job)
+  let attemptTokens = 0
+  let totalTokens = historicalTokens
   let persistedMedia: DurableMediaPersistenceBatch | null = null
 
   try {
@@ -134,13 +137,19 @@ export async function runChatTextJob(
     const processedAttachments = await ocrScannedPdfs(command.attachments, context.signal)
     await injectAttachmentsOpenAI(modelMessages, processedAttachments)
     const baseLength = modelMessages.length
-    const restored = restoredTrajectory(context.job.checkpoint)
+    if (context.job.checkpoint && !context.job.checkpoint.resumable) {
+      throw new JobRuntimeError('JOB_RETRY_UNSAFE', 'Chat checkpoint is explicitly non-resumable', {
+        class: 'internal', retryable: false,
+      })
+    }
+    const restored = restoredTrajectory(context.job.checkpoint?.data)
     if (restored.length) {
       modelMessages.push(...restored)
       await writer.append('job.resumed', { checkpointMessages: restored.length })
     }
     let checkpointRound = 0
     const executeTool: ExecuteTool = async (name, args, execution) => {
+      context.budget.consumeToolCall()
       const toolCallId = safeToolCallId(execution?.toolCallId)
       await writer.append('tool.requested', { toolCallId, toolName: name }, `${toolCallId}:requested`)
       let outcomeEvent: object | undefined
@@ -184,7 +193,14 @@ export async function runChatTextJob(
       maxRounds: SAFETY_ROUNDS,
       leakedRetry: true,
       autoContinue: { maxContinuations: 4 },
-      onUsage: value => { totalTokens = value },
+      onUsage: async value => {
+        attemptTokens = value
+        totalTokens = historicalTokens + attemptTokens
+        for (const entry of chatTokenAccounting(input, context.job.id, attemptTokens)) {
+          context.reportAccounting(entry)
+        }
+        await context.flushAccounting()
+      },
       onCheckpoint: async trajectory => {
         checkpointRound++
         const checkpoint = trajectoryCheckpoint(trajectory, baseLength, checkpointRound)
@@ -231,7 +247,7 @@ export async function runChatTextJob(
         model: selection.model,
         totalTokens,
       }),
-      ledgerEntries: chatTokenAccounting(input, context.job.id, totalTokens),
+      ledgerEntries: chatTokenAccounting(input, context.job.id, attemptTokens),
     }
   } catch (error) {
     if (persistedMedia) {

@@ -6,6 +6,7 @@ import { applyCodeChanges } from '@/lib/code-agent/apply'
 import { parseCodeApplyRequest } from '@/lib/code-agent/apply-request'
 import { getCurrentGitHubConnectionStatus } from '@/lib/github-session'
 import { expensiveWriteMaintenanceResponse } from '@/lib/api/maintenance'
+import { createAdminClient } from '@/lib/supabase/admin'
 
 /** DB-only transport: authenticate, strictly validate and atomically enqueue. */
 export async function POST(request: NextRequest) {
@@ -28,6 +29,8 @@ export async function POST(request: NextRequest) {
     return requestErrorResponse(error)
   }
   try {
+    const commandClient = createAdminClient()
+    if (!commandClient) throw new Error('command authority unavailable')
     const connection = await getCurrentGitHubConnectionStatus({
       purpose: 'agent.operation.enqueue', requestId: requestId(request),
     })
@@ -38,15 +41,16 @@ export async function POST(request: NextRequest) {
     const outcome = await applyCodeChanges({
       request: input,
       client: auth.supabase,
+      commandClient,
       userId: auth.userId,
       authClass: auth.isAnonymous ? 'anonymous' : 'registered',
     })
     return Response.json(outcome.body, { status: outcome.status, headers: outcome.headers })
-  } catch (error) {
+  } catch {
     return apiErrorResponseV1(request, {
       status: 503,
       code: 'DEPENDENCY_UNAVAILABLE',
-      message: error instanceof Error ? error.message : '发布控制面暂时不可用',
+      message: '发布控制面暂时不可用',
       retryable: true,
     })
   }

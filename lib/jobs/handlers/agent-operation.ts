@@ -1,9 +1,10 @@
-import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
+import { isolatedGitEnvironment } from '@/lib/agent/git-environment'
 import { createWorkspaceForTask } from '@/lib/agent/workspace'
 import { workspaceRoot } from '@/lib/agent/workspace-paths'
 import { restoreWorkspaceSnapshot } from '@/lib/agent/snapshot'
 import { publishWorkspaceToPullRequest } from '@/lib/agent/git-publish'
+import { runGit } from '@/lib/agent/git-publish/git-command'
 import { getGitHubCredentialForUser } from '@/lib/github-connection'
 import { enablePages, mergePullRequest, repoMeta, type FileWrite } from '@/lib/github'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -11,6 +12,10 @@ import type { JsonObject } from '../contracts'
 import { JobRuntimeError } from '../errors'
 import { JobEventWriter, jsonResult } from '../event-writer'
 import { executeFencedToolEffect } from '../tool-effects'
+import {
+  assessInitialRepositoryPublication,
+  type PublicationFile,
+} from '@/lib/agent/publication-safety'
 import type { JobExecutionContext, JobHandler } from '../worker'
 import { loadAgentOperation } from './agent-operation-input'
 import {
@@ -32,6 +37,7 @@ async function effect<T>(context: JobExecutionContext, input: {
   replaySafe?: boolean
   execute: () => Promise<T>
 }): Promise<T> {
+  context.budget.consumeToolCall()
   const result = await executeFencedToolEffect({
     client: createAdminClient()!,
     fence: context.fence,
@@ -47,32 +53,38 @@ async function effect<T>(context: JobExecutionContext, input: {
 
 function gitAuthEnvironment(token: string): NodeJS.ProcessEnv {
   const credentials = Buffer.from(`x-access-token:${token}`).toString('base64')
-  return {
-    ...process.env,
+  return isolatedGitEnvironment({
     GIT_ASKPASS: 'echo',
     GIT_TERMINAL_PROMPT: '0',
     GCM_INTERACTIVE: 'never',
     GIT_CONFIG_COUNT: '1',
     GIT_CONFIG_KEY_0: 'http.extraHeader',
     GIT_CONFIG_VALUE_0: `Authorization: Basic ${credentials}`,
-  }
+  })
 }
 
-function checkoutSnapshotHead(root: string, token: string, branch: string, head: string): void {
+async function checkoutSnapshotHead(
+  root: string,
+  token: string,
+  branch: string,
+  head: string,
+  signal: AbortSignal,
+): Promise<void> {
   const options = {
     cwd: root,
-    timeout: 120_000,
+    timeoutMs: 120_000,
     maxBuffer: 8 * 1024 * 1024,
-    encoding: 'utf8' as const,
     env: gitAuthEnvironment(token),
+    signal,
   }
   try {
-    execFileSync('git', ['cat-file', '-e', `${head}^{commit}`], options)
+    await runGit(['cat-file', '-e', `${head}^{commit}`], options)
   } catch {
-    execFileSync('git', ['fetch', '--no-tags', 'origin', head], options)
+    signal.throwIfAborted()
+    await runGit(['fetch', '--no-tags', 'origin', head], options)
   }
-  execFileSync('git', ['checkout', '-B', branch, head], options)
-  const actual = execFileSync('git', ['rev-parse', 'HEAD'], options).trim()
+  await runGit(['checkout', '-B', branch, head], options)
+  const actual = (await runGit(['rev-parse', 'HEAD'], options)).trim()
   if (actual !== head) throw new JobRuntimeError('JOB_CONFLICT', 'Workspace HEAD restore mismatch')
 }
 
@@ -103,6 +115,14 @@ async function initialRepository(
   token: string,
   login: string,
 ) {
+  const safety = assessInitialRepositoryPublication(input.actions.flatMap<PublicationFile>(action => {
+    if (action.kind === 'write_file') return [{ path: action.path, content: action.newContent }]
+    if (action.kind === 'delete_file') return [{ path: action.path, content: null }]
+    return []
+  }))
+  if (!safety.ok) throw new JobRuntimeError('JOB_INVALID_INPUT', safety.reason, {
+    class: 'policy', retryable: false,
+  })
   const create = input.actions.find(action => action.kind === 'create_repo')
   if (!create || create.kind !== 'create_repo') {
     throw new JobRuntimeError('JOB_INVALID_INPUT', 'Missing create_repo action')
@@ -180,9 +200,11 @@ async function workspacePublish(
     )
     if ('error' in created) throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', created.error)
   }
-  checkoutSnapshotHead(root, token, input.plan.workspaceBranch, input.snapshot.head)
+  await checkoutSnapshotHead(
+    root, token, input.plan.workspaceBranch, input.snapshot.head, context.signal,
+  )
   const restored = await restoreWorkspaceSnapshot(
-    input.taskId, input.userId, input.snapshot.snapshotId, input.client,
+    input.taskId, input.userId, input.snapshot.snapshotId, input.client, context.signal,
   )
   if (!restored.ok) throw new JobRuntimeError('JOB_CONFLICT', restored.error ?? 'CAS snapshot restore failed', {
     class: 'policy', retryable: false,
@@ -201,7 +223,11 @@ async function workspacePublish(
     },
     execute: async () => {
       const result = await publishWorkspaceToPullRequest(
-        input.taskId, input.userId, token, input.client, { message: input.message },
+        input.taskId,
+        input.userId,
+        token,
+        input.client,
+        { message: input.message, signal: context.signal },
       )
       if (!result.ok) throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', result.error ?? 'Pull Request publish failed', {
         class: 'provider', retryable: false,

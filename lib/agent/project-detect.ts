@@ -81,13 +81,15 @@ export function detectProjectCommands(taskId: string, userId: string): DetectedP
   const runPrefix = packageManager === "yarn" ? "yarn" : packageManager === "pnpm" ? "pnpm" : packageManager === "bun" ? "bun run" : "npm run"
 
   // install
-  const npmInstall = existsSync(workspaceFile(root, "package-lock.json")) ? "npm install" : "npm install --no-package-lock"
+  const npmInstall = existsSync(workspaceFile(root, "package-lock.json"))
+    ? "npm install --ignore-scripts"
+    : "npm install --ignore-scripts --no-package-lock"
   const installCommand = packageManager === "yarn"
-    ? "yarn"
+    ? "yarn install --ignore-scripts"
     : packageManager === "pnpm"
-      ? "pnpm install"
+      ? "pnpm install --ignore-scripts"
       : packageManager === "bun"
-        ? "bun install"
+        ? "bun install --ignore-scripts"
         : npmInstall
 
   // lint

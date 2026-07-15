@@ -1,6 +1,6 @@
-import { execFileSync } from "child_process"
-
 import { classifyFileRisk } from "../risk"
+import { isolatedGitEnvironment } from "../git-environment"
+import { runGit } from "./git-command"
 
 const AGENT_GIT_NAME = "mychat-agent"
 const AGENT_GIT_EMAIL = "mychat-agent@users.noreply.github.com"
@@ -14,40 +14,42 @@ export function checkRiskFiles(files: string[]): { blocked: string[]; warnings: 
 }
 
 function gitCommitEnv(): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
+  return isolatedGitEnvironment({
     GIT_AUTHOR_NAME: AGENT_GIT_NAME,
     GIT_AUTHOR_EMAIL: AGENT_GIT_EMAIL,
     GIT_COMMITTER_NAME: AGENT_GIT_NAME,
     GIT_COMMITTER_EMAIL: AGENT_GIT_EMAIL,
-  }
+  })
 }
 
 export function gitAuthEnv(token: string): NodeJS.ProcessEnv {
   const credentials = Buffer.from(`x-access-token:${token}`).toString("base64")
-  return {
+  return isolatedGitEnvironment({
     ...gitCommitEnv(),
     GIT_TERMINAL_PROMPT: "0",
     GIT_ASKPASS: "echo",
     GIT_CONFIG_COUNT: "1",
     GIT_CONFIG_KEY_0: "http.extraHeader",
     GIT_CONFIG_VALUE_0: `Authorization: Basic ${credentials}`,
-  }
+  })
 }
 
-export function ensureWorkspaceGitIdentity(root: string): NodeJS.ProcessEnv {
+export async function ensureWorkspaceGitIdentity(
+  root: string,
+  signal?: AbortSignal,
+): Promise<NodeJS.ProcessEnv> {
   const env = gitCommitEnv()
-  execFileSync("git", ["config", "user.name", AGENT_GIT_NAME], {
+  await runGit(["config", "user.name", AGENT_GIT_NAME], {
     cwd: root,
-    timeout: 5000,
-    encoding: "utf-8",
+    timeoutMs: 5000,
     env,
+    signal,
   })
-  execFileSync("git", ["config", "user.email", AGENT_GIT_EMAIL], {
+  await runGit(["config", "user.email", AGENT_GIT_EMAIL], {
     cwd: root,
-    timeout: 5000,
-    encoding: "utf-8",
+    timeoutMs: 5000,
     env,
+    signal,
   })
   return env
 }

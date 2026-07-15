@@ -1,49 +1,62 @@
-import { execFileSync, execSync } from "child_process"
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 import { addArtifact, addStep, getTaskDetail, updateTaskStatus } from "../data"
 import { redactSensitive } from "../path-security"
 import { isProtectedBranch } from "../risk"
-import { getChangedFiles, getWorkspaceDiff, workspaceRoot } from "../workspace"
+import { workspaceRoot } from "../workspace"
 import { checkRiskFiles } from "./shared"
+import { runGit } from "./git-command"
 import type { PRResult } from "./types"
 
 type ChangedFile = { path: string; status: string }
 
-function committedChanges(
+function throwIfAborted(signal?: AbortSignal): void {
+  signal?.throwIfAborted()
+}
+
+function requestSignal(signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(30_000)
+  return signal ? AbortSignal.any([signal, timeout]) : timeout
+}
+
+function parseNameStatus(output: string): ChangedFile[] {
+  return output.trim().split("\n").filter(Boolean).map(line => {
+    const [code, ...pathParts] = line.split("\t")
+    const path = pathParts.at(-1) ?? ""
+    const status = code.startsWith("A")
+      ? "added"
+      : code.startsWith("D") ? "deleted" : "modified"
+    return { path, status }
+  }).filter(file => file.path)
+}
+
+async function committedChanges(
   root: string,
   base: string,
-  taskId: string,
-  userId: string,
-): { changedFiles: ChangedFile[]; diff: string } {
+  signal?: AbortSignal,
+): Promise<{ changedFiles: ChangedFile[]; diff: string }> {
   try {
-    const nameStatus = execFileSync("git", ["diff", "--name-status", `${base}...HEAD`], {
-      cwd: root,
-      timeout: 15_000,
-      maxBuffer: 512 * 1024,
-      encoding: "utf-8",
-    })
-    const changedFiles = nameStatus.trim().split("\n").filter(Boolean).map(line => {
-      const [code, ...pathParts] = line.split("\t")
-      const path = pathParts.at(-1) ?? ""
-      const status = code.startsWith("A")
-        ? "added"
-        : code.startsWith("D") ? "deleted" : "modified"
-      return { path, status }
-    }).filter(file => file.path)
-    const diff = execFileSync("git", ["diff", "--no-color", `${base}...HEAD`], {
-      cwd: root,
-      timeout: 30_000,
-      maxBuffer: 2 * 1024 * 1024,
-      encoding: "utf-8",
-    })
-    return { changedFiles, diff }
+    const [nameStatus, diff] = await Promise.all([
+      runGit(["diff", "--name-status", `${base}...HEAD`], {
+        cwd: root, timeoutMs: 15_000, maxBuffer: 512 * 1024, signal,
+      }),
+      runGit(["diff", "--no-color", `${base}...HEAD`], {
+        cwd: root, timeoutMs: 30_000, maxBuffer: 2 * 1024 * 1024, signal,
+      }),
+    ])
+    return { changedFiles: parseNameStatus(nameStatus), diff }
   } catch {
-    const changed = getChangedFiles(taskId, userId)
-    return {
-      changedFiles: changed.ok ? changed.data.files : [],
-      diff: getWorkspaceDiff(taskId, userId),
-    }
+    throwIfAborted(signal)
+    const [nameStatus, diff] = await Promise.all([
+      runGit(["diff", "--name-status", "HEAD"], {
+        cwd: root, timeoutMs: 15_000, maxBuffer: 512 * 1024, signal,
+      }).catch(() => ""),
+      runGit(["diff", "--no-color", "HEAD"], {
+        cwd: root, timeoutMs: 30_000, maxBuffer: 2 * 1024 * 1024, signal,
+      }).catch(() => ""),
+    ])
+    throwIfAborted(signal)
+    return { changedFiles: parseNameStatus(nameStatus), diff }
   }
 }
 
@@ -52,7 +65,7 @@ export async function createWorkspacePullRequest(
   userId: string,
   githubToken: string,
   supabase: SupabaseClient,
-  options: { title?: string; body?: string; base?: string } = {},
+  options: { title?: string; body?: string; base?: string; signal?: AbortSignal } = {},
 ): Promise<PRResult> {
   const detail = await getTaskDetail(supabase, userId, taskId)
   if (!("workspace" in detail)) return { ok: false, error: "任务不存在" }
@@ -63,12 +76,13 @@ export async function createWorkspacePullRequest(
   let headBranch = detail.agentBranch
   if (!headBranch) {
     try {
-      headBranch = execSync("git rev-parse --abbrev-ref HEAD", {
+      headBranch = (await runGit(["rev-parse", "--abbrev-ref", "HEAD"], {
         cwd: root,
-        timeout: 5000,
-        encoding: "utf-8",
-      }).trim()
+        timeoutMs: 5000,
+        signal: options.signal,
+      })).trim()
     } catch {
+      throwIfAborted(options.signal)
       return { ok: false, error: "无法确定 head branch" }
     }
   }
@@ -77,7 +91,7 @@ export async function createWorkspacePullRequest(
   }
 
   const base = options.base || detail.branch || "main"
-  const { changedFiles, diff } = committedChanges(root, base, taskId, userId)
+  const { changedFiles, diff } = await committedChanges(root, base, options.signal)
   const title = options.title || `Agent: ${detail.goal.slice(0, 60)}`
   const risk = checkRiskFiles(changedFiles.map(file => file.path))
   const fileList = changedFiles.map(file => {
@@ -150,7 +164,7 @@ export async function createWorkspacePullRequest(
         "User-Agent": "mychat-agent",
       },
       body: JSON.stringify({ title, body, head: headBranch, base }),
-      signal: AbortSignal.timeout(30_000),
+      signal: requestSignal(options.signal),
     })
 
     if (!response.ok && response.status === 422) {
@@ -162,7 +176,7 @@ export async function createWorkspacePullRequest(
           Accept: "application/vnd.github+json",
           "User-Agent": "mychat-agent",
         },
-        signal: AbortSignal.timeout(30_000),
+        signal: requestSignal(options.signal),
       }).catch(() => null)
       const pulls = existing?.ok ? await existing.json().catch(() => []) : []
       const first = Array.isArray(pulls) ? pulls[0] : null
@@ -182,6 +196,7 @@ export async function createWorkspacePullRequest(
       pullRequestNumber = pullRequest.number ?? null
     }
   } catch (error) {
+    throwIfAborted(options.signal)
     const message = error && typeof error === "object" && "message" in error
       ? (error as { message?: unknown }).message
       : undefined

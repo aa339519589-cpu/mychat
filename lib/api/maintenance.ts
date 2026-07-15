@@ -1,7 +1,7 @@
 import { apiErrorResponseV1 } from './errors'
 import { jobMaintenanceMode } from '../jobs/maintenance'
 
-/** Reject new expensive commands while existing work is drained for cutover. */
+/** Reject new expensive commands while existing workers drain safely. */
 export function expensiveWriteMaintenanceResponse(request: Request): Response | null {
   if (jobMaintenanceMode() !== 'drain') return null
   return apiErrorResponseV1(request, {

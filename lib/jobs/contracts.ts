@@ -35,6 +35,15 @@ export type JobBudget = {
   [key: string]: JsonValue | undefined
 }
 
+export type JobUsage = {
+  wallTimeMs: number
+  rawTokens: number
+  weightedTokens: number
+  costMicros: number
+  sandboxTimeMs: number
+  toolCalls: number
+}
+
 export type JobFailure = {
   code: string
   message: string
@@ -47,6 +56,17 @@ export type JobLease = {
   owner: string
   version: number
   expiresAt: string
+}
+
+/** Database-owned recovery envelope returned by job_contract_json(). */
+export type JobCheckpoint = {
+  version: number
+  phase: string
+  data: JsonObject
+  progress: JsonObject
+  resumable: boolean
+  leaseVersion: number
+  updatedAt: string
 }
 
 export type JobRecord = {
@@ -63,7 +83,8 @@ export type JobRecord = {
   priority: number
   availableAt: string
   budget: JobBudget
-  checkpoint: JsonValue | null
+  usage: JobUsage
+  checkpoint: JobCheckpoint | null
   result: JsonValue | null
   error: JobFailure | null
   lease: JobLease | null
@@ -191,6 +212,34 @@ export function assertEnqueueJobInput(input: EnqueueJobInput): void {
   }
   if (input.availableAt !== undefined && !isIsoTimestamp(input.availableAt)) {
     throw new TypeError('Invalid job availability timestamp')
+  }
+  if (input.budget !== undefined) assertJobBudget(input.budget)
+}
+
+const JOB_BUDGET_MAXIMUMS: Readonly<Record<
+  'wallTimeMs' | 'tokenLimit' | 'costMicros' | 'sandboxTimeMs' | 'toolCallLimit',
+  number
+>> = {
+  wallTimeMs: 86_400_000,
+  tokenLimit: 1_000_000_000,
+  costMicros: 1_000_000_000_000,
+  sandboxTimeMs: 86_400_000,
+  toolCallLimit: 1_000_000,
+}
+
+export function assertJobBudget(budget: JobBudget): void {
+  if (!isJsonValue(budget) || Array.isArray(budget) || budget === null) {
+    throw new TypeError('Invalid job budget')
+  }
+  for (const [name, maximum] of Object.entries(JOB_BUDGET_MAXIMUMS)) {
+    const value = budget[name]
+    if (value !== undefined && (!Number.isSafeInteger(value) || Number(value) < 1 || Number(value) > maximum)) {
+      throw new TypeError(`Invalid job budget ${name}`)
+    }
+  }
+  if (typeof budget.wallTimeMs === 'number' && typeof budget.sandboxTimeMs === 'number'
+    && budget.sandboxTimeMs > budget.wallTimeMs) {
+    throw new TypeError('Sandbox budget exceeds wall-time budget')
   }
 }
 

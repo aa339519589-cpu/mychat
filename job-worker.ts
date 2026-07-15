@@ -12,7 +12,11 @@ import { log } from '@/lib/logger'
 import { jobMetrics, type JobMetricType } from '@/lib/observability/job-metrics'
 import { normalizeJobError } from '@/lib/jobs/errors'
 import type { JobHandler } from '@/lib/jobs/worker'
+import { JobWorkerHeartbeat } from '@/lib/jobs/worker-heartbeat'
+import { safeRevision } from '@/lib/supabase/health'
 import { jobMaintenanceMode } from '@/lib/jobs/maintenance'
+import { JobLifecycleSweeper } from '@/lib/jobs/lifecycle-sweeper'
+import { BillingReconciliationMonitor } from '@/lib/jobs/billing-reconciliation'
 
 function concurrency(name: string, fallback: number): number {
   const configured = Number(process.env[name] ?? fallback)
@@ -26,21 +30,6 @@ const baseWorkerId = process.env.JOB_WORKER_ID?.trim()
   || `${hostname()}:${process.pid}:${crypto.randomUUID()}`
 const shutdown = new AbortController()
 const maintenanceMode = jobMaintenanceMode()
-const MAINTENANCE_KEEPALIVE_MS = 60_000
-
-function waitForMaintenanceShutdown(signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return Promise.resolve()
-  return new Promise(resolve => {
-    const keepAlive = setInterval(() => undefined, MAINTENANCE_KEEPALIVE_MS)
-    const stop = () => {
-      clearInterval(keepAlive)
-      signal.removeEventListener('abort', stop)
-      resolve()
-    }
-    signal.addEventListener('abort', stop, { once: true })
-    if (signal.aborted) stop()
-  })
-}
 
 function metricType(job: { type: string; input: unknown }): JobMetricType {
   if (job.type === 'chat.title') return 'title'
@@ -92,15 +81,32 @@ const finalized: NonNullable<ConstructorParameters<typeof JobWorker>[0]['onFinal
     jobMetrics.observeRunDuration(type, status, durationMs)
   }
 const workerSpecs = [
-  { name: 'chat', queues: ['chat'], concurrency: concurrency('JOB_CHAT_CONCURRENCY', 2) },
-  { name: 'media', queues: ['media'], concurrency: concurrency('JOB_MEDIA_CONCURRENCY', 1) },
-  { name: 'title', queues: ['title'], concurrency: concurrency('JOB_TITLE_CONCURRENCY', 1) },
-  { name: 'agent', queues: ['agent'], concurrency: concurrency('JOB_AGENT_CONCURRENCY', 1) },
+  { name: 'chat', queue: 'chat', concurrency: concurrency('JOB_CHAT_CONCURRENCY', 2) },
+  { name: 'media', queue: 'media', concurrency: concurrency('JOB_MEDIA_CONCURRENCY', 1) },
+  { name: 'title', queue: 'title', concurrency: concurrency('JOB_TITLE_CONCURRENCY', 1) },
+  { name: 'agent', queue: 'agent', concurrency: concurrency('JOB_AGENT_CONCURRENCY', 1) },
 ] as const
+const workerStartedAt = new Date().toISOString()
+const heartbeatSpecs = [
+  ...workerSpecs.map(spec => ({
+    name: spec.name,
+    queue: spec.queue,
+    capacity: spec.concurrency,
+  })),
+  { name: 'outbox', queue: 'outbox', capacity: 1 },
+] as const
+const heartbeats = heartbeatSpecs.map(spec => new JobWorkerHeartbeat({
+  workerId: `${baseWorkerId}:${spec.name}`,
+  revision: safeRevision(),
+  queues: [spec.queue],
+  capacity: spec.capacity,
+  draining: maintenanceMode === 'drain',
+  startedAt: workerStartedAt,
+}))
 const workers = workerSpecs.map(spec => new JobWorker({
   repository,
   workerId: `${baseWorkerId}:${spec.name}`,
-  queues: spec.queues,
+  queues: [spec.queue],
   handlers,
   concurrency: spec.concurrency,
   leaseSeconds: 120,
@@ -113,6 +119,8 @@ const outbox = new JobOutboxDispatcher({
   workerId: `${baseWorkerId}:outbox`,
   lockSeconds: 120,
 })
+const lifecycleSweeper = new JobLifecycleSweeper()
+const billingReconciliation = new BillingReconciliationMonitor()
 
 async function main(): Promise<void> {
   assertProductionAgentSandbox()
@@ -120,13 +128,19 @@ async function main(): Promise<void> {
     log.warn('jobs', 'Maintenance drain is active; Job and outbox claims are disabled', {
       workerId: baseWorkerId,
     })
-    await waitForMaintenanceShutdown(shutdown.signal)
+    await Promise.all([
+      ...heartbeats.map(heartbeat => heartbeat.run(shutdown.signal)),
+      billingReconciliation.run(shutdown.signal),
+    ])
     return
   }
   log.info('jobs', 'Worker pool started', { workerId: baseWorkerId, workers: workerSpecs })
   await Promise.all([
+    ...heartbeats.map(heartbeat => heartbeat.run(shutdown.signal)),
     ...workers.map(worker => worker.run(shutdown.signal)),
     outbox.run(shutdown.signal),
+    lifecycleSweeper.run(shutdown.signal),
+    billingReconciliation.run(shutdown.signal),
   ])
   log.info('jobs', 'Worker pool stopped', { workerId: baseWorkerId })
 }

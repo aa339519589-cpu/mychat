@@ -6,6 +6,7 @@ import { weightedTokenUsage } from '@/lib/quota'
 import { createAdminClient } from '@/lib/supabase/admin'
 import type { JobHandler } from '../worker'
 import { JobRuntimeError } from '../errors'
+import { BILLING_PRICE_VERSION, platformModelCostMicros } from '../pricing'
 
 function stringField(value: unknown, name: string): string {
   if (typeof value !== 'string' || !value) throw new JobRuntimeError('JOB_INVALID_INPUT', `Missing ${name}`)
@@ -29,6 +30,8 @@ export const handleChatTitle: JobHandler = async context => {
   const sourceMessageId = stringField(context.job.subject.sourceMessageId, 'sourceMessageId')
   const payload = context.job.input && typeof context.job.input === 'object' && !Array.isArray(context.job.input)
     ? context.job.input as Record<string, unknown> : {}
+  const admission = payload.admission && typeof payload.admission === 'object' && !Array.isArray(payload.admission)
+    ? payload.admission as Record<string, unknown> : {}
   const endpointId = typeof payload.endpointId === 'string' ? payload.endpointId : undefined
   const { data: assistant, error: assistantError } = await client.from('messages')
     .select('id,seq,content,content_parts').eq('id', sourceMessageId)
@@ -47,6 +50,10 @@ export const handleChatTitle: JobHandler = async context => {
     supabase: client as unknown as SupabaseServer,
     userId: context.job.principal.id,
   })
+  if ((payload.billingClass === 'customer') !== selection.customEndpoint
+    || (payload.billingClass !== 'customer' && payload.billingClass !== 'platform')) {
+    throw new JobRuntimeError('JOB_CONFLICT', 'Billing authority changed after enqueue')
+  }
   const result = await generateTitleText({
     request: {
       conversationId,
@@ -57,6 +64,25 @@ export const handleChatTitle: JobHandler = async context => {
     selection,
     signal: context.signal,
     idempotencyNamespace: context.job.id,
+    onUsage: async totalTokens => {
+      if (totalTokens <= 0) return
+      const weightedTokens = selection.customEndpoint ? 0 : weightedTokenUsage(totalTokens, selection.model, false)
+      context.reportAccounting({
+        idempotencyKey: `${context.job.id}:model-usage`,
+        reason: selection.customEndpoint ? 'custom_title_usage' : 'platform_title_usage',
+        direction: 'debit',
+        weightedTokens,
+        rawTokens: totalTokens,
+        model: selection.model,
+        provider: selection.capability.provider.id,
+        costMicros: platformModelCostMicros(weightedTokens, selection.customEndpoint),
+        metadata: {
+          usingBalance: admission.funding === 'balance',
+          priceVersion: BILLING_PRICE_VERSION,
+        },
+      })
+      await context.flushAccounting()
+    },
   })
   context.assertAuthority()
   return {
@@ -70,7 +96,14 @@ export const handleChatTitle: JobHandler = async context => {
       rawTokens: result.totalTokens,
       model: selection.model,
       provider: selection.capability.provider.id,
-      metadata: { usingBalance: payload.usingBalance === true },
+      costMicros: platformModelCostMicros(
+        selection.customEndpoint ? 0 : weightedTokenUsage(result.totalTokens, selection.model, false),
+        selection.customEndpoint,
+      ),
+      metadata: {
+        usingBalance: admission.funding === 'balance',
+        priceVersion: BILLING_PRICE_VERSION,
+      },
     }] : [],
   }
 }

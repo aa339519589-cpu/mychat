@@ -1,26 +1,34 @@
-import { timingSafeEqual } from 'node:crypto'
-import { exportJobMetrics } from '@/lib/observability/job-metrics'
 import {
   exportAuthoritativeJobMetrics,
   readAuthoritativeJobMetrics,
 } from '@/lib/observability/authoritative-job-metrics'
-
-function authorized(request: Request): boolean {
-  const expected = process.env.METRICS_BEARER_TOKEN?.trim()
-  const header = request.headers.get('authorization') ?? ''
-  const received = header.startsWith('Bearer ') ? header.slice(7) : ''
-  if (!expected || !received) return false
-  const left = Buffer.from(expected)
-  const right = Buffer.from(received)
-  return left.length === right.length && timingSafeEqual(left, right)
-}
+import {
+  exportWorkerFleetMetrics,
+  readWorkerFleetMetrics,
+} from '@/lib/observability/worker-fleet-metrics'
+import {
+  exportStreamLifecycleMetrics,
+  readStreamLifecycleMetrics,
+} from '@/lib/observability/stream-lifecycle-metrics'
+import {
+  exportBillingReconciliationMetrics,
+  readBillingReconciliationMetrics,
+} from '@/lib/observability/billing-reconciliation-metrics'
+import { metricsRequestAuthorized } from '@/lib/observability/metrics-auth'
 
 export async function GET(request: Request): Promise<Response> {
-  if (!authorized(request)) return new Response(null, { status: 404 })
+  if (!metricsRequestAuthorized(request.headers.get('authorization'))) {
+    return new Response(null, { status: 404 })
+  }
   try {
-    const authoritative = await readAuthoritativeJobMetrics()
+    const [authoritative, workerFleet, lifecycle, billing] = await Promise.all([
+      readAuthoritativeJobMetrics(),
+      readWorkerFleetMetrics(),
+      readStreamLifecycleMetrics(),
+      readBillingReconciliationMetrics(),
+    ])
     return new Response(
-      `${exportAuthoritativeJobMetrics(authoritative)}${exportJobMetrics()}`,
+      `${exportAuthoritativeJobMetrics(authoritative)}${exportWorkerFleetMetrics(workerFleet)}${exportStreamLifecycleMetrics(lifecycle)}${exportBillingReconciliationMetrics(billing)}`,
       {
         headers: {
           'Content-Type': 'text/plain; version=0.0.4; charset=utf-8',

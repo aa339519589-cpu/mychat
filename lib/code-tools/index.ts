@@ -27,6 +27,7 @@ export function createCodeToolExecutor(options: CodeToolExecutorOptions) {
   const {
     repo, login, token, defaultBranch, repoIsPrivate, supabase, userId,
     wsReady, wsTaskId, wsUserId, tavilyApiKey, emit, state, signal, canExecute,
+    sandboxTimeoutMs,
   } = options
 
   const toolEmit = (event: ToolEvent) => emit(event)
@@ -34,6 +35,10 @@ export function createCodeToolExecutor(options: CodeToolExecutorOptions) {
   return async function executeTool(name: string, input: unknown) {
     const params = isRecord(input) ? input : {}
     if (name !== 'complete') state.markUsedTool()
+
+    if (repoIsPrivate && (name === 'search' || name === 'fetch_url')) {
+      return '安全策略已阻断：私有仓库任务不能把模型生成的查询或网址发送给外部检索服务。'
+    }
 
     if (name === 'list_files') {
       if (wsReady) {
@@ -218,7 +223,13 @@ export function createCodeToolExecutor(options: CodeToolExecutorOptions) {
       toolEmit({ step: { kind: 'read', label: `执行：${command.slice(0, 60)}` } })
 
       if (wsReady && supabase) {
-        const result = await runInWorkspace(supabase, wsUserId, wsTaskId, command)
+        const remaining = sandboxTimeoutMs?.()
+        const result = await runInWorkspace(supabase, wsUserId, wsTaskId, command, {
+          repoIsPrivate,
+          ...(remaining === null || remaining === undefined
+            ? {}
+            : { timeoutMs: Math.max(1, remaining) }),
+        })
         return commandOutput(result)
       }
 
@@ -232,9 +243,14 @@ export function createCodeToolExecutor(options: CodeToolExecutorOptions) {
         ? params.steps.filter((step: unknown) => typeof step === 'string' && allowed.has(step))
         : undefined
       toolEmit({ step: { kind: 'read', label: '自动验证项目' } })
+      const remaining = sandboxTimeoutMs?.()
       const result = await runVerification(wsTaskId, wsUserId, supabase, {
+        repoIsPrivate,
         install: params.install !== false,
         steps: requested?.length ? requested : undefined,
+        ...(remaining == null ? {} : {
+          totalTimeoutMs: Math.max(1, remaining),
+        }),
       })
       state.setVerifiedDiff(result.ok ? getWorkspaceDiff(wsTaskId, wsUserId) : null)
       const steps = result.steps.map(step => `${step.name}: ${step.skipped ? '跳过' : step.passed ? '通过' : '失败'}`).join('\n')
@@ -249,8 +265,8 @@ export function createCodeToolExecutor(options: CodeToolExecutorOptions) {
     }
 
     if (name === 'apply_patch') {
-      const patch = String(params.patch ?? '').trim()
-      if (!patch) return '缺少 patch 内容。'
+      const patch = typeof params.patch === 'string' ? params.patch : ''
+      if (!patch.trim()) return '缺少 patch 内容。'
       const dryRun = params.dryRun === true
 
       if (wsReady) {

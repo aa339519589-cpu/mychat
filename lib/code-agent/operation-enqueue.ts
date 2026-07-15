@@ -30,12 +30,13 @@ function rpcError(reason: unknown): { status: number; message: string } {
 
 export async function requestOrEnqueueAgentOperation(input: {
   client: SupabaseClient
+  commandClient: SupabaseClient
   userId: string
   authClass: 'anonymous' | 'registered'
   prepared: PreparedAgentOperation
   confirmation?: { confirmationId: string; confirmationToken: string }
 }): Promise<EnqueueResponse> {
-  const { client, userId, prepared, confirmation } = input
+  const { client, commandClient, userId, prepared, confirmation } = input
   if (!confirmation) {
     let gate: {
       id: string
@@ -94,7 +95,7 @@ export async function requestOrEnqueueAgentOperation(input: {
     planHash: prepared.planHash,
   }
   const jobId = crypto.randomUUID()
-  const { data, error } = await client.rpc('enqueue_agent_operation', {
+  const { data, error } = await commandClient.rpc('enqueue_agent_operation', {
     input_user_id: userId,
     input_task_id: prepared.taskId,
     input_confirmation_id: confirmation.confirmationId,

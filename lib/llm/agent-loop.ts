@@ -42,16 +42,16 @@ export type AgentLoopOpts = {
   // Code Agent 用它把最新模型轨迹持久化，进程重启后可从工具结果之后继续。
   onCheckpoint?: (messages: ModelMessage[]) => void | Promise<void>
   // 每次收到 usage 都上报累计值；即使后续工具或网络异常，调用方也能正确记账。
-  onUsage?: (totalTokens: number) => void
+  onUsage?: (totalTokens: number) => void | Promise<void>
   turnOptions?: Omit<RunTurnOptions, 'thinking' | 'adapter'>
 }
 
 export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: number }> {
   const { url, apiKey, model, adapter, thinking, reasoningEffort, messages: msgs, tools, emit, executeTool, maxRounds, leakedRetry, autoContinue, idleContinuation, onTurn, onCheckpoint, onUsage, turnOptions } = opts
   let totalTokens = 0
-  const addUsage = (tokens: number) => {
+  const addUsage = async (tokens: number) => {
     totalTokens += tokens
-    onUsage?.(totalTokens)
+    await onUsage?.(totalTokens)
   }
   let lastHadToolCalls = false
   let lastTurn: TurnResult | null = null
@@ -67,7 +67,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
 
   for (let round = 0; maxRounds === undefined || round < maxRounds; round++) {
     let turn = await runTurn(url, apiKey, model, msgs, activeTurnTools, emit, { thinking, adapter, reasoningEffort, ...sharedTurnOptions, emitErrors: false })
-    addUsage(turn.totalTokens)
+    await addUsage(turn.totalTokens)
     onTurn?.({ phase: 'round', round, turn })
 
     // OpenAI-compatible gateways vary widely in function-calling support. A plain-chat
@@ -75,7 +75,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
     if (turn.failed && adapter === 'generic-openai' && activeTurnTools.length > 0) {
       activeTurnTools = []
       turn = await runTurn(url, apiKey, model, msgs, activeTurnTools, emit, { thinking, adapter, reasoningEffort, ...sharedTurnOptions, emitErrors: false })
-      addUsage(turn.totalTokens)
+      await addUsage(turn.totalTokens)
       onTurn?.({ phase: 'round', round, turn })
     }
 
@@ -84,7 +84,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
       consecutiveFailures++
       await new Promise(r => setTimeout(r, 1000))
       turn = await runTurn(url, apiKey, model, msgs, activeTurnTools, emit, { thinking, adapter, reasoningEffort, ...sharedTurnOptions, emitErrors: false })
-      addUsage(turn.totalTokens)
+      await addUsage(turn.totalTokens)
       onTurn?.({ phase: 'round', round, turn })
     }
     if (turn.failed) {
@@ -107,7 +107,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
         msgs.push({ role: 'user', content: '继续完成你的回复。禁止在正文中使用 DSML 或任何 <｜ ｜> 标记来调用工具——你必须使用标准的 function calling。如果你的上一条回复被截断了，请重新完整输出。' })
         await onCheckpoint?.(msgs)
         turn = await runTurn(url, apiKey, model, msgs, [], emit, { thinking, adapter, reasoningEffort, ...sharedTurnOptions, emitErrors: false })
-        addUsage(turn.totalTokens)
+        await addUsage(turn.totalTokens)
         onTurn?.({ phase: 'leaked-retry', round, turn })
       }
       lastTurn = turn
@@ -163,7 +163,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
   // 轮次用完但最后一轮还有工具调用 → 补一轮纯文本请求，确保有完整回复
   if (lastHadToolCalls) {
     lastTurn = await runTurn(url, apiKey, model, msgs, [], emit, { thinking, adapter, reasoningEffort, ...sharedTurnOptions, emitErrors: false })
-    addUsage(lastTurn.totalTokens)
+    await addUsage(lastTurn.totalTokens)
     onTurn?.({ phase: 'final-text', turn: lastTurn })
   }
 
@@ -179,7 +179,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: 
       msgs.push({ role: 'user', content: '紧接上文继续输出剩余内容，不要重复已经写过的部分，也不要加任何开场白。如果之前在正文中使用了 DSML 工具调用格式，请改用标准的 function calling 或直接用文字说明。' })
       await onCheckpoint?.(msgs)
       cur = await runTurn(url, apiKey, model, msgs, [], emit, { thinking, adapter, reasoningEffort, ...sharedTurnOptions, emitErrors: false })
-      addUsage(cur.totalTokens)
+      await addUsage(cur.totalTokens)
       onTurn?.({ phase: 'continue', round: cont, turn: cur })
     }
     if (!cur.failed && cur.finishReason === 'length' && autoContinue.maxContinuations !== undefined && cont >= autoContinue.maxContinuations) {

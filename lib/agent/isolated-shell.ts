@@ -17,7 +17,7 @@ import {
 } from "./isolated-files"
 import {
   isolatedSandboxConfigured,
-  sandboxEgressAllowlist,
+  sandboxEgressForRepository,
   type AgentExecutionEnvironment,
 } from "./execution-policy"
 import {
@@ -76,7 +76,9 @@ async function getSandbox(
   supabase: SupabaseClient,
   userId: string,
   taskId: string,
+  repoIsPrivate: boolean,
 ): Promise<SandboxConnection> {
+  const allowOut = sandboxEgressForRepository(repoIsPrivate)
   const meta = await taskMeta(supabase, userId, taskId)
   const existingId = typeof meta.e2bSandboxId === "string" ? meta.e2bSandboxId : null
   const syncVersion = meta.e2bSyncVersion
@@ -86,7 +88,7 @@ async function getSandbox(
   if (existingId) {
     try {
       const existing = await Sandbox.connect(existingId, { timeoutMs: SANDBOX_TIMEOUT })
-      await existing.updateNetwork({ allowOut: sandboxEgressAllowlist() })
+      await existing.updateNetwork({ allowOut })
       return { sandbox: existing, syncInitialized: syncVersion === E2B_SYNC_VERSION }
     } catch { /* expired, unreachable, or unable to enforce the egress policy */ }
   }
@@ -95,7 +97,7 @@ async function getSandbox(
     timeoutMs: SANDBOX_TIMEOUT,
     lifecycle: { onTimeout: "pause" as const, autoResume: false },
     metadata: { taskId },
-    network: { allowOut: sandboxEgressAllowlist() },
+    network: { allowOut },
   }
   const template = process.env.E2B_TEMPLATE?.trim()
   const sandbox = template
@@ -217,7 +219,7 @@ export async function runInIsolatedWorkspace(
   const timeoutMs = Math.min(opts.timeoutMs ?? 5 * 60_000, MAX_COMMAND_TIMEOUT)
 
   try {
-    const connection = await getSandbox(supabase, userId, taskId)
+    const connection = await getSandbox(supabase, userId, taskId, opts.repoIsPrivate === true)
     const { sandbox } = connection
     const hydration = await hydrateIsolatedWorkspace(
       sandbox,

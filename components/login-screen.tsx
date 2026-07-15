@@ -1,7 +1,6 @@
 "use client"
 
 import { useState } from "react"
-import { createClient } from "@/lib/supabase/client"
 import { Loader2 } from "lucide-react"
 import { CompanionAvatar } from "@/components/companion-avatar"
 
@@ -13,21 +12,33 @@ export function LoginScreen() {
   const [guestLoading, setGuestLoading] = useState(false)
   const [error, setError] = useState("")
 
-  const supabase = createClient()
-
   async function handleEmailAuth() {
     setError("")
     if (!email.trim() || !password.trim()) { setError("请填写邮箱和密码"); return }
     if (password.length < 6) { setError("密码至少 6 位"); return }
     setLoading(true)
     try {
-      if (mode === "signup") {
-        const { error } = await supabase.auth.signUp({ email: email.trim(), password })
-        if (error) { setError(translateError(error.message)); return }
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password })
-        if (error) { setError(translateError(error.message)); return }
+      const response = await fetch("/api/auth/email", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ mode, email: email.trim(), password }),
+      })
+      const payload = await response.json().catch(() => null) as {
+        error?: unknown
+        requiresConfirmation?: unknown
+      } | null
+      if (!response.ok) {
+        if (response.status === 429) setError("操作太频繁，稍等一下再试")
+        else if (response.status === 503) setError("登录服务暂时不可用，请稍后再试")
+        else setError(typeof payload?.error === "string" ? payload.error : "登录失败，请重试")
+        return
       }
+      if (payload?.requiresConfirmation === true) {
+        setError("请检查邮箱并完成验证后登录")
+        return
+      }
+      window.location.reload()
     } catch {
       setError("网络错误，请重试")
     } finally {
@@ -36,18 +47,22 @@ export function LoginScreen() {
   }
 
   async function handleGuest() {
+    setError("")
     setGuestLoading(true)
     try {
-      const { error } = await supabase.auth.signInAnonymously()
-      if (error) {
-        console.error("[guest-login]", error.status, error.message)
-        const msg = error.message || ""
-        if (/anonymous|disabled|not enabled|signup/i.test(msg)) {
-          setError("游客登录暂未开放，请用邮箱登录")
-        } else {
-          setError("游客登录失败，请重试")
-        }
+      const response = await fetch("/api/auth/anonymous", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { Accept: "application/json" },
+      })
+      const payload = await response.json().catch(() => null) as { error?: unknown } | null
+      if (!response.ok) {
+        if (response.status === 429) setError("游客登录请求过于频繁，请稍后再试")
+        else if (response.status === 503) setError("登录服务暂时不可用，请稍后再试")
+        else setError(typeof payload?.error === "string" ? payload.error : "游客登录失败，请重试")
+        return
       }
+      window.location.reload()
     } catch {
       setError("网络错误，请重试")
     } finally {
@@ -124,12 +139,4 @@ export function LoginScreen() {
       </div>
     </div>
   )
-}
-
-function translateError(msg: string): string {
-  const m = msg.toLowerCase()
-  if (m.includes("invalid login credentials")) return "邮箱或密码不对"
-  if (m.includes("user already registered")) return "这个邮箱已经注册过了，直接登录吧"
-  if (m.includes("rate limit")) return "操作太频繁，稍等一下再试"
-  return msg
 }

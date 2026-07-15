@@ -18,6 +18,8 @@ test('CI and Render use the supported Node runtime and strict readiness', () => 
   assert.match(workflow, /node-version:\s*24/)
   assert.match(workflow, /playwright install --with-deps chromium/)
   assert.match(render, /healthCheckPath:\s*\/api\/ready/)
+  assert.match(render, /autoDeployTrigger:\s*off/)
+  assert.match(render, /key:\s*MYCHAT_MAINTENANCE_MODE\s*\n\s*sync:\s*false/)
   assert.match(render, /key:\s*NODE_VERSION\s*\n\s*value:\s*24/)
   assert.equal(render.match(/key:\s*NODE_ENV\s*\n\s*value:\s*production/g)?.length, 1)
   assert.equal(render.match(/^\s*- type:/gm)?.length, 1)
@@ -25,8 +27,8 @@ test('CI and Render use the supported Node runtime and strict readiness', () => 
   assert.match(read('package.json'), /"prestart":\s*"tsx scripts\/assert-production-agent-sandbox\.ts"/)
   assert.match(read('package.json'), /"start":\s*"node scripts\/start-production\.mjs"/)
   assert.match(read('job-worker.ts'), /assertProductionAgentSandbox\(\)/)
-  assert.match(read('lib/agent/isolated-shell.ts'), /network:\s*\{\s*allowOut:\s*sandboxEgressAllowlist\(\)\s*\}/)
-  assert.match(read('lib/agent/isolated-shell.ts'), /updateNetwork\(\{\s*allowOut:\s*sandboxEgressAllowlist\(\)\s*\}\)/)
+  assert.match(read('lib/agent/isolated-shell.ts'), /network:\s*\{\s*allowOut\s*\}/)
+  assert.match(read('lib/agent/isolated-shell.ts'), /updateNetwork\(\{\s*allowOut\s*\}\)/)
 })
 
 test('worker deployment has queue bulkheads and a sub-three-second cancellation poll', () => {
@@ -34,14 +36,18 @@ test('worker deployment has queue bulkheads and a sub-three-second cancellation 
   const worker = read('job-worker.ts')
   const supervisor = read('scripts/start-production.mjs')
   const keepalive = read('.github/workflows/render-keepalive.yml')
+  const healthVerifier = read('scripts/check-production-health.mjs')
 
   for (const queue of ['CHAT', 'MEDIA', 'TITLE', 'AGENT']) {
     assert.match(render, new RegExp(`key:\\s*JOB_${queue}_CONCURRENCY`))
   }
-  assert.match(worker, /queues:\s*\['chat'\]/)
-  assert.match(worker, /queues:\s*\['media'\]/)
-  assert.match(worker, /queues:\s*\['title'\]/)
-  assert.match(worker, /queues:\s*\['agent'\]/)
+  for (const queue of ['chat', 'media', 'title', 'agent']) {
+    assert.match(worker, new RegExp(`\\{ name: '${queue}', queue: '${queue}', concurrency:`))
+  }
+  assert.match(worker, /const heartbeatSpecs = \[/)
+  assert.match(worker, /\{ name: 'outbox', queue: 'outbox', capacity: 1 \}/)
+  assert.match(worker, /queues:\s*\[spec\.queue\]/)
+  assert.match(worker, /capacity:\s*spec\.capacity/)
   assert.match(worker, /renewIntervalMs:\s*2_000/)
   assert.doesNotMatch(worker, /queues:\s*\['chat',\s*'media'/)
   assert.match(supervisor, /next\/dist\/bin\/next/)
@@ -49,7 +55,14 @@ test('worker deployment has queue bulkheads and a sub-three-second cancellation 
   assert.match(supervisor, /job-worker\.ts/)
   assert.match(supervisor, /child\.kill\(signal\)/)
   assert.match(keepalive, /cron:\s*'\*\/10 \* \* \* \*'/)
-  assert.match(keepalive, /mychat-nm6x\.onrender\.com\/api\/live/)
+  assert.match(keepalive, /actions\/checkout@[0-9a-f]{40}\s+# v4/)
+  assert.match(keepalive, /actions\/setup-node@[0-9a-f]{40}\s+# v4[\s\S]*node-version:\s*24/)
+  assert.match(keepalive, /node scripts\/check-production-health\.mjs https:\/\/mychat-nm6x\.onrender\.com\/api\/ready/)
+  assert.match(healthVerifier, /payload\.status !== "ok"/)
+  assert.match(healthVerifier, /payload\.ready !== true/)
+  for (const check of ['auth', 'database', 'distributedRateLimit', 'queue', 'worker', 'stream', 'sandbox']) {
+    assert.match(healthVerifier, new RegExp(`"${check}"`))
+  }
 })
 
 test('runtime readiness is defined after and checks every scaling primitive', () => {

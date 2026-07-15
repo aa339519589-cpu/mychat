@@ -2,9 +2,9 @@
 
 `/api/metrics` 是受保护的 Prometheus scrape 端点。请求必须携带
 `Authorization: Bearer $METRICS_BEARER_TOKEN`；令牌缺失或不匹配统一返回
-`404`，避免暴露监控面的存在。通过认证后，Web 进程调用
-`read_job_observability_v1(3600)` 读取数据库权威快照，再附加本进程的单调
-counter 和 histogram。数据库、RPC、返回结构任一不可用时端点返回 `503`，
+`404`，避免暴露监控面的存在。通过认证后，Web 进程调用数据库权威 RPC 读取
+Job、Worker fleet、SSE 和生命周期快照。Web 不导出自己的进程本地 Job
+counter/histogram，因为它们不能代表独立 Worker。数据库、任一 RPC、返回结构任一不可用时端点返回 `503`，
 不会用“看起来健康”的本地数据掩盖控制面故障。
 
 数据库 RPC 只有 `service_role` 可执行。响应中的 `job_type`、`status`、
@@ -31,10 +31,25 @@ gauge：
   15 分钟仍未收敛、且没有可交付 cleanup 消息的非 canonical asset。
 - `slo_window_good|eligible|ratio{objective=...,job_type=...}`：最近一小时的
   SLO 分子、分母和比率。无合格样本时 ratio 为 `NaN`，不视为 0%。
+- `worker_fleet_ready|active_workers|total_capacity|stale_workers|draining_workers`：
+  数据库权威 worker fleet 状态；不是 Web 进程内计数。
+- `worker_fleet_freshest_heartbeat_age_seconds` / `oldest_active_heartbeat_age_seconds`：
+  整体 heartbeat 新鲜度边界；无样本输出 `NaN`。
+- `worker_queue_ready|active_workers|total_capacity|freshest_heartbeat_age_seconds{queue=...}`：
+  固定 `chat|media|title|agent|outbox` 队列的消费者覆盖，标签不接受运行时扩张。
+- `billing_healthy` / `billing_mismatches_total`：最新一次数据库权威计费对账是否
+  满足全部账务不变量。细分 gauge 覆盖 v2 Job 缺 reservation、终态 hold、
+  quote/hash、`hold = debit - credit + release`、ledger receipt、profile
+  anchor+journal 和 price activation。
+- `billing_release_ready` / `billing_release_blockers`：在账务 healthy 之外，进一步
+  要求 `billing_active_legacy_jobs=0`。因此 `healthy=1`、`release_ready=0` 是合法但
+  仍然阻断发布的 cutover 状态，不能解释为告警误报。
+- `billing_snapshot_age_seconds`：snapshot 超过 600 秒时，即使旧值为 healthy 和
+  release ready 也禁止发布和新付费准入；必须先恢复权威 refresh。
 
-不带 `authoritative` 前缀的 counter/histogram 是单进程遥测；它们适合用
-`rate()` 分析过程行为，但进程重启会归零。告警和 SLO 必须以数据库权威 gauge
-为准。
+进程内 counter/histogram 只用于 Worker 内部测量和测试，不从 Web exporter
+输出。接入 OTLP 后应由 Worker 主动推送，进程重启归零的过程指标不能作为权威
+告警或 SLO 分母。
 
 ## SLO 与分母
 
@@ -65,6 +80,12 @@ sum by (job_type, status) (rate(mychat_authoritative_jobs_terminal_total[5m]))
 sum by (job_type) (mychat_authoritative_job_lease_expired)
 mychat_authoritative_outbox_dead
 mychat_authoritative_asset_cleanup
+mychat_authoritative_worker_fleet_ready
+mychat_authoritative_worker_queue_freshest_heartbeat_age_seconds
+mychat_authoritative_billing_snapshot_age_seconds
+mychat_authoritative_billing_healthy
+mychat_authoritative_billing_release_ready
+mychat_authoritative_billing_release_blockers
 ```
 
 整体 SLO 比率必须从分子/分母求和：
@@ -105,11 +126,23 @@ clamp_min(sum by (objective) (mychat_authoritative_slo_window_eligible), 1)
   必须人工判断是否重放，禁止直接改表绕过 lock version。
 - `asset_cleanup{condition="dead"} > 0` 或 `orphan > 0`：page；优先核对私有
   Storage 对象与 receipt，再通过受控补偿流程重投。
+- `billing_snapshot_age_seconds > 600`、`billing_mismatches_total > 0`、
+  `billing_release_ready < 1` 或 `billing_release_blockers > 0`：停止发布。账务 mismatch
+  或陈旧 snapshot 立即 page；只有 active legacy Job 的 release blocker 进入受控 drain，
+  但同样不得解除维护。不得通过改 snapshot 解除；必须修复源记录或让 legacy Job
+  权威收敛后重新执行 reconciliation，直到 `healthy=1`、`release_ready=1` 且全部
+  blocker 为 0。
 - eligible 样本不少于 100 时，burn rate `> 2` 持续 15 分钟报警，`> 6`
   持续 5 分钟 page 并停止扩大发布；恢复到 `< 1` 后继续观察一个完整窗口。
 
 任何 dashboard 都应同时显示 snapshot age。该值持续超过两倍 scrape interval
 说明监控数据已经陈旧，即使其他曲线仍平坦也不能判定健康。
+
+仓库提供可直接加载的规则文件 `ops/prometheus/alerts.yml` 和 Grafana dashboard
+`ops/grafana/job-control-plane-dashboard.json`。告警覆盖 scrape/snapshot、worker
+freshness、queue oldest age、终态失败、取消 SLO、lease recovery、outbox dead 和
+billing reconciliation；
+生产监控应从这两份受测试的资产部署，避免在控制台维护不可审计的副本。
 
 ## 故障演练与验收
 
@@ -128,5 +161,5 @@ clamp_min(sum by (objective) (mychat_authoritative_slo_window_eligible), 1)
 6. 使用无令牌、错误令牌、authenticated JWT 调用监控面：HTTP 均为 `404`，
    authenticated/anon 直接调用 RPC 必须得到 `insufficient_privilege`。
 
-演练失败、dead-letter 未清零、orphan 未收敛、或一小时 burn rate 大于 1 时，
+演练失败、dead-letter 未清零、orphan 未收敛、计费对账非零或一小时 burn rate 大于 1 时，
 发布不满足完成条件。

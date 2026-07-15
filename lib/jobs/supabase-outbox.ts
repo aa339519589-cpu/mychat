@@ -218,4 +218,35 @@ export class SupabaseJobOutboxRepository implements JobOutboxRepository {
     if (finished.finished !== true) rejected('finish_asset_cleanup', finished.reason)
     return objectKeys.length
   }
+
+  async cleanupPayload(input: { message: JobOutboxMessage; workerId: string }): Promise<boolean> {
+    const prepared = await this.rpc('prepare_job_payload_cleanup', {
+      input_outbox_id: input.message.id,
+      input_worker_id: input.workerId,
+      input_lock_version: input.message.lockVersion,
+    })
+    if (prepared.prepared !== true) rejected('prepare_payload_cleanup', prepared.reason)
+    const objectKey = prepared.objectKey
+    if (objectKey !== null && (typeof objectKey !== 'string' || objectKey.length < 1
+      || objectKey.length > 512 || objectKey.includes('..')
+      || !objectKey.startsWith(`${input.message.principalId}/${input.message.jobId}/`))) {
+      throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'Payload cleanup plan is malformed')
+    }
+    if (typeof objectKey === 'string') {
+      const { error } = await this.client().storage.from('job-payloads').remove([objectKey])
+      if (error) throw new JobRuntimeError(
+        'JOB_DEPENDENCY_UNAVAILABLE',
+        'Job payload cleanup failed',
+        { details: { storageCode: error.name || 'unknown' } },
+      )
+    }
+    const finished = await this.rpc('finish_job_payload_cleanup', {
+      input_outbox_id: input.message.id,
+      input_worker_id: input.workerId,
+      input_lock_version: input.message.lockVersion,
+      input_object_key: objectKey,
+    })
+    if (finished.finished !== true) rejected('finish_payload_cleanup', finished.reason)
+    return typeof objectKey === 'string'
+  }
 }

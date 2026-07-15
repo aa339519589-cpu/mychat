@@ -8,6 +8,7 @@ import { sha256JobValue } from '@/lib/jobs/canonical'
 import type { JsonObject } from '@/lib/jobs/contracts'
 import { jobMetrics } from '@/lib/observability/job-metrics'
 import { expensiveWriteMaintenanceResponse } from '@/lib/api/maintenance'
+import { createAdminClient } from '@/lib/supabase/admin'
 
 function latestGoal(messages: Array<{ role: string; content: string }>): string {
   return [...messages].reverse().find(message => message.role === 'user')?.content.slice(0, 10_000)
@@ -90,7 +91,9 @@ export async function POST(request: NextRequest) {
   }
   try {
     const inputHash = sha256JobValue(payload)
-    const { data, error } = await auth.supabase.rpc('enqueue_agent_task_job', {
+    const commandClient = createAdminClient()
+    if (!commandClient) throw new Error('command authority unavailable')
+    const { data, error } = await commandClient.rpc('enqueue_agent_task_job', {
       input_user_id: auth.userId,
       input_task_id: taskId,
       input_goal: latestGoal(body.messages),

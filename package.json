@@ -15,6 +15,7 @@
     "prestart": "tsx scripts/assert-production-agent-sandbox.ts",
     "start": "node scripts/start-production.mjs",
     "worker": "tsx job-worker.ts",
+    "outbox:redrive": "node scripts/redrive-outbox.mjs",
     "lint": "eslint --max-warnings 0 app components e2e lib proxy.ts playwright.config.ts next.config.mjs postcss.config.mjs eslint.config.mjs scripts tests",
     "lint:backend": "eslint --max-warnings 0 app/api lib/agent lib/api lib/chat lib/code-agent lib/code-tools lib/generation lib/llm lib/supabase lib/tools lib/github.ts lib/quota.ts lib/model-endpoint-server.ts lib/model-endpoint-secret.ts lib/rate-limit.ts",
     "precheck": "npm run patch:seedream",

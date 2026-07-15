@@ -29,6 +29,7 @@ export function createAgentRuntime(
       ? '在当前任务独享的 Linux 沙箱中执行经过白名单审计的命令'
       : '在 workspace 中执行受控命令',
     canExecute,
+    allowExternalNetwork: !input.repoIsPrivate,
   })
   const events = createCodeEventCollector({
     send: event => writer.emit(event as ChatEvent),
@@ -55,8 +56,11 @@ export function createAgentRuntime(
     signal: context.signal,
     canExecute,
     state: progress.toolState,
+    sandboxTimeoutMs: () => context.budget.remainingSandboxTimeMs(),
   })
   const executeTool: ExecuteTool = async (name, args, execution) => {
+    context.budget.consumeToolCall()
+    const startedAt = Date.now()
     const toolCallId = execution?.toolCallId
     if (!toolCallId) throw new JobRuntimeError('JOB_INVALID_INPUT', 'Provider tool call id is missing')
     await writer.append('tool.requested', { toolCallId, toolName: name }, `${toolCallId}:requested`)
@@ -69,6 +73,9 @@ export function createAgentRuntime(
       replaySafe: SAFE_TOOLS.has(name),
       execute: () => recorder.recordToolCall(name, args, () => executeImpl(name, args)),
     })
+    if (!effect.replayed && (name === 'execute' || name === 'verify')) {
+      context.budget.reportSandboxTime(Date.now() - startedAt)
+    }
     const dryRun = name === 'apply_patch' && args && typeof args === 'object'
       && !Array.isArray(args) && (args as { dryRun?: unknown }).dryRun === true
     if (CHECKPOINT_TOOLS.has(name) && !dryRun) {

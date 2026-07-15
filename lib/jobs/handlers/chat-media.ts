@@ -23,6 +23,7 @@ import { JobEventWriter, jsonResult } from '../event-writer'
 import { executeFencedToolEffect } from '../tool-effects'
 import { jobAssetUploadLifecycle } from '../assets'
 import { JobRuntimeError } from '../errors'
+import { platformMediaUsage } from '../pricing'
 
 type MediaTransport = {
   baseUrl: string
@@ -109,6 +110,7 @@ export async function runChatMediaJob(
   const rawPrompt = latestUserPrompt(input.context.messages)
   const prompt = input.selection.customEndpoint ? rawPrompt : extractImagePrompt(rawPrompt)
   const sourceImage = latestUserSourceImages(input.context.messages)[0]
+  const usage = platformMediaUsage(config.outputKind, input.selection.customEndpoint)
   if (!prompt && !sourceImage) throw new JobRuntimeError(
     'JOB_INVALID_INPUT',
     config.outputKind === 'image' ? '请输入图片描述，或附上参考图' : '请输入视频描述，或附上参考图',
@@ -129,6 +131,7 @@ export async function runChatMediaJob(
       data: { schemaVersion: 1, stage: 'provider_request' },
       resumable: true,
     })
+    context.budget.consumeToolCall()
     const providerEffect = await executeFencedToolEffect({
       client: input.client,
       fence: context.fence,
@@ -146,6 +149,23 @@ export async function runChatMediaJob(
     })
     context.assertAuthority()
     const generated = parsedMedia(providerEffect.result)
+    context.reportAccounting({
+      idempotencyKey: `${context.job.id}:media-usage`,
+      reason: input.selection.customEndpoint ? 'custom_media_usage' : 'platform_media_usage',
+      direction: 'debit',
+      weightedTokens: usage.weightedTokens,
+      rawTokens: 0,
+      model: config.model,
+      provider: input.selection.capability.provider.id,
+      costMicros: usage.costMicros,
+      currency: 'USD',
+      metadata: {
+        outputKind: config.outputKind,
+        usingBalance: input.command.usingBalance,
+        providerResultReplayed: providerEffect.replayed,
+        priceVersion: usage.priceVersion,
+      },
+    })
     await writer.checkpoint({
       phase: 'media.storage_upload',
       data: {
@@ -155,6 +175,7 @@ export async function runChatMediaJob(
       },
       resumable: true,
     })
+    context.budget.consumeToolCall()
     const storageEffect = await executeFencedToolEffect({
       client: input.client,
       fence: context.fence,
@@ -198,13 +219,18 @@ export async function runChatMediaJob(
         idempotencyKey: `${context.job.id}:media-usage`,
         reason: input.selection.customEndpoint ? 'custom_media_usage' : 'platform_media_usage',
         direction: 'debit',
-        weightedTokens: 0,
+        weightedTokens: usage.weightedTokens,
         rawTokens: 0,
         model: config.model,
         provider: input.selection.capability.provider.id,
-        costEstimate: 0,
+        costMicros: usage.costMicros,
         currency: 'USD',
-        metadata: { outputKind: config.outputKind, usingBalance: input.command.usingBalance },
+        metadata: {
+          outputKind: config.outputKind,
+          usingBalance: input.command.usingBalance,
+          providerResultReplayed: providerEffect.replayed,
+          priceVersion: usage.priceVersion,
+        },
       }],
     }
   } catch (error) {

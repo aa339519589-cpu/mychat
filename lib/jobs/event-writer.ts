@@ -37,6 +37,24 @@ function deltaValue(event: JobEventDraft): { field: 'text' | 'thinking'; value: 
   return null
 }
 
+function materializedText(
+  progress: JsonObject | undefined,
+  field: 'content' | 'thinking',
+  partsField: 'contentParts' | 'thinkingParts',
+): string {
+  const direct = progress?.[field]
+  if (typeof direct === 'string') return direct
+  const parts = progress?.[partsField]
+  if (!Array.isArray(parts)) return ''
+  const text: string[] = []
+  for (const part of parts) {
+    if (!part || typeof part !== 'object' || Array.isArray(part)
+      || part.type !== 'text' || typeof part.text !== 'string') return ''
+    text.push(part.text)
+  }
+  return text.join('')
+}
+
 /**
  * Bridges synchronous model deltas to the durable, fenced event log. Adjacent
  * deltas are coalesced, writes are serialized, and drain propagates any lost
@@ -53,6 +71,9 @@ export class JobEventWriter {
 
   constructor(context: JobExecutionContext) {
     this.context = context
+    const progress = context.job.checkpoint?.progress
+    this.fullText = materializedText(progress, 'content', 'contentParts')
+    this.fullThinking = materializedText(progress, 'thinking', 'thinkingParts')
   }
 
   emit = (event: ChatEvent): void => {

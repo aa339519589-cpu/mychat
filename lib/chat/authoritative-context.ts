@@ -4,11 +4,13 @@ import type { ProjectContext } from '@/lib/project-data'
 import type { RawMsg } from '@/lib/llm/types'
 import { isRecord } from '@/lib/unknown-value'
 
-const MAX_CONTEXT_MESSAGES = 500
+const MAX_CONTEXT_MESSAGES = 120
+const MAX_MESSAGE_HISTORY_BYTES = 512 * 1024
+const MAX_AUTHORITATIVE_CONTEXT_BYTES = 1024 * 1024
 const MAX_MEMORIES = 200
 const MAX_PROJECT_FILES = 30
 
-type MessageRow = {
+export type MessageRow = {
   id: string
   role: string
   content: string | null
@@ -24,11 +26,45 @@ export class AuthoritativeContextError extends Error {
     public readonly code:
       | 'CONVERSATION_NOT_FOUND'
       | 'USER_MESSAGE_NOT_FOUND'
+      | 'CONTEXT_TOO_LARGE'
       | 'CONTEXT_UNAVAILABLE',
     message: string,
   ) {
     super(message)
     this.name = 'AuthoritativeContextError'
+  }
+}
+
+const encoder = new TextEncoder()
+
+function jsonBytes(value: unknown): number {
+  return encoder.encode(JSON.stringify(value)).byteLength
+}
+
+/** Rows arrive newest-first; retain one contiguous suffix without truncating a message. */
+export function compileAuthoritativeMessages(
+  rows: MessageRow[],
+  userMessageId: string,
+  maxBytes = MAX_MESSAGE_HISTORY_BYTES,
+): RawMsg[] {
+  const compiled: RawMsg[] = []
+  let bytes = 0
+  for (const row of rows) {
+    const message = rawMessage(row)
+    const messageBytes = jsonBytes(message)
+    if (row.id === userMessageId && messageBytes > maxBytes) {
+      throw new AuthoritativeContextError('CONTEXT_TOO_LARGE', '当前消息超过模型上下文上限')
+    }
+    if (bytes + messageBytes > maxBytes) break
+    compiled.push(message)
+    bytes += messageBytes
+  }
+  return compiled.reverse()
+}
+
+function assertContextBudget(value: unknown): void {
+  if (jsonBytes(value) > MAX_AUTHORITATIVE_CONTEXT_BYTES) {
+    throw new AuthoritativeContextError('CONTEXT_TOO_LARGE', '权威对话、项目或记忆上下文超过处理上限')
   }
 }
 
@@ -167,20 +203,23 @@ export async function loadAuthoritativeChatContext(input: {
   if (!rows.some(row => row.id === userMessageId && row.role === 'user')) {
     throw new AuthoritativeContextError('USER_MESSAGE_NOT_FOUND', '用户消息不在权威历史中')
   }
-  const messages = rows.reverse().map(rawMessage)
+  const messages = compileAuthoritativeMessages(rows, userMessageId)
 
   const projectId = typeof conversationResult.data.project_id === 'string'
     ? conversationResult.data.project_id
     : null
   if (projectId) {
+    const project = await loadProjectContext(client, userId, projectId)
+    assertContextBudget({ messages, project })
     return {
       messages,
       memories: [],
       memoryEnabled: false,
-      project: await loadProjectContext(client, userId, projectId),
+      project,
     }
   }
   const globalMemory = await loadGlobalMemories(client, userId)
+  assertContextBudget({ messages, memories: globalMemory.memories })
   return {
     messages,
     memories: globalMemory.memories,

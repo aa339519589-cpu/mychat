@@ -54,6 +54,7 @@ export async function generateTitleText(options: {
   selection: ChatModelSelection
   signal: AbortSignal
   idempotencyNamespace?: string
+  onUsage?: (totalTokens: number) => void | Promise<void>
 }, dependencies: TitleDependencies = { runAgentLoop }): Promise<{ title: string; totalTokens: number }> {
   if (options.selection.outputKind !== 'chat') {
     throw new RequestError(400, '标题生成只支持聊天模型')
@@ -78,6 +79,7 @@ export async function generateTitleText(options: {
     },
     executeTool: async () => { throw new Error('Title generation does not allow tools') },
     maxRounds: 1,
+    onUsage: options.onUsage,
     turnOptions: {
       signal: options.signal,
       timeoutMs: 30_000,

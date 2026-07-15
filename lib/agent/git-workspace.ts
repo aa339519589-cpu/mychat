@@ -9,6 +9,7 @@ import { join } from "path"
 import { log } from "@/lib/logger"
 import { WORKSPACE_ROOT as ROOT } from "./workspace-paths"
 import { errorMessage, recordText } from '@/lib/unknown-value'
+import { isolatedGitEnvironment } from './git-environment'
 
 const execFileAsync = promisify(execFile)
 
@@ -43,19 +44,14 @@ function agentBranch(taskGoal: string, fallback?: string): string {
 // clone 时 token 通过环境变量注入，绝不出现在命令字符串中。
 // 用 GIT_ASKPASS 空字符串禁用密码弹窗。
 function gitEnv(token?: string): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    GIT_ASKPASS: "echo",
-    GIT_TERMINAL_PROMPT: "0",
-    GCM_INTERACTIVE: "never",
-  }
+  const env: Record<string, string> = {}
   if (token) {
     const credentials = Buffer.from(`x-access-token:${token}`).toString("base64")
     env.GIT_CONFIG_COUNT = "1"
     env.GIT_CONFIG_KEY_0 = "http.extraHeader"
     env.GIT_CONFIG_VALUE_0 = `Authorization: Basic ${credentials}`
   }
-  return env
+  return isolatedGitEnvironment(env)
 }
 
 // ── 克隆仓库 ──

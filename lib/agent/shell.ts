@@ -33,6 +33,7 @@ export type ShellOptions = {
   cwd?: string
   timeoutMs?: number
   maxOutputChars?: number
+  repoIsPrivate?: boolean
 }
 
 export function workspaceProcessEnv(): NodeJS.ProcessEnv {

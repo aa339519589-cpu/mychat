@@ -14,6 +14,17 @@ const NODE_BUILTINS = new Set([
   ...builtinModules.map((name) => `node:${name}`),
 ])
 const SERVER_RUNTIME_IMPORTS = new Set(["server-only", "next/server", "next/headers"])
+const API_FORBIDDEN_RUNTIME_IMPORTS = new Set(["child_process", "node:child_process"])
+const API_DEEP_EXECUTION_TARGETS = new Set([
+  "lib/agent/isolated-sandbox-sync.ts",
+  "lib/agent/isolated-shell.ts",
+  "lib/agent/shell.ts",
+  "lib/llm/agent-loop.ts",
+  "lib/llm/conversation-summary.ts",
+  "lib/llm/openai-compatible/safe-fetch.ts",
+  "lib/llm/provider-adapters.ts",
+  "lib/llm/turn.ts",
+])
 
 const DEFAULT_BUDGETS = {
   app: { maxLines: 300, maxLocalDependencies: 18 },
@@ -206,6 +217,18 @@ function isServerRoot(path) {
     || ROOT_ENTRY_STEMS.some((stem) => SOURCE_EXTENSIONS.some((extension) => path === `${stem}${extension}`))
 }
 
+function isApiDeepExecutionTarget(path) {
+  return API_DEEP_EXECUTION_TARGETS.has(path)
+    || path === "lib/llm/media-generation.ts"
+    || path.startsWith("lib/llm/media-generation/")
+}
+
+function isApiForbiddenRuntimeImport(specifier) {
+  return API_FORBIDDEN_RUNTIME_IMPORTS.has(specifier)
+    || specifier === "e2b"
+    || specifier.startsWith("e2b/")
+}
+
 function layerFor(path) {
   if (path.startsWith("app/")) return "app"
   if (path.startsWith("components/")) return "components"
@@ -369,6 +392,17 @@ function inspect(root, config) {
 
     for (const entry of imports.get(file.path) ?? []) {
       const target = entry.target
+      if (file.path.startsWith("app/api/")
+        && !entry.typeOnly
+        && (isApiForbiddenRuntimeImport(entry.specifier)
+          || (target && isApiDeepExecutionTarget(target)))) {
+        violations.push(violation(
+          "api-execution-boundary",
+          file.path,
+          entry.line,
+          `API routes must validate, enqueue, query, or cancel work; direct execution dependency ${target ?? entry.specifier} is forbidden`,
+        ))
+      }
       if (clientEntries.has(file.path)
         && !entry.typeOnly
         && (NODE_BUILTINS.has(entry.specifier) || SERVER_RUNTIME_IMPORTS.has(entry.specifier))) {

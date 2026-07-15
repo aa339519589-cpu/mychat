@@ -34,13 +34,14 @@ type Calls = {
     retrySeconds: number
   }>
   cleaned: number
+  payloadCleaned: number
 }
 
 function repositoryFixture(input: {
   claimed?: JobOutboxMessage | null
   cleanupError?: Error
 } = {}): { repository: JobOutboxRepository; calls: Calls } {
-  const calls: Calls = { renewed: 0, published: [], failed: [], cleaned: 0 }
+  const calls: Calls = { renewed: 0, published: [], failed: [], cleaned: 0, payloadCleaned: 0 }
   let claimed = false
   const repository: JobOutboxRepository = {
     claim: async () => {
@@ -55,6 +56,10 @@ function repositoryFixture(input: {
       calls.cleaned += 1
       if (input.cleanupError) throw input.cleanupError
       return 2
+    },
+    cleanupPayload: async () => {
+      calls.payloadCleaned += 1
+      return true
     },
   }
   return { repository, calls }
@@ -102,6 +107,20 @@ test('failed delivery is delay-queued with the same fencing generation', async (
     errorCode: 'JOB_DEPENDENCY_UNAVAILABLE',
     retrySeconds: 5,
   }])
+})
+
+test('payload cleanup publishes only after its fenced object deletion', async () => {
+  const payloadCleanup = message({ topic: 'payloads.cleanup' })
+  const fixture = repositoryFixture({ claimed: payloadCleanup })
+  const dispatcher = new JobOutboxDispatcher({
+    repository: fixture.repository,
+    workerId: 'outbox-worker',
+    sleep: abortableSleep,
+  })
+  assert.equal(await dispatcher.runOnce(), true)
+  assert.equal(fixture.calls.payloadCleaned, 1)
+  assert.equal(fixture.calls.cleaned, 0)
+  assert.equal(fixture.calls.published.length, 1)
 })
 
 test('known lifecycle topics require an observer before acknowledgement', async () => {

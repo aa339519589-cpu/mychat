@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
 
   let body
   try {
-    body = validateChatRequest(await readJson(request, { maxBytes: 48 * 1024 * 1024 }))
+    body = validateChatRequest(await readJson(request, { maxBytes: 8 * 1024 * 1024 }))
     requireDurableChatIdentity(body)
   } catch (error) {
     return apiErrorResponseV1(request, {

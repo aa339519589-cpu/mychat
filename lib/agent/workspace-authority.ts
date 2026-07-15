@@ -1,9 +1,9 @@
-import { execFileSync } from 'node:child_process'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { JobExecutionContext } from '@/lib/jobs/worker'
 import { JobRuntimeError } from '@/lib/jobs/errors'
 import { createWorkspaceSnapshot, restoreWorkspaceSnapshot } from './snapshot'
 import { workspaceRoot } from './workspace-paths'
+import { runGit } from './git-publish/git-command'
 
 export type WorkspaceAuthority = {
   taskId: string
@@ -25,16 +25,25 @@ function authEnvironment(token: string): NodeJS.ProcessEnv {
   }
 }
 
-function checkoutExactHead(root: string, token: string, branch: string, head: string): void {
+async function checkoutExactHead(
+  root: string,
+  token: string,
+  branch: string,
+  head: string,
+  signal?: AbortSignal,
+): Promise<void> {
   const options = {
-    cwd: root, timeout: 120_000, maxBuffer: 8 * 1024 * 1024,
-    encoding: 'utf8' as const, env: authEnvironment(token),
+    cwd: root, timeoutMs: 120_000, maxBuffer: 8 * 1024 * 1024,
+    env: authEnvironment(token), signal,
   }
-  try { execFileSync('git', ['cat-file', '-e', `${head}^{commit}`], options) } catch {
-    execFileSync('git', ['fetch', '--no-tags', 'origin', head], options)
+  try {
+    await runGit(['cat-file', '-e', `${head}^{commit}`], options)
+  } catch {
+    signal?.throwIfAborted()
+    await runGit(['fetch', '--no-tags', 'origin', head], options)
   }
-  execFileSync('git', ['checkout', '-B', branch, head], options)
-  if (execFileSync('git', ['rev-parse', 'HEAD'], options).trim() !== head) {
+  await runGit(['checkout', '-B', branch, head], options)
+  if ((await runGit(['rev-parse', 'HEAD'], options)).trim() !== head) {
     throw new JobRuntimeError('JOB_CONFLICT', 'Workspace authority HEAD mismatch', {
       class: 'policy', retryable: false,
     })
@@ -131,11 +140,14 @@ export async function restoreWorkspaceAuthority(input: {
   token: string
   branch: string
   authority: WorkspaceAuthority
+  signal?: AbortSignal
 }): Promise<void> {
   const root = workspaceRoot(input.taskId, input.userId)
-  checkoutExactHead(root, input.token, input.branch, input.authority.head)
+  await checkoutExactHead(
+    root, input.token, input.branch, input.authority.head, input.signal,
+  )
   const restored = await restoreWorkspaceSnapshot(
-    input.taskId, input.userId, input.authority.snapshotId, input.client,
+    input.taskId, input.userId, input.authority.snapshotId, input.client, input.signal,
   )
   if (!restored.ok) throw new JobRuntimeError('JOB_CONFLICT', restored.error ?? 'Workspace authority restore failed', {
     class: 'policy', retryable: false,

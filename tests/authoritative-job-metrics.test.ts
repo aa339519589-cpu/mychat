@@ -15,6 +15,7 @@ const migration = new URL(
   import.meta.url,
 )
 const metricsRoute = new URL('../app/api/metrics/route.ts', import.meta.url)
+const metricsAuth = new URL('../lib/observability/metrics-auth.ts', import.meta.url)
 
 function snapshot() {
   return {
@@ -128,9 +129,10 @@ test('authoritative metrics reader calls the bounded RPC and fails closed', asyn
 })
 
 test('observability migration and route preserve the privileged scrape boundary', async () => {
-  const [sql, route] = await Promise.all([
+  const [sql, route, auth] = await Promise.all([
     readFile(migration, 'utf8'),
     readFile(metricsRoute, 'utf8'),
+    readFile(metricsAuth, 'utf8'),
   ])
   assert.match(sql, /create or replace function public\.read_job_observability_v1/)
   assert.match(sql, /security definer[\s\S]*set statement_timeout = '8s'/)
@@ -146,10 +148,15 @@ test('observability migration and route preserve the privileged scrape boundary'
   assert.match(sql, /grant execute on function public\.read_job_observability_v1\(integer\)[\s\S]*to service_role/)
   assert.doesNotMatch(sql, /'jobId'|'principalId'|'requestId'|'objectKey'/)
 
-  assert.match(route, /timingSafeEqual/)
+  assert.match(route, /metricsRequestAuthorized/)
+  assert.match(auth, /timingSafeEqual/)
+  assert.match(auth, /MINIMUM_SECRET_BYTES = 32/)
   assert.match(route, /status: 404/)
   assert.match(route, /readAuthoritativeJobMetrics/)
-  assert.match(route, /exportAuthoritativeJobMetrics\(authoritative\)[\s\S]*exportJobMetrics\(\)/)
+  assert.match(route, /readWorkerFleetMetrics/)
+  assert.match(route, /readStreamLifecycleMetrics/)
+  assert.match(route, /exportAuthoritativeJobMetrics\(authoritative\)[\s\S]*exportWorkerFleetMetrics\(workerFleet\)[\s\S]*exportStreamLifecycleMetrics\(lifecycle\)/)
+  assert.doesNotMatch(route, /exportJobMetrics\(\)/)
   assert.match(route, /status: 503/)
   assert.match(route, /'Retry-After': '5'/)
 })

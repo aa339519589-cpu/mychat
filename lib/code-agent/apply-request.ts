@@ -1,5 +1,6 @@
 import type { PlanAction } from '@/lib/code-data'
 import type { AgentConfirmationCredential } from '@/lib/agent/confirmation-plan'
+import { assessInitialRepositoryPublication } from '@/lib/agent/publication-safety'
 
 export type CodeApplyRequest = {
   repo: string | null
@@ -74,10 +75,21 @@ function parseAction(value: unknown, index: number): PlanAction {
       if (value.oldContent !== undefined && typeof value.oldContent !== 'string') {
         throw new Error(`actions[${index}].oldContent 无效`)
       }
+      {
+        const safety = assessInitialRepositoryPublication([{
+          path: value.path,
+          content: value.newContent,
+        }])
+        if (!safety.ok) throw new Error(`actions[${index}] ${safety.reason}`)
+      }
       return { kind: value.kind, path: value.path, oldContent: value.oldContent ?? '', newContent: value.newContent }
     case 'delete_file':
       if (typeof value.path !== 'string' || !isSafeRepositoryPath(value.path)) {
         throw new Error(`actions[${index}].path 无效`)
+      }
+      {
+        const safety = assessInitialRepositoryPublication([{ path: value.path, content: null }])
+        if (!safety.ok) throw new Error(`actions[${index}] ${safety.reason}`)
       }
       return { kind: value.kind, path: value.path }
     case 'enable_pages':

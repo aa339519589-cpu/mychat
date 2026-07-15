@@ -1,11 +1,11 @@
-import { execFileSync, execSync } from "child_process"
 import { existsSync } from "fs"
 import type { SupabaseClient } from "@supabase/supabase-js"
 
 import { addArtifact, addStep, getTaskDetail, updateTaskStatus } from "../data"
 import { redactSensitive } from "../path-security"
 import { isProtectedBranch } from "../risk"
-import { getChangedFiles, workspaceRoot } from "../workspace"
+import { workspaceRoot } from "../workspace"
+import { runGit } from "./git-command"
 import {
   checkRiskFiles,
   commandError,
@@ -15,68 +15,86 @@ import {
 } from "./shared"
 import type { CommitResult, GitStatus, PushResult } from "./types"
 
-function currentBranch(root: string): string {
-  return execSync("git rev-parse --abbrev-ref HEAD", {
-    cwd: root,
-    timeout: 5000,
-    encoding: "utf-8",
-  }).trim()
+function throwIfAborted(signal?: AbortSignal): void {
+  signal?.throwIfAborted()
 }
 
-export function getWorkspaceGitStatus(taskId: string, userId: string): GitStatus {
+async function currentBranch(root: string, signal?: AbortSignal): Promise<string> {
+  return (await runGit(["rev-parse", "--abbrev-ref", "HEAD"], {
+    cwd: root,
+    timeoutMs: 5000,
+    signal,
+  })).trim()
+}
+
+function changedFilesFromPorcelain(output: string): Array<{ path: string; status: string }> {
+  const entries = output.split("\0").filter(Boolean)
+  const files: Array<{ path: string; status: string }> = []
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index]
+    const code = entry.slice(0, 2)
+    const path = entry.slice(3)
+    if (!path) continue
+    const status = code === "??" || code.includes("A")
+      ? "added"
+      : code.includes("D") ? "deleted" : "modified"
+    files.push({ path, status })
+    if (code.includes("R") || code.includes("C")) index++
+  }
+  return files
+}
+
+export async function getWorkspaceGitStatus(
+  taskId: string,
+  userId: string,
+  signal?: AbortSignal,
+): Promise<GitStatus> {
   const root = workspaceRoot(taskId, userId)
   if (!existsSync(root)) return { ok: false, error: "Workspace 不存在" }
 
   let branch = ""
   try {
-    branch = currentBranch(root)
+    branch = await currentBranch(root, signal)
   } catch {
+    throwIfAborted(signal)
     return { ok: false, error: "无法获取当前分支" }
   }
 
-  const changed = getChangedFiles(taskId, userId)
-  const changedFiles = changed.ok ? changed.data.files : []
+  let changedFiles: Array<{ path: string; status: string }> = []
   let diffStat = ""
   let diffPreview = ""
   let hasChanges = false
   try {
-    diffStat = execSync("git diff --stat", {
-      cwd: root,
-      timeout: 10000,
-      maxBuffer: 256 * 1024,
-      encoding: "utf-8",
+    const porcelain = await runGit(["status", "--porcelain", "-z"], {
+      cwd: root, timeoutMs: 10_000, maxBuffer: 512 * 1024, signal,
     })
-    diffPreview = execSync("git diff --name-only", {
-      cwd: root,
-      timeout: 10000,
-      maxBuffer: 256 * 1024,
-      encoding: "utf-8",
-    })
-    hasChanges = diffPreview.trim().length > 0
+    changedFiles = changedFilesFromPorcelain(porcelain)
+    hasChanges = changedFiles.length > 0
   } catch {
-    // A clean diff produces an empty status.
+    throwIfAborted(signal)
+    return { ok: false, error: "无法读取 Workspace Git 状态" }
   }
-
-  try {
-    const untracked = execSync("git ls-files --others --exclude-standard", {
-      cwd: root,
-      timeout: 5000,
-      maxBuffer: 64 * 1024,
-      encoding: "utf-8",
-    }).trim()
-    if (untracked) hasChanges = true
-  } catch {
-    // Untracked-file detection is best effort.
-  }
+  const [stat, preview] = await Promise.all([
+    runGit(["diff", "--stat"], {
+      cwd: root, timeoutMs: 10_000, maxBuffer: 256 * 1024, signal,
+    }).catch(() => ""),
+    runGit(["diff", "--name-only"], {
+      cwd: root, timeoutMs: 10_000, maxBuffer: 256 * 1024, signal,
+    }).catch(() => ""),
+  ])
+  throwIfAborted(signal)
+  diffStat = stat
+  diffPreview = preview
 
   let commitSha: string | null = null
   try {
-    commitSha = execSync("git rev-parse HEAD", {
+    commitSha = (await runGit(["rev-parse", "HEAD"], {
       cwd: root,
-      timeout: 5000,
-      encoding: "utf-8",
-    }).trim()
+      timeoutMs: 5000,
+      signal,
+    })).trim()
   } catch {
+    throwIfAborted(signal)
     // An unborn repository has no HEAD yet.
   }
 
@@ -96,6 +114,7 @@ export async function commitWorkspaceChanges(
   userId: string,
   message: string,
   supabase: SupabaseClient,
+  signal?: AbortSignal,
 ): Promise<CommitResult> {
   const root = workspaceRoot(taskId, userId)
   if (!existsSync(root)) return { ok: false, error: "Workspace 不存在" }
@@ -105,8 +124,9 @@ export async function commitWorkspaceChanges(
 
   let branch = ""
   try {
-    branch = currentBranch(root)
+    branch = await currentBranch(root, signal)
   } catch {
+    throwIfAborted(signal)
     return { ok: false, error: "无法获取当前分支" }
   }
   if (isProtectedBranch(branch)) {
@@ -115,33 +135,33 @@ export async function commitWorkspaceChanges(
 
   let hasChanges = false
   try {
-    hasChanges = execSync("git status --porcelain", {
+    hasChanges = (await runGit(["status", "--porcelain"], {
       cwd: root,
-      timeout: 5000,
+      timeoutMs: 5000,
       maxBuffer: 64 * 1024,
-      encoding: "utf-8",
-    }).trim().length > 0
+      signal,
+    })).trim().length > 0
   } catch {
+    throwIfAborted(signal)
     // The explicit no-changes error below is safer than attempting an empty commit.
   }
   if (!hasChanges) return { ok: false, error: "没有可提交的改动" }
 
   let changedFiles: string[] = []
   try {
-    changedFiles = execSync("git diff --name-only HEAD", {
-      cwd: root,
-      timeout: 10000,
-      maxBuffer: 128 * 1024,
-      encoding: "utf-8",
-    }).trim().split("\n").filter(Boolean)
-    const untracked = execSync("git ls-files --others --exclude-standard", {
-      cwd: root,
-      timeout: 5000,
-      maxBuffer: 64 * 1024,
-      encoding: "utf-8",
-    }).trim()
+    const [tracked, untrackedOutput] = await Promise.all([
+      runGit(["diff", "--name-only", "HEAD"], {
+        cwd: root, timeoutMs: 10_000, maxBuffer: 128 * 1024, signal,
+      }),
+      runGit(["ls-files", "--others", "--exclude-standard"], {
+        cwd: root, timeoutMs: 5000, maxBuffer: 64 * 1024, signal,
+      }),
+    ])
+    changedFiles = tracked.trim().split("\n").filter(Boolean)
+    const untracked = untrackedOutput.trim()
     if (untracked) changedFiles.push(...untracked.split("\n").filter(Boolean))
   } catch {
+    throwIfAborted(signal)
     // The staged-file check below is authoritative.
   }
 
@@ -158,69 +178,73 @@ export async function commitWorkspaceChanges(
 
   let diffStat = ""
   try {
-    diffStat = execSync("git diff --stat HEAD", {
+    diffStat = await runGit(["diff", "--stat", "HEAD"], {
       cwd: root,
-      timeout: 10000,
+      timeoutMs: 10_000,
       maxBuffer: 128 * 1024,
-      encoding: "utf-8",
+      signal,
     })
   } catch {
+    throwIfAborted(signal)
     // Diff stats are optional metadata.
   }
   const safeMessage = message.slice(0, 200) || "Agent: code changes"
 
   try {
-    const commitEnv = ensureWorkspaceGitIdentity(root)
-    execFileSync("git", ["add", "-A", "--", ".", ":(exclude).claude/snapshots/**"], {
+    const commitEnv = await ensureWorkspaceGitIdentity(root, signal)
+    await runGit(["add", "-A", "--", ".", ":(exclude).claude/snapshots/**"], {
       cwd: root,
-      timeout: 15000,
+      timeoutMs: 15_000,
       maxBuffer: 256 * 1024,
-      encoding: "utf-8",
       env: commitEnv,
+      signal,
     })
 
     let stagedFiles: string[] = []
     try {
-      stagedFiles = execSync("git diff --cached --name-only", {
+      stagedFiles = (await runGit(["diff", "--cached", "--name-only"], {
         cwd: root,
-        timeout: 10000,
+        timeoutMs: 10_000,
         maxBuffer: 128 * 1024,
-        encoding: "utf-8",
         env: commitEnv,
-      }).trim().split("\n").filter(Boolean)
+        signal,
+      })).trim().split("\n").filter(Boolean)
     } catch {
+      throwIfAborted(signal)
       // An empty list is handled by git commit below.
     }
     const { blocked: stagedBlocked } = checkRiskFiles(stagedFiles)
     if (stagedBlocked.length > 0) {
-      execFileSync("git", ["reset", "HEAD", "--", "."], {
+      await runGit(["reset", "HEAD", "--", "."], {
         cwd: root,
-        timeout: 10000,
-        encoding: "utf-8",
+        timeoutMs: 10_000,
         env: commitEnv,
+        signal,
       })
       return { ok: false, error: `禁止提交高危文件：${stagedBlocked.join("、")}` }
     }
 
-    execFileSync("git", ["commit", "-m", safeMessage], {
+    await runGit(["commit", "-m", safeMessage], {
       cwd: root,
-      timeout: 30000,
+      timeoutMs: 30_000,
       maxBuffer: 256 * 1024,
-      encoding: "utf-8",
       env: commitEnv,
+      signal,
     })
   } catch (error) {
+    throwIfAborted(signal)
     return { ok: false, error: `Commit 失败：${commandError(error)}` }
   }
 
   let commitSha = ""
   try {
-    commitSha = execSync("git rev-parse HEAD", {
+    commitSha = (await runGit(["rev-parse", "HEAD"], {
       cwd: root,
-      timeout: 5000,
-      encoding: "utf-8",
-    }).trim()
+      timeoutMs: 5000,
+      signal,
+    })).trim()
   } catch {
+    throwIfAborted(signal)
     // Artifact metadata can tolerate a missing SHA.
   }
 
@@ -256,14 +280,16 @@ export async function pushAgentBranch(
   userId: string,
   githubToken: string,
   supabase: SupabaseClient,
+  signal?: AbortSignal,
 ): Promise<PushResult> {
   const root = workspaceRoot(taskId, userId)
   if (!existsSync(root)) return { ok: false, error: "Workspace 不存在" }
 
   let branch = ""
   try {
-    branch = currentBranch(root)
+    branch = await currentBranch(root, signal)
   } catch {
+    throwIfAborted(signal)
     return { ok: false, error: "无法获取当前分支" }
   }
   if (isProtectedBranch(branch)) return { ok: false, error: `禁止推送 ${branch} 分支` }
@@ -278,25 +304,26 @@ export async function pushAgentBranch(
 
   const remoteUrl = `https://github.com/${repo}.git`
   try {
-    const remotes = execSync("git remote", {
+    const remotes = (await runGit(["remote"], {
       cwd: root,
-      timeout: 5000,
-      encoding: "utf-8",
-    }).trim()
+      timeoutMs: 5000,
+      signal,
+    })).trim()
     if (!remotes) {
-      execFileSync("git", ["remote", "add", "origin", remoteUrl], {
+      await runGit(["remote", "add", "origin", remoteUrl], {
         cwd: root,
-        timeout: 10000,
-        encoding: "utf-8",
+        timeoutMs: 10_000,
+        signal,
       })
     } else {
-      execFileSync("git", ["remote", "set-url", "origin", remoteUrl], {
+      await runGit(["remote", "set-url", "origin", remoteUrl], {
         cwd: root,
-        timeout: 10000,
-        encoding: "utf-8",
+        timeoutMs: 10_000,
+        signal,
       })
     }
   } catch {
+    throwIfAborted(signal)
     return { ok: false, error: "无法安全配置 Git remote" }
   }
 
@@ -306,14 +333,15 @@ export async function pushAgentBranch(
     detail: `推送到 ${repo}`,
   })
   try {
-    execFileSync("git", ["push", "origin", branch], {
+    await runGit(["push", "origin", branch], {
       cwd: root,
-      timeout: 120_000,
+      timeoutMs: 120_000,
       maxBuffer: 512 * 1024,
-      encoding: "utf-8",
       env: gitAuthEnv(githubToken),
+      signal,
     })
   } catch (error) {
+    throwIfAborted(signal)
     const stderr = commandError(error).replace(githubToken, "***")
     return { ok: false, error: `Push 失败：${stderr}` }
   }

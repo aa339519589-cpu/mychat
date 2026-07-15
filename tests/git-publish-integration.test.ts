@@ -141,14 +141,14 @@ function interceptGitPush(t: test.TestContext, shouldFail = false) {
   })
 }
 
-test("git status distinguishes missing, clean, tracked, and untracked workspaces", t => {
+test("git status distinguishes missing, clean, tracked, and untracked workspaces", async t => {
   const taskId = `status-${crypto.randomUUID()}`
   const root = workspaceRoot(taskId, userId)
   t.after(() => rmSync(root, { recursive: true, force: true }))
-  assert.deepEqual(getWorkspaceGitStatus(taskId, userId), { ok: false, error: "Workspace 不存在" })
+  assert.deepEqual(await getWorkspaceGitStatus(taskId, userId), { ok: false, error: "Workspace 不存在" })
 
   initializeRepository(taskId)
-  const clean = getWorkspaceGitStatus(taskId, userId)
+  const clean = await getWorkspaceGitStatus(taskId, userId)
   assert.equal(clean.ok, true)
   assert.equal(clean.currentBranch, "agent/backend-hardening")
   assert.equal(clean.hasChanges, false)
@@ -156,7 +156,7 @@ test("git status distinguishes missing, clean, tracked, and untracked workspaces
 
   writeFileSync(`${root}/README.md`, "changed\n")
   writeFileSync(`${root}/new.txt`, "new\n")
-  const dirty = getWorkspaceGitStatus(taskId, userId)
+  const dirty = await getWorkspaceGitStatus(taskId, userId)
   assert.equal(dirty.hasChanges, true)
   assert.match(dirty.diffPreview ?? "", /README\.md/)
 })

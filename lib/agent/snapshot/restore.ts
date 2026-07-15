@@ -1,4 +1,3 @@
-import { execFileSync } from "child_process"
 import { chmodSync, lstatSync, mkdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "fs"
 import type { Stats } from "fs"
 import { dirname } from "path"
@@ -6,18 +5,19 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { errorMessage } from "@/lib/unknown-value"
 import type { RestoreResult } from "../types"
 import { workspaceRoot } from "../workspace-paths"
+import { runGit } from "../git-publish/git-command"
 import { fetchSnapshotFromArtifact } from "./artifact"
 import { resolveSnapshotPath } from "./cas-capture"
 import { sha256, verifyBundle } from "./cas-integrity"
 import { loadLocalBundle } from "./cas-local"
 import type { SnapshotBundle, SnapshotEntry } from "./cas-types"
 
-function git(root: string, args: string[]): string {
-  return execFileSync("git", args, {
+function git(root: string, args: string[], signal?: AbortSignal): Promise<string> {
+  return runGit(args, {
     cwd: root,
-    timeout: 60_000,
+    timeoutMs: 60_000,
     maxBuffer: 8 * 1024 * 1024,
-    encoding: "utf-8",
+    signal,
   })
 }
 
@@ -64,16 +64,20 @@ function verifyRestoredEntry(root: string, entry: SnapshotEntry): boolean {
   return blob.byteLength === entry.size && sha256(blob) === entry.digest
 }
 
-function applyBundle(root: string, bundle: SnapshotBundle): { restored: number; failed: number } {
+async function applyBundle(
+  root: string,
+  bundle: SnapshotBundle,
+  signal?: AbortSignal,
+): Promise<{ restored: number; failed: number }> {
   const verified = verifyBundle(bundle)
   if (!verified.ok) throw new Error(verified.error)
-  const currentHead = git(root, ["rev-parse", "--verify", "HEAD"]).trim()
+  const currentHead = (await git(root, ["rev-parse", "--verify", "HEAD"], signal)).trim()
   if (currentHead !== bundle.manifest.head) {
     throw new Error(`Workspace HEAD 与 snapshot 不一致（当前 ${currentHead}，snapshot ${bundle.manifest.head}）`)
   }
   // Source integrity and HEAD are checked before the first destructive operation.
-  git(root, ["reset", "--hard", "HEAD"])
-  git(root, ["clean", "-ffd"])
+  await git(root, ["reset", "--hard", "HEAD"], signal)
+  await git(root, ["clean", "-ffd"], signal)
   let restored = 0
   for (const entry of bundle.manifest.entries) {
     applyEntry(root, entry, bundle.blobs)
@@ -92,6 +96,7 @@ export async function restoreWorkspaceSnapshot(
   userId: string,
   snapshotId: string,
   supabase?: SupabaseClient,
+  signal?: AbortSignal,
 ): Promise<RestoreResult> {
   const root = workspaceRoot(taskId, userId)
   if (!lstatOrNull(root)) {
@@ -121,9 +126,10 @@ export async function restoreWorkspaceSnapshot(
   }
 
   try {
-    const result = applyBundle(root, bundle)
+    const result = await applyBundle(root, bundle, signal)
     return { ok: true, snapshotId, restoredFiles: result.restored, failedFiles: 0, usedSource: source }
   } catch (error) {
+    signal?.throwIfAborted()
     return {
       ok: false, snapshotId, restoredFiles: 0, failedFiles: bundle.manifest.entries.length,
       usedSource: "none", error: `恢复失败（未降级到无摘要 patch）：${errorMessage(error)}`,

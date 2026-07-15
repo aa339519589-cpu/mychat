@@ -2,6 +2,7 @@ import type { JsonObject } from './contracts'
 
 export const JOB_OUTBOX_TOPICS = [
   'assets.cleanup',
+  'payloads.cleanup',
   'jobs.cancel_requested',
   'jobs.poison',
   'jobs.ready',
@@ -48,4 +49,5 @@ export interface JobOutboxRepository {
     retrySeconds: number
   }): Promise<void>
   cleanupAssets(input: { message: JobOutboxMessage; workerId: string }): Promise<number>
+  cleanupPayload(input: { message: JobOutboxMessage; workerId: string }): Promise<boolean>
 }

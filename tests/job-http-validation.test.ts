@@ -17,6 +17,7 @@ test('all durable job routes share the canonical UUID validator', async () => {
   const sources = await Promise.all([
     '../app/api/v1/jobs/[jobId]/route.ts',
     '../app/api/v1/jobs/[jobId]/cancel/route.ts',
+    '../app/api/v1/jobs/[jobId]/resume/route.ts',
     '../app/api/v1/jobs/[jobId]/events/route.ts',
     '../app/api/v1/conversations/[conversationId]/generation/route.ts',
   ].map(path => readFile(new URL(path, import.meta.url), 'utf8')))

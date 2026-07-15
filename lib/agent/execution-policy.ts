@@ -42,6 +42,14 @@ export function sandboxEgressAllowlist(
   return [...new Set([...DEFAULT_SANDBOX_EGRESS, ...configured])]
 }
 
+/** Private source is never exposed to a network-capable command sandbox. */
+export function sandboxEgressForRepository(
+  repoIsPrivate: boolean,
+  environment: AgentExecutionEnvironment = process.env,
+): string[] {
+  return repoIsPrivate ? [] : sandboxEgressAllowlist(environment)
+}
+
 function runtimeEnvironment(environment: AgentExecutionEnvironment): string {
   return environment.NODE_ENV?.trim().toLowerCase() ?? ""
 }

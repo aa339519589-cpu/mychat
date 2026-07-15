@@ -111,6 +111,13 @@ export class JobOutboxDispatcher {
           jobId: message.jobId,
           deleted,
         })
+      } else if (message.topic === 'payloads.cleanup') {
+        const deleted = await this.repository.cleanupPayload({ message, workerId: this.workerId })
+        log.info('outbox', 'Job payload cleanup published', {
+          outboxId: message.id,
+          jobId: message.jobId,
+          deleted,
+        })
       } else {
         await this.observe(message)
       }

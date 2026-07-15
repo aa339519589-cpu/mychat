@@ -2,6 +2,7 @@
 // access token 只在服务端从加密连接存储读取，绝不写入 Cookie 或下发前端。
 // Code 的 agentic loop（/api/code/chat）与执行端点（/api/code/apply）都复用这一份，杜绝重复实现。
 import { isRecord, type UnknownRecord } from '@/lib/unknown-value'
+import { safeModelEndpointFetch } from '@/lib/llm/openai-compatible/safe-fetch'
 
 const GH = 'https://api.github.com'
 
@@ -232,6 +233,65 @@ type PagesWaitOptions = {
   intervalMs?: number
   verifyUrl?: boolean
   expectedCommitSha?: string
+  siteProbe?: (url: string) => boolean | Promise<boolean>
+}
+
+export function canonicalGitHubPagesUrl(repo: string): string {
+  const [owner, name] = repo.split('/')
+  if (!owner || !name || !/^[A-Za-z0-9_.-]+$/.test(owner) || !/^[A-Za-z0-9_.-]+$/.test(name)) {
+    throw new Error('GitHub Pages 仓库标识无效')
+  }
+  const host = `${owner.toLowerCase()}.github.io`
+  const isRootSite = name.toLowerCase() === host
+  return `https://${host}${isRootSite ? '/' : `/${encodeURIComponent(name)}/`}`
+}
+
+export function isCanonicalGitHubPagesUrl(value: unknown, repo: string): value is string {
+  if (typeof value !== 'string' || value.length > 2048) return false
+  let candidate: URL
+  let canonical: URL
+  try {
+    candidate = new URL(value)
+    canonical = new URL(canonicalGitHubPagesUrl(repo))
+  } catch {
+    return false
+  }
+  return candidate.protocol === 'https:'
+    && !candidate.username
+    && !candidate.password
+    && !candidate.port
+    && !candidate.hash
+    && candidate.hostname.toLowerCase() === canonical.hostname
+    && candidate.pathname.startsWith(canonical.pathname)
+}
+
+async function probeCanonicalGitHubPages(
+  repo: string,
+  value: string,
+  timeoutMs = 15_000,
+): Promise<boolean> {
+  if (!isCanonicalGitHubPagesUrl(value, repo)) return false
+  let current = value
+  const signal = AbortSignal.timeout(timeoutMs)
+  for (let redirect = 0; redirect <= 3; redirect++) {
+    const response = await safeModelEndpointFetch(current, {
+      method: 'GET', redirect: 'manual', cache: 'no-store', signal,
+      headers: { Accept: 'text/html,application/xhtml+xml' },
+    }).catch(() => null)
+    if (!response) return false
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location')
+      await response.body?.cancel().catch(() => undefined)
+      if (!location) return false
+      const next = new URL(location, current).toString()
+      if (!isCanonicalGitHubPagesUrl(next, repo)) return false
+      current = next
+      continue
+    }
+    await response.body?.cancel().catch(() => undefined)
+    return response.ok
+  }
+  return false
 }
 
 export async function mergePullRequest(
@@ -259,9 +319,10 @@ export async function waitForPages(
   options: PagesWaitOptions = {},
   initialUrl?: string,
 ): Promise<PagesResult> {
-  const owner = repo.split('/')[0]
-  const name = repo.split('/')[1]
-  let url = initialUrl ?? `https://${owner}.github.io/${name}/`
+  const canonicalUrl = canonicalGitHubPagesUrl(repo)
+  let url = initialUrl && isCanonicalGitHubPagesUrl(initialUrl, repo)
+    ? initialUrl
+    : canonicalUrl
   const timeoutMs = options.timeoutMs ?? 90_000
   const intervalMs = options.intervalMs ?? 3_000
   const deadline = Date.now() + timeoutMs
@@ -269,7 +330,7 @@ export async function waitForPages(
     const statusRes = await boundedFetch(`${GH}/repos/${repo}/pages`, { headers: ghHeaders(token) }).catch(() => null)
     if (statusRes?.ok) {
       const data = await statusRes.json().catch(() => null)
-      if (data?.html_url) url = data.html_url
+      if (isCanonicalGitHubPagesUrl(data?.html_url, repo)) url = data.html_url
       if (data?.status === 'errored') return { status: 'failed', url, error: 'GitHub Pages 构建失败' }
       if (data?.status === 'built') {
         if (options.expectedCommitSha) {
@@ -286,8 +347,10 @@ export async function waitForPages(
           }
         }
         if (options.verifyUrl === false) return { status: 'ready', url }
-        const site = await boundedFetch(url, { redirect: 'follow', cache: 'no-store' }).catch(() => null)
-        if (site?.ok) return { status: 'ready', url }
+        const siteReady = options.siteProbe
+          ? await options.siteProbe(url)
+          : await probeCanonicalGitHubPages(repo, url)
+        if (siteReady) return { status: 'ready', url }
       }
     }
     if (Date.now() < deadline) await sleep(intervalMs)
@@ -306,9 +369,7 @@ export async function enablePages(
     method: 'POST', headers: ghHeaders(token, true),
     body: JSON.stringify({ source: { branch, path: '/' } }),
   }).catch(() => null)
-  const owner = repo.split('/')[0]
-  const name = repo.split('/')[1]
-  let url = `https://${owner}.github.io/${name}/`
+  let url = canonicalGitHubPagesUrl(repo)
   if (!res?.ok && res?.status !== 409) {
     const err = await responseRecord(res)
     return { status: 'failed', url, error: `开启 Pages 失败：${typeof err?.message === 'string' ? err.message : '未知错误'}` }
@@ -325,7 +386,7 @@ export async function enablePages(
   }
   try {
     const data = await res.json()
-    if (data?.html_url) url = data.html_url
+    if (isCanonicalGitHubPagesUrl(data?.html_url, repo)) url = data.html_url
   } catch {}
 
   return waitForPages(token, repo, options, url)

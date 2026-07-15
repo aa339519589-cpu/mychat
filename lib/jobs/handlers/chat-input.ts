@@ -121,6 +121,9 @@ export async function loadChatJob(job: JobRecord): Promise<LoadedChatJob> {
   const assistantMessageId = identity(job, 'assistantMessageId')
   const payload = await loadJobPayload(reference(job), { userId, jobId: job.id })
   const parsedCommand = command(payload)
+  const jobInput = record(job.input)
+  const admission = record(jobInput?.admission)
+  const billingClass = jobInput?.billingClass
   try {
     const [authoritativeContext, selection] = await Promise.all([
       loadAuthoritativeChatContext({ client, userId, conversationId, userMessageId }),
@@ -136,13 +139,20 @@ export async function loadChatJob(job: JobRecord): Promise<LoadedChatJob> {
     if (selectedKind !== parsedCommand.outputKind) {
       throw new JobRuntimeError('JOB_CONFLICT', 'Model policy changed after enqueue')
     }
+    if ((billingClass === 'customer') !== selection.customEndpoint
+      || (billingClass !== 'customer' && billingClass !== 'platform')) {
+      throw new JobRuntimeError('JOB_CONFLICT', 'Billing authority changed after enqueue')
+    }
     return {
       client,
       userId,
       conversationId,
       userMessageId,
       assistantMessageId,
-      command: parsedCommand,
+      command: {
+        ...parsedCommand,
+        usingBalance: admission?.funding === 'balance',
+      },
       context: authoritativeContext,
       selection,
     }

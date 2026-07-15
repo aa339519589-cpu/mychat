@@ -36,6 +36,15 @@ test('enqueue validation rejects unbounded or ambiguous identities', () => {
   assert.doesNotThrow(() => assertEnqueueJobInput(valid))
   assert.throws(() => assertEnqueueJobInput({ ...valid, type: 'generation' }), TypeError)
   assert.throws(() => assertEnqueueJobInput({ ...valid, maxAttempts: 101 }), TypeError)
+  assert.throws(() => assertEnqueueJobInput({ ...valid, budget: { tokenLimit: 1.5 } }), TypeError)
+  assert.throws(() => assertEnqueueJobInput({
+    ...valid,
+    budget: { wallTimeMs: 1_000, sandboxTimeMs: 1_001 },
+  }), TypeError)
+  assert.doesNotThrow(() => assertEnqueueJobInput({
+    ...valid,
+    budget: { wallTimeMs: 1_000, tokenLimit: 10, toolCallLimit: 1 },
+  }))
   assert.equal(isJsonValue({ nested: [1, true, null] }), true)
   assert.equal(isJsonValue({ invalid: Number.NaN }), false)
 })

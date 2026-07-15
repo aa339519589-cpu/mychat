@@ -8,6 +8,7 @@ import {
   assertProductionAgentSandbox,
   localWorkspaceExecutionAllowed,
   sandboxEgressAllowlist,
+  sandboxEgressForRepository,
 } from "../lib/agent/execution-policy"
 import { validatePath } from "../lib/agent/path-security"
 import { mkdirSync, rmSync, symlinkSync } from "node:fs"
@@ -30,6 +31,10 @@ test("workspace shell blocks direct main pushes", () => {
   assert.equal(checkCommand("x".repeat(4_001)).allowed, false)
   assert.equal(checkCommand("git push origin main").allowed, false)
   assert.equal(checkCommand("npm test").allowed, true)
+  assert.equal(checkCommand("npm install").allowed, false)
+  assert.equal(checkCommand("npm ci --ignore-scripts").allowed, true)
+  assert.equal(checkCommand("pnpm install").allowed, false)
+  assert.equal(checkCommand("pnpm install --ignore-scripts").allowed, true)
   assert.equal(checkCommand("git status; printenv").allowed, false)
   assert.equal(checkCommand("git status && cat .env").allowed, false)
   assert.equal(checkCommand("git status$(printenv)").allowed, false)
@@ -111,6 +116,13 @@ test("sandbox egress is a bounded public-host allowlist", () => {
   assert.throws(() => sandboxEgressAllowlist({
     AGENT_SANDBOX_EGRESS_ALLOWLIST: "127.0.0.1,metadata.internal",
   }), /Invalid AGENT_SANDBOX_EGRESS_ALLOWLIST/)
+})
+
+test("private repository command sandboxes have no outbound network", () => {
+  assert.deepEqual(sandboxEgressForRepository(true, {
+    AGENT_SANDBOX_EGRESS_ALLOWLIST: "packages.example.com",
+  }), [])
+  assert.ok(sandboxEgressForRepository(false, {}).includes("registry.npmjs.org"))
 })
 
 test("workspace paths reject symlinks that escape the workspace", t => {

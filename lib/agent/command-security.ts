@@ -54,6 +54,7 @@ const ALLOWED_COMMANDS: RegExp[] = [
   /^npm\s+run\s+(build|lint|typecheck|test|start|dev)(?:\s|$)/i,
   /^pnpm\s+(--version|install|build|test|lint|typecheck)(?:\s|$)/i,
   /^yarn\s+(--version|-v|install|build|test|lint|typecheck)(?:\s|$)/i,
+  /^bun\s+(--version|install|build|test|lint|typecheck)(?:\s|$)/i,
   /^npx\s+(tsc|eslint|vitest|jest|next|prettier)(?:\s|$)/i,
   /^(python|python3)\s+(--version|-V)(?:\s|$)/,
   /^(ls|cat|grep|rg|find|head|tail|wc|echo|sort|uniq|cut|which|whereis|du|df)(?:\s|$)/i,
@@ -88,6 +89,11 @@ export function checkCommand(command: string): SecurityVerdict {
     if (rule.pattern.test(trimmed)) {
       return { allowed: false, reason: rule.reason }
     }
+  }
+
+  if (/^(?:npm\s+(?:ci|install)|pnpm\s+install|yarn\s+install|bun\s+install)(?:\s|$)/i.test(trimmed)
+    && !/(?:^|\s)--ignore-scripts(?:\s|$)/i.test(trimmed)) {
+    return { allowed: false, reason: "依赖安装必须禁用生命周期脚本（--ignore-scripts）" }
   }
 
   // 检查白名单（安全前缀）

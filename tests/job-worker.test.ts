@@ -21,6 +21,7 @@ function claimedJob(overrides: Partial<JobRecord> = {}): JobRecord {
     priority: 0,
     availableAt: now,
     budget: {},
+    usage: { wallTimeMs: 0, rawTokens: 0, weightedTokens: 0, costMicros: 0, sandboxTimeMs: 0, toolCalls: 0 },
     checkpoint: null,
     result: null,
     error: null,
@@ -42,7 +43,19 @@ function fakeRepository(overrides: RepositoryOverrides = {}): JobRepository {
     renew: async () => ({ state: 'renewed', status: 'running', leaseExpiresAt: new Date(Date.now() + 60_000).toISOString(), cancelRequested: false }),
     retry: async () => ({ accepted: true, reason: null, status: 'queued', availableAt: new Date().toISOString(), eventSeq: 2, cancelRequested: false }),
     appendEvents: async () => ({ accepted: true, replayed: false, status: 'running', fromSeq: 1, toSeq: 1, cancelRequested: false }),
-    checkpoint: async () => ({ accepted: true, status: 'running', cancelRequested: false }),
+    checkpointWithAccounting: async input => ({
+      accepted: true,
+      replayed: false,
+      reason: null,
+      status: input.status ?? 'running',
+      checkpointVersion: input.expectedCheckpointVersion + 1,
+      cancelRequested: false,
+    }),
+    recordAccounting: async () => ({ accepted: true, replayed: false, status: 'running', cancelRequested: false }),
+    resume: async () => ({
+      accepted: false, replayed: false, reason: 'not_found',
+      status: null, checkpointVersion: null, eventSeq: null,
+    }),
     finalize: async input => ({ accepted: true, replayed: false, status: input.status, result: input.result ?? null, error: input.error ?? null, eventSeq: 2 }),
     cancel: async () => ({ accepted: true, replayed: false, status: 'cancelling', result: null, eventSeq: 2 }),
     ...overrides,
@@ -53,6 +66,7 @@ function oneClaimRepository(input: {
   controller: AbortController
   handler?: JobHandler
   append?: JobRepository['appendEvents']
+  checkpoint?: JobRepository['checkpointWithAccounting']
   finalize?: JobRepository['finalize']
 }) {
   let claimCount = 0
@@ -71,6 +85,7 @@ function oneClaimRepository(input: {
         : { acquired: false, reason: 'empty', job: null }
     },
     ...(input.append ? { appendEvents: input.append } : {}),
+    ...(input.checkpoint ? { checkpointWithAccounting: input.checkpoint } : {}),
     finalize: input.finalize ?? (async request => {
       finalizationCount += 1
       input.controller.abort()
@@ -103,6 +118,145 @@ test('worker permits only one local claim winner and fences every mutation', asy
   assert.equal(counts.handlerCount, 1)
   assert.equal(counts.finalizationCount, 1)
   assert.ok(counts.claimCount >= 2)
+})
+
+test('worker checkpoints pending usage atomically and final-persist sends only the unacked delta', async () => {
+  const controller = new AbortController()
+  const checkpointEntries: Array<readonly import('../lib/jobs/repository').JobAccounting[]> = []
+  let finalEntries: readonly import('../lib/jobs/repository').JobAccounting[] = []
+  const fixture = oneClaimRepository({
+    controller,
+    handler: async context => {
+      context.reportAccounting({
+        idempotencyKey: 'model-usage', reason: 'provider',
+        rawTokens: 10, weightedTokens: 10, costMicros: 10,
+      })
+      await context.checkpoint({
+        phase: 'chat.model_round', checkpoint: { schemaVersion: 1 },
+        progress: { totalTokens: 10 }, resumable: true,
+      })
+      context.reportAccounting({
+        idempotencyKey: 'model-usage', reason: 'provider',
+        rawTokens: 15, weightedTokens: 15, costMicros: 15,
+      })
+      return { status: 'completed', result: { ok: true } }
+    },
+    checkpoint: async input => {
+      checkpointEntries.push(input.ledgerEntries)
+      return {
+        accepted: true, replayed: false, reason: null,
+        status: input.status ?? 'running',
+        checkpointVersion: input.expectedCheckpointVersion + 1,
+        cancelRequested: false,
+      }
+    },
+    finalize: async request => {
+      controller.abort()
+      return {
+        accepted: true, replayed: false, status: request.status,
+        result: request.result ?? null, error: request.error ?? null, eventSeq: 3,
+      }
+    },
+  })
+  fixture.repository.recordAccounting = async input => {
+    finalEntries = input.ledgerEntries
+    return { accepted: true, replayed: false, status: 'running', cancelRequested: false }
+  }
+
+  await new JobWorker({
+    repository: fixture.repository,
+    workerId: 'worker-1',
+    queues: ['chat'],
+    handlers: fixture.handlers,
+    sleep: async (_milliseconds, signal) => {
+      await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))
+    },
+  }).run(controller.signal)
+
+  assert.equal(checkpointEntries.length, 1)
+  assert.equal(checkpointEntries[0]?.find(entry => entry.reason === 'provider')?.rawTokens, 10)
+  assert.equal(finalEntries.find(entry => entry.reason === 'provider')?.rawTokens, 5)
+  assert.equal(finalEntries.some(entry => entry.reason === 'provider' && entry.rawTokens === 15), false)
+})
+
+test('handler usage flush is fenced and durable before the handler can return', async () => {
+  const controller = new AbortController()
+  const order: string[] = []
+  const fixture = oneClaimRepository({
+    controller,
+    handler: async context => {
+      context.reportAccounting({
+        idempotencyKey: 'model-usage', reason: 'provider',
+        rawTokens: 9, weightedTokens: 9, costMicros: 9,
+      })
+      await context.flushAccounting()
+      order.push('handler-return')
+      return { status: 'completed', result: { ok: true } }
+    },
+    finalize: async request => {
+      order.push('finalize')
+      controller.abort()
+      return {
+        accepted: true, replayed: false, status: request.status,
+        result: request.result ?? null, error: request.error ?? null, eventSeq: 3,
+      }
+    },
+  })
+  fixture.repository.recordAccounting = async input => {
+    const provider = input.ledgerEntries.find(entry => entry.reason === 'provider')
+    if (provider) {
+      assert.equal(provider.rawTokens, 9)
+      order.push('accounting-durable')
+    } else {
+      assert.equal(input.ledgerEntries.every(entry => entry.reason === 'job_resource_usage'), true)
+    }
+    return { accepted: true, replayed: false, status: 'running', cancelRequested: false }
+  }
+
+  await new JobWorker({
+    repository: fixture.repository,
+    workerId: 'worker-1',
+    queues: ['chat'],
+    handlers: fixture.handlers,
+    sleep: async (_milliseconds, signal) => {
+      await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))
+    },
+  }).run(controller.signal)
+
+  assert.deepEqual(order, ['accounting-durable', 'handler-return', 'finalize'])
+})
+
+test('worker reports the database-authoritative terminal after a completion race', async () => {
+  const controller = new AbortController()
+  const observed: string[] = []
+  const fixture = oneClaimRepository({
+    controller,
+    handler: async () => ({ status: 'completed', result: { ok: true } }),
+    finalize: async () => {
+      controller.abort()
+      return {
+        accepted: false,
+        replayed: true,
+        status: 'cancelled',
+        result: null,
+        error: null,
+        eventSeq: 3,
+      }
+    },
+  })
+
+  await new JobWorker({
+    repository: fixture.repository,
+    workerId: 'worker-1',
+    queues: ['chat'],
+    handlers: fixture.handlers,
+    onFinalized: ({ status }) => { observed.push(status) },
+    sleep: async (_milliseconds, signal) => {
+      await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))
+    },
+  }).run(controller.signal)
+
+  assert.deepEqual(observed, ['cancelled'])
 })
 
 test('stale fencing rejection stops work and never attempts terminal CAS', async () => {
@@ -155,6 +309,7 @@ test('graceful shutdown stops claiming then aborts an over-grace active handler'
   const active = new Promise<void>(resolve => { started = resolve })
   let claimCount = 0
   let finalizeCount = 0
+  let accountedTokens = -1
   const repository = fakeRepository({
     claim: async () => {
       claimCount += 1
@@ -166,6 +321,10 @@ test('graceful shutdown stops claiming then aborts an over-grace active handler'
       finalizeCount += 1
       return { accepted: true, replayed: false, status: request.status, result: null, error: null, eventSeq: 2 }
     },
+    recordAccounting: async request => {
+      accountedTokens = Number(request.ledgerEntries[0]?.rawTokens ?? 0)
+      return { accepted: true, replayed: false, status: 'running', cancelRequested: false }
+    },
   })
   const worker = new JobWorker({
     repository,
@@ -173,6 +332,7 @@ test('graceful shutdown stops claiming then aborts an over-grace active handler'
     queues: ['chat'],
     handlers: {
       'chat.generation': async context => {
+        context.reportAccounting({ idempotencyKey: 'model-usage', reason: 'provider', rawTokens: 5 })
         started()
         return new Promise<never>((_resolve, reject) => {
           context.signal.addEventListener('abort', () => reject(context.signal.reason), { once: true })
@@ -187,6 +347,7 @@ test('graceful shutdown stops claiming then aborts an over-grace active handler'
   await running
   assert.equal(claimCount, 1)
   assert.equal(finalizeCount, 0)
+  assert.equal(accountedTokens, 5)
 })
 
 test('renewal outage fails closed at the existing lease deadline', async () => {
@@ -282,6 +443,137 @@ test('retryable provider failures are delay-queued without a false terminal stat
   assert.equal(retries, 1)
   assert.equal(finalizations, 0)
   assert.deepEqual(observedTerminals, [])
+})
+
+test('worker durably records failed-attempt usage before scheduling a retry', async () => {
+  const shutdown = new AbortController()
+  const order: string[] = []
+  let claims = 0
+  let recordedEntries: readonly import('../lib/jobs/repository').JobAccounting[] = []
+  const repository = fakeRepository({
+    claim: async () => {
+      claims += 1
+      return claims === 1
+        ? { acquired: true, reason: 'claimed', job: claimedJob() }
+        : { acquired: false, reason: 'empty', job: null }
+    },
+    recordAccounting: async input => {
+      order.push('accounting')
+      recordedEntries = input.ledgerEntries
+      return { accepted: true, replayed: false, status: 'running', cancelRequested: false }
+    },
+    retry: async () => {
+      order.push('retry')
+      shutdown.abort()
+      return {
+        accepted: true, reason: null, status: 'queued',
+        availableAt: new Date().toISOString(), eventSeq: 3, cancelRequested: false,
+      }
+    },
+  })
+  await new JobWorker({
+    repository,
+    workerId: 'worker-1',
+    queues: ['chat'],
+    handlers: {
+      'chat.generation': async context => {
+        context.reportAccounting({
+          idempotencyKey: 'model-usage', reason: 'provider', rawTokens: 17,
+        })
+        throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'provider offline', { class: 'provider' })
+      },
+    },
+    random: () => 0.5,
+  }).run(shutdown.signal)
+  assert.deepEqual(order, ['accounting', 'retry'])
+  assert.equal(recordedEntries.length, 2)
+  assert.equal(recordedEntries[0].rawTokens, 17)
+  assert.match(recordedEntries[0].idempotencyKey, /:attempt:1:/)
+  assert.equal(recordedEntries[1].reason, 'job_resource_usage')
+})
+
+test('accounting failure suppresses both retry and terminal transition', async () => {
+  const shutdown = new AbortController()
+  let claims = 0
+  let retries = 0
+  let finalizations = 0
+  const repository = fakeRepository({
+    claim: async () => {
+      claims += 1
+      if (claims === 1) return { acquired: true, reason: 'claimed', job: claimedJob() }
+      shutdown.abort()
+      return { acquired: false, reason: 'empty', job: null }
+    },
+    recordAccounting: async () => {
+      throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'ledger unavailable')
+    },
+    retry: async () => {
+      retries += 1
+      return { accepted: true, reason: null, status: 'queued', availableAt: new Date().toISOString(), eventSeq: 2, cancelRequested: false }
+    },
+    finalize: async request => {
+      finalizations += 1
+      return { accepted: true, replayed: false, status: request.status, result: null, error: request.error ?? null, eventSeq: 2 }
+    },
+  })
+  await new JobWorker({
+    repository,
+    workerId: 'worker-1',
+    queues: ['chat'],
+    handlers: {
+      'chat.generation': async context => {
+        context.reportAccounting({ idempotencyKey: 'usage', reason: 'provider', rawTokens: 3 })
+        throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'provider offline', { class: 'provider' })
+      },
+    },
+    idleBackoffMinimumMs: 1,
+    idleBackoffMaximumMs: 1,
+  }).run(shutdown.signal)
+  assert.equal(retries, 0)
+  assert.equal(finalizations, 0)
+})
+
+test('budget excess is a stable non-retry terminal failure after accounting', async () => {
+  const shutdown = new AbortController()
+  let claims = 0
+  let retries = 0
+  let terminalCode = ''
+  let accounted = false
+  const repository = fakeRepository({
+    claim: async () => {
+      claims += 1
+      return claims === 1
+        ? { acquired: true, reason: 'claimed', job: claimedJob({ budget: { tokenLimit: 5 } }) }
+        : { acquired: false, reason: 'empty', job: null }
+    },
+    recordAccounting: async () => {
+      accounted = true
+      return { accepted: true, replayed: false, status: 'running', cancelRequested: false }
+    },
+    retry: async () => {
+      retries += 1
+      return { accepted: true, reason: null, status: 'queued', availableAt: new Date().toISOString(), eventSeq: 2, cancelRequested: false }
+    },
+    finalize: async request => {
+      terminalCode = request.error?.code ?? ''
+      shutdown.abort()
+      return { accepted: true, replayed: false, status: request.status, result: null, error: request.error ?? null, eventSeq: 3 }
+    },
+  })
+  await new JobWorker({
+    repository,
+    workerId: 'worker-1',
+    queues: ['chat'],
+    handlers: {
+      'chat.generation': async context => {
+        context.reportAccounting({ idempotencyKey: 'usage', reason: 'provider', rawTokens: 6 })
+        return { status: 'completed' }
+      },
+    },
+  }).run(shutdown.signal)
+  assert.equal(accounted, true)
+  assert.equal(retries, 0)
+  assert.equal(terminalCode, 'JOB_BUDGET_EXCEEDED')
 })
 
 test('an unsafe retry is terminally poisoned with a stable error code', async () => {

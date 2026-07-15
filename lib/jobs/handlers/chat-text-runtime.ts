@@ -2,9 +2,10 @@ import { createHash } from 'node:crypto'
 import type { ModelMessage } from '@/lib/llm/types'
 import { weightedTokenUsage } from '@/lib/quota'
 import type { JobAccounting } from '../repository'
-import type { JsonObject } from '../contracts'
+import type { JobRecord, JsonObject } from '../contracts'
 import { jsonResult } from '../event-writer'
 import type { LoadedChatJob } from './chat-input'
+import { BILLING_PRICE_VERSION, platformModelCostMicros } from '../pricing'
 
 const MAX_CHECKPOINT_BYTES = 850_000
 
@@ -35,30 +36,53 @@ export function restoredTrajectory(value: unknown): ModelMessage[] {
   return source.trajectory as ModelMessage[]
 }
 
+export function restoredCheckpointTokens(value: unknown): number {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return 0
+  const totalTokens = (value as Record<string, unknown>).totalTokens
+  return Number.isSafeInteger(totalTokens) && Number(totalTokens) >= 0
+    ? Number(totalTokens)
+    : 0
+}
+
+/**
+ * A recovered checkpoint is presentation state, while durable ledger usage is
+ * the billing authority. Use the larger historical value for cumulative
+ * progress, but never feed it back into the current attempt's ledger entry.
+ */
+export function restoredHistoricalTokens(
+  job: Pick<JobRecord, 'checkpoint' | 'usage'>,
+): number {
+  return Math.max(
+    restoredCheckpointTokens(job.checkpoint?.progress),
+    job.usage.rawTokens,
+  )
+}
+
 export function chatTokenAccounting(
   input: LoadedChatJob,
   jobId: string,
-  totalTokens: number,
+  attemptTokens: number,
 ): JobAccounting[] {
   const selection = input.selection
   const weighted = selection.customEndpoint
     ? 0
-    : weightedTokenUsage(totalTokens, selection.model, selection.thinking)
-  if (totalTokens <= 0 && weighted <= 0) return []
+    : weightedTokenUsage(attemptTokens, selection.model, selection.thinking)
+  if (attemptTokens <= 0 && weighted <= 0) return []
   return [{
     idempotencyKey: `${jobId}:model-usage`,
     reason: selection.customEndpoint ? 'custom_model_usage' : 'platform_model_usage',
     direction: 'debit',
     weightedTokens: weighted,
-    rawTokens: Math.max(0, Math.round(totalTokens)),
+    rawTokens: Math.max(0, Math.round(attemptTokens)),
     model: selection.model,
     provider: selection.capability.provider.id,
-    costEstimate: 0,
+    costMicros: platformModelCostMicros(weighted, selection.customEndpoint),
     currency: 'USD',
     metadata: {
       thinking: selection.thinking,
       usingBalance: input.command.usingBalance,
       customEndpoint: selection.customEndpoint,
+      priceVersion: BILLING_PRICE_VERSION,
     },
   }]
 }

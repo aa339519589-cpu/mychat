@@ -3,10 +3,12 @@ import type {
   JobFailure,
   JobFence,
   JobRecord,
+  JobStatus,
   JsonObject,
   JsonValue,
 } from './contracts'
 import type { JobAccounting, JobOutboxInput, JobRepository } from './repository'
+import type { JobBudgetControl } from './budget'
 
 export type JobHandlerResult =
   | {
@@ -29,13 +31,17 @@ export type JobExecutionContext = {
   readonly job: JobRecord
   readonly fence: JobFence
   readonly signal: AbortSignal
+  readonly budget: JobBudgetControl
   assertAuthority: () => void
+  reportAccounting: (entry: JobAccounting) => void
+  flushAccounting: () => Promise<void>
   appendEvents: (events: readonly JobEventDraft[]) => Promise<void>
   checkpoint: (input: {
     phase: string
     checkpoint: JsonObject
     progress?: JsonObject
     resumable: boolean
+    status?: Extract<JobStatus, 'running' | 'awaiting_input'>
   }) => Promise<void>
 }
 

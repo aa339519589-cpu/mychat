@@ -62,6 +62,7 @@ export async function POST(request: NextRequest) {
     const payload: JsonObject = {
       schemaVersion: 1,
       usingBalance: gate.usingBalance,
+      billingClass: body.endpointId ? 'customer' : 'platform',
       ...(body.endpointId ? { endpointId: body.endpointId } : {}),
     }
     const result = await new SupabaseJobRepository().enqueue({
@@ -73,7 +74,8 @@ export async function POST(request: NextRequest) {
       idempotencyKey: `title:${body.conversationId}:${source.id}`,
       inputHash: sha256JobValue(payload),
       input: payload,
-      budget: { wallTimeMs: 60_000, tokenLimit: 256 },
+      // Provider usage includes the source prompt as well as the short title.
+      budget: { wallTimeMs: 60_000, tokenLimit: 8_192 },
       maxAttempts: 3,
     })
     if (result.created) jobMetrics.recordEnqueued('title')

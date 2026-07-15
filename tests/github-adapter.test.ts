@@ -5,6 +5,8 @@ import {
   commitFiles,
   createRepo,
   enablePages,
+  canonicalGitHubPagesUrl,
+  isCanonicalGitHubPagesUrl,
   listRepos,
   listTree,
   mergePullRequest,
@@ -137,6 +139,17 @@ test("GitHub Pages and merge state machines preserve every failure outcome", { c
   assert.equal(pageCalls, 2)
 })
 
+test("GitHub Pages verification accepts only the canonical HTTPS origin", () => {
+  assert.equal(canonicalGitHubPagesUrl("Owner/Repo"), "https://owner.github.io/Repo/")
+  assert.equal(canonicalGitHubPagesUrl("owner/owner.github.io"), "https://owner.github.io/")
+  assert.equal(isCanonicalGitHubPagesUrl("https://owner.github.io/repo/", "owner/repo"), true)
+  assert.equal(isCanonicalGitHubPagesUrl("http://owner.github.io/repo/", "owner/repo"), false)
+  assert.equal(isCanonicalGitHubPagesUrl("https://127.0.0.1/repo/", "owner/repo"), false)
+  assert.equal(isCanonicalGitHubPagesUrl("https://owner.github.io.evil.test/repo/", "owner/repo"), false)
+  assert.equal(isCanonicalGitHubPagesUrl("https://owner.github.io/other/", "owner/repo"), false)
+  assert.equal(isCanonicalGitHubPagesUrl("https://user:pass@owner.github.io/repo/", "owner/repo"), false)
+})
+
 test("atomic GitHub commits stop at each malformed Git Data stage", { concurrency: false }, async t => {
   const originalFetch = globalThis.fetch
   t.after(() => { globalThis.fetch = originalFetch })
@@ -176,7 +189,10 @@ test("GitHub defaults remain explicit for empty names, missing SHAs, and pending
   globalThis.fetch = async () => Response.json({ merged: true })
   assert.deepEqual(await mergePullRequest("token", "owner/repo", 1, "head"), { merged: true, commitSha: "" })
   globalThis.fetch = async input => input.toString().startsWith("https://api.github.com/") ? Response.json({ status: "built" }) : new Response("not ready", { status: 503 })
-  assert.deepEqual(await waitForPages("token", "owner/repo", { timeoutMs: 0 }), { status: "pending", url: "https://owner.github.io/repo/" })
+  assert.deepEqual(await waitForPages("token", "owner/repo", {
+    timeoutMs: 0,
+    siteProbe: async () => false,
+  }), { status: "pending", url: "https://owner.github.io/repo/" })
   globalThis.fetch = async input => input.toString().includes("builds/latest") ? Response.json({ commit: "new", status: "building" }) : Response.json({ status: "built" })
   assert.deepEqual(await waitForPages("token", "owner/repo", { timeoutMs: 0, expectedCommitSha: "new" }), { status: "pending", url: "https://owner.github.io/repo/" })
 })

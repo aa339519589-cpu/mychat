@@ -1,0 +1,218 @@
+groups:
+  - name: mychat-control-plane
+    interval: 30s
+    rules:
+      - alert: MyChatMetricsScrapeDown
+        expr: up{job="mychat"} == 0
+        for: 2m
+        labels:
+          severity: page
+          service: mychat
+        annotations:
+          summary: MyChat authoritative metrics are unavailable
+          description: The protected metrics endpoint has failed for two minutes; verify Supabase and the service-role RPCs before restarting workers.
+
+      - alert: MyChatMetricsSnapshotStale
+        expr: mychat_authoritative_snapshot_age_seconds > 30 or mychat_authoritative_worker_fleet_snapshot_age_seconds > 30 or mychat_authoritative_lifecycle_snapshot_age_seconds > 30
+        for: 2m
+        labels:
+          severity: page
+          service: mychat
+        annotations:
+          summary: MyChat database metrics snapshot is stale
+          description: At least one authoritative snapshot is over 30 seconds old, so flat control-plane graphs cannot be trusted.
+
+      - alert: MyChatWorkerFleetNotReady
+        expr: mychat_authoritative_worker_fleet_ready < 1 or min(mychat_authoritative_worker_queue_ready) < 1
+        for: 2m
+        labels:
+          severity: page
+          service: mychat
+        annotations:
+          summary: Worker fleet no longer covers all required queues
+          description: One or more of chat, media, title, agent, or outbox has no fresh non-draining consumer.
+
+      - alert: MyChatWorkerHeartbeatStale
+        expr: mychat_authoritative_worker_fleet_stale_workers > 0 or max(mychat_authoritative_worker_queue_freshest_heartbeat_age_seconds) > 15
+        for: 2m
+        labels:
+          severity: page
+          service: mychat
+        annotations:
+          summary: Worker heartbeat freshness is degrading
+          description: A non-draining worker is stale or a required queue has not received a heartbeat within 15 seconds.
+
+      - alert: MyChatQueueOldestAgeHigh
+        expr: max by (job_type) (mychat_authoritative_queue_oldest_age_seconds) > 30
+        for: 5m
+        labels:
+          severity: page
+          service: mychat
+        annotations:
+          summary: Durable job queue is not draining
+          description: Queue {{ $labels.job_type }} has held its oldest job for more than 30 seconds for five minutes.
+
+      - alert: MyChatJobFailureRatioHigh
+        expr: |
+          (
+            sum(mychat_authoritative_jobs_terminal_window{status="failed"})
+            /
+            clamp_min(sum(mychat_authoritative_jobs_terminal_window), 1)
+          ) > 0.05
+          and
+          sum(mychat_authoritative_jobs_terminal_window) >= 20
+        for: 10m
+        labels:
+          severity: warning
+          service: mychat
+        annotations:
+          summary: Job terminal failure ratio exceeds five percent
+          description: The authoritative one-hour window has at least 20 terminal jobs and more than five percent failed.
+
+      - alert: MyChatCancellationSLOBurn
+        expr: |
+          (
+            1 - (
+              sum(mychat_authoritative_slo_window_good{objective="cancel_terminal_3s"})
+              /
+              clamp_min(sum(mychat_authoritative_slo_window_eligible{objective="cancel_terminal_3s"}), 1)
+            )
+          ) / 0.001 > 2
+          and
+          sum(mychat_authoritative_slo_window_eligible{objective="cancel_terminal_3s"}) >= 100
+        for: 15m
+        labels:
+          severity: warning
+          service: mychat
+        annotations:
+          summary: Cancellation latency is burning its error budget
+          description: The cancel-to-terminal objective is consuming more than twice its one-hour error budget with a meaningful sample size.
+
+      - alert: MyChatCancellationSLOPage
+        expr: |
+          (
+            1 - (
+              sum(mychat_authoritative_slo_window_good{objective="cancel_terminal_3s"})
+              /
+              clamp_min(sum(mychat_authoritative_slo_window_eligible{objective="cancel_terminal_3s"}), 1)
+            )
+          ) / 0.001 > 6
+          and
+          sum(mychat_authoritative_slo_window_eligible{objective="cancel_terminal_3s"}) >= 100
+        for: 5m
+        labels:
+          severity: page
+          service: mychat
+        annotations:
+          summary: Cancellation latency is rapidly exhausting its error budget
+          description: Stop expanding the release and inspect worker cancellation polling, provider aborts, and terminal CAS writes.
+
+      - alert: MyChatLeaseRecoveryStalled
+        expr: sum by (job_type) (mychat_authoritative_job_lease_expired) > 0
+        for: 2m
+        labels:
+          severity: page
+          service: mychat
+        annotations:
+          summary: Expired job leases are not recovering
+          description: Job type {{ $labels.job_type }} has retained an expired active lease for at least two minutes.
+
+      - alert: MyChatOutboxDeliveryStalled
+        expr: mychat_authoritative_outbox_expired_leases > 0 or mychat_authoritative_outbox_oldest_ready_age_seconds > 30
+        for: 2m
+        labels:
+          severity: page
+          service: mychat
+        annotations:
+          summary: Transactional outbox delivery is stalled
+          description: An outbox lock expired or the oldest claimable delivery has waited more than 30 seconds.
+
+      - alert: MyChatOutboxDeadLetter
+        expr: mychat_authoritative_outbox_dead > 0
+        for: 1m
+        labels:
+          severity: page
+          service: mychat
+        annotations:
+          summary: Transactional outbox contains dead-lettered messages
+          description: Use the controlled audited redrive operation after identifying and correcting the underlying side-effect failure.
+
+      - alert: MyChatStreamCapacityHigh
+        expr: mychat_authoritative_lifecycle_active_streams / mychat_authoritative_lifecycle_stream_capacity > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          service: mychat
+        annotations:
+          summary: Job event stream capacity is above eighty percent
+          description: Inspect reconnect storms and slow clients before admission starts rejecting streams.
+
+      - alert: MyChatStreamLeaseCollectionStalled
+        expr: mychat_authoritative_lifecycle_expired_stream_leases > 0
+        for: 2m
+        labels:
+          severity: warning
+          service: mychat
+        annotations:
+          summary: Expired stream leases are not being collected
+          description: Verify event admission traffic and the lifecycle sweeper database RPC.
+
+      - alert: MyChatPayloadCleanupStalled
+        expr: mychat_authoritative_lifecycle_overdue_payloads > 0 or mychat_authoritative_lifecycle_payload_cleanup_dead_letters > 0
+        for: 5m
+        labels:
+          severity: page
+          service: mychat
+        annotations:
+          summary: Private Job payload cleanup is stalled
+          description: Inspect the payload cleanup outbox, Storage availability, and stale delivery fences.
+
+      - alert: MyChatTenantResourceHeadroomLow
+        expr: mychat_authoritative_lifecycle_tenants_near_resource_limit > 0
+        for: 15m
+        labels:
+          severity: warning
+          service: mychat
+        annotations:
+          summary: One or more tenants are approaching a hard resource limit
+          description: Review retention and legitimate tenant growth before writes reach the hard database boundary.
+
+      - alert: MyChatAdmissionReservationExpired
+        expr: mychat_authoritative_lifecycle_expired_admission_reservations > 0
+        for: 5m
+        labels:
+          severity: page
+          service: mychat
+        annotations:
+          summary: Expired paid-work reservations are not converging
+          description: Check for fresh execution leases first, then inspect lifecycle sweeper failures and terminal settlement.
+
+      - alert: MyChatBillingReconciliationStale
+        expr: mychat_authoritative_billing_snapshot_age_seconds > 600
+        for: 2m
+        labels:
+          severity: page
+          service: mychat
+        annotations:
+          summary: Authoritative billing reconciliation is stale
+          description: New paid-work admission is fail-closed. Restore the reconciliation worker before changing balances or releasing.
+
+      - alert: MyChatBillingInvariantMismatch
+        expr: mychat_authoritative_billing_healthy < 1 or mychat_authoritative_billing_mismatches_total > 0
+        for: 1m
+        labels:
+          severity: page
+          service: mychat
+        annotations:
+          summary: A billing invariant no longer reconciles
+          description: Stop the release and paid-work admission. Compare quote, hold, debit, credit, release, receipt, and profile journal counters before repair.
+
+      - alert: MyChatBillingReleaseBlocked
+        expr: mychat_authoritative_billing_release_ready < 1 or mychat_authoritative_billing_release_blockers > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: mychat
+        annotations:
+          summary: Billing cutover is not ready for release
+          description: Drain every pre-cutover Job and refresh reconciliation. Do not deploy while release blockers remain.

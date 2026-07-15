@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { TIER_MAP, type Tier } from '@/lib/chat-data'
@@ -11,6 +10,7 @@ import {
   restoreWorkspaceAuthority,
 } from '@/lib/agent/workspace-authority'
 import { workspaceRoot } from '@/lib/agent/workspace-paths'
+import { runGit } from '@/lib/agent/git-publish/git-command'
 import { getGitHubCredentialForUser } from '@/lib/github-connection'
 import { repoMeta } from '@/lib/github'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -58,6 +58,7 @@ export async function loadAgentJob(context: JobExecutionContext): Promise<Loaded
   const responseId = required(context.job.subject.responseId, 'responseId')
   const userMessageId = required(context.job.subject.userMessageId, 'userMessageId')
   const payload = object(context.job.input)
+  const admission = object(payload.admission)
   const tier = typeof payload.tier === 'string' ? payload.tier : '正构'
   const selected = tier === '观照' ? TIER_MAP['正构'] : (TIER_MAP[tier as Tier] ?? TIER_MAP['正构'])
   const [{ data: task, error: taskError }, { data: source, error: sourceError }, memoriesResult] = await Promise.all([
@@ -113,10 +114,11 @@ export async function loadAgentJob(context: JobExecutionContext): Promise<Loaded
   if (!workspaceReady) throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'Workspace creation failed')
   if (!task.agent_branch) {
     try {
-      workspaceBranch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
-        cwd: workspaceRoot(taskId, userId), timeout: 10_000, encoding: 'utf8',
-      }).trim()
+      workspaceBranch = (await runGit(['rev-parse', '--abbrev-ref', 'HEAD'], {
+        cwd: workspaceRoot(taskId, userId), timeoutMs: 10_000, signal: context.signal,
+      })).trim()
     } catch {
+      context.signal.throwIfAborted()
       throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'Workspace branch cannot be determined')
     }
   }
@@ -124,6 +126,7 @@ export async function loadAgentJob(context: JobExecutionContext): Promise<Loaded
   if (authority) {
     await restoreWorkspaceAuthority({
       client, userId, taskId, token: credential.token, branch: workspaceBranch, authority,
+      signal: context.signal,
     })
   } else {
     await advanceWorkspaceAuthority(context, client, userId, taskId, 'initial-worker-hydration')
@@ -138,6 +141,6 @@ export async function loadAgentJob(context: JobExecutionContext): Promise<Loaded
     workspaceReady,
     model: selected.model,
     thinking: selected.thinking,
-    usingBalance: payload.usingBalance === true,
+    usingBalance: admission.funding === 'balance',
   }
 }

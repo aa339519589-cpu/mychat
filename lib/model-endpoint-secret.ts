@@ -18,8 +18,18 @@ function configuredSecret(): string {
   return process.env.AGENT_CREDENTIAL_KEY?.trim() ?? ""
 }
 
-function encryptionKey(): Buffer {
-  return createHash("sha256").update(`mychat:model-endpoint:v3:${configuredSecret()}`).digest()
+function previousSecret(): string {
+  return process.env.AGENT_CREDENTIAL_KEY_PREVIOUS?.trim() ?? ""
+}
+
+function encryptionKey(secret = configuredSecret()): Buffer {
+  return createHash("sha256").update(`mychat:model-endpoint:v3:${secret}`).digest()
+}
+
+function decryptionKeys(): Buffer[] {
+  return [...new Set([configuredSecret(), previousSecret()])]
+    .filter(secret => secret.length >= 32)
+    .map(secret => encryptionKey(secret))
 }
 
 function legacySignatureContext(userId: string, endpointId: string): ModelEndpointSecretContext {
@@ -117,10 +127,20 @@ export function openModelEndpointKey(
     const tag = Buffer.from(tagRaw, "base64url")
     if (iv.length !== 12 || tag.length !== 16) return null
 
-    const decipher = createDecipheriv("aes-256-gcm", encryptionKey(), iv)
-    decipher.setAAD(authenticatedData)
-    decipher.setAuthTag(tag)
-    return Buffer.concat([decipher.update(Buffer.from(bodyRaw, "base64url")), decipher.final()]).toString("utf8")
+    for (const candidate of decryptionKeys()) {
+      try {
+        const decipher = createDecipheriv("aes-256-gcm", candidate, iv)
+        decipher.setAAD(authenticatedData)
+        decipher.setAuthTag(tag)
+        return Buffer.concat([
+          decipher.update(Buffer.from(bodyRaw, "base64url")),
+          decipher.final(),
+        ]).toString("utf8")
+      } catch {
+        // Continue only across explicitly configured rotation keys.
+      }
+    }
+    return null
   } catch {
     return null
   }

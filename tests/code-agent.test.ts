@@ -186,7 +186,11 @@ test('Pages is ready only after GitHub reports built and the URL responds', { co
   }
 
   assert.deepEqual(
-    await enablePages('token', 'owner/project', 'main', { timeoutMs: 0, intervalMs: 0 }),
+    await enablePages('token', 'owner/project', 'main', {
+      timeoutMs: 0,
+      intervalMs: 0,
+      siteProbe: async url => url === 'https://owner.github.io/project/',
+    }),
     { status: 'ready', url: 'https://owner.github.io/project/' },
   )
 })
