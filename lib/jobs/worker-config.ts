@@ -48,3 +48,31 @@ export function jitteredJobInterval(
   const factor = 1 - jitter + (2 * jitter * boundedRandom)
   return Math.max(1, Math.round(baseMs * factor))
 }
+
+export function jobLeaseRenewalSchedule(
+  leaseSeconds: number,
+  intervalMs: number | undefined,
+  jitter: number | undefined,
+): { intervalMs: number; jitter: number } {
+  const boundedInterval = boundedJobInteger(
+    intervalMs ?? Math.floor(leaseSeconds * 1_000 / 3),
+    100,
+    leaseSeconds * 500,
+    'job lease renewal interval',
+  )
+  const boundedJitter = jitter ?? 0.1
+  if (!Number.isFinite(boundedJitter) || boundedJitter < 0 || boundedJitter > 0.25
+    || Math.ceil(boundedInterval * (1 + boundedJitter)) > leaseSeconds * 500) {
+    throw new JobRuntimeError('JOB_INVALID_INPUT', 'Invalid job lease renewal jitter')
+  }
+  return { intervalMs: boundedInterval, jitter: boundedJitter }
+}
+
+export function nextJobLeaseRenewalDelay(
+  remainingLeaseMs: number,
+  intervalMs: number,
+  jitter: number,
+  random: () => number,
+): number {
+  return Math.min(remainingLeaseMs, jitteredJobInterval(intervalMs, jitter, random))
+}

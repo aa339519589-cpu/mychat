@@ -11,10 +11,8 @@ import type { JobRepository } from './repository'
 import { decideJobRetry } from './retry-policy'
 import { JobBudgetController } from './budget'
 import {
-  boundedJobInteger,
-  defaultJobSleep,
-  jitteredJobInterval,
-  nextJobBackoff,
+  boundedJobInteger, defaultJobSleep, jobLeaseRenewalSchedule,
+  nextJobBackoff, nextJobLeaseRenewalDelay,
 } from './worker-config'
 import { createActiveExecution, type ActiveExecution } from './worker-execution'
 import {
@@ -71,17 +69,9 @@ export class JobWorker {
       JOB_LIMITS.leaseSecondsMaximum,
       'job lease duration',
     )
-    this.renewIntervalMs = boundedJobInteger(
-      options.renewIntervalMs ?? Math.floor(this.leaseSeconds * 1_000 / 3),
-      100,
-      this.leaseSeconds * 500,
-      'job lease renewal interval',
-    )
-    this.renewJitter = options.renewJitter ?? 0.1
-    if (!Number.isFinite(this.renewJitter) || this.renewJitter < 0 || this.renewJitter > 0.25
-      || Math.ceil(this.renewIntervalMs * (1 + this.renewJitter)) > this.leaseSeconds * 500) {
-      throw new JobRuntimeError('JOB_INVALID_INPUT', 'Invalid job lease renewal jitter')
-    }
+    const renewal = jobLeaseRenewalSchedule(this.leaseSeconds, options.renewIntervalMs, options.renewJitter)
+    this.renewIntervalMs = renewal.intervalMs
+    this.renewJitter = renewal.jitter
     this.idleBackoffMinimumMs = boundedJobInteger(
       options.idleBackoffMinimumMs ?? 100,
       1,
@@ -274,9 +264,8 @@ export class JobWorker {
         execution.controller.abort(new JobRuntimeError('JOB_LEASE_STALE', 'Job lease expired'))
         return
       }
-      const renewAfterMs = Math.min(
-        remainingLeaseMs,
-        jitteredJobInterval(this.renewIntervalMs, this.renewJitter, this.random),
+      const renewAfterMs = nextJobLeaseRenewalDelay(
+        remainingLeaseMs, this.renewIntervalMs, this.renewJitter, this.random,
       )
       try {
         await this.sleep(renewAfterMs, execution.renewStop.signal)
