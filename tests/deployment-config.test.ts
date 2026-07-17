@@ -24,8 +24,8 @@ test('CI and Render use the supported Node runtime and strict readiness', () => 
   assert.equal(render.match(/key:\s*NODE_ENV\s*\n\s*value:\s*production/g)?.length, 1)
   assert.equal(render.match(/^\s*- type:/gm)?.length, 1)
   assert.doesNotMatch(render, /type:\s*worker/)
-  assert.match(read('package.json'), /"prestart":\s*"tsx scripts\/assert-production-agent-sandbox\.ts"/)
-  assert.match(read('package.json'), /"start":\s*"node scripts\/start-production\.mjs"/)
+  assert.match(read('package.json'), /"prestart":\s*"tsx scripts\/assert-production-config\.ts"/)
+  assert.match(read('package.json'), /"start":\s*"tsx scripts\/start-production\.ts"/)
   assert.match(read('job-worker.ts'), /assertProductionAgentSandbox\(\)/)
   assert.match(read('lib/agent/isolated-shell.ts'), /network:\s*\{\s*allowOut\s*\}/)
   assert.match(read('lib/agent/isolated-shell.ts'), /updateNetwork\(\{\s*allowOut\s*\}\)/)
@@ -34,7 +34,7 @@ test('CI and Render use the supported Node runtime and strict readiness', () => 
 test('worker deployment has queue bulkheads and lease-relative renewal', () => {
   const render = read('render.yaml')
   const worker = read('job-worker.ts')
-  const supervisor = read('scripts/start-production.mjs')
+  const supervisor = read('scripts/start-production.ts')
   const workerRuntime = read('lib/jobs/worker.ts')
   const keepalive = read('.github/workflows/render-keepalive.yml')
   const healthVerifier = read('scripts/check-production-health.mjs')
@@ -45,10 +45,9 @@ test('worker deployment has queue bulkheads and lease-relative renewal', () => {
   for (const queue of ['chat', 'media', 'title', 'agent']) {
     assert.match(worker, new RegExp(`\\{ name: '${queue}', queue: '${queue}', concurrency:`))
   }
-  assert.match(worker, /const heartbeatSpecs = \[/)
-  assert.match(worker, /\{ name: 'outbox', queue: 'outbox', capacity: 1 \}/)
-  assert.match(worker, /queues:\s*\[spec\.queue\]/)
-  assert.match(worker, /capacity:\s*spec\.capacity/)
+  assert.match(worker, /const heartbeat = new JobWorkerHeartbeat/)
+  assert.match(worker, /\['outbox', 1\]/)
+  assert.match(worker, /queueCapacities:\s*Object\.fromEntries/)
   assert.match(worker, /leaseSeconds:\s*120/)
   assert.doesNotMatch(worker, /renewIntervalMs:/)
   assert.match(workerRuntime, /jobLeaseRenewalSchedule\(/)

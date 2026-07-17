@@ -1,5 +1,6 @@
-import type { SupabaseClient } from "@supabase/supabase-js"
+import type { SupabaseClient } from "@/lib/supabase/types"
 import { log } from "@/lib/logger"
+import { toJson } from '@/lib/supabase/json'
 
 export async function mergeTaskMeta(
   supabase: SupabaseClient,
@@ -11,7 +12,7 @@ export async function mergeTaskMeta(
   try {
     const result = await supabase.rpc("merge_agent_task_meta", {
       input_task_id: taskId,
-      patch,
+      patch: toJson(patch),
       remove_keys: removeKeys,
     })
     if (!result.error && result.data && typeof result.data === "object") {

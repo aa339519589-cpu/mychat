@@ -1,4 +1,4 @@
-import type { SupabaseClient } from '@supabase/supabase-js'
+import type { SupabaseClient } from '@/lib/supabase/types'
 import { sha256 } from '@/lib/agent/confirmation-plan'
 import { parseCodeApplyRequest } from '@/lib/code-agent/apply-request'
 import { sha256JobValue } from '../canonical'
@@ -31,10 +31,14 @@ export type LoadedAgentOperation = {
   }
 }
 
-function record(value: unknown): Record<string, unknown> | null {
-  const candidate = Array.isArray(value) ? value[0] : value
-  return candidate && typeof candidate === 'object' && !Array.isArray(candidate)
-    ? candidate as Record<string, unknown> : null
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function rpcRecord(value: unknown): Record<string, unknown> | null {
+  return objectRecord(Array.isArray(value) ? value[0] : value)
 }
 
 function requiredString(value: unknown, name: string): string {
@@ -54,7 +58,7 @@ async function readAuthority(context: JobExecutionContext, client: SupabaseClien
     input_worker_id: context.fence.workerId,
     input_lease_version: context.fence.leaseVersion,
   })
-  const result = record(data)
+  const result = rpcRecord(data)
   if (error || result?.ok !== true) {
     throw new JobRuntimeError('JOB_LEASE_STALE', 'Agent operation authority fence was rejected')
   }
@@ -67,24 +71,42 @@ async function readAuthority(context: JobExecutionContext, client: SupabaseClien
   try { plan = JSON.parse(canonical) } catch {
     throw new JobRuntimeError('JOB_CONFLICT', 'Confirmation plan is not canonical JSON', { class: 'policy' })
   }
-  return { result, plan: record(plan), planHash }
+  return { result, plan: objectRecord(plan), planHash }
 }
 
-/** Revalidate every persisted binding before touching a workspace or GitHub. */
-export async function loadAgentOperation(
-  context: JobExecutionContext,
-  client: SupabaseClient,
-): Promise<LoadedAgentOperation> {
-  const userId = context.job.principal.id
-  const payload = record(context.job.input)
-  if (!payload || payload.schemaVersion !== 1) throw new JobRuntimeError('JOB_INVALID_INPUT', 'Invalid operation payload')
-  const taskId = requiredString(payload.taskId, 'taskId')
-  if (context.job.subject.taskId !== taskId) throw new JobRuntimeError('JOB_CONFLICT', 'Operation task binding mismatch')
-  const kind = payload.kind
-  if (kind !== 'initial_repository' && kind !== 'workspace_publish') {
-    throw new JobRuntimeError('JOB_INVALID_INPUT', 'Invalid operation kind')
+type OperationKind = LoadedAgentOperation['kind']
+type OperationSnapshot = LoadedAgentOperation['snapshot']
+
+function operationKind(value: unknown): OperationKind {
+  if (value === 'initial_repository' || value === 'workspace_publish') return value
+  throw new JobRuntimeError('JOB_INVALID_INPUT', 'Invalid operation kind')
+}
+
+function operationSnapshot(value: unknown): OperationSnapshot {
+  if (value === null) return null
+  const source = objectRecord(value)
+  if (!source) throw new JobRuntimeError('JOB_INVALID_INPUT', 'Invalid operation snapshot')
+  return {
+    snapshotId: requiredString(source.snapshotId, 'snapshotId'),
+    manifestDigest: digest(source.manifestDigest, 'manifestDigest'),
+    treeDigest: digest(source.treeDigest, 'treeDigest'),
+    head: requiredString(source.head, 'snapshotHead'),
   }
-  const targetRepo = payload.targetRepo === null ? null : requiredString(payload.targetRepo, 'targetRepo')
+}
+
+function parseOperationPayload(context: JobExecutionContext) {
+  const payload = objectRecord(context.job.input)
+  if (!payload || payload.schemaVersion !== 1) {
+    throw new JobRuntimeError('JOB_INVALID_INPUT', 'Invalid operation payload')
+  }
+  const taskId = requiredString(payload.taskId, 'taskId')
+  if (context.job.subject.taskId !== taskId) {
+    throw new JobRuntimeError('JOB_CONFLICT', 'Operation task binding mismatch')
+  }
+  const kind = operationKind(payload.kind)
+  const targetRepo = payload.targetRepo === null
+    ? null
+    : requiredString(payload.targetRepo, 'targetRepo')
   const request = parseCodeApplyRequest({
     repo: targetRepo,
     taskId,
@@ -92,13 +114,7 @@ export async function loadAgentOperation(
     actions: payload.actions,
     message: payload.message,
   })
-  const snapshotSource = payload.snapshot === null ? null : record(payload.snapshot)
-  const snapshot = snapshotSource ? {
-    snapshotId: requiredString(snapshotSource.snapshotId, 'snapshotId'),
-    manifestDigest: digest(snapshotSource.manifestDigest, 'manifestDigest'),
-    treeDigest: digest(snapshotSource.treeDigest, 'treeDigest'),
-    head: requiredString(snapshotSource.head, 'snapshotHead'),
-  } : null
+  const snapshot = operationSnapshot(payload.snapshot)
   if ((kind === 'workspace_publish') !== Boolean(snapshot)) {
     throw new JobRuntimeError('JOB_CONFLICT', 'Operation snapshot binding mismatch', { class: 'policy' })
   }
@@ -116,52 +132,156 @@ export async function loadAgentOperation(
   if (sha256JobValue(operation as unknown as JsonObject) !== operationHash) {
     throw new JobRuntimeError('JOB_CONFLICT', 'Operation payload hash mismatch', { class: 'policy' })
   }
+  return { payload, taskId, kind, targetRepo, request, snapshot, operationHash }
+}
 
-  const authority = await readAuthority(context, client)
-  const plan = authority.plan
-  const planPayload = record(plan?.payload)
-  if (!plan || plan.version !== 1 || plan.userId !== userId || plan.taskId !== taskId
-      || plan.operation !== 'publish' || planPayload?.kind !== kind
-      || planPayload.operationInputSha256 !== operationHash
-      || payload.planHash !== authority.planHash) {
+function validateConfirmedPlan(input: {
+  plan: Record<string, unknown> | null
+  authority: Awaited<ReturnType<typeof readAuthority>>
+  payload: Record<string, unknown>
+  userId: string
+  taskId: string
+  kind: OperationKind
+  operationHash: string
+}): Record<string, unknown> {
+  const planPayload = objectRecord(input.plan?.payload)
+  if (!input.plan
+    || input.plan.version !== 1
+    || input.plan.userId !== input.userId
+    || input.plan.taskId !== input.taskId
+    || input.plan.operation !== 'publish'
+    || planPayload?.kind !== input.kind
+    || planPayload.operationInputSha256 !== input.operationHash
+    || input.payload.planHash !== input.authority.planHash) {
     throw new JobRuntimeError('JOB_CONFLICT', 'Operation does not match confirmed plan', { class: 'policy' })
   }
-  if (kind === 'workspace_publish' && (
-    authority.result.snapshotId !== snapshot?.snapshotId
-    || authority.result.snapshotDigest !== snapshot?.manifestDigest
-    || plan.head !== snapshot?.head
-    || plan.workspaceStateSha256 !== snapshot?.manifestDigest
-    || plan.repo !== targetRepo
-  )) throw new JobRuntimeError('JOB_CONFLICT', 'Workspace CAS authority changed', { class: 'policy' })
-  if (kind === 'initial_repository' && (
-    authority.result.snapshotId !== null || authority.result.snapshotDigest !== null || plan.repo !== null
-  )) throw new JobRuntimeError('JOB_CONFLICT', 'Initial repository authority is invalid', { class: 'policy' })
+  return planPayload
+}
 
-  if (kind === 'workspace_publish') {
-    const { data: currentHead, error } = await client.from('agent_workspace_heads')
-      .select('snapshot_id,manifest_digest,tree_digest,head')
-      .eq('task_id', taskId).eq('user_id', userId).maybeSingle()
-    if (error || !currentHead
-        || currentHead.snapshot_id !== snapshot?.snapshotId
-        || currentHead.manifest_digest !== snapshot?.manifestDigest
-        || currentHead.tree_digest !== snapshot?.treeDigest
-        || currentHead.head !== snapshot?.head) {
-      throw new JobRuntimeError('JOB_CONFLICT', 'Confirmed workspace is no longer current', {
-        class: 'policy', retryable: false,
-      })
-    }
+function validateWorkspaceCas(input: {
+  authority: Awaited<ReturnType<typeof readAuthority>>
+  snapshot: NonNullable<OperationSnapshot>
+  targetRepo: string | null
+}): void {
+  const plan = input.authority.plan
+  if (!plan
+    || input.authority.result.snapshotId !== input.snapshot.snapshotId
+    || input.authority.result.snapshotDigest !== input.snapshot.manifestDigest
+    || plan.head !== input.snapshot.head
+    || plan.workspaceStateSha256 !== input.snapshot.manifestDigest
+    || plan.repo !== input.targetRepo) {
+    throw new JobRuntimeError('JOB_CONFLICT', 'Workspace CAS authority changed', { class: 'policy' })
   }
+}
 
+function validateInitialCas(authority: Awaited<ReturnType<typeof readAuthority>>): void {
+  if (!authority.plan
+    || authority.result.snapshotId !== null
+    || authority.result.snapshotDigest !== null
+    || authority.plan.repo !== null) {
+    throw new JobRuntimeError('JOB_CONFLICT', 'Initial repository authority is invalid', { class: 'policy' })
+  }
+}
+
+function validateCasAuthority(input: {
+  kind: OperationKind
+  authority: Awaited<ReturnType<typeof readAuthority>>
+  snapshot: OperationSnapshot
+  targetRepo: string | null
+}): void {
+  if (input.kind === 'initial_repository') {
+    validateInitialCas(input.authority)
+    return
+  }
+  if (!input.snapshot) {
+    throw new JobRuntimeError('JOB_CONFLICT', 'Operation snapshot binding mismatch', { class: 'policy' })
+  }
+  validateWorkspaceCas({
+    authority: input.authority,
+    snapshot: input.snapshot,
+    targetRepo: input.targetRepo,
+  })
+}
+
+async function validateCurrentWorkspace(input: {
+  client: SupabaseClient
+  kind: OperationKind
+  taskId: string
+  userId: string
+  snapshot: OperationSnapshot
+}): Promise<void> {
+  if (input.kind !== 'workspace_publish' || !input.snapshot) return
+  const { data, error } = await input.client.from('agent_workspace_heads')
+    .select('snapshot_id,manifest_digest,tree_digest,head')
+    .eq('task_id', input.taskId).eq('user_id', input.userId).maybeSingle()
+  if (error || !data
+    || data.snapshot_id !== input.snapshot.snapshotId
+    || data.manifest_digest !== input.snapshot.manifestDigest
+    || data.tree_digest !== input.snapshot.treeDigest
+    || data.head !== input.snapshot.head) {
+    throw new JobRuntimeError('JOB_CONFLICT', 'Confirmed workspace is no longer current', {
+      class: 'policy', retryable: false,
+    })
+  }
+}
+
+function loadedPlan(
+  plan: Record<string, unknown>,
+  payload: Record<string, unknown>,
+): LoadedAgentOperation['plan'] {
   return {
-    client, userId, taskId, kind, message: request.message, actions: request.actions,
-    targetRepo, deployPages: payload.deployPages === true, snapshot,
-    plan: {
-      repo: typeof plan.repo === 'string' ? plan.repo : null,
-      baseBranch: requiredString(plan.baseBranch, 'baseBranch'),
-      workspaceBranch: typeof plan.workspaceBranch === 'string' ? plan.workspaceBranch : null,
-      head: typeof plan.head === 'string' ? plan.head : null,
-      workspaceStateSha256: digest(plan.workspaceStateSha256, 'workspaceStateSha256'),
-      payload: planPayload ?? {},
-    },
+    repo: typeof plan.repo === 'string' ? plan.repo : null,
+    baseBranch: requiredString(plan.baseBranch, 'baseBranch'),
+    workspaceBranch: typeof plan.workspaceBranch === 'string' ? plan.workspaceBranch : null,
+    head: typeof plan.head === 'string' ? plan.head : null,
+    workspaceStateSha256: digest(plan.workspaceStateSha256, 'workspaceStateSha256'),
+    payload,
+  }
+}
+
+/** Revalidate every persisted binding before touching a workspace or GitHub. */
+export async function loadAgentOperation(
+  context: JobExecutionContext,
+  client: SupabaseClient,
+): Promise<LoadedAgentOperation> {
+  const userId = context.job.principal.id
+  const parsed = parseOperationPayload(context)
+  const authority = await readAuthority(context, client)
+  const planPayload = validateConfirmedPlan({
+    plan: authority.plan,
+    authority,
+    payload: parsed.payload,
+    userId,
+    taskId: parsed.taskId,
+    kind: parsed.kind,
+    operationHash: parsed.operationHash,
+  })
+  validateCasAuthority({
+    kind: parsed.kind,
+    authority,
+    snapshot: parsed.snapshot,
+    targetRepo: parsed.targetRepo,
+  })
+  await validateCurrentWorkspace({
+    client,
+    kind: parsed.kind,
+    taskId: parsed.taskId,
+    userId,
+    snapshot: parsed.snapshot,
+  })
+  if (!authority.plan) {
+    throw new JobRuntimeError('JOB_CONFLICT', 'Operation does not match confirmed plan', { class: 'policy' })
+  }
+  return {
+    client,
+    userId,
+    taskId: parsed.taskId,
+    kind: parsed.kind,
+    message: parsed.request.message,
+    actions: parsed.request.actions,
+    targetRepo: parsed.targetRepo,
+    deployPages: parsed.payload.deployPages === true,
+    snapshot: parsed.snapshot,
+    plan: loadedPlan(authority.plan, planPayload),
   }
 }

@@ -276,6 +276,22 @@ test("pull request creation fails safely for invalid task state and upstream sha
   )
   assert.match(protectedHead.error ?? "", /禁止从 main/)
 
+  let rejectedNetworkCalls = 0
+  const rejectedNetwork = t.mock.method(globalThis, "fetch", async () => {
+    rejectedNetworkCalls++
+    return Response.json({})
+  })
+  const invalidRepoTask = `invalid-repo-${crypto.randomUUID()}`
+  const invalidRepo = await createWorkspacePullRequest(
+    invalidRepoTask,
+    userId,
+    "token",
+    dataClient(invalidRepoTask, { repo: "../repo", agentBranch: "agent/invalid" }).client,
+  )
+  assert.match(invalidRepo.error ?? "", /仓库格式无效/)
+  assert.equal(rejectedNetworkCalls, 0)
+  rejectedNetwork.mock.restore()
+
   const taskId = `bad-pr-${crypto.randomUUID()}`
   const root = initializeRepository(taskId, "main")
   t.after(() => rmSync(root, { recursive: true, force: true }))
@@ -292,8 +308,49 @@ test("pull request creation fails safely for invalid task state and upstream sha
   assert.match((await createWorkspacePullRequest(taskId, userId, "token", database)).error ?? "", /未获取到 URL/)
   incompleteFetch.mock.restore()
 
-  t.mock.method(globalThis, "fetch", async () => { throw new Error("network offline") })
+  const hostileUrlFetch = t.mock.method(globalThis, "fetch", async () => Response.json({
+    html_url: "https://evil.example/owner/repo/pull/3",
+    number: 3,
+  }))
+  assert.match((await createWorkspacePullRequest(taskId, userId, "token", database)).error ?? "", /响应无效/)
+  hostileUrlFetch.mock.restore()
+
+  let invalidBaseCalls = 0
+  const invalidBaseFetch = t.mock.method(globalThis, "fetch", async () => {
+    invalidBaseCalls++
+    return Response.json({})
+  })
+  const invalidBase = await createWorkspacePullRequest(
+    taskId, userId, "token", database, { base: "--output=/tmp/unsafe" },
+  )
+  assert.match(invalidBase.error ?? "", /分支格式无效/)
+  assert.equal(invalidBaseCalls, 0)
+  invalidBaseFetch.mock.restore()
+
+  const networkFetch = t.mock.method(globalThis, "fetch", async () => { throw new Error("network offline") })
   assert.match((await createWorkspacePullRequest(taskId, userId, "token", database)).error ?? "", /network offline/)
+  networkFetch.mock.restore()
+
+  const sensitiveTask = `sensitive-pr-${crypto.randomUUID()}`
+  const sensitiveRoot = initializeRepository(sensitiveTask, "main")
+  t.after(() => rmSync(sensitiveRoot, { recursive: true, force: true }))
+  execFileSync("git", ["checkout", "-qb", "agent/sensitive"], { cwd: sensitiveRoot })
+  writeFileSync(`${sensitiveRoot}/.env.production`, "SECRET=blocked\n")
+  execFileSync("git", ["add", ".env.production"], { cwd: sensitiveRoot })
+  execFileSync("git", ["commit", "-qm", "unsafe"], { cwd: sensitiveRoot })
+  let sensitiveNetworkCalls = 0
+  t.mock.method(globalThis, "fetch", async () => {
+    sensitiveNetworkCalls++
+    return Response.json({})
+  })
+  const sensitive = await createWorkspacePullRequest(
+    sensitiveTask,
+    userId,
+    "token",
+    dataClient(sensitiveTask, { agentBranch: "agent/sensitive" }).client,
+  )
+  assert.match(sensitive.error ?? "", /禁止发布的高危文件/)
+  assert.equal(sensitiveNetworkCalls, 0)
 })
 
 test("full workspace publish commits, intercepts push, and creates the PR", { concurrency: false }, async t => {

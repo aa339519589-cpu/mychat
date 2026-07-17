@@ -1,6 +1,6 @@
 # MyChat Platform Refactor Status
 
-Updated: 2026-07-17T00:46:38-05:00
+Updated: 2026-07-17T06:57:44-05:00
 
 This is the authoritative continuation record for the platform refactor. The
 audit in `docs/refactor/full-platform-audit.md` describes the production baseline;
@@ -10,8 +10,10 @@ this file records later branch changes without rewriting that baseline.
 
 - Production baseline: `daacffad107a6513fa6b0ee5b63e512c102cdf2b`.
 - Working branch: `refactor/platform-v2`.
-- Integrated implementation head covered by this status record:
-  `6fb708f81b7c2e70caebb91420bffaea6effede6`.
+- Working-tree base for the current hardening pass:
+  `e1fd4d93eaaae080809b4c0c481225a6b6cd1083`.
+- The platform authority v2 changes in this record are still uncommitted; they do
+  not yet have an implementation commit or CI identity.
 - The branch includes `origin/main` through
   `fa6dd1267d77a8747660f9a22bcd984370fb7728` without losing the request-bound
   nonce rendering in `app/layout.tsx`.
@@ -22,14 +24,15 @@ this file records later branch changes without rewriting that baseline.
 
 ## Current phase
 
-Phase: risk containment, workflow boundary, and pre-PR verification
+Phase: platform authority v2, generated database contracts, and pre-PR verification
 
-Status: local verification complete; staging evidence not started
+Status: local verification complete; CI, independent review, and staging evidence pending
 
-The first P0 request boundary and the highest-risk artifact/CSP code paths have
-branch remediations. A provider-independent workflow boundary and reversible title
-vertical slice now exist. Every local repository gate passes; CI/container/security
-and real staging evidence are still required before any production claim.
+The highest-risk request, browser mutation, schema, runtime configuration, Worker
+presence, stream admission, outbox ownership, and artifact/CSP boundaries now have
+branch remediations. The complete local repository gate passes. CI,
+container/security, independent review, and real staging evidence are still required
+before any production claim.
 
 ## Completed branch work
 
@@ -39,7 +42,7 @@ and real staging evidence are still required before any production claim.
 - Added a reproducible platform inventory and a 16-finding audit with consequences,
   acceptance tests, and remediation order.
 - Extended architecture reporting with local dependency fan-in.
-- Current architecture check: 362 files, 901 runtime edges, zero dependency cycles.
+- Current architecture check: 382 files, 974 runtime edges, zero dependency cycles.
 - Baseline inventory: 581 scanned files and 71,869 effective lines, including
   36,665 runtime TypeScript/JavaScript lines and 14,112 migration SQL lines. These
   are baseline measurements, not silently relabelled as post-refactor counts.
@@ -111,54 +114,116 @@ and real staging evidence are still required before any production claim.
 - Mock runs verify the harness only. They are not capacity, recovery, cost, or
   production-readiness evidence.
 
+### Platform authority v2
+
+- Chat turn creation is one service-owned transaction covering an optional
+  conversation, user message, assistant placeholder, Job, and generation projection.
+  Regeneration uses an expected-tail CAS and commits branch replacement, cleanup
+  receipts, replacement placeholder, Job, and projection together. Browser code no
+  longer directly inserts, updates, or deletes authoritative message rows.
+- Agent requested and effective token limits now come from the same activated price
+  catalog used by admission, and the chosen price version is recorded in the payload.
+- One process heartbeat reports exact per-queue capacity. Readiness v3 accepts only
+  fresh, non-draining processes from the requested revision and no longer overcounts a
+  process once per queue.
+- SSE admission uses bounded O(1) global, principal, address, and Job counters with
+  deterministic lock order, lease expiry, hard duration limits, and concurrent tests.
+- Only `assets.cleanup` and `payloads.cleanup` are deliverable outbox topics. Lifecycle
+  topics without a real consumer are suppressed instead of being labelled published;
+  their facts remain in authoritative Job/event/audit records.
+- Runtime v15 and immutable schema contract v2 bind all 45 manifest migrations to
+  digest `c0c1dd9dcf788761cae5ac5a0bcb3ddd49e13ab8c59638e2c91d53ce1c5fcacc`.
+
+### Generated database and runtime contracts
+
+- A disposable PostgreSQL 16 + pgvector database now replays both canonical baselines,
+  the legacy compatibility baseline, all manifest migrations, and the v2 seal before
+  generating `lib/supabase/database.types.ts` from catalogs.
+- `npm run database:types:check` compares generated output byte-for-byte and is part of
+  `npm run verify`; CI uses a digest-pinned PostgreSQL 16 pgvector image.
+- Runtime clients use `SupabaseClient<Database>`. Generic RPC correlation is isolated in
+  one `typedRpc` adapter; JSON writes use a bounded plain-JSON normalizer that rejects
+  non-finite, circular, accessor, class-instance, sparse, oversized, and over-deep data.
+- Agent database text values are validated against closed domain enums. Production
+  startup now resolves one immutable, role-aware configuration and fails before child
+  processes start when a required URL, secret pair, revision, sandbox, role, mode, or
+  concurrency value is invalid.
+- Architecture budgets count runtime dependencies rather than type-only contracts.
+  Oversized generated files require an explicit config entry and generated-code marker;
+  handwritten modules retain the 400-line/18-runtime-dependency ceiling.
+
+### Interface and accessibility
+
+- The login surface now uses a neutral operational palette with rust primary actions
+  and teal focus state instead of a low-contrast single beige/orange palette.
+- Inputs have persistent labels, 48 px targets, 15/16 px text, visible focus rings,
+  autocomplete contracts, and an announced error node. The mode switch is 44 px high.
+- Browser evidence at 1440x900 and Pixel 7 412x915 found no horizontal overflow,
+  element overlap, console warning/error, or target below 44 px; primary contrast is
+  5.52:1 in light mode and the dark token pair is 5.63:1.
+
+### Maintainability ratchet
+
+- A repository-wide function-complexity gate now caps new functions at cyclomatic
+  complexity 15 and 80 effective lines. Existing exceptions are tracked per file;
+  their count and descending peaks may only decrease, and every improvement must
+  lower the checked-in baseline.
+- Request validation, Code Agent tool dispatch, chat streaming, Agent/model loops,
+  project command detection, authoritative operation input, and the Agent workspace
+  panel were split into bounded units with focused regression coverage.
+- This pass reduced legacy complexity exceptions from 130 to 106 and effective-line
+  exceptions from 67 to 49. Repository peaks fell from 175/324 to 41/292. The
+  remaining exceptions are explicit debt, so F-15 is only partially remediated.
+
 ## Finding disposition
 
 | ID | Branch state | Remaining acceptance work |
 | --- | --- | --- |
 | F-01 | Closed on branch | Independent review and any later production rollout remain. |
 | F-02 | Closed on branch | Independent review remains. |
-| F-03 | Open | Split Web/worker topology and independently kill/restart roles in staging. |
-| F-04 | Open | Promote one immutable CI-built digest through staging and production. |
-| F-05 | Open | Replace per-client PostgreSQL polling/admission bottleneck and measure 2x peak. |
-| F-06 | Open | Move one complete browser mutation/replay path to server authority. |
-| F-07 | Open | Generate database types, typed RPCs, runtime schemas, and drift CI. |
-| F-08 | Partially remediated | Renewal pressure is reduced; heartbeat ownership and measured RPC budget remain. |
+| F-03 | Partially remediated | Role-aware startup and process heartbeat are complete; split Web/worker topology and independent staging restarts remain. |
+| F-04 | Partially remediated | Release evidence and exact-commit Render promotion exist; staging and production promotion evidence remains. |
+| F-05 | Partially remediated | Admission is bounded O(1); per-client PostgreSQL event polling and representative 2x-peak measurement remain. |
+| F-06 | Closed on branch | Chat creation and both regeneration paths are server-authoritative and transaction/CAS tested; independent review remains. |
+| F-07 | Closed on branch | PostgreSQL-generated types, typed clients/RPCs, domain enum validation, bounded JSON conversion, and drift CI are present. |
+| F-08 | Partially remediated | Renewal and heartbeat pressure are reduced with process ownership; representative database RPC budget remains unmeasured. |
 | F-09 | Partially remediated | Code and browser gates pass; monitored rollout evidence remains. |
-| F-10 | Open | One workflow enum is typed, but role-wide startup config remains scattered. |
-| F-11 | Open | Security browser tests are real Chromium, but critical transaction E2E is absent. |
+| F-10 | Closed on branch | Role-wide startup configuration is centralized, immutable, bounded, and fail-closed. |
+| F-11 | Closed on branch | Critical chat transaction success, replay, concurrent CAS, rollback, CSP, and dual-viewport browser paths are covered. |
 | F-12 | Partially remediated | Tools exist; staging, paging, restore, and 30m/6h/24h records do not. |
-| F-13 | Open | Lifecycle topics still need real consumers or removal. |
-| F-14 | Open | Tombstone traffic/deprecation evidence and schema baseline are absent. |
-| F-15 | Open | High-complexity functions have not yet been systematically reduced. |
-| F-16 | Open | Agent requested/effective budget still has two source values. |
+| F-13 | Closed on branch | Unconsumed lifecycle topics are suppressed; only cleanup topics with durable consumers are dispatchable. |
+| F-14 | Partially remediated | A reproducible legacy compatibility baseline exists; tombstone traffic and deprecation evidence remain absent. |
+| F-15 | Partially remediated | A fail-on-regression ratchet is active and the highest peaks were reduced; 106 complexity and 49 effective-line exceptions remain. |
+| F-16 | Closed on branch | Agent requested/effective limits share the activated price catalog and record their source/version. |
 
 No open or partially remediated finding is waived by test count or by the absence
 of a current incident.
 
 ## Verification record
 
-Current integrated-head local verification on 2026-07-17:
+Current working-tree local verification on 2026-07-17:
 
-- Full `npm run verify`: passed after merging the latest `main`.
-- Architecture: 362 files, 901 runtime edges, zero baseline cycles.
-- Migration contract: 43 sealed files with digest
-  `e5479e42cbba7c439a1a31ec3325344625f740d2cca37c3865dc4af00243dc0d`.
-- TypeScript, backend ESLint, and repository-wide ESLint including `ops/`: passed.
-- 140 Node test files: 613 passed, zero failed/skipped/cancelled.
-- Coverage: 82.20% lines, 80.62% branches, 87.48% functions.
+- Architecture: 382 files, 974 runtime edges, zero baseline cycles.
+- Function-complexity ratchet: 106 complexity exceptions and 49 effective-line
+  exceptions remain; current maxima are 41 cyclomatic complexity and 292 effective
+  lines.
+- Migration contract: version 2, 45 sealed files, digest
+  `c0c1dd9dcf788761cae5ac5a0bcb3ddd49e13ab8c59638e2c91d53ce1c5fcacc`.
+- Strict TypeScript and repository-wide zero-warning ESLint: passed.
+- 160 Node test files: 691 passed, zero failed/skipped/cancelled.
+- Coverage gate: 81.59% lines, 81.32% branches, 85.99% functions.
 - `npm audit --omit=dev --audit-level=high`: zero production vulnerabilities.
-- PostgreSQL 16 migration/replay/concurrency/SIGKILL verification: passed.
+- Deterministic PostgreSQL database type replay/drift check: passed.
+- PostgreSQL 16 migration/replay/permissions/concurrency/CAS/failure-rollback/SIGKILL
+  verification: passed.
 - Next.js 16.2.6 optimized production build and route collection: passed.
-- Playwright: 10/10 passed across desktop Chromium and Pixel 7. This includes
-  artifact network/script containment, unique application CSP nonces, framework
-  script nonce binding, and the existing shell/navigation scenarios.
-- GitHub Advanced Security initially reported one high-severity alert because the
-  CSP E2E test parsed script tags with a case-sensitive regular expression. The
-  test now uses browser `DOMParser`; targeted ESLint, TypeScript, and Playwright
-  passed, and CodeQL marks the alert fixed.
-- Reliability harness regression: mock load/chaos, resumable soak extension,
-  corrupt checkpoint rejection, required staging acknowledgements, and permanent
-  production-host rejection all passed inside the 613-test suite.
+- Playwright: 10/10 passed across desktop Chromium and Pixel 7, including auth
+  geometry/accessibility, authenticated shell/history, artifact containment, unique
+  CSP nonces, and framework nonce binding.
+- Reliability harness regression remains part of the Node suite: mock load/chaos,
+  resumable soak extension, corrupt checkpoint rejection, staging acknowledgements,
+  and permanent production-host rejection.
+- Complete working-tree `npm run verify`: passed locally.
 
 Draft PR #42 evidence on implementation head `6fb708f`:
 
@@ -205,11 +270,12 @@ Concurrent mainline production observation on 2026-07-17:
 - Web and worker still share one service, supervisor, artifact build path, and
   broad failure domain.
 - Render rebuilds Git source instead of executing the CI-attested GHCR digest.
-- Event delivery still polls PostgreSQL per connection and admission retains a
-  global serialized path.
-- The browser still coordinates business writes and multiple cache projections.
-- Database contracts, role config, lifecycle outbox ownership, compatibility
-  retirement, core-function complexity, and Agent budget sources remain unresolved.
+- Event delivery still polls PostgreSQL per connection. The O(1) global capacity
+  counter is bounded but has not been measured at representative peak concurrency.
+- Chat writes are server-authoritative, but other browser data gateways and local
+  cache projections still require compatibility retirement evidence.
+- Compatibility retirement and the remaining 106 complexity/49 effective-line
+  exceptions remain unresolved.
 - The custom PostgreSQL workflow control plane remains operationally owned by
   MyChat even though it now has a provider-independent boundary.
 - No representative arrival rate, database connection/QPS budget, memory-growth
@@ -237,7 +303,8 @@ Concurrent mainline production observation on 2026-07-17:
 
 ## Next actions
 
-1. Push this evidence-only update to draft PR #42 and require its final CI.
+1. Review the working-tree diff and create a coherent commit before updating draft
+   PR #42; require the exact committed head to pass CI.
 2. Obtain independent review; do not merge or deploy this branch.
 3. Create a production-like staging topology before running real load/chaos/soak,
    restore, paging, or role-isolation acceptance gates.
@@ -246,8 +313,8 @@ Concurrent mainline production observation on 2026-07-17:
 
 ## Blockers and required decisions
 
-- No blocker exists for local verification, branch push, or a draft PR.
+- No blocker exists for local verification or preparing a reviewed commit/PR update.
 - Production-like staging resources, isolated disposable fixtures, and external
-  monitoring ownership are required before F-03/F-04/F-11/F-12 can close.
+  monitoring ownership are required before F-03/F-04/F-08/F-12 can close.
 - Merge, vendor commitment, paid service creation, production canary, and production
   deployment require separate explicit authorization.

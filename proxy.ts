@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr"
 import { NextResponse, type NextRequest } from "next/server"
+import type { Database } from "@/lib/supabase/database.types"
 import {
   contentSecurityPolicy,
   createContentSecurityPolicyNonce,
@@ -35,7 +36,7 @@ export async function proxy(request: NextRequest) {
 
   let response = nextResponse()
   try {
-    const supabase = createServerClient(url, key, {
+    const supabase = createServerClient<Database>(url, key, {
       cookies: {
         getAll: () => request.cookies.getAll(),
         setAll(cookies) {

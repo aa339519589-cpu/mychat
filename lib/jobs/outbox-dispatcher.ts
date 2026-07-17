@@ -1,7 +1,7 @@
 import { log } from '@/lib/logger'
 import { normalizeJobError } from './errors'
 import {
-  JOB_OUTBOX_TOPICS,
+  DELIVERABLE_JOB_OUTBOX_TOPICS,
   type JobOutboxMessage,
   type JobOutboxRepository,
 } from './outbox-contracts'
@@ -16,7 +16,6 @@ export type JobOutboxDispatcherOptions = {
   backoffJitter?: number
   random?: () => number
   sleep?: (milliseconds: number, signal: AbortSignal) => Promise<void>
-  observe?: (message: JobOutboxMessage) => void | Promise<void>
 }
 
 export class JobOutboxDispatcher {
@@ -28,7 +27,6 @@ export class JobOutboxDispatcher {
   private readonly backoffJitter: number
   private readonly random: () => number
   private readonly sleep: (milliseconds: number, signal: AbortSignal) => Promise<void>
-  private readonly observe: (message: JobOutboxMessage) => void | Promise<void>
 
   constructor(options: JobOutboxDispatcherOptions) {
     if (!options.workerId || options.workerId.length > 256) throw new TypeError('Invalid outbox worker id')
@@ -53,11 +51,6 @@ export class JobOutboxDispatcher {
     }
     this.random = options.random ?? Math.random
     this.sleep = options.sleep ?? defaultJobSleep
-    this.observe = options.observe ?? (message => {
-      const data = { outboxId: message.id, jobId: message.jobId, attempt: message.attempt }
-      if (message.topic === 'jobs.poison') log.error('outbox', 'Poison job published', data)
-      else log.info('outbox', 'Job lifecycle event published', { ...data, topic: message.topic })
-    })
   }
 
   async run(signal: AbortSignal): Promise<void> {
@@ -93,7 +86,7 @@ export class JobOutboxDispatcher {
   async runOnce(): Promise<boolean> {
     const claim = await this.repository.claim({
       workerId: this.workerId,
-      topics: JOB_OUTBOX_TOPICS,
+      topics: DELIVERABLE_JOB_OUTBOX_TOPICS,
       lockSeconds: this.lockSeconds,
     })
     if (!claim.acquired) return false
@@ -118,9 +111,7 @@ export class JobOutboxDispatcher {
           jobId: message.jobId,
           deleted,
         })
-      } else {
-        await this.observe(message)
-      }
+      } else throw new TypeError(`Outbox topic has no durable consumer: ${message.topic}`)
       if (renewalError) throw renewalError
       await this.repository.publish({
         outboxId: message.id,

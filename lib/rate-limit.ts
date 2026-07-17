@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { log } from '@/lib/logger'
 import { createAdminClient } from '@/lib/supabase/admin'
+import type { RpcArgs } from '@/lib/supabase/types'
 
 const RATE_LIMIT_MAX = 30
 const WINDOW_MS = 60 * 1000
@@ -16,7 +17,7 @@ interface RateLimitEntry {
 type RateLimitStore = Map<string, RateLimitEntry>
 type RateLimitEnvironment = Pick<NodeJS.ProcessEnv, 'NODE_ENV'>
 type RateLimitRpcClient = {
-  rpc: (name: string, args: Record<string, unknown>) => PromiseLike<{
+  rpc: (name: 'consume_api_rate_limit', args: RpcArgs<'consume_api_rate_limit'>) => PromiseLike<{
     data: unknown
     error: { code?: string; message?: string } | null
   }>

@@ -1,4 +1,4 @@
-import type { SupabaseClient } from '@supabase/supabase-js'
+import type { SupabaseClient } from '@/lib/supabase/types'
 import { sha256JobValue } from '@/lib/jobs/canonical'
 import type { EnqueueJobInput, JobAuthClass, JobStatus, JsonObject } from '@/lib/jobs/contracts'
 import type { JobRepository } from '@/lib/jobs/repository'

@@ -358,6 +358,13 @@ export class JobWorker {
       if (retry.action === 'stop') return
       terminalError = retry.error
       poisonReason = retry.poisonReason
+      if (poisonReason) log.error('jobs', 'Job exhausted safe retry policy', {
+        jobId: context.job.id,
+        type: context.job.type,
+        attempt: context.job.attempt,
+        reason: poisonReason,
+        lastErrorCode: normalized.code,
+      })
     }
     try {
       if (terminalError.code !== 'JOB_CANCEL_REQUESTED'
@@ -366,17 +373,6 @@ export class JobWorker {
         ...context.fence,
         status: terminalError.code === 'JOB_CANCEL_REQUESTED' ? 'cancelled' : 'failed',
         error: terminalError.code === 'JOB_CANCEL_REQUESTED' ? undefined : terminalError.toFailure(),
-        outbox: poisonReason ? [{
-          kind: 'jobs.poison',
-          dedupeKey: `${context.job.id}:poison`,
-          payload: {
-            jobId: context.job.id,
-            type: context.job.type,
-            reason: poisonReason,
-            attempt: context.job.attempt,
-            lastErrorCode: normalized.code,
-          },
-        }] : undefined,
       })
       const execution = this.active.get(context.job.id)
       if (!execution) throw new JobRuntimeError('JOB_LEASE_STALE', 'Job execution is no longer active')

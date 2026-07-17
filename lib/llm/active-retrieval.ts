@@ -1,5 +1,6 @@
 import type { SupabaseServer } from '@/lib/api/guard'
 import { log } from '@/lib/logger'
+import type { TablesInsert } from '@/lib/supabase/types'
 import {
   chunkMessages,
   embed,
@@ -85,7 +86,7 @@ export async function ensureConversationIndexed(supabase: SupabaseServer | null,
     if (!pending.length) return
 
     const conv = conversation as ConversationRow
-    const rowsToInsert: Record<string, unknown>[] = []
+    const rowsToInsert: TablesInsert<'conversation_chunks'>[] = []
     let cursor = 0
     const workers = Array.from({ length: Math.min(4, pending.length) }, async () => {
       while (cursor < pending.length) {

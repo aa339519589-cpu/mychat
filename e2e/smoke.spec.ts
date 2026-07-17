@@ -95,9 +95,21 @@ test('root page reaches the authentication shell without client exceptions', asy
   await page.goto('/', { waitUntil: 'domcontentloaded' })
 
   await expect(page).toHaveTitle(/MyChat/)
-  await expect(page.getByPlaceholder('邮箱')).toBeVisible()
+  await expect(page.getByLabel('邮箱地址')).toBeVisible()
+  await expect(page.getByLabel('密码')).toBeVisible()
   await expect(page.getByRole('button', { name: '登录', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: '以游客身份继续' })).toBeVisible()
+  const geometry = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+    targetHeights: [...document.querySelectorAll('main input, main button')]
+      .map(element => Math.round(element.getBoundingClientRect().height)),
+  }))
+  expect(geometry.scrollWidth).toBe(geometry.clientWidth)
+  expect(geometry.targetHeights.length).toBeGreaterThanOrEqual(5)
+  expect(geometry.targetHeights.every(height => height >= 44)).toBe(true)
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await expect(page.locator('#login-error')).toHaveText('请填写邮箱和密码')
   expect(pageErrors).toEqual([])
 })
 
@@ -105,7 +117,7 @@ test('conversation deep links preserve the application shell', async ({ page }) 
   await page.goto('/c/550e8400-e29b-41d4-a716-446655440000', { waitUntil: 'domcontentloaded' })
 
   await expect(page).toHaveTitle(/MyChat/)
-  await expect(page.getByPlaceholder('邮箱')).toBeVisible()
+  await expect(page.getByLabel('邮箱地址')).toBeVisible()
 })
 
 test('authenticated shell uses one responsive tree and synchronizes browser history', async ({ page }) => {

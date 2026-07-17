@@ -1,4 +1,5 @@
 import { isSafeModelId, type EndpointAuthType } from '@/lib/model-endpoints'
+import { isRecord } from '@/lib/unknown-value'
 import { chatCompletionsUrl } from '../openai'
 import { MAX_MODEL_ID, ModelEndpointError, PROBE_TIMEOUT_MS } from './contracts'
 import { endpointAuthHeaders, normalizeOpenAIBaseUrl } from './policy'
@@ -13,9 +14,8 @@ type ProbeOptions = {
   signal?: AbortSignal
 }
 
-export async function probeOpenAIChat(options: ProbeOptions): Promise<{ content: string }> {
-  const baseUrl = normalizeOpenAIBaseUrl(options.baseUrl)
-  const model = options.model.replace(/[\u0000-\u001f\u007f]/g, '').trim()
+function probeModel(value: string): string {
+  const model = value.replace(/[\u0000-\u001f\u007f]/g, '').trim()
   if (!isSafeModelId(model) || model.length > MAX_MODEL_ID) {
     throw new ModelEndpointError(
       '模型 ID 无效，不能填写 URL 或 API Key',
@@ -23,12 +23,21 @@ export async function probeOpenAIChat(options: ProbeOptions): Promise<{ content:
       'invalid_model',
     )
   }
+  return model
+}
 
-  let response: Response
+function probeSignal(signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(PROBE_TIMEOUT_MS)
+  return signal ? AbortSignal.any([signal, timeout]) : timeout
+}
+
+async function requestProbe(
+  options: ProbeOptions,
+  baseUrl: string,
+  model: string,
+): Promise<Response> {
   try {
-    const signals = [options.signal, AbortSignal.timeout(PROBE_TIMEOUT_MS)]
-      .filter(Boolean) as AbortSignal[]
-    response = await safeModelEndpointFetch(chatCompletionsUrl(baseUrl), {
+    return await safeModelEndpointFetch(chatCompletionsUrl(baseUrl), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -41,68 +50,102 @@ export async function probeOpenAIChat(options: ProbeOptions): Promise<{ content:
         stream: true,
       }),
       redirect: 'manual',
-      signal: signals.length === 1 ? signals[0] : AbortSignal.any(signals),
+      signal: probeSignal(options.signal),
     })
   } catch (error) {
-    if (options.signal?.aborted) throw error
-    if (error instanceof ModelEndpointError) throw error
+    if (options.signal?.aborted || error instanceof ModelEndpointError) throw error
+    const timeout = error instanceof Error && error.name === 'TimeoutError'
     throw new ModelEndpointError(
-      error instanceof Error && error.name === 'TimeoutError'
-        ? '模型生成测试超时'
-        : '无法连接聊天接口',
+      timeout ? '模型生成测试超时' : '无法连接聊天接口',
       'chat',
       'connect_failed',
       502,
     )
   }
+}
 
-  const raw = await readLimitedText(response)
-  if (!response.ok) {
-    if (response.status === 401 || response.status === 403) {
-      throw new ModelEndpointError(
-        'API Key 被聊天接口拒绝',
-        'chat',
-        'auth_failed',
-        response.status,
-      )
-    }
-    if (response.status === 404) {
-      throw new ModelEndpointError(
-        '没有找到 /chat/completions 接口',
-        'chat',
-        'chat_not_found',
-        404,
-      )
-    }
-    const detail = upstreamMessage(raw, [options.apiKey ?? ''])
-    throw new ModelEndpointError(
-      `模型生成测试失败（${response.status}）${detail ? `：${detail}` : ''}`,
+function chatResponseError(response: Response, raw: string, apiKey: string): ModelEndpointError | null {
+  if (response.ok) return null
+  if (response.status === 401 || response.status === 403) {
+    return new ModelEndpointError(
+      'API Key 被聊天接口拒绝',
       'chat',
-      'upstream_error',
+      'auth_failed',
       response.status,
     )
   }
-
-  let content = ''
-  if (response.headers.get('content-type')?.includes('application/json')) {
-    try {
-      content = String(JSON.parse(raw)?.choices?.[0]?.message?.content ?? '')
-    } catch {}
-  } else {
-    for (const line of raw.split(/\r?\n/)) {
-      const trimmed = line.trim()
-      if (!trimmed.startsWith('data:') || trimmed === 'data: [DONE]') continue
-      try {
-        const event = JSON.parse(trimmed.slice(5).trim())
-        content += String(
-          event?.choices?.[0]?.delta?.content
-          ?? event?.choices?.[0]?.message?.content
-          ?? '',
-        )
-      } catch {}
-    }
+  const detail = upstreamMessage(raw, [apiKey])
+  if (response.status === 404 || response.status === 405) {
+    const suffix = detail ? `：${detail}` : '；请检查 Base URL 和模型 ID'
+    return new ModelEndpointError(
+      `聊天请求返回 ${response.status}${suffix}`,
+      'chat',
+      'chat_not_found',
+      response.status,
+    )
   }
-  if (!content.trim()) {
+  return new ModelEndpointError(
+    `模型生成测试失败（${response.status}）${detail ? `：${detail}` : ''}`,
+    'chat',
+    'upstream_error',
+    response.status,
+  )
+}
+
+function contentText(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (!Array.isArray(value)) return ''
+  return value.map(part => {
+    if (typeof part === 'string') return part
+    if (!isRecord(part)) return ''
+    return typeof part.text === 'string' ? part.text : ''
+  }).join('')
+}
+
+function payloadContent(value: unknown): string {
+  if (!isRecord(value) || !Array.isArray(value.choices)) return ''
+  const choice = value.choices.find(isRecord)
+  if (!choice) return ''
+  const delta = isRecord(choice.delta) ? choice.delta : null
+  const message = isRecord(choice.message) ? choice.message : null
+  return contentText(delta?.content)
+    || contentText(message?.content)
+    || contentText(choice.text)
+}
+
+function jsonContent(raw: string): string {
+  try {
+    return payloadContent(JSON.parse(raw))
+  } catch {
+    return ''
+  }
+}
+
+function sseLineContent(line: string): string {
+  const trimmed = line.trim()
+  if (!trimmed.startsWith('data:')) return ''
+  const data = trimmed.slice(5).trim()
+  if (!data || data === '[DONE]') return ''
+  return jsonContent(data)
+}
+
+export function parseChatProbeContent(raw: string, contentType: string | null): string {
+  if (contentType?.toLowerCase().includes('json')) return jsonContent(raw)
+  return raw.split(/\r?\n/).map(sseLineContent).join('')
+}
+
+export async function probeOpenAIChat(options: ProbeOptions): Promise<{ content: string }> {
+  const baseUrl = normalizeOpenAIBaseUrl(options.baseUrl)
+  const model = probeModel(options.model)
+  const response = await requestProbe(options, baseUrl, model)
+  const raw = await readLimitedText(response, {
+    stage: 'chat',
+    tooLargeMessage: '聊天接口响应过大',
+  })
+  const failure = chatResponseError(response, raw, options.apiKey ?? '')
+  if (failure) throw failure
+  const content = parseChatProbeContent(raw, response.headers.get('content-type')).trim()
+  if (!content) {
     throw new ModelEndpointError(
       '聊天接口已响应，但没有生成文本；所选模型可能不是对话模型',
       'chat',
@@ -110,5 +153,5 @@ export async function probeOpenAIChat(options: ProbeOptions): Promise<{ content:
       422,
     )
   }
-  return { content: content.trim().slice(0, 200) }
+  return { content: content.slice(0, 200) }
 }

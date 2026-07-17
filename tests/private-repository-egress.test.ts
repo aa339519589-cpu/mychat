@@ -27,10 +27,10 @@ test('private repository execute and verify paths force an empty E2B allowlist',
     AGENT_SANDBOX_EGRESS_ALLOWLIST: 'registry.example.com',
   }), [])
 
-  const executor = readFileSync(new URL('../lib/code-tools/index.ts', import.meta.url), 'utf8')
+  const workflowHandlers = readFileSync(new URL('../lib/code-tools/workflow-handlers.ts', import.meta.url), 'utf8')
   const isolatedShell = readFileSync(new URL('../lib/agent/isolated-shell.ts', import.meta.url), 'utf8')
-  assert.match(executor, /runInWorkspace[\s\S]*?repoIsPrivate/)
-  assert.match(executor, /runVerification[\s\S]*?repoIsPrivate/)
+  assert.match(workflowHandlers, /runInWorkspace[\s\S]*?repoIsPrivate/)
+  assert.match(workflowHandlers, /runVerification[\s\S]*?repoIsPrivate/)
   assert.match(isolatedShell, /sandboxEgressForRepository\(repoIsPrivate\)/)
   assert.match(isolatedShell, /updateNetwork\(\{ allowOut \}\)/)
   assert.match(isolatedShell, /network: \{ allowOut \}/)

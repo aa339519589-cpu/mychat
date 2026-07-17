@@ -2,9 +2,10 @@ import { assertJobFence, isIsoTimestamp, isJobStatus } from './contracts'
 import { JobRuntimeError } from './errors'
 import type { JobRepository } from './repository'
 import type { JobRetryResult } from './repository-types'
+import type { RpcArgs } from '@/lib/supabase/types'
 
 type RetryInput = Parameters<JobRepository['retry']>[0]
-type Rpc = (name: string, args: Record<string, unknown>) => Promise<Record<string, unknown>>
+type Rpc = (name: 'retry_job', args: RpcArgs<'retry_job'>) => Promise<Record<string, unknown>>
 
 function malformed(): never {
   throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'Job repository returned malformed data', {

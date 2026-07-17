@@ -1,4 +1,4 @@
-import type { SupabaseClient } from '@supabase/supabase-js'
+import type { SupabaseClient } from '@/lib/supabase/types'
 import { createAdminClient } from '@/lib/supabase/admin'
 import {
   REQUIRED_JOB_WORKER_QUEUES,
@@ -181,7 +181,7 @@ export async function readWorkerFleetMetrics(
   const controller = new AbortController()
   let timeout: ReturnType<typeof setTimeout> | undefined
   try {
-    const raw = client.rpc('read_job_worker_readiness_v2', {
+    const raw = client.rpc('read_job_worker_readiness_v3', {
       input_required_queues: [...WORKER_FLEET_QUEUES],
       input_max_age_seconds: resolved.maxAgeSeconds,
       input_revision: resolved.revision,

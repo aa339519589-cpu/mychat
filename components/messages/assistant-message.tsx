@@ -12,6 +12,7 @@ import { VegaChart } from "@/components/vega-chart"
 import { artifactTitle, parseArtifact } from "@/lib/artifact"
 import type { Message } from "@/lib/chat-data"
 import { stripToolMarkup } from "@/lib/llm/sanitize"
+import { normalizeSearchNotes } from "@/lib/search-notes"
 import { MessageMarkdown } from "./markdown-content"
 
 type Searches = NonNullable<Message["searchNotes"]>
@@ -19,7 +20,9 @@ type Searches = NonNullable<Message["searchNotes"]>
 function SearchBlock({ searches, replying }: { searches: Searches; replying: boolean }) {
   const [open, setOpen] = useState(true)
   useEffect(() => { if (replying) setOpen(false) }, [replying])
-  const total = searches.reduce((count, search) => count + search.results.length, 0)
+  const safeSearches = normalizeSearchNotes(searches)
+  const total = safeSearches.reduce((count, search) => count + search.results.length, 0)
+  if (total === 0) return null
   return (
     <div className="mb-2.5">
       <button
@@ -32,11 +35,11 @@ function SearchBlock({ searches, replying }: { searches: Searches; replying: boo
       </button>
       {open && (
         <div className="mt-2 space-y-2 rounded-xl border border-border/30 bg-muted/15 px-4 py-2.5 text-xs md:text-[12px]">
-          {searches.map((search, searchIndex) => (
+          {safeSearches.map((search, searchIndex) => (
             <div key={searchIndex} className="space-y-1">
               <div className="text-xs font-[500] italic text-muted-foreground">搜索：{search.query}</div>
               {search.results.map((result, resultIndex) => (
-                <a key={resultIndex} href={result.url} target="_blank" rel="noreferrer" className="block truncate text-xs font-[500] text-primary/80 underline underline-offset-2 hover:text-primary">
+                <a key={resultIndex} href={result.url} target="_blank" rel="noopener noreferrer" className="block truncate text-xs font-[500] text-primary/80 underline underline-offset-2 hover:text-primary">
                   {result.title || result.url}
                 </a>
               ))}

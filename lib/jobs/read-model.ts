@@ -1,4 +1,4 @@
-import type { SupabaseClient } from '@supabase/supabase-js'
+import type { SupabaseClient } from '@/lib/supabase/types'
 import { isJobStatus, isJsonValue, type JobStatus, type JsonObject, type JsonValue } from './contracts'
 
 const READ_TIMEOUT_MS = 8_000

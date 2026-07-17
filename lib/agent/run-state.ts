@@ -1,7 +1,8 @@
-import type { SupabaseClient } from "@supabase/supabase-js"
+import type { SupabaseClient } from "@/lib/supabase/types"
 import { redactSensitive } from "./path-security"
 import { log } from "@/lib/logger"
 import type { ModelMessage } from '@/lib/llm/types'
+import { toJson } from '@/lib/supabase/json'
 
 const MAX_MESSAGES = 48
 const MAX_CONTENT = 16_000
@@ -62,7 +63,10 @@ export async function saveAgentRunState(
   if (Array.isArray(patch.messages)) next.messages = compactRunMessages(patch.messages)
   if (Array.isArray(patch.resumeMessages)) next.resumeMessages = compactRunMessages(patch.resumeMessages)
   try {
-    const result = await supabase.rpc("merge_agent_run_state", { input_task_id: taskId, patch: next })
+    const result = await supabase.rpc("merge_agent_run_state", {
+      input_task_id: taskId,
+      patch: toJson(next),
+    })
     if (result.error) {
       log.error("agentRun", "Atomic run-state merge failed", { userId, taskId, code: result.error.code })
     }

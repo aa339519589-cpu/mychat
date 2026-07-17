@@ -21,6 +21,11 @@ test("message cache normalization rejects malformed entries and preserves safe f
       time: "10:00",
       images: ["https://example.com/image.png", 42],
       memoryNotes: ["remember", false],
+      searchNotes: [
+        { query: "safe", results: [{ title: "Docs", url: "https://example.com/docs" }] },
+        { query: "unsafe", results: [{ title: "Run", url: "javascript:alert(1)" }] },
+        { query: 42, results: [] },
+      ],
     },
   ])
 
@@ -30,6 +35,10 @@ test("message cache normalization rejects malformed entries and preserves safe f
   assert.equal(messages[0].content, "hello")
   assert.deepEqual(messages[0].images, ["https://example.com/image.png"])
   assert.deepEqual(messages[0].memoryNotes, ["remember"])
+  assert.deepEqual(messages[0].searchNotes, [
+    { query: "safe", results: [{ title: "Docs", url: "https://example.com/docs" }] },
+    { query: "unsafe", results: [] },
+  ])
 })
 
 test("message cache preserves terminal metadata and derives cancelled state", () => {

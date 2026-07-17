@@ -1,4 +1,5 @@
-import type { SupabaseClient } from '@supabase/supabase-js'
+import { typedRpc, type RpcArgs, type SupabaseClient } from '@/lib/supabase/types'
+import { toJson } from '@/lib/supabase/json'
 import { log } from '@/lib/logger'
 import { createAdminClient } from '@/lib/supabase/admin'
 import {
@@ -9,15 +10,7 @@ import {
   assertJobFence,
   isIsoTimestamp,
   isJobIdentifier,
-  isJobName,
-  isJsonValue,
   isTerminalJobStatus,
-  type JobAuthClass,
-  type JobBudget,
-  type JobCheckpoint,
-  type JobRecord,
-  type JobUsage,
-  type JsonObject,
 } from './contracts'
 import { JobRuntimeError } from './errors'
 import type { JobRepository } from './repository'
@@ -32,9 +25,11 @@ import { resumeSupabaseJob } from './supabase-resume'
 import { recordSupabaseJobAccounting } from './supabase-accounting'
 import { checkpointSupabaseJobWithAccounting } from './supabase-checkpoint'
 import {
-  failureOf, integerOf, jsonObjectOf, jsonOf, malformed,
-  nullableInteger, objectOf, statusOf,
+  failureOf, jsonOf, malformed, nullableInteger, objectOf, statusOf,
 } from './supabase-parsing'
+import { parseJobRecord } from './supabase-job-record'
+
+export { parseJobRecord } from './supabase-job-record'
 
 const DEFAULT_RPC_TIMEOUT_MS = 8_000
 
@@ -48,122 +43,20 @@ const DEFAULT_DEPENDENCIES: SupabaseJobRepositoryDependencies = {
   rpcTimeoutMs: DEFAULT_RPC_TIMEOUT_MS,
 }
 
-type RpcError = { code?: string }
-type RpcResponse = { data: unknown; error: RpcError | null }
-type RpcRequest = PromiseLike<RpcResponse> & {
-  abortSignal?: (signal: AbortSignal) => PromiseLike<RpcResponse>
-}
+type JobRpcName =
+  | 'enqueue_job'
+  | 'claim_next_job'
+  | 'renew_job_lease'
+  | 'retry_job'
+  | 'append_job_events'
+  | 'checkpoint_job_with_accounting'
+  | 'record_job_accounting'
+  | 'resume_awaiting_job'
+  | 'finalize_job'
+  | 'cancel_job'
 
 function rpcObject(value: unknown): Record<string, unknown> | null {
   return objectOf(Array.isArray(value) ? value[0] : value)
-}
-
-function checkpointOf(value: unknown, rpcName: string): JobCheckpoint | null {
-  if (value == null) return null
-  const source = objectOf(value)
-  const version = integerOf(source?.version)
-  const leaseVersion = integerOf(source?.leaseVersion)
-  const data = source ? objectOf(source.data) : null
-  const progress = source ? objectOf(source.progress) : null
-  if (!source || version === null || version < 1 || leaseVersion === null || leaseVersion < 1
-    || !isJobName(source.phase, 128) || !data || !progress
-    || typeof source.resumable !== 'boolean' || !isIsoTimestamp(source.updatedAt)
-    || !isJsonValue(data) || !isJsonValue(progress)) return malformed(rpcName)
-  return {
-    version,
-    phase: source.phase,
-    data: data as JsonObject,
-    progress: progress as JsonObject,
-    resumable: source.resumable,
-    leaseVersion,
-    updatedAt: source.updatedAt,
-  }
-}
-
-function usageOf(value: unknown, rpcName: string): JobUsage {
-  if (value == null) return {
-    wallTimeMs: 0,
-    rawTokens: 0,
-    weightedTokens: 0,
-    costMicros: 0,
-    sandboxTimeMs: 0,
-    toolCalls: 0,
-  }
-  const source = objectOf(value)
-  const wallTimeMs = integerOf(source?.wallTimeMs)
-  const rawTokens = integerOf(source?.rawTokens)
-  const weightedTokens = integerOf(source?.weightedTokens)
-  const costMicros = integerOf(source?.costMicros)
-  const sandboxTimeMs = integerOf(source?.sandboxTimeMs)
-  const toolCalls = integerOf(source?.toolCalls)
-  if (!source || [wallTimeMs, rawTokens, weightedTokens, costMicros, sandboxTimeMs, toolCalls]
-    .some(entry => entry === null || entry < 0)) return malformed(rpcName)
-  return {
-    wallTimeMs: wallTimeMs as number,
-    rawTokens: rawTokens as number,
-    weightedTokens: weightedTokens as number,
-    costMicros: costMicros as number,
-    sandboxTimeMs: sandboxTimeMs as number,
-    toolCalls: toolCalls as number,
-  }
-}
-
-function parseJob(value: unknown, rpcName: string): JobRecord {
-  const source = objectOf(value)
-  if (!source) return malformed(rpcName)
-  const principal = objectOf(source.principal)
-  const principalId = principal?.id ?? source.principalId
-  const authClass = principal?.authClass ?? source.authClass
-  const status = statusOf(source.status)
-  const attempt = integerOf(source.attempt)
-  const maxAttempts = integerOf(source.maxAttempts)
-  const priority = integerOf(source.priority)
-  const leaseSource = objectOf(source.lease)
-  const leaseOwner = leaseSource?.owner ?? source.leaseOwner
-  const leaseVersion = leaseSource?.version ?? source.leaseVersion
-  const leaseExpiresAt = leaseSource?.expiresAt ?? source.leaseExpiresAt
-  const parsedLeaseVersion = integerOf(leaseVersion)
-  const validAuth = authClass === 'anonymous' || authClass === 'registered' || authClass === 'service'
-  if (!isJobIdentifier(source.id) || typeof source.type !== 'string' || typeof source.queue !== 'string'
-    || !isJobIdentifier(principalId) || !validAuth || !status || attempt === null
-    || maxAttempts === null || priority === null || !isIsoTimestamp(source.availableAt)
-    || !isIsoTimestamp(source.createdAt) || !isIsoTimestamp(source.updatedAt)) return malformed(rpcName)
-  const hasLease = leaseOwner != null || leaseExpiresAt != null
-  if ((hasLease && (!isJobIdentifier(leaseOwner) || parsedLeaseVersion === null
-      || parsedLeaseVersion < 1 || !isIsoTimestamp(leaseExpiresAt)))
-    || (!hasLease && (parsedLeaseVersion === null || parsedLeaseVersion < 0))) return malformed(rpcName)
-  return {
-    id: source.id,
-    type: source.type,
-    queue: source.queue,
-    principal: { id: principalId, authClass: authClass as JobAuthClass },
-    subject: jsonObjectOf(source.subject),
-    inputHash: typeof source.inputHash === 'string' ? source.inputHash : '',
-    input: jsonObjectOf(source.input ?? source.payload),
-    status,
-    attempt,
-    maxAttempts,
-    priority,
-    availableAt: source.availableAt,
-    budget: jsonObjectOf(source.budget) as JobBudget,
-    usage: usageOf(source.usage, rpcName),
-    checkpoint: checkpointOf(source.checkpoint, rpcName),
-    result: source.result == null ? null : jsonOf(source.result, null),
-    error: failureOf(source),
-    lease: hasLease ? {
-      owner: leaseOwner as string,
-      version: parsedLeaseVersion as number,
-      expiresAt: leaseExpiresAt as string,
-    } : null,
-    cancelRequestedAt: source.cancelRequestedAt == null
-      ? null
-      : isIsoTimestamp(source.cancelRequestedAt) ? source.cancelRequestedAt : malformed(rpcName),
-    createdAt: source.createdAt,
-    updatedAt: source.updatedAt,
-    terminalAt: source.terminalAt == null
-      ? null
-      : isIsoTimestamp(source.terminalAt) ? source.terminalAt : malformed(rpcName),
-  }
 }
 
 export class SupabaseJobRepository implements JobRepository {
@@ -184,11 +77,14 @@ export class SupabaseJobRepository implements JobRepository {
     return client
   }
 
-  private async rpc(name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+  private async rpc<Name extends JobRpcName>(
+    name: Name,
+    args: RpcArgs<Name>,
+  ): Promise<Record<string, unknown>> {
     const controller = new AbortController()
     let timeout: ReturnType<typeof setTimeout> | undefined
     try {
-      const raw = this.client().rpc(name, args) as unknown as RpcRequest
+      const raw = typedRpc(this.client(), name, args)
       const operation = typeof raw.abortSignal === 'function' ? raw.abortSignal(controller.signal) : raw
       const response = await Promise.race([
         Promise.resolve(operation),
@@ -231,7 +127,7 @@ export class SupabaseJobRepository implements JobRepository {
       ...(input.availableAt ? { input_available_at: input.availableAt } : {}),
     })
     if (result.enqueued !== true && result.replayed !== true) return malformed('enqueue_job')
-    return { created: result.enqueued === true && result.replayed !== true, job: parseJob(result.job, 'enqueue_job') }
+    return { created: result.enqueued === true && result.replayed !== true, job: parseJobRecord(result.job, 'enqueue_job') }
   }
 
   async claim(input: Parameters<JobRepository['claim']>[0]): Promise<JobClaimResult> {
@@ -254,7 +150,7 @@ export class SupabaseJobRepository implements JobRepository {
         : 'empty'
       return { acquired: false, reason, job: null }
     }
-    return { acquired: true, reason: 'claimed', job: parseJob(result.job, 'claim_next_job') }
+    return { acquired: true, reason: 'claimed', job: parseJobRecord(result.job, 'claim_next_job') }
   }
 
   async renew(input: Parameters<JobRepository['renew']>[0]): Promise<JobRenewResult> {
@@ -334,8 +230,8 @@ export class SupabaseJobRepository implements JobRepository {
       input_result: input.result ?? null,
       input_error_class: input.error?.class ?? null,
       input_error_code: input.error?.code ?? null,
-      input_ledger_entries: input.ledgerEntries ?? [],
-      input_outbox: input.outbox ?? [],
+      input_ledger_entries: toJson([...(input.ledgerEntries ?? [])]),
+      input_outbox: toJson([...(input.outbox ?? [])]),
     })
     const status = statusOf(result.status)
     if (!isTerminalJobStatus(status)) return malformed('finalize_job')

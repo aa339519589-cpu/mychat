@@ -95,7 +95,7 @@ test('release images are digest-pinned, attested, and generated only after verif
 test('CI loads and starts the exact revision-bearing production container', () => {
   const verify = read('.github/workflows/verify.yml')
   assert.match(verify, /npm ci --ignore-scripts --legacy-peer-deps/)
-  assert.match(verify, /postgres:16@sha256:[0-9a-f]{64}/)
+  assert.match(verify, /pgvector\/pgvector:pg16@sha256:[0-9a-f]{64}/)
   assert.match(verify, /name: Container runtime/)
   assert.match(verify, /docker\/build-push-action@[0-9a-f]{40}/)
   assert.match(verify, /load:\s*true/)

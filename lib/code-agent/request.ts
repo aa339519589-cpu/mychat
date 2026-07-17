@@ -1,5 +1,6 @@
 import { validate } from '@/lib/validation'
-import type { ModelMessage } from '@/lib/llm/types'
+import { isValidGitHubRepository } from '@/lib/agent/git-publish/shared'
+import { isProvisionalRepositoryForSession } from './provisional-repository'
 
 export type CodeChatMessage = {
   role: 'user' | 'assistant'
@@ -13,10 +14,47 @@ export type CodeChatRequest = {
   taskId: string | null
   responseId: string | null
   sessionId: string | null
-  resumeMessages?: ModelMessage[]
 }
 
-const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
+function optionalUuid(value: unknown, field: string): string | null {
+  if (value === undefined || value === null) return null
+  validate.uuid(value, field)
+  return value as string
+}
+
+function tierOf(value: unknown): string {
+  const tier = value ?? '正构'
+  if (typeof tier !== 'string' || !tier.trim() || tier.length > 64 || /[\u0000-\u001f\u007f]/.test(tier)) {
+    throw new Error('模型档位无效')
+  }
+  return tier.trim()
+}
+
+function repositoryOf(value: unknown, sessionId: string | null): string | null {
+  const repo = value ?? null
+  if (repo === null) return null
+  if (typeof repo !== 'string') throw new Error('仓库参数无效')
+  const provisional = sessionId !== null && isProvisionalRepositoryForSession(repo, sessionId)
+  const reserved = repo.startsWith('__mychat_new__/')
+  if (reserved ? !provisional : !isValidGitHubRepository(repo)) throw new Error('仓库参数无效')
+  return repo
+}
+
+function messagesOf(value: unknown): CodeChatMessage[] {
+  validate.array(value, 'messages', { minLength: 1, maxLength: 200 })
+  let totalChars = 0
+  for (const message of value as unknown[]) {
+    if (!message || typeof message !== 'object'
+      || !('role' in message) || (message.role !== 'user' && message.role !== 'assistant')
+      || !('content' in message) || typeof message.content !== 'string') {
+      throw new Error('消息格式或角色无效')
+    }
+    if (message.content.length > 100_000) throw new Error('单条消息过长')
+    totalChars += message.content.length
+  }
+  if (totalChars > 2_000_000) throw new Error('消息上下文过大')
+  return value as CodeChatMessage[]
+}
 
 /** Validate and normalize the untrusted JSON body before any external work starts. */
 export function parseCodeChatRequest(input: unknown): CodeChatRequest {
@@ -25,45 +63,16 @@ export function parseCodeChatRequest(input: unknown): CodeChatRequest {
   }
 
   const body = input as Record<string, unknown>
-  const repo = body.repo ?? null
-  const tier = body.tier ?? '正构'
-  const messages = body.messages
-  const taskId = body.taskId ?? null
-  const responseId = body.responseId ?? null
-  const sessionId = body.sessionId ?? null
-
-  validate.array(messages, 'messages', { minLength: 1, maxLength: 200 })
-  if (repo !== null && (typeof repo !== 'string' || !REPO_PATTERN.test(repo))) {
-    throw new Error('仓库参数无效')
-  }
-  if (taskId !== null) validate.uuid(taskId, 'taskId')
-  if (responseId !== null) validate.uuid(responseId, 'responseId')
-  if (sessionId !== null) validate.uuid(sessionId, 'sessionId')
-
-  let totalChars = 0
-  for (const message of messages as unknown[]) {
-    if (
-      !message
-      || typeof message !== 'object'
-      || !('role' in message)
-      || (message.role !== 'user' && message.role !== 'assistant')
-      || !('content' in message)
-      || typeof message.content !== 'string'
-    ) {
-      throw new Error('消息格式或角色无效')
-    }
-    if (message.content.length > 100_000) throw new Error('单条消息过长')
-    totalChars += message.content.length
-  }
-  if (totalChars > 2_000_000) throw new Error('消息上下文过大')
+  const taskId = optionalUuid(body.taskId, 'taskId')
+  const responseId = optionalUuid(body.responseId, 'responseId')
+  const sessionId = optionalUuid(body.sessionId, 'sessionId')
 
   return {
-    repo: repo as string | null,
-    tier: typeof tier === 'string' ? tier : '正构',
-    messages: messages as CodeChatMessage[],
-    taskId: taskId as string | null,
-    responseId: responseId as string | null,
-    sessionId: sessionId as string | null,
-    resumeMessages: Array.isArray(body.resumeMessages) ? body.resumeMessages as ModelMessage[] : undefined,
+    repo: repositoryOf(body.repo, sessionId),
+    tier: tierOf(body.tier),
+    messages: messagesOf(body.messages),
+    taskId,
+    responseId,
+    sessionId,
   }
 }

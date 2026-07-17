@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { provisionalRepositoryForSession } from '../lib/code-agent/provisional-repository'
 import { parseCodeChatRequest } from '../lib/code-agent/request'
 import {
   createCodeEventCollector,
@@ -7,21 +8,33 @@ import {
   finalCodeTaskStatus,
 } from '../lib/code-agent/runtime'
 
-test('code chat request applies stable defaults and keeps recovery messages', () => {
+test('code chat request applies stable defaults', () => {
   const parsed = parseCodeChatRequest({
     messages: [{ role: 'user', content: '修复测试' }],
-    resumeMessages: [{ role: 'tool', content: 'done' }],
   })
 
   assert.equal(parsed.repo, null)
   assert.equal(parsed.tier, '正构')
   assert.equal(parsed.taskId, null)
-  assert.deepEqual(parsed.resumeMessages, [{ role: 'tool', content: 'done' }])
 })
 
 test('code chat request rejects invalid repositories and message roles', () => {
   assert.throws(
     () => parseCodeChatRequest({ repo: 'owner/repo/extra', messages: [{ role: 'user', content: 'x' }] }),
+    /仓库参数无效/,
+  )
+  const sessionId = '60000000-0000-4000-8000-000000000001'
+  assert.equal(parseCodeChatRequest({
+    repo: provisionalRepositoryForSession(sessionId),
+    sessionId,
+    messages: [{ role: 'user', content: 'new project' }],
+  }).repo, provisionalRepositoryForSession(sessionId))
+  assert.throws(
+    () => parseCodeChatRequest({
+      repo: '__mychat_new__/60000000-0000-4000-8000-000000000002',
+      sessionId,
+      messages: [{ role: 'user', content: 'x' }],
+    }),
     /仓库参数无效/,
   )
   assert.throws(

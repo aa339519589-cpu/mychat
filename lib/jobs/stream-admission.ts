@@ -1,5 +1,5 @@
 import { createHmac } from 'node:crypto'
-import type { SupabaseClient } from '@supabase/supabase-js'
+import { typedRpc, type RpcArgs, type SupabaseClient } from '@/lib/supabase/types'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { awaitAbortableRequest, type AbortableRequest } from './abortable-request'
 
@@ -35,15 +35,17 @@ function record(value: unknown): Record<string, unknown> | null {
     : null
 }
 
-async function rpc(
+type StreamRpcName = 'acquire_job_event_stream' | 'renew_job_event_stream' | 'release_job_event_stream'
+
+async function rpc<Name extends StreamRpcName>(
   client: SupabaseClient,
-  name: string,
-  args: Record<string, unknown>,
+  name: Name,
+  args: RpcArgs<Name>,
   timeoutMs: number,
   signal?: AbortSignal,
 ): Promise<Record<string, unknown> | null> {
   try {
-    const request = client.rpc(name, args) as unknown as AbortableRequest<RpcResponse>
+    const request = typedRpc(client, name, args) as AbortableRequest<RpcResponse>
     const response = await awaitAbortableRequest(request, {
       timeoutMs,
       timeoutMessage: `Job stream admission RPC timed out: ${name}`,

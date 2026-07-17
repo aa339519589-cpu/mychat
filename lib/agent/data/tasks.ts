@@ -1,6 +1,8 @@
-import type { SupabaseClient } from "@supabase/supabase-js"
+import type { SupabaseClient } from "@/lib/supabase/types"
 import type { AgentTask, AgentTaskDetail, AgentTaskStatus, CreateTaskInput } from "../types"
 import { mapArtifact, mapStep, mapTask, mapToolCall, mapWorkspace } from "../data-mappers"
+import type { TablesUpdate } from '@/lib/supabase/types'
+import { toJson } from '@/lib/supabase/json'
 
 export async function createTask(
   supabase: SupabaseClient,
@@ -19,7 +21,7 @@ export async function createTask(
       repo: input.repo ?? null,
       branch: input.branch ?? "main",
       status: "queued",
-      meta: input.meta ?? null,
+      meta: input.meta ? toJson(input.meta) : null,
       created_at: now,
       updated_at: now,
     })
@@ -109,7 +111,7 @@ export async function updateTaskStatus(
     commitSha?: string
   },
 ): Promise<AgentTask | { error: string }> {
-  const update: Record<string, unknown> = {
+  const update: TablesUpdate<'agent_tasks'> = {
     status,
     updated_at: new Date().toISOString(),
   }

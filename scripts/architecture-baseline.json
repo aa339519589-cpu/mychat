@@ -14,6 +14,9 @@
       "maxLocalDependencies": 18
     }
   },
+  "generatedFiles": [
+    "lib/supabase/database.types.ts"
+  ],
   "exceptions": {},
   "allowedCycles": []
 }

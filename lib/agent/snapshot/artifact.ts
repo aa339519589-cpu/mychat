@@ -1,4 +1,4 @@
-import type { SupabaseClient } from "@supabase/supabase-js"
+import type { SupabaseClient } from "@/lib/supabase/types"
 import { errorMessage, isRecord } from "@/lib/unknown-value"
 import { redactSensitive } from "../path-security"
 import type { SnapshotRecord } from "../types"

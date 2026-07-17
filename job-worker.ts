@@ -14,22 +14,15 @@ import { normalizeJobError } from '@/lib/jobs/errors'
 import type { JobHandler } from '@/lib/jobs/worker'
 import { JobWorkerHeartbeat } from '@/lib/jobs/worker-heartbeat'
 import { safeRevision } from '@/lib/supabase/health'
-import { jobMaintenanceMode } from '@/lib/jobs/maintenance'
 import { JobLifecycleSweeper } from '@/lib/jobs/lifecycle-sweeper'
 import { BillingReconciliationMonitor } from '@/lib/jobs/billing-reconciliation'
+import { resolveRuntimeConfiguration } from '@/lib/runtime-config'
 
-function concurrency(name: string, fallback: number): number {
-  const configured = Number(process.env[name] ?? fallback)
-  if (!Number.isSafeInteger(configured) || configured < 1 || configured > 16) {
-    throw new Error(`${name} must be an integer between 1 and 16`)
-  }
-  return configured
-}
-
-const baseWorkerId = process.env.JOB_WORKER_ID?.trim()
+const runtimeConfiguration = resolveRuntimeConfiguration(process.env, 'worker')
+const baseWorkerId = runtimeConfiguration.workerId
   || `${hostname()}:${process.pid}:${crypto.randomUUID()}`
 const shutdown = new AbortController()
-const maintenanceMode = jobMaintenanceMode()
+const maintenanceMode = runtimeConfiguration.maintenanceMode
 
 function metricType(job: { type: string; input: unknown }): JobMetricType {
   if (job.type === 'chat.title') return 'title'
@@ -81,28 +74,22 @@ const finalized: NonNullable<ConstructorParameters<typeof JobWorker>[0]['onFinal
     jobMetrics.observeRunDuration(type, status, durationMs)
   }
 const workerSpecs = [
-  { name: 'chat', queue: 'chat', concurrency: concurrency('JOB_CHAT_CONCURRENCY', 2) },
-  { name: 'media', queue: 'media', concurrency: concurrency('JOB_MEDIA_CONCURRENCY', 1) },
-  { name: 'title', queue: 'title', concurrency: concurrency('JOB_TITLE_CONCURRENCY', 1) },
-  { name: 'agent', queue: 'agent', concurrency: concurrency('JOB_AGENT_CONCURRENCY', 1) },
+  { name: 'chat', queue: 'chat', concurrency: runtimeConfiguration.workerConcurrency.chat },
+  { name: 'media', queue: 'media', concurrency: runtimeConfiguration.workerConcurrency.media },
+  { name: 'title', queue: 'title', concurrency: runtimeConfiguration.workerConcurrency.title },
+  { name: 'agent', queue: 'agent', concurrency: runtimeConfiguration.workerConcurrency.agent },
 ] as const
 const workerStartedAt = new Date().toISOString()
-const heartbeatSpecs = [
-  ...workerSpecs.map(spec => ({
-    name: spec.name,
-    queue: spec.queue,
-    capacity: spec.concurrency,
-  })),
-  { name: 'outbox', queue: 'outbox', capacity: 1 },
-] as const
-const heartbeats = heartbeatSpecs.map(spec => new JobWorkerHeartbeat({
-  workerId: `${baseWorkerId}:${spec.name}`,
+const heartbeat = new JobWorkerHeartbeat({
+  workerId: baseWorkerId,
   revision: safeRevision(),
-  queues: [spec.queue],
-  capacity: spec.capacity,
+  queueCapacities: Object.fromEntries([
+    ...workerSpecs.map(spec => [spec.queue, spec.concurrency] as const),
+    ['outbox', 1] as const,
+  ]),
   draining: maintenanceMode === 'drain',
   startedAt: workerStartedAt,
-}))
+})
 const workers = workerSpecs.map(spec => new JobWorker({
   repository,
   workerId: `${baseWorkerId}:${spec.name}`,
@@ -128,14 +115,14 @@ async function main(): Promise<void> {
       workerId: baseWorkerId,
     })
     await Promise.all([
-      ...heartbeats.map(heartbeat => heartbeat.run(shutdown.signal)),
+      heartbeat.run(shutdown.signal),
       billingReconciliation.run(shutdown.signal),
     ])
     return
   }
   log.info('jobs', 'Worker pool started', { workerId: baseWorkerId, workers: workerSpecs })
   await Promise.all([
-    ...heartbeats.map(heartbeat => heartbeat.run(shutdown.signal)),
+    heartbeat.run(shutdown.signal),
     ...workers.map(worker => worker.run(shutdown.signal)),
     outbox.run(shutdown.signal),
     lifecycleSweeper.run(shutdown.signal),

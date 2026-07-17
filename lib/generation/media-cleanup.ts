@@ -1,4 +1,4 @@
-import type { SupabaseClient } from '@supabase/supabase-js'
+import type { SupabaseClient } from '@/lib/supabase/types'
 import { log } from '@/lib/logger'
 
 const CLEANUP_TABLE = 'generated_media_cleanup_jobs'

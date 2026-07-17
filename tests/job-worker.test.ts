@@ -631,7 +631,7 @@ test('an unsafe retry is terminally poisoned with a stable error code', async ()
   const shutdown = new AbortController()
   let claims = 0
   let terminalCode = ''
-  let poisonKind = ''
+  let outboxCount = -1
   const observedTerminals: string[] = []
   const repository = fakeRepository({
     claim: async () => {
@@ -650,7 +650,7 @@ test('an unsafe retry is terminally poisoned with a stable error code', async ()
     }),
     finalize: async request => {
       terminalCode = request.error?.code ?? ''
-      poisonKind = request.outbox?.[0]?.kind ?? ''
+      outboxCount = request.outbox?.length ?? 0
       shutdown.abort()
       return { accepted: true, replayed: false, status: request.status, result: null, error: request.error ?? null, eventSeq: 3 }
     },
@@ -667,7 +667,7 @@ test('an unsafe retry is terminally poisoned with a stable error code', async ()
     onFinalized: ({ status }) => { observedTerminals.push(status) },
   }).run(shutdown.signal)
   assert.equal(terminalCode, 'JOB_RETRY_UNSAFE')
-  assert.equal(poisonKind, 'jobs.poison')
+  assert.equal(outboxCount, 0)
   assert.deepEqual(observedTerminals, ['failed'])
 })
 

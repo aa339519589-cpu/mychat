@@ -1,4 +1,4 @@
-import type { SupabaseClient } from '@supabase/supabase-js'
+import { typedRpc, type RpcArgs, type SupabaseClient } from '@/lib/supabase/types'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { isIsoTimestamp, isJsonValue, type JsonObject } from './contracts'
 import { JobRuntimeError } from './errors'
@@ -13,10 +13,14 @@ import {
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const DEFAULT_RPC_TIMEOUT_MS = 8_000
 
-type RpcResponse = { data: unknown; error: { code?: string } | null }
-type RpcRequest = PromiseLike<RpcResponse> & {
-  abortSignal?: (signal: AbortSignal) => PromiseLike<RpcResponse>
-}
+type OutboxRpcName =
+  | 'claim_job_outbox'
+  | 'renew_job_outbox'
+  | 'complete_job_outbox'
+  | 'prepare_job_asset_cleanup'
+  | 'finish_job_asset_cleanup'
+  | 'prepare_job_payload_cleanup'
+  | 'finish_job_payload_cleanup'
 
 export type SupabaseOutboxDependencies = {
   createAdminClient: () => SupabaseClient | null
@@ -88,11 +92,14 @@ export class SupabaseJobOutboxRepository implements JobOutboxRepository {
     return client
   }
 
-  private async rpc(name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+  private async rpc<Name extends OutboxRpcName>(
+    name: Name,
+    args: RpcArgs<Name>,
+  ): Promise<Record<string, unknown>> {
     const controller = new AbortController()
     let timeout: ReturnType<typeof setTimeout> | undefined
     try {
-      const raw = this.client().rpc(name, args) as unknown as RpcRequest
+      const raw = typedRpc(this.client(), name, args)
       const operation = typeof raw.abortSignal === 'function' ? raw.abortSignal(controller.signal) : raw
       const response = await Promise.race([
         Promise.resolve(operation),

@@ -31,6 +31,6 @@ test('HTML responses use unique nonces on every framework script', async ({ page
   const pageErrors: string[] = []
   page.on('pageerror', error => pageErrors.push(error.message))
   await page.goto('/', { waitUntil: 'domcontentloaded' })
-  await expect(page.getByPlaceholder('邮箱')).toBeVisible()
+  await expect(page.getByLabel('邮箱地址')).toBeVisible()
   expect(pageErrors).toEqual([])
 })

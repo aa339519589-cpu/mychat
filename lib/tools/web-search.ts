@@ -1,6 +1,7 @@
 // 联网搜索工具：调用 Tavily 查最新信息
 import type { ToolDef, ToolOutcome } from './types'
 import { buildSearchQueries, searchSourceBudget } from '@/lib/search-mode'
+import { isSafeExternalHttpUrl } from '@/lib/external-url'
 import { isRecord } from '@/lib/unknown-value'
 
 type SearchHit = { title: string; url: string; content?: string }
@@ -19,13 +20,14 @@ async function tavilySearchOnce(query: string, maxResults: number, searchDepth: 
     if (!res.ok) return { answer: '', results: [] }
     const data = await res.json()
     const payload = isRecord(data) ? data : {}
-    const results = (Array.isArray(payload.results) ? payload.results : [])
-      .filter(isRecord)
-      .map(result => ({
+    const results = (Array.isArray(payload.results) ? payload.results : []).flatMap(result => {
+      if (!isRecord(result) || !isSafeExternalHttpUrl(result.url)) return []
+      return [{
         title: typeof result.title === 'string' ? result.title : '',
-        url: typeof result.url === 'string' ? result.url : '',
+        url: result.url,
         content: String(result.content ?? ''),
-      }))
+      }]
+    })
     return { answer: String(payload.answer ?? ''), results }
   } catch (error) {
     if (parentSignal?.aborted) throw error

@@ -1,5 +1,5 @@
 import { existsSync } from "fs"
-import type { SupabaseClient } from "@supabase/supabase-js"
+import type { SupabaseClient } from "@/lib/supabase/types"
 import { errorMessage } from "@/lib/unknown-value"
 import type { SnapshotRecord } from "../types"
 import { workspaceRoot } from "../workspace-paths"

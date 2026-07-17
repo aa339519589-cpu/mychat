@@ -6,7 +6,7 @@ import {
   mkdirSync,
 } from "fs"
 import { dirname } from "path"
-import type { SupabaseClient } from "@supabase/supabase-js"
+import type { SupabaseClient } from "@/lib/supabase/types"
 import { validatePath, isBinaryFile, fileTooBig, redactSensitive } from "./path-security"
 import { createWorkspaceSnapshot } from "./snapshot"
 import { workspacePath, workspaceRoot } from "./workspace-paths"

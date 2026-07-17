@@ -2,6 +2,7 @@
 
 import { ChevronLeft } from "lucide-react"
 import type { AgentTaskDetail } from "@/lib/agent/types"
+import { isSafeExternalHttpUrl } from "@/lib/external-url"
 import { cn } from "@/lib/utils"
 import { ConfirmationCard } from "./confirmation-card"
 import { statusColor, statusLabel } from "./status"
@@ -20,16 +21,17 @@ export function TaskDetail({
   onBack: () => void
 }) {
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-border">
-        <button onClick={onBack} className="text-muted-foreground hover:text-foreground">
-          <ChevronLeft className="size-4" />
+    <div className="flex h-full flex-col">
+      <div className="flex min-h-11 items-center gap-2 border-b border-border px-2">
+        <button type="button" onClick={onBack} aria-label="返回任务列表" className="inline-flex size-11 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--code-accent)]">
+          <ChevronLeft className="size-4" aria-hidden="true" />
         </button>
-        <span className="text-[11px] font-medium text-foreground truncate flex-1">{detail.goal.slice(0, 60)}</span>
-        <span className={cn("text-[10px]", statusColor(detail.status))}>{statusLabel(detail.status)}</span>
+        <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-foreground">{detail.goal.slice(0, 60)}</span>
+        <span className={cn("shrink-0 text-[10px]", statusColor(detail.status))}>{statusLabel(detail.status)}</span>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+      <div className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
+        {detail.error && <p role="alert" className="rounded-md bg-red-400/10 px-3 py-2 text-[11px] text-red-400">{detail.error}</p>}
         {detail.steps.length > 0 && (
           <div>
             <p className="text-[10px] text-muted-foreground mb-1.5">执行步骤</p>
@@ -58,7 +60,7 @@ export function TaskDetail({
                   {toolCall.durationMs != null && (
                     <span className="text-muted-foreground/60 ml-auto">{toolCall.durationMs}ms</span>
                   )}
-                  {toolCall.error && <span className="text-red-400 truncate ml-2">{toolCall.error}</span>}
+                  {toolCall.error && <span className="ml-2 truncate text-red-400">{toolCall.error}</span>}
                 </div>
               ))}
             </div>
@@ -73,10 +75,10 @@ export function TaskDetail({
             <p className="text-[10px] text-muted-foreground mb-1.5">产物</p>
             <div className="space-y-1">
               {detail.artifacts.map(artifact => (
-                <div key={artifact.id} className="text-[10px] rounded bg-secondary/30 px-2 py-1 text-muted-foreground">
+                <div key={artifact.id} className="min-h-11 rounded bg-secondary/30 px-2 py-1 text-[10px] text-muted-foreground">
                   [{artifact.kind}] {artifact.title || artifact.id}
-                  {artifact.url && (
-                    <a href={artifact.url} target="_blank" rel="noreferrer" className="ml-2 underline" style={{ color: ACCENT }}>
+                  {isSafeExternalHttpUrl(artifact.url) && (
+                    <a href={artifact.url} target="_blank" rel="noopener noreferrer" className="ml-2 inline-flex min-h-11 items-center rounded-md underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--code-accent)]" style={{ color: ACCENT }}>
                       打开
                     </a>
                   )}

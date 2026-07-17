@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { SupabaseJobRepository } from '../lib/jobs/supabase-repository'
+import { parseJobRecord, SupabaseJobRepository } from '../lib/jobs/supabase-repository'
 
 const timestamp = '2026-07-13T12:00:00.000Z'
 
@@ -44,6 +44,68 @@ function repositoryWith(
   const client = { rpc } as unknown as SupabaseClient
   return new SupabaseJobRepository({ createAdminClient: () => client, rpcTimeoutMs })
 }
+
+test('Job record parser accepts canonical nested principal and lease envelopes', () => {
+  const parsed = parseJobRecord(databaseJob({
+    principal: {
+      id: '00000000-0000-4000-8000-000000000002',
+      authClass: 'service',
+    },
+    principalId: undefined,
+    authClass: undefined,
+    lease: {
+      owner: 'worker-nested',
+      version: 9,
+      expiresAt: '2026-07-13T12:02:00.000Z',
+    },
+    leaseOwner: undefined,
+    leaseVersion: undefined,
+    leaseExpiresAt: undefined,
+  }), 'claim_next_job')
+
+  assert.deepEqual(parsed.principal, {
+    id: '00000000-0000-4000-8000-000000000002',
+    authClass: 'service',
+  })
+  assert.deepEqual(parsed.lease, {
+    owner: 'worker-nested',
+    version: 9,
+    expiresAt: '2026-07-13T12:02:00.000Z',
+  })
+})
+
+test('Job record parser fails closed on invalid identity, scheduling, JSON, and nested fields', () => {
+  const invalid: Array<Record<string, unknown>> = [
+    { type: 'Chat.Generation' },
+    { queue: 'x'.repeat(65) },
+    { inputHash: 'short' },
+    { attempt: -1 },
+    { attempt: 4, maxAttempts: 3 },
+    { maxAttempts: 0 },
+    { priority: 1_001 },
+    { subject: [] },
+    { payload: { invalid: Number.POSITIVE_INFINITY } },
+    { budget: [] },
+    { result: Number.NaN },
+    { principal: [] },
+    { lease: [] },
+    { leaseOwner: 'worker-1', leaseExpiresAt: null },
+    { createdAt: 'not-a-timestamp' },
+    { checkpoint: {
+      version: 1,
+      phase: 'chat.model_round',
+      data: [],
+      progress: {},
+      resumable: true,
+      leaseVersion: 1,
+      updatedAt: timestamp,
+    } },
+  ]
+
+  for (const override of invalid) {
+    assert.throws(() => parseJobRecord(databaseJob(override), 'claim_next_job'), /malformed data/)
+  }
+})
 
 test('Supabase repository enqueues bounded JSON and maps the canonical job contract', async () => {
   let calledName = ''

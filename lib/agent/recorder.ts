@@ -1,7 +1,7 @@
 // Agent Task 运行时记录器：封装 step 写入 / tool_call 写入 / 输入清理。
 // 由 /api/code/chat 和 /api/code/apply 共用，确保所有 task 操作统一走这条管道。
 
-import type { SupabaseClient } from "@supabase/supabase-js"
+import type { SupabaseClient } from "@/lib/supabase/types"
 import { addStep, addToolCall, completeToolCall, updateTaskStatus, addArtifact } from "./data"
 import type { AgentArtifact, AgentTaskStatus, StepKind } from "./types"
 import { errorMessage } from '@/lib/unknown-value'

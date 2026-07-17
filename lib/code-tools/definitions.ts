@@ -1,5 +1,5 @@
 import type { CodePlan, Emit } from "@/lib/llm/events"
-import type { SupabaseClient } from '@supabase/supabase-js'
+import type { SupabaseClient } from '@/lib/supabase/types'
 
 export type ToolStepKind = 'list' | 'read' | 'edit' | 'memory' | 'repo' | 'deploy'
 

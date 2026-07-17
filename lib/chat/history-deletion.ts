@@ -1,4 +1,4 @@
-import type { SupabaseClient } from '@supabase/supabase-js'
+import type { SupabaseClient } from '@/lib/supabase/types'
 import { generatedMediaObjectKey, normalizeGeneratedMedia } from '@/lib/generated-media'
 import { log } from '@/lib/logger'
 import {

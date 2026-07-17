@@ -122,8 +122,12 @@ test("HTTP workspace mutations are disabled and durable publish consumes the aut
   assert.match(confirmRoute, /parseAgentConfirmationCredential\(body\)/)
   assert.doesNotMatch(confirmRoute, /body\.action === "reject" \? "reject" : "confirm"/)
 
-  const workerTools = await fs.readFile(new URL("../lib/code-tools/index.ts", import.meta.url), "utf8")
-  assert.match(workerTools, /classifyFileRisk\(paths\)/)
-  assert.match(workerTools, /classifyFileRisk\(preview\.changedFiles\)/)
-  assert.match(workerTools, /该操作只能由客户端通过数据库单次确认门提交/)
+  const [toolDispatcher, fileHandlers] = await Promise.all([
+    "../lib/code-tools/index.ts",
+    "../lib/code-tools/file-handlers.ts",
+  ].map(path => fs.readFile(new URL(path, import.meta.url), "utf8")))
+  assert.match(toolDispatcher, /createFileToolHandlers\(context\)/)
+  assert.match(fileHandlers, /classifyFileRisk\(normalized\)/)
+  assert.match(fileHandlers, /classifyFileRisk\(preview\.changedFiles\)/)
+  assert.match(fileHandlers, /该操作只能由客户端通过数据库单次确认门提交/)
 })

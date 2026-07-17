@@ -23,21 +23,23 @@ export function ConfirmationCard({ actions }: { actions: WorkspaceActions }) {
           {confirmation.files.map((file, index) => <div key={index} className="truncate">{file}</div>)}
         </div>
       )}
-      <div className="flex gap-1.5">
+      <div className="flex flex-col gap-2 min-[360px]:flex-row">
         <button
+          type="button"
           onClick={actions.confirm}
           disabled={actions.confirming}
-          className="flex items-center gap-1 text-[10px] rounded px-2.5 py-1 bg-yellow-400/20 hover:bg-yellow-400/30 transition-colors text-yellow-400 font-medium"
+          className="inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-md bg-yellow-400/20 px-3 text-[10px] font-medium text-yellow-400 transition-colors hover:bg-yellow-400/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          <Shield className="size-3" />
+          <Shield className="size-3.5" aria-hidden="true" />
           确认继续
         </button>
         <button
+          type="button"
           onClick={actions.reject}
           disabled={actions.confirming}
-          className="flex items-center gap-1 text-[10px] rounded px-2.5 py-1 bg-secondary/50 hover:bg-secondary transition-colors text-muted-foreground"
+          className="inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-md bg-secondary/50 px-3 text-[10px] text-muted-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--code-accent)] disabled:cursor-not-allowed disabled:opacity-50"
         >
-          <XCircle className="size-3" />
+          <XCircle className="size-3.5" aria-hidden="true" />
           拒绝
         </button>
       </div>

@@ -1,4 +1,4 @@
-import type { SupabaseClient } from '@supabase/supabase-js'
+import type { SupabaseClient } from '@/lib/supabase/types'
 import type { JobExecutionContext } from '@/lib/jobs/worker'
 import { JobRuntimeError } from '@/lib/jobs/errors'
 import { createWorkspaceSnapshot, restoreWorkspaceSnapshot } from './snapshot'

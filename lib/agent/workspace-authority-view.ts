@@ -1,4 +1,4 @@
-import type { SupabaseClient } from '@supabase/supabase-js'
+import type { SupabaseClient } from '@/lib/supabase/types'
 import { parseAndVerifyManifest } from './snapshot/cas-integrity'
 import type { SnapshotManifest } from './snapshot/cas-types'
 import { readWorkspaceAuthority, type WorkspaceAuthority } from './workspace-authority'

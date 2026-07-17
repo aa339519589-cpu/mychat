@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "contractVersion": 1,
-  "sealMigration": "20260713310000_schema_contract_attestation.sql",
-  "migrationCount": 43,
+  "contractVersion": 2,
+  "sealMigration": "20260717020000_schema_contract_attestation_v2.sql",
+  "migrationCount": 45,
   "migrations": [
     {
       "file": "20260624_add_pr_mode_constraint.sql",
@@ -175,7 +175,15 @@
     {
       "file": "20260713300000_atomic_checkpoint_accounting.sql",
       "sha256": "f880c2c28280fc592e3c1aff1da72247e8aa7c92d2ee4b4d420d492f80f77d61"
+    },
+    {
+      "file": "20260713310000_schema_contract_attestation.sql",
+      "sha256": "eb210f0597abb9ed6ae972eb9e111fa43a87d2318c3e06a62125ff5dde291b2a"
+    },
+    {
+      "file": "20260717010000_platform_authority_v2.sql",
+      "sha256": "c527dbf0581e9bc8484a3738c38d5a1a64c93c30c81183d6884a7969377d336d"
     }
   ],
-  "contractDigest": "e5479e42cbba7c439a1a31ec3325344625f740d2cca37c3865dc4af00243dc0d"
+  "contractDigest": "c0c1dd9dcf788761cae5ac5a0bcb3ddd49e13ab8c59638e2c91d53ce1c5fcacc"
 }

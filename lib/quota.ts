@@ -1,7 +1,7 @@
 // 额度核算：发送前检查窗口/余额，回复后按加权 token 记账。
 // 主聊天 (/api/chat) 与 Code (/api/code/chat) 共用这一份，避免逻辑重复、口径不一。
 import { log } from '@/lib/logger'
-import type { SupabaseClient } from '@supabase/supabase-js'
+import type { SupabaseClient } from '@/lib/supabase/types'
 
 // 加权额度上限（与 QuotaScreen 展示的 max 一致）
 const QUOTA_LIMIT_5H = 500_000

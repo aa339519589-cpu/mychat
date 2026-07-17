@@ -9,17 +9,20 @@ import {
   GITHUB_OAUTH_STATE_COOKIE,
 } from '@/lib/github-cookies'
 import { githubCredentialEncryptionConfigured } from '@/lib/github-credential'
+import {
+  githubConnectionCookieMaxAge,
+  parseGitHubOAuthCode,
+  parseGitHubOAuthToken,
+  parseGitHubUser,
+  resolveGitHubOAuthBaseUrl,
+  type GitHubOAuthCredential,
+  type GitHubOAuthTokenResult,
+} from '@/lib/github-oauth-flow'
 import { verifyGitHubOAuthState } from '@/lib/github-oauth-state'
 import { revokeGitHubOAuthToken } from '@/lib/github-token-revocation'
 import { isAdminConfigured } from '@/lib/supabase/admin'
 
-type UnknownRecord = Record<string, unknown>
-
-function record(value: unknown): UnknownRecord | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as UnknownRecord
-    : null
-}
+type OAuthConfig = { clientId: string; clientSecret: string }
 
 function redirect(home: string, outcome: 'connected' | 'error', connection?: {
   id: string
@@ -35,78 +38,46 @@ function redirect(home: string, outcome: 'connected' | 'error', connection?: {
   return new Response(null, { status: 302, headers })
 }
 
-function parseExpiry(value: unknown): Date | null | undefined {
-  if (value === undefined || value === null) return null
-  const seconds = typeof value === 'number'
-    ? value
-    : typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : Number.NaN
-  if (!Number.isSafeInteger(seconds) || seconds <= 0 || seconds > 366 * 24 * 60 * 60) {
-    return undefined
+function callbackHome(request: NextRequest): string | null {
+  try {
+    return `${resolveGitHubOAuthBaseUrl(
+      process.env.AGENT_PUBLIC_URL,
+      request.nextUrl.origin,
+    )}/`
+  } catch {
+    return null
   }
-  const expiresAt = new Date(Date.now() + seconds * 1000)
-  return Number.isFinite(expiresAt.getTime()) ? expiresAt : undefined
 }
 
-function parseScopes(value: unknown): string[] | undefined {
-  if (value === undefined || value === null || value === '') return []
-  if (typeof value !== 'string') return undefined
-  const scopes = [...new Set(value.split(/[,\s]+/).map(scope => scope.trim()).filter(Boolean))]
-  return scopes.length <= 64 && scopes.every(scope => /^[A-Za-z0-9:_-]{1,100}$/.test(scope))
-    ? scopes
-    : undefined
-}
-
-// GitHub returns a code once; the resulting bearer token is encrypted into the
-// service-only connection table and only an opaque connection id reaches the browser.
-export async function GET(req: NextRequest) {
-  const origin = process.env.AGENT_PUBLIC_URL?.trim().replace(/\/$/, '') || req.nextUrl.origin
-  const home = `${origin}/`
+function oauthConfig(): OAuthConfig | null {
   const clientId = process.env.GITHUB_CLIENT_ID?.trim()
   const clientSecret = process.env.GITHUB_CLIENT_SECRET?.trim()
-  if (!clientId
-    || !clientSecret
-    || !githubCredentialEncryptionConfigured()
-    || !isAdminConfigured()) return redirect(home, 'error')
+  if (!clientId || !clientSecret || !githubCredentialEncryptionConfigured() || !isAdminConfigured()) return null
+  return { clientId, clientSecret }
+}
 
-  const auth = await resolveAuth()
-  if (!auth.userId) return redirect(home, 'error')
+function callbackCode(request: NextRequest, userId: string, clientSecret: string): string | null {
+  const code = parseGitHubOAuthCode(request.nextUrl.searchParams.get('code'))
+  const state = request.nextUrl.searchParams.get('state') ?? ''
+  const savedState = request.cookies.get(GITHUB_OAUTH_STATE_COOKIE)?.value ?? ''
+  return code && state === savedState && verifyGitHubOAuthState(state, userId, clientSecret)
+    ? code
+    : null
+}
 
-  const code = req.nextUrl.searchParams.get('code')
-  const state = req.nextUrl.searchParams.get('state') ?? ''
-  const savedState = req.cookies.get(GITHUB_OAUTH_STATE_COOKIE)?.value ?? ''
-  if (!code
-    || state !== savedState
-    || !verifyGitHubOAuthState(state, auth.userId, clientSecret)) {
-    return redirect(home, 'error')
-  }
-
-  const tokenRes = await fetch('https://github.com/login/oauth/access_token', {
+async function exchangeCode(code: string, config: OAuthConfig): Promise<GitHubOAuthTokenResult> {
+  const response = await fetch('https://github.com/login/oauth/access_token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code }),
+    body: JSON.stringify({ client_id: config.clientId, client_secret: config.clientSecret, code }),
     signal: AbortSignal.timeout(15_000),
   }).catch(() => null)
-  if (!tokenRes?.ok) return redirect(home, 'error')
+  if (!response?.ok) return { ok: false, accessToken: '' }
+  return parseGitHubOAuthToken(await response.json().catch(() => null))
+}
 
-  const tokenData = record(await tokenRes.json().catch(() => null))
-  const accessToken = typeof tokenData?.access_token === 'string'
-    ? tokenData.access_token
-    : ''
-  const tokenType = tokenData?.token_type
-  const expiresAt = parseExpiry(tokenData?.expires_in)
-  const scopes = parseScopes(tokenData?.scope)
-  if (!accessToken
-    || accessToken.length > 16_384
-    || (tokenType !== undefined && tokenType !== 'bearer')
-    || expiresAt === undefined
-    || scopes === undefined) {
-    if (accessToken) {
-      await revokeGitHubOAuthToken(accessToken, { clientId, clientSecret }).catch(() => false)
-    }
-    return redirect(home, 'error')
-  }
-
-  const userRes = await fetch('https://api.github.com/user', {
+async function githubUser(accessToken: string) {
+  const response = await fetch('https://api.github.com/user', {
     headers: {
       Authorization: `Bearer ${accessToken}`,
       Accept: 'application/vnd.github+json',
@@ -115,31 +86,61 @@ export async function GET(req: NextRequest) {
     },
     signal: AbortSignal.timeout(15_000),
   }).catch(() => null)
-  const userData = userRes?.ok ? record(await userRes.json().catch(() => null)) : null
-  const login = typeof userData?.login === 'string' ? userData.login : ''
-  const githubUserId = typeof userData?.id === 'number' ? userData.id : Number.NaN
-  if (!login || !Number.isSafeInteger(githubUserId) || githubUserId <= 0) {
-    await revokeGitHubOAuthToken(accessToken, { clientId, clientSecret }).catch(() => false)
+  return response?.ok ? parseGitHubUser(await response.json().catch(() => null)) : null
+}
+
+async function revoke(accessToken: string, config: OAuthConfig): Promise<void> {
+  if (!accessToken) return
+  await revokeGitHubOAuthToken(accessToken, config).catch(() => false)
+}
+
+async function persistConnection(
+  request: NextRequest,
+  userId: string,
+  credential: GitHubOAuthCredential,
+  user: { login: string; githubUserId: number },
+) {
+  return persistGitHubConnection({
+    userId,
+    githubUserId: user.githubUserId,
+    login: user.login,
+    token: credential.accessToken,
+    scopes: credential.scopes,
+    expiresAt: credential.expiresAt,
+    requestId: requestId(request),
+  })
+}
+
+// GitHub returns a code once; the bearer token is encrypted into a service-only
+// connection row and only an opaque connection id reaches the browser.
+export async function GET(request: NextRequest): Promise<Response> {
+  const home = callbackHome(request)
+  if (!home) return new Response('GitHub OAuth 配置无效', { status: 503 })
+  const config = oauthConfig()
+  if (!config) return redirect(home, 'error')
+  const auth = await resolveAuth()
+  if (!auth.userId) return redirect(home, 'error')
+  const code = callbackCode(request, auth.userId, config.clientSecret)
+  if (!code) return redirect(home, 'error')
+
+  const credential = await exchangeCode(code, config)
+  if (!credential.ok) {
+    await revoke(credential.accessToken, config)
     return redirect(home, 'error')
   }
-
+  const user = await githubUser(credential.accessToken)
+  if (!user) {
+    await revoke(credential.accessToken, config)
+    return redirect(home, 'error')
+  }
   try {
-    const connection = await persistGitHubConnection({
-      userId: auth.userId,
-      githubUserId,
-      login,
-      token: accessToken,
-      scopes,
-      expiresAt,
-      requestId: requestId(req),
+    const connection = await persistConnection(request, auth.userId, credential, user)
+    return redirect(home, 'connected', {
+      id: connection.connectionId,
+      maxAgeSeconds: githubConnectionCookieMaxAge(credential.expiresAt),
     })
-    const maxAgeSeconds = expiresAt
-      ? Math.min(30 * 24 * 60 * 60, Math.max(1, Math.floor((expiresAt.getTime() - Date.now()) / 1000)))
-      : 30 * 24 * 60 * 60
-    return redirect(home, 'connected', { id: connection.connectionId, maxAgeSeconds })
   } catch {
-    // Do not leave an active orphan token if encrypted persistence fails.
-    await revokeGitHubOAuthToken(accessToken, { clientId, clientSecret }).catch(() => false)
+    await revoke(credential.accessToken, config)
     return redirect(home, 'error')
   }
 }

@@ -1,6 +1,8 @@
-import type { SupabaseClient } from "@supabase/supabase-js"
+import type { SupabaseClient } from "@/lib/supabase/types"
 import type { AgentArtifact, AgentWorkspace, WorkspaceStatus } from "../types"
 import { mapArtifact, mapWorkspace } from "../data-mappers"
+import type { TablesUpdate } from '@/lib/supabase/types'
+import { toJson } from '@/lib/supabase/json'
 
 export async function addWorkspace(
   supabase: SupabaseClient,
@@ -42,7 +44,7 @@ export async function updateWorkspaceStatus(
   status: WorkspaceStatus,
   extra?: { path?: string; commitSha?: string },
 ): Promise<AgentWorkspace | { error: string }> {
-  const update: Record<string, unknown> = {
+  const update: TablesUpdate<'agent_workspaces'> = {
     status,
     updated_at: new Date().toISOString(),
   }
@@ -83,7 +85,7 @@ export async function addArtifact(
       title: artifact.title ?? null,
       content: artifact.content ?? null,
       url: artifact.url ?? null,
-      meta: artifact.meta ?? null,
+      meta: artifact.meta ? toJson(artifact.meta) : null,
     })
     .select()
     .single()

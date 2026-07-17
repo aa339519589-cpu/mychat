@@ -1,11 +1,11 @@
 import { createClient } from "@/lib/supabase/client"
 import type { Conversation, Message } from "@/lib/chat-data"
-import { parseArtifact, artifactTitle } from "@/lib/artifact"
 import { normalizeGeneratedMediaList } from "@/lib/generated-media"
 import { normalizeMessageGeneration } from "@/lib/generation-message"
-import { insertArtifactFromMessage } from "./artifacts"
 import { fmtDate } from "./shared"
 import { normalizeMessageRow, type ConversationRow, type MessageRow } from "./conversation-rows"
+import type { TablesInsert, TablesUpdate } from '@/lib/supabase/types'
+import { toJson } from '@/lib/supabase/json'
 import {
   MESSAGE_CACHE_WARM_LIMIT,
   REMOTE_MESSAGE_LIMIT,
@@ -44,19 +44,6 @@ function warmRecentMessageCaches(ids: string[]) {
   }, 700)
 }
 
-async function saveMessageArtifact(userId: string, conversationId: string, msg: Message) {
-  if (msg.role !== "assistant" || !msg.content) return
-  const parsed = parseArtifact(msg.content)
-  if (!parsed.raw || !parsed.done) return
-  await insertArtifactFromMessage({
-    userId,
-    conversationId,
-    messageId: msg.id,
-    title: artifactTitle(parsed.raw),
-    raw: parsed.raw,
-  })
-}
-
 async function fetchRemoteMessages(conversationId: string, limit = REMOTE_MESSAGE_LIMIT): Promise<Message[]> {
   const supabase = createClient()
   const { data, error } = await supabase
@@ -93,7 +80,7 @@ export async function fetchConversations(): Promise<Conversation[]> {
   const supabase = createClient()
   const { data, error } = await supabase
     .from("conversations")
-    .select("id, title, updated_at, project_id, starred, pinned, messages(count)")
+    .select("id, title, updated_at, project_id, starred, pinned, messages!messages_conversation_id_fkey(count)")
     .order("pinned", { ascending: false })
     .order("updated_at", { ascending: false })
     .limit(100)
@@ -142,7 +129,7 @@ export async function fetchConversations(): Promise<Conversation[]> {
 export async function insertConversation(userId: string, title: string, projectId?: string | null): Promise<string | null> {
   const supabase = createClient()
   const id = crypto.randomUUID()
-  const row: Record<string, unknown> = { id, user_id: userId, title }
+  const row: TablesInsert<'conversations'> = { id, user_id: userId, title }
   if (projectId) row.project_id = projectId
   const { error } = await supabase.from("conversations").insert(row)
   if (error) { console.error("insertConversation", error); return null }
@@ -218,40 +205,6 @@ export async function fetchMessages(
   return messages
 }
 
-export async function insertMessage(userId: string, conversationId: string, msg: Message): Promise<void> {
-  const generatedMedia = normalizeGeneratedMediaList(msg.media)
-  const safeMessage: Message = {
-    ...msg,
-    media: generatedMedia.length ? generatedMedia : undefined,
-  }
-  const cached = await readCachedMessages(conversationId)
-  const next = [...cached.filter(m => m.id !== msg.id), safeMessage]
-
-  const supabase = createClient()
-  const mediaPayload = msg.images?.length || msg.imageSummary || generatedMedia.length
-    ? {
-      refs: msg.images ?? [],
-      image_summary: msg.imageSummary ?? null,
-      generated_media: generatedMedia,
-    }
-    : null
-  const { error } = await supabase.from("messages").insert({
-    id: msg.id,
-    conversation_id: conversationId,
-    user_id: userId,
-    role: msg.role,
-    content: msg.content,
-    images: mediaPayload,
-    thinking: msg.thinking ?? null,
-  })
-  if (error) {
-    console.error("insertMessage", error)
-    throw new Error("消息保存失败，请检查网络后重试。")
-  }
-  writeCachedMessages(conversationId, next)
-  saveMessageArtifact(userId, conversationId, safeMessage).catch(e => console.error("saveMessageArtifact", e))
-}
-
 export async function updateMessageContent(conversationId: string, messageId: string, content: string): Promise<void> {
   const supabase = createClient()
   const { error } = await supabase.from("messages").update({ content }).eq("id", messageId)
@@ -277,7 +230,7 @@ export async function updateMessageFields(
   const generatedMedia = fields.media !== undefined
     ? normalizeGeneratedMediaList(fields.media)
     : undefined
-  const patch: Record<string, unknown> = {}
+  const patch: TablesUpdate<'messages'> = {}
   if (fields.content !== undefined) patch.content = fields.content
   if (fields.thinking !== undefined) patch.thinking = fields.thinking
   if (fields.media !== undefined || fields.images !== undefined || fields.imageSummary !== undefined) {
@@ -300,12 +253,12 @@ export async function updateMessageFields(
       : (typeof prev.image_summary === "string" ? prev.image_summary : null)
     const generation = normalizeMessageGeneration(prev.generation)
     patch.images = (nextMedia.length || nextRefs.length || nextSummary || generation)
-      ? {
+      ? toJson({
         ...prev,
         refs: nextRefs,
         image_summary: nextSummary,
         generated_media: nextMedia,
-      }
+      })
       : null
   }
   const { error } = await supabase.from("messages").update(patch).eq("id", messageId)
