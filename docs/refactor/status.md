@@ -1,6 +1,6 @@
 # MyChat Platform Refactor Status
 
-Updated: 2026-07-16T22:47:41-05:00
+Updated: 2026-07-16T23:15:36-05:00
 
 ## Phase 0: Re-establish the factual baseline
 
@@ -26,6 +26,11 @@ Changes:
 - Replaced the ineffective Render restart drain transition with an exact redeploy of the currently live commit.
 - Bound the old-runtime drain check, target drain deploy, activation, image digest, migration contract, and GitHub deployment evidence to immutable identities.
 - Created this status file as the authoritative continuation record for the refactor.
+- Added `docs/refactor/platform-inventory.md` with reproducible source-size, route,
+  RPC, storage/table identifier, migration, browser-write, event-path, provider,
+  configuration, complexity, dependency, duplication, dead-code, and test inventories.
+- Extended the architecture report with local dependency fan-in so shared-module
+  concentration is measured in addition to fan-out.
 
 Deleted legacy code or complexity:
 
@@ -39,6 +44,16 @@ Tests and results:
 - Release Image run `29552598051`: passed.
 - Activate Production run `29552925340`: passed.
 - Manual keepalive run `29553099519`: passed strict readiness and protected authoritative metrics.
+- Architecture graph: 356 files, 891 runtime edges, zero dependency cycles;
+  highest fan-in is 43 and highest fan-out is 18.
+- Static complexity baseline: 128 functions over complexity 15 and 68 functions
+  over 80 effective lines. The current maximum is `executeTool` at 175.
+- Knip 6.27.0: zero unused files or dependencies after correcting dynamic test
+  entries; 52 unused export candidates and 50 unused type candidates remain for
+  ownership review rather than blind deletion.
+- jscpd 5.0.12 in single-worker mode: 17 clone groups, 189 duplicated lines,
+  0.54% duplication. Automatic worker mode was non-progressing and is not used
+  as evidence.
 
 Runtime evidence:
 
@@ -56,6 +71,26 @@ Resource use:
 - Render currently uses one free Web Service with an embedded worker process.
 - No representative load, database connection, memory-growth, or long-soak baseline has been recorded yet.
 
+Baseline size and test surface:
+
+- 581 scanned source files and 71,869 effective lines after excluding generated
+  output, dependencies, build output, coverage, and Git metadata.
+- 36,665 effective runtime TypeScript/JavaScript lines, 14,112 canonical
+  migration SQL lines, 2,420 script lines, 17,830 Node test lines, and 124
+  Playwright lines.
+- 45 API routes, including five HTTP 410 compatibility methods; 50 distinct RPC
+  names and 25 distinct `.from(...)` database/storage identifiers.
+- 44 canonical migrations. The first 43 are sealed by migration contract version
+  1 with digest `e5479e42cbba7c439a1a31ec3325344625f740d2cca37c3865dc4af00243dc0d`.
+- 133 Node test files produce 583 passing tests. One Playwright file supplies
+  three heavily mocked scenarios across two viewports; it is not treated as a
+  real transaction E2E suite.
+
+Commits:
+
+- `8c7dbd2` establishes the isolated refactor baseline and status record.
+- `25ce74e` adds local dependency fan-in to the architecture report and fixture.
+
 Risks and rollback:
 
 - Web and worker still share one Render service and one supervisor failure domain.
@@ -65,10 +100,15 @@ Risks and rollback:
 
 Next:
 
-1. Produce reproducible SLOC and API/RPC/table/env/worker/provider/client-write inventories.
-2. Measure function complexity, dead code, duplication, and dependency fan-in/fan-out with correctly scoped tools.
-3. Write `docs/refactor/full-platform-audit.md` and decision ADRs with evidence, consequences, fixes, and acceptance tests.
-4. Implement the first independently reversible P0/P1 fixes and open a draft PR. Do not merge or change production from this branch.
+1. Write `docs/refactor/full-platform-audit.md` and decision ADRs with evidence,
+   consequences, fixes, and acceptance tests.
+2. Bound and rate-limit `/api/messages/delete`, then verify oversized declared and
+   chunked bodies plus rate-limit failure behavior.
+3. Replace the explicit two-second worker lease renewal with a lease-relative,
+   jittered cadence and focused failure-timing tests.
+4. Implement the first architecture vertical slice, load/chaos/soak tooling, and
+   artifact isolation fixes before opening a draft PR. Do not merge or change
+   production from this branch.
 
 Blockers and minimum user decision required:
 
