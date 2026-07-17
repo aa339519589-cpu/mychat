@@ -10,6 +10,7 @@ test("public surfaces present the phone-first Code workflow consistently", () =>
   const layout = source("app/layout.tsx")
   const login = source("components/login-screen.tsx")
   const code = source("components/code-console/presentation.tsx")
+  const smoke = source("e2e/smoke.spec.ts")
 
   assert.match(layout, /MyChat — Build and ship from your phone/)
   assert.doesNotMatch(layout, /generator:\s*['"]v0\.app/)
@@ -19,6 +20,8 @@ test("public surfaces present the phone-first Code workflow consistently", () =>
   assert.match(code, /Your phone is the command center/)
   assert.match(code, /max-w-\[42vw\]/)
   assert.match(code, /className="truncate">\{repo\}/)
+  assert.equal(smoke.match(/toHaveTitle\(\/MyChat\/\)/g)?.length, 2)
+  assert.doesNotMatch(smoke, /toHaveTitle\(\/My Chat\/\)/)
 })
 
 test("the public repository carries the Build Week evidence and license", () => {
