@@ -7,8 +7,20 @@ export type GitHubCredentialContext = {
   login: string
 }
 
-function configuredSecret(): string {
+function dedicatedSecret(): string {
   return process.env.AGENT_CREDENTIAL_KEY?.trim() ?? ''
+}
+
+function oauthFallbackSecret(): string {
+  return process.env.GITHUB_CLIENT_SECRET?.trim() ?? ''
+}
+
+function configuredSecret(): string {
+  const dedicated = dedicatedSecret()
+  // GitHub OAuth already requires a server-only client secret. Reuse it only as
+  // an availability fallback when the newer dedicated credential key has not
+  // yet been provisioned on an existing production service.
+  return dedicated.length >= 32 ? dedicated : oauthFallbackSecret()
 }
 
 function previousSecret(): string {
@@ -22,7 +34,9 @@ function key(secret = configuredSecret()): Buffer {
 }
 
 function decryptionKeys(): Buffer[] {
-  return [...new Set([configuredSecret(), previousSecret()])]
+  // Keep the OAuth fallback in the read set after a dedicated key is added so
+  // connections created during the compatibility window remain decryptable.
+  return [...new Set([configuredSecret(), previousSecret(), oauthFallbackSecret()])]
     .filter(secret => secret.length >= 32)
     .map(secret => key(secret))
 }
@@ -78,7 +92,7 @@ export function openGitHubCredential(
           decipher.final(),
         ]).toString('utf8')
       } catch {
-        // Continue only across explicitly configured rotation keys.
+        // Continue only across explicitly configured rotation or compatibility keys.
       }
     }
     return null
