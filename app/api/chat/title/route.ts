@@ -3,11 +3,8 @@ import { apiErrorResponseV1 } from '@/lib/api/errors'
 import { enforceLimits, resolveAuth } from '@/lib/api/guard'
 import { readJson, RequestError } from '@/lib/api/request'
 import { validateTitleGenerationRequest } from '@/lib/chat/title-generation'
+import { startTitleWorkflow } from '@/lib/chat/title-workflow'
 import { resolveChatModelSelection, ChatModelSelectionError } from '@/lib/chat/model-selection'
-import { SupabaseJobRepository } from '@/lib/jobs/supabase-repository'
-import { sha256JobValue } from '@/lib/jobs/canonical'
-import type { JsonObject } from '@/lib/jobs/contracts'
-import { jobMetrics } from '@/lib/observability/job-metrics'
 import { expensiveWriteMaintenanceResponse } from '@/lib/api/maintenance'
 
 export async function POST(request: NextRequest) {
@@ -58,36 +55,24 @@ export async function POST(request: NextRequest) {
       supabase: auth.supabase,
       userId: auth.userId,
     })
-    const jobId = crypto.randomUUID()
-    const payload: JsonObject = {
-      schemaVersion: 1,
+    const result = await startTitleWorkflow({
+      client: auth.supabase,
+      userId: auth.userId,
+      authClass: auth.isAnonymous ? 'anonymous' : 'registered',
+      conversationId: body.conversationId,
+      sourceMessageId: source.id,
+      endpointId: body.endpointId,
       usingBalance: gate.usingBalance,
-      billingClass: body.endpointId ? 'customer' : 'platform',
-      ...(body.endpointId ? { endpointId: body.endpointId } : {}),
-    }
-    const result = await new SupabaseJobRepository().enqueue({
-      jobId,
-      type: 'chat.title',
-      queue: 'title',
-      principal: { id: auth.userId, authClass: auth.isAnonymous ? 'anonymous' : 'registered' },
-      subject: { conversationId: body.conversationId, sourceMessageId: source.id },
-      idempotencyKey: `title:${body.conversationId}:${source.id}`,
-      inputHash: sha256JobValue(payload),
-      input: payload,
-      // Provider usage includes the source prompt as well as the short title.
-      budget: { wallTimeMs: 60_000, tokenLimit: 8_192 },
-      maxAttempts: 3,
     })
-    if (result.created) jobMetrics.recordEnqueued('title')
     return Response.json({
       schemaVersion: 1,
-      jobId: result.job.id,
-      status: result.job.status,
+      jobId: result.executionId,
+      status: result.state,
       created: result.created,
-      streamUrl: `/api/v1/jobs/${result.job.id}/events?from_seq=0`,
+      streamUrl: `/api/v1/jobs/${result.executionId}/events?from_seq=0`,
     }, {
       status: 202,
-      headers: { 'Cache-Control': 'no-store', 'Location': `/api/v1/jobs/${result.job.id}` },
+      headers: { 'Cache-Control': 'no-store', 'Location': `/api/v1/jobs/${result.executionId}` },
     })
   } catch (error) {
     if (error instanceof ChatModelSelectionError) return apiErrorResponseV1(request, {
