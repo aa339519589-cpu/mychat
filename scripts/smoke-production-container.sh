@@ -40,9 +40,21 @@ fi
 container="mychat-smoke-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-${RANDOM}"
 cleanup() { docker rm --force "$container" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
+# These deterministic placeholders exist only to exercise the fail-closed
+# production contract. They are deliberately low-entropy and cannot authorize
+# access to any external service.
 docker run --detach --name "$container" \
   --publish 127.0.0.1:3000:3000 \
+  --env NEXT_PUBLIC_SUPABASE_URL=https://example.supabase.co \
+  --env NEXT_PUBLIC_SUPABASE_ANON_KEY=ci-public-anon-key \
+  --env SUPABASE_SERVICE_ROLE_KEY=00000000000000000000000000000000 \
+  --env STREAM_ADMISSION_HASH_KEY=11111111111111111111111111111111 \
   --env E2B_API_KEY=ci-container-smoke \
+  --env DEEPSEEK_API_KEY=ci-deepseek-key \
+  --env AGENT_CREDENTIAL_KEY=22222222222222222222222222222222 \
+  --env AGENT_PUBLIC_URL=https://mychat.example \
+  --env GITHUB_CLIENT_ID=ci-github-client \
+  --env GITHUB_CLIENT_SECRET=33333333333333333333333333333333 \
   --env METRICS_BEARER_TOKEN=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
   --env MYCHAT_MAINTENANCE_MODE=drain \
   --env MYCHAT_RUNTIME_ROLE=all \
