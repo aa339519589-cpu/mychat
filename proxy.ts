@@ -1,24 +1,36 @@
 import { createServerClient } from "@supabase/ssr"
 import { NextResponse, type NextRequest } from "next/server"
+import {
+  contentSecurityPolicy,
+  createContentSecurityPolicyNonce,
+} from "@/lib/content-security-policy"
 
 const SESSION_FREE_PATHS = new Set(["/api/live", "/api/ready", "/api/metrics"])
 
 export async function proxy(request: NextRequest) {
   const requestId = crypto.randomUUID()
+  const nonce = createContentSecurityPolicyNonce()
+  const policy = contentSecurityPolicy(nonce, process.env.NODE_ENV === "production")
   const requestHeaders = new Headers(request.headers)
   requestHeaders.set("x-request-id", requestId)
-  const nextResponse = () => NextResponse.next({ request: { headers: requestHeaders } })
-  if (SESSION_FREE_PATHS.has(request.nextUrl.pathname)) {
-    const response = nextResponse()
+  requestHeaders.set("x-nonce", nonce)
+  requestHeaders.set("content-security-policy", policy)
+  const nextResponse = () => {
+    const response = NextResponse.next({ request: { headers: requestHeaders } })
+    response.headers.set("content-security-policy", policy)
     response.headers.set("x-request-id", requestId)
+    if (!request.nextUrl.pathname.startsWith("/api/")) {
+      response.headers.set("cache-control", "private, no-store")
+    }
     return response
+  }
+  if (SESSION_FREE_PATHS.has(request.nextUrl.pathname)) {
+    return nextResponse()
   }
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
   if (!url || !key) {
-    const response = nextResponse()
-    response.headers.set("x-request-id", requestId)
-    return response
+    return nextResponse()
   }
 
   let response = nextResponse()
@@ -37,7 +49,6 @@ export async function proxy(request: NextRequest) {
   } catch {
     response = nextResponse()
   }
-  response.headers.set("x-request-id", requestId)
   return response
 }
 
