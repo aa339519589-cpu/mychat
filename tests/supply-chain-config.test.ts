@@ -131,7 +131,7 @@ test('release promotion ties one verified SHA to the image digest and exact Rend
   assert.match(release, /RENDER_SERVICE_ID:\s*\$\{\{ secrets\.RENDER_SERVICE_ID \}\}/)
   assert.match(release, /--data '\{"autoDeploy":"no"\}'/)
   assert.match(release, /--request PUT --data '\{"value":"drain"\}'/)
-  assert.match(release, /services\/\$RENDER_SERVICE_ID\/restart/)
+  assert.doesNotMatch(release, /services\/\$RENDER_SERVICE_ID\/restart/)
   assert.ok(
     release.indexOf('- name: Preflight the existing production runtime')
       < release.indexOf('- name: Put the existing production revision into drain'),
@@ -145,11 +145,22 @@ test('release promotion ties one verified SHA to the image digest and exact Rend
   assert.equal(preflight.match(/HEALTH_CHECK_TIMEOUT_MS=60000/g)?.length, 2)
   assert.ok(
     release.indexOf('- name: Put the existing production revision into drain')
+      < release.indexOf('- name: Wait for the existing production drain deploy'),
+  )
+  assert.ok(
+    release.indexOf('- name: Wait for the existing production drain deploy')
       < release.indexOf('- name: Require the existing production revision to be drained'),
   )
   assert.match(release, /if EXPECTED_WORKER_DRAINING=true[\s\S]*?EXPECTED_WORKER_DRAINING=false/)
+  assert.match(release, /repos\/\$GITHUB_REPOSITORY\/commits\/\$runtime_revision/)
+  assert.match(release, /existing_revision=\$existing_revision/)
   assert.match(release, /ALREADY_DRAINED:\s*\$\{\{ steps\.phase\.outputs\.already_drained \}\}/)
+  assert.match(release, /EXISTING_REVISION:\s*\$\{\{ steps\.phase\.outputs\.existing_revision \}\}/)
   assert.match(release, /if \[\[ "\$ALREADY_DRAINED" != "true" \]\]; then/)
+  assert.match(release, /jq -nc --arg commitId "\$EXISTING_REVISION"[\s\S]*?'\{commitId: \$commitId\}'/)
+  assert.match(release, /RENDER_DEPLOY_ID:\s*\$\{\{ steps\.existing-drain\.outputs\.deploy_id \}\}/)
+  assert.match(release, /commit" != "\$EXISTING_REVISION"/)
+  assert.match(release, /EXPECTED_REVISION:\s*\$\{\{ steps\.phase\.outputs\.existing_revision \}\}/)
   assert.match(release, /Render's deploy creation endpoint is not documented as idempotent/)
   assert.doesNotMatch(release, /render_api --request POST/)
   assert.ok(

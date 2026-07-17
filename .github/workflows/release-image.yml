@@ -242,7 +242,7 @@ jobs:
     environment:
       name: Production-Drain
       url: https://mychat-nm6x.onrender.com
-    timeout-minutes: 45
+    timeout-minutes: 75
     permissions:
       attestations: read
       contents: read
@@ -280,6 +280,8 @@ jobs:
 
       - name: Preflight the existing production runtime
         id: phase
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if EXPECTED_WORKER_DRAINING=true \
             HEALTH_CHECK_ATTEMPTS=3 HEALTH_CHECK_RETRY_MS=5000 \
@@ -294,9 +296,27 @@ jobs:
             echo "already_drained=false" >> "$GITHUB_OUTPUT"
           fi
 
+          ready_payload="$(curl --fail-with-body --silent --show-error \
+            --retry 4 --retry-all-errors --connect-timeout 10 --max-time 60 \
+            --header 'Accept: application/json' \
+            "$PRODUCTION_READY_URL")"
+          runtime_revision="$(jq -er \
+            '.revision | select(type == "string" and test("^[0-9a-f]{7,12}$"))' \
+            <<<"$ready_payload")"
+          existing_revision="$(gh api \
+            "repos/$GITHUB_REPOSITORY/commits/$runtime_revision" --jq '.sha')"
+          if [[ ! "$existing_revision" =~ ^[0-9a-f]{40}$ ]] \
+            || [[ "${existing_revision:0:${#runtime_revision}}" != "$runtime_revision" ]]; then
+            echo "Production revision did not resolve to one immutable repository commit" >&2
+            exit 1
+          fi
+          echo "existing_revision=$existing_revision" >> "$GITHUB_OUTPUT"
+
       - name: Put the existing production revision into drain
+        id: existing-drain
         env:
           ALREADY_DRAINED: ${{ steps.phase.outputs.already_drained }}
+          EXISTING_REVISION: ${{ steps.phase.outputs.existing_revision }}
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
         run: |
@@ -312,6 +332,11 @@ jobs:
               --header 'Content-Type: application/json' \
               "$@"
           }
+          EXPECTED_REVISION="$EXISTING_REVISION" \
+            EXPECTED_WORKER_DRAINING="$ALREADY_DRAINED" \
+            HEALTH_CHECK_ATTEMPTS=3 HEALTH_CHECK_RETRY_MS=5000 \
+            HEALTH_CHECK_TIMEOUT_MS=60000 \
+            node scripts/check-production-health.mjs "$PRODUCTION_READY_URL"
           render_api --request PATCH --data '{"autoDeploy":"no"}' \
             "https://api.render.com/v1/services/$RENDER_SERVICE_ID" >/dev/null
           render_api --request PUT --data '{"value":"drain"}' \
@@ -321,17 +346,67 @@ jobs:
             | jq --exit-status '.value == "drain"' >/dev/null
 
           if [[ "$ALREADY_DRAINED" != "true" ]]; then
-            # Restart is sent exactly once. A lost response may leave production
-            # safely drained, and a later release run can continue from that state.
-            curl --fail-with-body --silent --show-error \
+            # Render restarts preserve the environment snapshot from the existing
+            # deploy. Redeploy the exact live commit once so the saved drain value
+            # is loaded. A later release can continue if the response is lost.
+            response="$(curl --fail-with-body --silent --show-error \
               --connect-timeout 10 --max-time 60 \
               --header "Authorization: Bearer $RENDER_API_KEY" \
+              --header 'Content-Type: application/json' \
               --request POST \
-              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/restart" >/dev/null
+              --data "$(jq -nc --arg commitId "$EXISTING_REVISION" \
+                '{commitId: $commitId}')" \
+              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys")"
+            render_deploy_id="$(jq -er '.id' <<<"$response")"
+            render_commit="$(jq -r '.commit.id // empty' <<<"$response")"
+            if [[ ! "$render_deploy_id" =~ ^dep-[a-z0-9]+$ ]] \
+              || [[ -n "$render_commit" && "$render_commit" != "$EXISTING_REVISION" ]]; then
+              echo "Render did not create an exact existing-revision drain deploy" >&2
+              exit 1
+            fi
+            echo "deploy_id=$render_deploy_id" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Wait for the existing production drain deploy
+        if: steps.phase.outputs.already_drained != 'true'
+        env:
+          EXISTING_REVISION: ${{ steps.phase.outputs.existing_revision }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_DEPLOY_ID: ${{ steps.existing-drain.outputs.deploy_id }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          for attempt in {1..180}; do
+            response="$(curl --fail-with-body --silent --show-error \
+              --retry 4 --retry-all-errors --connect-timeout 10 --max-time 60 \
+              --header "Authorization: Bearer $RENDER_API_KEY" \
+              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys/$RENDER_DEPLOY_ID")"
+            status="$(jq -er '.status' <<<"$response")"
+            commit="$(jq -r '.commit.id // empty' <<<"$response")"
+            if [[ -n "$commit" && "$commit" != "$EXISTING_REVISION" ]]; then
+              echo "Existing-revision drain deploy resolved a different commit" >&2
+              exit 1
+            fi
+            case "$status" in
+              live)
+                if [[ "$commit" != "$EXISTING_REVISION" ]]; then
+                  echo "Live existing-revision drain deploy omitted the exact commit" >&2
+                  exit 1
+                fi
+                exit 0
+                ;;
+              build_failed|update_failed|pre_deploy_failed|canceled|deactivated)
+                echo "Existing-revision drain deploy failed with status $status" >&2
+                exit 1
+                ;;
+            esac
+            sleep 10
+          done
+          echo "Existing-revision drain deploy did not become live before the deadline" >&2
+          exit 1
 
       - name: Require the existing production revision to be drained
         env:
+          EXPECTED_REVISION: ${{ steps.phase.outputs.existing_revision }}
           EXPECTED_WORKER_DRAINING: 'true'
           HEALTH_CHECK_ATTEMPTS: '10'
           HEALTH_CHECK_RETRY_MS: '10000'
