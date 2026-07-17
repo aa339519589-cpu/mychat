@@ -136,6 +136,13 @@ test('release promotion ties one verified SHA to the image digest and exact Rend
     release.indexOf('- name: Preflight the existing production runtime')
       < release.indexOf('- name: Put the existing production revision into drain'),
   )
+  const preflight = release.slice(
+    release.indexOf('- name: Preflight the existing production runtime'),
+    release.indexOf('- name: Put the existing production revision into drain'),
+  )
+  assert.equal(preflight.match(/HEALTH_CHECK_ATTEMPTS=3/g)?.length, 2)
+  assert.equal(preflight.match(/HEALTH_CHECK_RETRY_MS=5000/g)?.length, 2)
+  assert.equal(preflight.match(/HEALTH_CHECK_TIMEOUT_MS=60000/g)?.length, 2)
   assert.ok(
     release.indexOf('- name: Put the existing production revision into drain')
       < release.indexOf('- name: Require the existing production revision to be drained'),

@@ -361,7 +361,7 @@ MYCHAT_MAINTENANCE_MODE=drain
 
 `render.yaml` 的 steady-state 值是 `off`；如果 Blueprint sync 或环境编辑把预发布的 `drain` 重置为 `off`，必须停止合并并修正，不能让第一次新代码部署直接开放 admission。
 
-数据库 v14 和 reconciliation 已通过、PR checks 仍对应冻结 head 后才合并。记录 merge commit SHA。Render 第一次从 `main` 部署该 commit 时保持 drain：新 Web 可提供状态/取消读取，新 Worker 只发布 draining heartbeat 并刷新 billing reconciliation，不 claim 新工作。确认 Render event 的 commit 与 `/api/ready` revision 一致，响应显式包含 `checks.worker.draining=true`。此时严格生产检查脚本应失败；这是维护态，不是发布完成。
+数据库 schema contract 和 reconciliation 已通过、PR checks 仍对应冻结 head 后才合并。记录 merge commit SHA。Release workflow 的 preflight 会为免费实例冷启动提供有界重试，但每次响应仍必须通过完整 readiness；网络超时不能被解释为健康。Render 第一次从 `main` 部署该 commit 时保持 drain：新 Web 可提供状态/取消读取，新 Worker 只发布 draining heartbeat 并刷新 billing reconciliation，不 claim 新工作。确认 Render event 的 commit 与 `/api/ready` revision 一致，响应显式包含 `checks.worker.draining=true`。此时严格生产检查脚本应失败；这是维护态，不是发布完成。
 
 当前 Blueprint 只有一个 Web service，`npm start` 默认在同一实例监管 Web 与 Worker。不要设为 `worker`，否则没有 HTTP；不要设为 `web` 后又没有独立 Worker。真正拆分时，Web/Worker 必须运行相同 commit、连接同一数据库，且五个队列仍由相同 revision heartbeat 覆盖。
 
