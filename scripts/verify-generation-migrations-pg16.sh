@@ -1302,4 +1302,67 @@ if [[ "$ATOMIC_CHECKPOINT_REPLAY_HEALTH" != "t" ]]; then
   exit 1
 fi
 
+# Seal the complete repository migration manifest only after v14 is healthy.
+# Replay must be idempotent, while every mismatched tuple and unauthorized role
+# remains fail-closed.
+CONTRACT_VERSION="$(node -e \
+  "process.stdout.write(String(require(process.argv[1]).contractVersion))" \
+  "$ROOT/supabase/migrations.manifest.json")"
+CONTRACT_DIGEST="$(node -e \
+  "process.stdout.write(require(process.argv[1]).contractDigest)" \
+  "$ROOT/supabase/migrations.manifest.json")"
+CONTRACT_MIGRATION_COUNT="$(node -e \
+  "process.stdout.write(String(require(process.argv[1]).migrationCount))" \
+  "$ROOT/supabase/migrations.manifest.json")"
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713310000_schema_contract_attestation.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713310000_schema_contract_attestation.sql" >/dev/null
+
+SCHEMA_CONTRACT_RESULT="$("${PSQL[@]}" -qAt -d "$DB" -c \
+  "set role service_role; select public.verify_schema_contract_v1(${CONTRACT_VERSION}, '${CONTRACT_DIGEST}', ${CONTRACT_MIGRATION_COUNT})")"
+if [[ "$SCHEMA_CONTRACT_RESULT" != "t" ]]; then
+  echo "Exact schema contract attestation was not accepted" >&2
+  exit 1
+fi
+for mismatch in \
+  "$((CONTRACT_VERSION + 1)) '${CONTRACT_DIGEST}' ${CONTRACT_MIGRATION_COUNT}" \
+  "${CONTRACT_VERSION} '$(printf '0%.0s' {1..64})' ${CONTRACT_MIGRATION_COUNT}" \
+  "${CONTRACT_VERSION} '${CONTRACT_DIGEST}' $((CONTRACT_MIGRATION_COUNT + 1))"; do
+  read -r version digest count <<<"$mismatch"
+  result="$("${PSQL[@]}" -qAt -d "$DB" -c \
+    "set role service_role; select public.verify_schema_contract_v1(${version}, ${digest}, ${count})")"
+  if [[ "$result" != "f" ]]; then
+    echo "Mismatched schema contract was accepted: $mismatch" >&2
+    exit 1
+  fi
+done
+
+SCHEMA_CONTRACT_ROWS="$("${PSQL[@]}" -qAt -d "$DB" -c \
+  "select count(*) from public.schema_contract_attestations")"
+if [[ "$SCHEMA_CONTRACT_ROWS" != "1" ]]; then
+  echo "Schema contract replay created unexpected attestation rows" >&2
+  exit 1
+fi
+SCHEMA_CONTRACT_DIRECT_GRANTS="$("${PSQL[@]}" -qAt -d "$DB" -c \
+  "select count(*) from (values ('anon'), ('authenticated'), ('service_role')) roles(name) where has_table_privilege(name, 'public.schema_contract_attestations', 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')")"
+if [[ "$SCHEMA_CONTRACT_DIRECT_GRANTS" != "0" ]]; then
+  echo "A runtime role has direct schema attestation table privileges" >&2
+  exit 1
+fi
+for role in anon authenticated; do
+  if "${PSQL[@]}" -qAt -d "$DB" -c \
+    "set role ${role}; select public.verify_schema_contract_v1(${CONTRACT_VERSION}, '${CONTRACT_DIGEST}', ${CONTRACT_MIGRATION_COUNT})" \
+    >/dev/null 2>&1; then
+    echo "$role can execute the service-only schema contract RPC" >&2
+    exit 1
+  fi
+done
+for mutation in \
+  "update public.schema_contract_attestations set migration_count = migration_count" \
+  "delete from public.schema_contract_attestations"; do
+  if "${PSQL[@]}" -qAt -d "$DB" -c "$mutation" >/dev/null 2>&1; then
+    echo "Schema contract attestation accepted a forbidden mutation" >&2
+    exit 1
+  fi
+done
+
 echo "PostgreSQL generation migration verification passed"

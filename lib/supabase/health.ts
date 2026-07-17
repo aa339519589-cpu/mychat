@@ -7,6 +7,7 @@ import { REQUIRED_JOB_WORKER_QUEUES } from '@/lib/jobs/worker-queues'
 import { jobMaintenanceMode } from '@/lib/jobs/maintenance'
 import { streamAdmissionHashKey } from '@/lib/jobs/stream-admission'
 import { metricsBearerToken } from '@/lib/observability/metrics-auth'
+import { MIGRATION_CONTRACT } from '@/lib/supabase/migration-contract'
 
 type HealthEnvironment = {
   [key: string]: string | undefined
@@ -63,7 +64,7 @@ export type RuntimeHealthOptions = {
   timeoutMs?: number
 }
 
-const RUNTIME_HEALTHCHECK_RPC = 'runtime_healthcheck_v14'
+const RUNTIME_HEALTHCHECK_RPC = 'verify_schema_contract_v1'
 const WORKER_READINESS_RPC = 'read_job_worker_readiness_v2'
 
 export function safeRevision(environment: HealthEnvironment = process.env): string {
@@ -148,9 +149,13 @@ export async function probeDatabase(
   client: HealthRpcClient | null,
   timeoutMs = 2_000,
 ): Promise<boolean> {
-  // Only the latest structural contract is accepted. Falling back would let a
-  // partially migrated release receive production traffic.
-  return probeRpc(client, RUNTIME_HEALTHCHECK_RPC, boundedTimeoutMs(timeoutMs))
+  // The database compares this build's closed migration manifest with its
+  // immutable schema attestation and runtime v14 in one fail-closed RPC.
+  return probeRpc(client, RUNTIME_HEALTHCHECK_RPC, boundedTimeoutMs(timeoutMs), {
+    input_contract_version: MIGRATION_CONTRACT.version,
+    input_manifest_sha256: MIGRATION_CONTRACT.digest,
+    input_migration_count: MIGRATION_CONTRACT.migrationCount,
+  })
 }
 
 async function probeQueue(

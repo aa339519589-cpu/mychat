@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 image_ref="${1:-}"
 verified_sha="${2:-}"
 if [[ -z "$image_ref" || ! "$verified_sha" =~ ^[0-9a-f]{40}$ ]]; then
@@ -14,6 +15,27 @@ test "$(docker image inspect \
 docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$image_ref" \
   | grep --fixed-strings --line-regexp "MYCHAT_BUILD_REVISION=$verified_sha"
 test "$(docker image inspect --format '{{json .Config.Cmd}}' "$image_ref")" = '["npm","start"]'
+
+expected_contract="$(node -e '
+  const manifest = require(process.argv[1])
+  process.stdout.write(JSON.stringify({
+    version: manifest.contractVersion,
+    digest: manifest.contractDigest,
+    migrationCount: manifest.migrationCount,
+  }))
+' "$ROOT/supabase/migrations.manifest.json")"
+installed_contract="$(docker run --rm --entrypoint node "$image_ref" -e '
+  const manifest = require("/app/supabase/migrations.manifest.json")
+  process.stdout.write(JSON.stringify({
+    version: manifest.contractVersion,
+    digest: manifest.contractDigest,
+    migrationCount: manifest.migrationCount,
+  }))
+')"
+if [[ "$installed_contract" != "$expected_contract" ]]; then
+  echo "Container migration contract does not match the verified checkout" >&2
+  exit 1
+fi
 
 container="mychat-smoke-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-${RANDOM}"
 cleanup() { docker rm --force "$container" >/dev/null 2>&1 || true; }

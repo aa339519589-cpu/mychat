@@ -1,0 +1,181 @@
+{
+  "schemaVersion": 1,
+  "contractVersion": 1,
+  "sealMigration": "20260713310000_schema_contract_attestation.sql",
+  "migrationCount": 43,
+  "migrations": [
+    {
+      "file": "20260624_add_pr_mode_constraint.sql",
+      "sha256": "7ae92d715271a66e2b10fc4a38d05825781ebd01fd61467ba1930f7d26831989"
+    },
+    {
+      "file": "20260624_agent_artifacts_summary_kind.sql",
+      "sha256": "eb8010253cd69a48fcbe7d7010fd4cf4614f5e992e1dc583270aef6375194476"
+    },
+    {
+      "file": "20260624_step6_2_task_status_migration.sql",
+      "sha256": "0e310d902638ee3bba73df05ff9001af8e21a85e51a208559f8f7c3eae0ad769"
+    },
+    {
+      "file": "20260624_step6_workspace_status_and_task_columns.sql",
+      "sha256": "a37de59f6c459084fc21f7366b4d65f91d3aa78f09ad58970bfa587464f3adb6"
+    },
+    {
+      "file": "20260626000000_conversation_context_summary.sql",
+      "sha256": "e2c0f93df7f688bbd661dce40aa9afc073443294e020517837a46757d37da331"
+    },
+    {
+      "file": "20260626001000_active_history_retrieval.sql",
+      "sha256": "2c1c83d3bc19ee68835d78411882621f647f768b45b3d4bf79d241bbeefb55ee"
+    },
+    {
+      "file": "20260626002000_keyword_history_retrieval_fallback.sql",
+      "sha256": "469e00a99c99d51fa388a69f6df7625bb4a31434393941772cec4800ba969dc7"
+    },
+    {
+      "file": "20260626003000_artifact_library.sql",
+      "sha256": "fd3e9785d95c70c587f7759f6acfd04314d66d7a42d21a2c84524027e1877ab2"
+    },
+    {
+      "file": "20260710000000_backend_integrity_hardening.sql",
+      "sha256": "214018bab845578c0e3cc4e64b831753cf229a1ea864845b13d46ee354f97244"
+    },
+    {
+      "file": "20260711000000_custom_model_endpoints.sql",
+      "sha256": "e4b179d74e299a15a8904dc3caa680097072c4a00ee2d4d023d45e7e9bd9b213"
+    },
+    {
+      "file": "20260711010000_daily_articles.sql",
+      "sha256": "ff98a4d9a147d90d494597913fead3d903347ed9ebcf9283639edfd5892c0a40"
+    },
+    {
+      "file": "20260712_chat_generations.sql",
+      "sha256": "9edcf5eecbfd00e1c183766a39694141e42be382bcfea9b04e4119ec2cbc5d87"
+    },
+    {
+      "file": "20260712_generated_media_bucket.sql",
+      "sha256": "cbd0ede9c0abeee5a72661d2df976f1b9e4760fb857d5689c49a5c8606c9456f"
+    },
+    {
+      "file": "20260713020000_drop_daily_articles.sql",
+      "sha256": "900f58e338e3802a0a0d7c034745edbf69894a965ec054c3e81ae7fe5d433268"
+    },
+    {
+      "file": "20260713030000_runtime_scaling.sql",
+      "sha256": "dcd2060c5629ed8811d08bc15a232a86ee5a7f5482a330b238acca5cbc9e308c"
+    },
+    {
+      "file": "20260713040000_generation_leases.sql",
+      "sha256": "6d7ad089c90da5ab40f487b48e4a1995d9051f4eb1ae0cd2d7d57071fef4a9bb"
+    },
+    {
+      "file": "20260713050000_generation_lease_contract.sql",
+      "sha256": "e1a5f5f62663bf2080b39cb6e08851d8b24fe3b339e6efc87685f3d4080ecdb2"
+    },
+    {
+      "file": "20260713060000_rate_limit_timestamp_fix.sql",
+      "sha256": "1bac1149ed9c7f29799dcdef182d368f695977ec1971b8a64316d81b9548539e"
+    },
+    {
+      "file": "20260713070000_unified_job_control_plane.sql",
+      "sha256": "19607bfac8989f7ed9862eca666b78d74d3fc4e7709db3aaedcd92271b454445"
+    },
+    {
+      "file": "20260713080000_github_connections.sql",
+      "sha256": "4f5935c31b54bcc1ad89509e2534102ad811266f0c6bd5a7c30bb17d2bb24dda"
+    },
+    {
+      "file": "20260713090000_job_assets_and_ledger_quota.sql",
+      "sha256": "6961495d395b39bd1f4a748746095f4067dfd2da7fffdcafa7f14710c3a017d8"
+    },
+    {
+      "file": "20260713100000_job_outbox_dispatch.sql",
+      "sha256": "86cb10e7925ca9bd67e61ed818808b80dfcadea3181e5587137279de9b1514a4"
+    },
+    {
+      "file": "20260713110000_private_generated_media.sql",
+      "sha256": "55ee18e71e7059866a910c1d710cd50aab1f2f387c4a1d3a6cb480b5f827878e"
+    },
+    {
+      "file": "20260713120000_agent_confirmation_gates.sql",
+      "sha256": "6388471b61b604826559385fc720dd5b1853bc13192fd84efb19132ab20e1d52"
+    },
+    {
+      "file": "20260713130000_agent_snapshot_cas.sql",
+      "sha256": "78806b3675f67880717ac2f523ffb38e360551180765405be260c1eb444eff33"
+    },
+    {
+      "file": "20260713140000_authoritative_job_observability.sql",
+      "sha256": "67dbf1dfca5fe2e58536a91e85e8013e7e2b9eadeb4572bcbd771015bf39d48f"
+    },
+    {
+      "file": "20260713150000_durable_agent_operations.sql",
+      "sha256": "f00301d4354af2178767bef414d8376fb403dfe26063a93baea3678b7c969c8c"
+    },
+    {
+      "file": "20260713160000_agent_workspace_authority.sql",
+      "sha256": "ae37c4cce23938aa665b168b172f1dc2577872094b492e955642f5f113e144a2"
+    },
+    {
+      "file": "20260713170000_agent_atomicity_and_balance.sql",
+      "sha256": "641180d91aaaf1107260ef1d192938b4674d0a00c9bfbff91b2eff2fada451ce"
+    },
+    {
+      "file": "20260713180000_checkpoint_recovery_contract.sql",
+      "sha256": "ea709366b9a925caf23c03e692b6a4c135b74baf71e0bf3c706630604516df69"
+    },
+    {
+      "file": "20260713190000_agent_publication_safety.sql",
+      "sha256": "0fa9739c92801f843cb9c8896139848a1b9626c3359b7d50c9c089f094af36ab"
+    },
+    {
+      "file": "20260713200000_job_worker_heartbeats.sql",
+      "sha256": "e1262406717acbba2ce6aa0ab6d4b9dca8cd202c6542e29a5cdc7dd757028f99"
+    },
+    {
+      "file": "20260713210000_job_outbox_redrive.sql",
+      "sha256": "6bf470c69bc1ff61b9631b70fa875713cdfaf70dabe5cde45cb2c529784372c4"
+    },
+    {
+      "file": "20260713220000_job_budget_accounting.sql",
+      "sha256": "4ef5b5c8dc475c3ad0e3fbea51e0d6b9f49f1c1dde0327ae0ba8c78ce9c8642f"
+    },
+    {
+      "file": "20260713230000_awaiting_job_resume.sql",
+      "sha256": "eea656bc1daeda53683cc07d3c1f5ee2f843cc52e85f35c6076abd61844035d6"
+    },
+    {
+      "file": "20260713240000_admission_and_reservations.sql",
+      "sha256": "52d2a29a86685c7486d8f7d841a7a35de7b08e055ab56a20e84a2662615a3457"
+    },
+    {
+      "file": "20260713250000_terminal_projection_and_effect_recovery.sql",
+      "sha256": "dc8e9bb318c75a52ef556de0d59f203965fd5cd60fb3490ba6b87ebc13de742b"
+    },
+    {
+      "file": "20260713260000_stream_and_asset_lifecycle.sql",
+      "sha256": "8ab6bda44ba2054f795597403417904511d08eacfefdaa23f9e7e6620a258ed9"
+    },
+    {
+      "file": "20260713270000_tenant_relational_integrity.sql",
+      "sha256": "1094a6a319733bb6537835cbc76856a727ebf4d04de0ab180e98d0b28bb5672a"
+    },
+    {
+      "file": "20260713280000_revision_scoped_worker_readiness.sql",
+      "sha256": "77b73fcf527beb07c26ad9c2aa6ebe598a8def0fdc337b7a06a72fca198834a9"
+    },
+    {
+      "file": "20260713285000_pgcrypto_digest_bridge.sql",
+      "sha256": "ee49ea532c2edeec5f8b8870c5a4b4755a2501f026e4ac0ddcd675c1c32f9656"
+    },
+    {
+      "file": "20260713290000_billing_reconciliation_contract.sql",
+      "sha256": "15cf49c765b9beb5ca14c0ad4dcc1ec3dcc3e47c05540831fb73e8c21ba18dd4"
+    },
+    {
+      "file": "20260713300000_atomic_checkpoint_accounting.sql",
+      "sha256": "f880c2c28280fc592e3c1aff1da72247e8aa7c92d2ee4b4d420d492f80f77d61"
+    }
+  ],
+  "contractDigest": "e5479e42cbba7c439a1a31ec3325344625f740d2cca37c3865dc4af00243dc0d"
+}
