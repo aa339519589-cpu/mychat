@@ -110,7 +110,6 @@ const workers = workerSpecs.map(spec => new JobWorker({
   handlers,
   concurrency: spec.concurrency,
   leaseSeconds: 120,
-  renewIntervalMs: 2_000,
   shutdownGraceMs: 240_000,
   onFinalized: finalized,
 }))

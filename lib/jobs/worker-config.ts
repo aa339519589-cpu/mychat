@@ -32,10 +32,19 @@ export function nextJobBackoff(
   jitter: number,
   random: () => number,
 ): { waitMs: number; nextMs: number } {
-  const boundedRandom = Math.min(1, Math.max(0, random()))
-  const factor = 1 - jitter + (2 * jitter * boundedRandom)
   return {
-    waitMs: Math.min(maximumMs, Math.max(1, Math.round(currentMs * factor))),
+    waitMs: Math.min(maximumMs, jitteredJobInterval(currentMs, jitter, random)),
     nextMs: Math.min(maximumMs, currentMs * 2),
   }
+}
+
+export function jitteredJobInterval(
+  baseMs: number,
+  jitter: number,
+  random: () => number,
+): number {
+  const sample = random()
+  const boundedRandom = Number.isFinite(sample) ? Math.min(1, Math.max(0, sample)) : 0.5
+  const factor = 1 - jitter + (2 * jitter * boundedRandom)
+  return Math.max(1, Math.round(baseMs * factor))
 }

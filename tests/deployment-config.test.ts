@@ -31,10 +31,11 @@ test('CI and Render use the supported Node runtime and strict readiness', () => 
   assert.match(read('lib/agent/isolated-shell.ts'), /updateNetwork\(\{\s*allowOut\s*\}\)/)
 })
 
-test('worker deployment has queue bulkheads and a sub-three-second cancellation poll', () => {
+test('worker deployment has queue bulkheads and lease-relative renewal', () => {
   const render = read('render.yaml')
   const worker = read('job-worker.ts')
   const supervisor = read('scripts/start-production.mjs')
+  const workerRuntime = read('lib/jobs/worker.ts')
   const keepalive = read('.github/workflows/render-keepalive.yml')
   const healthVerifier = read('scripts/check-production-health.mjs')
 
@@ -48,7 +49,10 @@ test('worker deployment has queue bulkheads and a sub-three-second cancellation 
   assert.match(worker, /\{ name: 'outbox', queue: 'outbox', capacity: 1 \}/)
   assert.match(worker, /queues:\s*\[spec\.queue\]/)
   assert.match(worker, /capacity:\s*spec\.capacity/)
-  assert.match(worker, /renewIntervalMs:\s*2_000/)
+  assert.match(worker, /leaseSeconds:\s*120/)
+  assert.doesNotMatch(worker, /renewIntervalMs:/)
+  assert.match(workerRuntime, /Math\.floor\(this\.leaseSeconds \* 1_000 \/ 3\)/)
+  assert.match(workerRuntime, /jitteredJobInterval\(this\.renewIntervalMs, this\.renewJitter, this\.random\)/)
   assert.doesNotMatch(worker, /queues:\s*\['chat',\s*'media'/)
   assert.match(supervisor, /next\/dist\/bin\/next/)
   assert.match(supervisor, /process\.argv\.slice\(2\)/)

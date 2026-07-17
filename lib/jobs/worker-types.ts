@@ -55,6 +55,7 @@ export type JobWorkerOptions = {
   concurrency?: number
   leaseSeconds?: number
   renewIntervalMs?: number
+  renewJitter?: number
   idleBackoffMinimumMs?: number
   idleBackoffMaximumMs?: number
   backoffJitter?: number

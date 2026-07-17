@@ -10,7 +10,12 @@ import { JobRuntimeError, isJobRuntimeError, normalizeJobError } from './errors'
 import type { JobRepository } from './repository'
 import { decideJobRetry } from './retry-policy'
 import { JobBudgetController } from './budget'
-import { boundedJobInteger, defaultJobSleep, nextJobBackoff } from './worker-config'
+import {
+  boundedJobInteger,
+  defaultJobSleep,
+  jitteredJobInterval,
+  nextJobBackoff,
+} from './worker-config'
 import { createActiveExecution, type ActiveExecution } from './worker-execution'
 import {
   createJobExecutionContext,
@@ -29,6 +34,7 @@ export class JobWorker {
   private readonly concurrency: number
   private readonly leaseSeconds: number
   private readonly renewIntervalMs: number
+  private readonly renewJitter: number
   private readonly idleBackoffMinimumMs: number
   private readonly idleBackoffMaximumMs: number
   private readonly backoffJitter: number
@@ -71,6 +77,11 @@ export class JobWorker {
       this.leaseSeconds * 500,
       'job lease renewal interval',
     )
+    this.renewJitter = options.renewJitter ?? 0.1
+    if (!Number.isFinite(this.renewJitter) || this.renewJitter < 0 || this.renewJitter > 0.25
+      || Math.ceil(this.renewIntervalMs * (1 + this.renewJitter)) > this.leaseSeconds * 500) {
+      throw new JobRuntimeError('JOB_INVALID_INPUT', 'Invalid job lease renewal jitter')
+    }
     this.idleBackoffMinimumMs = boundedJobInteger(
       options.idleBackoffMinimumMs ?? 100,
       1,
@@ -258,8 +269,17 @@ export class JobWorker {
 
   private async renewLease(fence: JobFence, execution: ActiveExecution): Promise<void> {
     while (!execution.renewStop.signal.aborted) {
+      const remainingLeaseMs = execution.leaseDeadline - this.now()
+      if (remainingLeaseMs <= 0) {
+        execution.controller.abort(new JobRuntimeError('JOB_LEASE_STALE', 'Job lease expired'))
+        return
+      }
+      const renewAfterMs = Math.min(
+        remainingLeaseMs,
+        jitteredJobInterval(this.renewIntervalMs, this.renewJitter, this.random),
+      )
       try {
-        await this.sleep(this.renewIntervalMs, execution.renewStop.signal)
+        await this.sleep(renewAfterMs, execution.renewStop.signal)
       } catch {
         return
       }
