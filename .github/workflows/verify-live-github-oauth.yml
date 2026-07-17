@@ -1,0 +1,68 @@
+name: Verify live GitHub OAuth fix
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/verify-live-github-oauth.yml
+
+permissions:
+  contents: read
+
+jobs:
+  production-probe:
+    name: Production OAuth probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Wait for exact Render revision and verify OAuth availability
+        env:
+          EXPECTED_REVISION: 26ce1f03b1f0
+          READY_URL: https://mychat-nm6x.onrender.com/api/ready
+          OAUTH_URL: https://mychat-nm6x.onrender.com/api/auth/github
+        run: |
+          set -euo pipefail
+          ready_body="$(mktemp)"
+          oauth_body="$(mktemp)"
+          trap 'rm -f "$ready_body" "$oauth_body"' EXIT
+
+          deployed=false
+          for attempt in $(seq 1 90); do
+            ready_code="$(curl --silent --show-error --max-time 30 \
+              --output "$ready_body" --write-out '%{http_code}' \
+              -H 'Cache-Control: no-cache' \
+              "${READY_URL}?probe=${GITHUB_RUN_ID}-${attempt}" || true)"
+            revision="$(jq -r '.revision // "unknown"' "$ready_body" 2>/dev/null || printf 'unknown')"
+            status="$(jq -r '.status // "invalid"' "$ready_body" 2>/dev/null || printf 'invalid')"
+
+            echo "attempt=${attempt} http=${ready_code:-000} status=${status} revision=${revision}"
+            if [[ "$ready_code" == '200' && "$status" == 'ok' && "$revision" == "$EXPECTED_REVISION" ]]; then
+              deployed=true
+              break
+            fi
+            sleep 20
+          done
+
+          if [[ "$deployed" != true ]]; then
+            echo "Render did not activate revision ${EXPECTED_REVISION} within the verification window." >&2
+            echo 'Last readiness response:' >&2
+            cat "$ready_body" >&2 || true
+            exit 1
+          fi
+
+          oauth_code="$(curl --silent --show-error --max-time 30 \
+            --output "$oauth_body" --write-out '%{http_code}' \
+            -H 'Cache-Control: no-cache' \
+            "${OAUTH_URL}?probe=${GITHUB_RUN_ID}" || true)"
+          oauth_text="$(cat "$oauth_body")"
+          echo "oauth_http=${oauth_code:-000} oauth_body=${oauth_text}"
+
+          if [[ "$oauth_code" == '503' || "$oauth_text" == *'GitHub OAuth 暂不可用'* ]]; then
+            echo 'Production still reports GitHub OAuth unavailable.' >&2
+            exit 1
+          fi
+          if [[ "$oauth_code" != '401' || "$oauth_text" != *'请先登录 MyChat'* ]]; then
+            echo 'OAuth endpoint did not return the expected unauthenticated response.' >&2
+            exit 1
+          fi
+
+          echo "Production revision ${EXPECTED_REVISION} is active and GitHub OAuth configuration is available."
