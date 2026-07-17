@@ -44,9 +44,9 @@ export function Shell({ children, onExit, repo, login, onSwitchRepo, onGhMenu, g
 }) {
   return (
     <div className="paper-grain fixed inset-0 z-[60] flex flex-col overflow-hidden bg-background">
-      <div className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-2.5 md:px-8">
+      <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2.5 sm:gap-3 sm:px-4 md:px-8">
         <button onClick={onExit} className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-secondary" style={{ fontFamily: MONO }}>
-          <ChevronLeft className="size-4" />退出
+          <ChevronLeft className="size-4" /><span className="hidden sm:inline">退出</span>
         </button>
         <span className="text-[11px] tracking-[0.25em]" style={{ color: ACCENT, fontFamily: MONO }}>CODE</span>
 
@@ -57,8 +57,8 @@ export function Shell({ children, onExit, repo, login, onSwitchRepo, onGhMenu, g
             </button>
           )}
           {repo !== undefined && repo && (
-            <button onClick={onSwitchRepo} className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] text-foreground/80 transition-colors hover:bg-secondary" style={{ fontFamily: MONO }}>
-              <GitBranch className="size-3.5" style={{ color: ACCENT }} />{repo}
+            <button onClick={onSwitchRepo} className="flex min-w-0 max-w-[42vw] items-center gap-1.5 rounded-md px-2 py-1 text-[11px] text-foreground/80 transition-colors hover:bg-secondary sm:max-w-[48vw]" style={{ fontFamily: MONO }}>
+              <GitBranch className="size-3.5 shrink-0" style={{ color: ACCENT }} /><span className="truncate">{repo}</span>
             </button>
           )}
           {repo !== undefined && !repo && login !== undefined && (
@@ -66,8 +66,8 @@ export function Shell({ children, onExit, repo, login, onSwitchRepo, onGhMenu, g
           )}
           {login !== undefined && (
             <div className="relative">
-              <button onClick={onGhMenu} className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-secondary" style={{ fontFamily: MONO }}>
-                {login ? `@${login}` : "GitHub"}<ChevronDown className="size-3" />
+              <button onClick={onGhMenu} className="flex min-w-0 max-w-[28vw] items-center gap-1 rounded-md px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-secondary sm:max-w-none" style={{ fontFamily: MONO }}>
+                <span className="truncate">{login ? `@${login}` : "GitHub"}</span><ChevronDown className="size-3 shrink-0" />
               </button>
               {ghMenu && (
                 <>
@@ -105,6 +105,11 @@ export function RepoPicker({ repos, hidden, onLoad, onPick, onHide, onReset }: {
   return (
     <div className="flex-1 overflow-y-auto px-4 py-6 md:px-8">
       <div className="mx-auto max-w-2xl space-y-2">
+        <div className="mb-5 rounded-xl border border-border bg-secondary/25 px-4 py-4">
+          <p className="text-[10px] font-medium uppercase tracking-[0.18em]" style={{ color: ACCENT, fontFamily: MONO }}>Your phone is the command center</p>
+          <h2 className="mt-1.5 text-base font-medium text-foreground" style={{ fontFamily: MONO }}>不用电脑，也能完成从代码到上线</h2>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">选择仓库或从零开始。Code 会在隔离云端环境中读取、修改、测试，再由你在手机上确认提交、推送和部署。</p>
+        </div>
         <button onClick={() => onPick(null)} className="flex w-full items-center gap-3 rounded-lg border px-4 py-3 text-left transition-colors hover:bg-secondary/50" style={{ borderColor: ACCENT }}>
           <Plus className="size-4 shrink-0" style={{ color: ACCENT }} /><span className="text-[12px] font-medium text-foreground" style={{ fontFamily: MONO }}>从零做个新项目（我来建仓库）</span>
         </button>
