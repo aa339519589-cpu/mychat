@@ -310,7 +310,7 @@ export function CodeConsole({ userId, onExit }: CodeConsoleProps) {
       currentTaskId={currentTaskId}
       workspaceDirty={workspaceDirty}
       publishPending={publishPending}
-      applyError={applyError}
+      applyError={applyError} onDismissApplyError={() => setApplyError(null)}
       onPublishWorkspacePR={() => { void publishWorkspacePR() }}
       pendingPlan={pendingPlan}
       onAbandonPlan={() => { setPendingPlan([]); setApplyError(null) }}

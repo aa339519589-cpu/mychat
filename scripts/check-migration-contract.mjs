@@ -11,7 +11,7 @@ import { resolve } from 'node:path'
 const root = process.cwd()
 const migrationsDirectory = resolve(root, 'supabase/migrations')
 const manifestPath = resolve(root, 'supabase/migrations.manifest.json')
-const defaultSealMigration = '20260713310000_schema_contract_attestation.sql'
+const defaultSealMigration = '20260717020000_schema_contract_attestation_v2.sql'
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex')
@@ -55,7 +55,7 @@ function canonicalPayload({
 
 function buildManifest({
   schemaVersion = 1,
-  contractVersion = 1,
+  contractVersion = 2,
   sealMigration = defaultSealMigration,
 } = {}) {
   const migrations = migrationEntries(sealMigration)

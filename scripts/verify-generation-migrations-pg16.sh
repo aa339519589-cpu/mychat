@@ -33,7 +33,11 @@ do \$\$
 begin
   if not exists (select 1 from pg_roles where rolname='anon') then create role anon nologin; end if;
   if not exists (select 1 from pg_roles where rolname='authenticated') then create role authenticated nologin; end if;
-  if not exists (select 1 from pg_roles where rolname='service_role') then create role service_role nologin; end if;
+  if not exists (select 1 from pg_roles where rolname='service_role') then
+    create role service_role nologin bypassrls;
+  else
+    alter role service_role bypassrls;
+  end if;
 end;
 \$\$;
 select pg_terminate_backend(pid) from pg_stat_activity where datname = '${DB}';
@@ -1302,31 +1306,24 @@ if [[ "$ATOMIC_CHECKPOINT_REPLAY_HEALTH" != "t" ]]; then
   exit 1
 fi
 
-# Seal the complete repository migration manifest only after v14 is healthy.
-# Replay must be idempotent, while every mismatched tuple and unauthorized role
-# remains fail-closed.
-CONTRACT_VERSION="$(node -e \
-  "process.stdout.write(String(require(process.argv[1]).contractVersion))" \
-  "$ROOT/supabase/migrations.manifest.json")"
-CONTRACT_DIGEST="$(node -e \
-  "process.stdout.write(require(process.argv[1]).contractDigest)" \
-  "$ROOT/supabase/migrations.manifest.json")"
-CONTRACT_MIGRATION_COUNT="$(node -e \
-  "process.stdout.write(String(require(process.argv[1]).migrationCount))" \
-  "$ROOT/supabase/migrations.manifest.json")"
+# Re-prove the original v1 seal before expanding the platform. It remains valid
+# for rollback builds and is itself included in the v2 manifest.
+LEGACY_CONTRACT_VERSION=1
+LEGACY_CONTRACT_DIGEST='e5479e42cbba7c439a1a31ec3325344625f740d2cca37c3865dc4af00243dc0d'
+LEGACY_CONTRACT_MIGRATION_COUNT=43
 "${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713310000_schema_contract_attestation.sql" >/dev/null
 "${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713310000_schema_contract_attestation.sql" >/dev/null
 
 SCHEMA_CONTRACT_RESULT="$("${PSQL[@]}" -qAt -d "$DB" -c \
-  "set role service_role; select public.verify_schema_contract_v1(${CONTRACT_VERSION}, '${CONTRACT_DIGEST}', ${CONTRACT_MIGRATION_COUNT})")"
+  "set role service_role; select public.verify_schema_contract_v1(${LEGACY_CONTRACT_VERSION}, '${LEGACY_CONTRACT_DIGEST}', ${LEGACY_CONTRACT_MIGRATION_COUNT})")"
 if [[ "$SCHEMA_CONTRACT_RESULT" != "t" ]]; then
-  echo "Exact schema contract attestation was not accepted" >&2
+  echo "Legacy schema contract attestation was not accepted" >&2
   exit 1
 fi
 for mismatch in \
-  "$((CONTRACT_VERSION + 1)) '${CONTRACT_DIGEST}' ${CONTRACT_MIGRATION_COUNT}" \
-  "${CONTRACT_VERSION} '$(printf '0%.0s' {1..64})' ${CONTRACT_MIGRATION_COUNT}" \
-  "${CONTRACT_VERSION} '${CONTRACT_DIGEST}' $((CONTRACT_MIGRATION_COUNT + 1))"; do
+  "$((LEGACY_CONTRACT_VERSION + 1)) '${LEGACY_CONTRACT_DIGEST}' ${LEGACY_CONTRACT_MIGRATION_COUNT}" \
+  "${LEGACY_CONTRACT_VERSION} '$(printf '0%.0s' {1..64})' ${LEGACY_CONTRACT_MIGRATION_COUNT}" \
+  "${LEGACY_CONTRACT_VERSION} '${LEGACY_CONTRACT_DIGEST}' $((LEGACY_CONTRACT_MIGRATION_COUNT + 1))"; do
   read -r version digest count <<<"$mismatch"
   result="$("${PSQL[@]}" -qAt -d "$DB" -c \
     "set role service_role; select public.verify_schema_contract_v1(${version}, ${digest}, ${count})")"
@@ -1350,9 +1347,60 @@ if [[ "$SCHEMA_CONTRACT_DIRECT_GRANTS" != "0" ]]; then
 fi
 for role in anon authenticated; do
   if "${PSQL[@]}" -qAt -d "$DB" -c \
-    "set role ${role}; select public.verify_schema_contract_v1(${CONTRACT_VERSION}, '${CONTRACT_DIGEST}', ${CONTRACT_MIGRATION_COUNT})" \
+    "set role ${role}; select public.verify_schema_contract_v1(${LEGACY_CONTRACT_VERSION}, '${LEGACY_CONTRACT_DIGEST}', ${LEGACY_CONTRACT_MIGRATION_COUNT})" \
     >/dev/null 2>&1; then
     echo "$role can execute the service-only schema contract RPC" >&2
+    exit 1
+  fi
+done
+
+# Expand to platform authority v2, prove its transaction/capacity contracts,
+# replay the migration, then append a second immutable schema attestation.
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260717010000_platform_authority_v2.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/tests/platform-authority-v2-pg16.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260717010000_platform_authority_v2.sql" >/dev/null
+
+CONTRACT_VERSION="$(node -e \
+  "process.stdout.write(String(require(process.argv[1]).contractVersion))" \
+  "$ROOT/supabase/migrations.manifest.json")"
+CONTRACT_DIGEST="$(node -e \
+  "process.stdout.write(require(process.argv[1]).contractDigest)" \
+  "$ROOT/supabase/migrations.manifest.json")"
+CONTRACT_MIGRATION_COUNT="$(node -e \
+  "process.stdout.write(String(require(process.argv[1]).migrationCount))" \
+  "$ROOT/supabase/migrations.manifest.json")"
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260717020000_schema_contract_attestation_v2.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260717020000_schema_contract_attestation_v2.sql" >/dev/null
+
+SCHEMA_CONTRACT_RESULT="$("${PSQL[@]}" -qAt -d "$DB" -c \
+  "set role service_role; select public.verify_schema_contract_v2(${CONTRACT_VERSION}, '${CONTRACT_DIGEST}', ${CONTRACT_MIGRATION_COUNT})")"
+if [[ "$SCHEMA_CONTRACT_RESULT" != "t" ]]; then
+  echo "Exact v2 schema contract attestation was not accepted" >&2
+  exit 1
+fi
+for mismatch in \
+  "$((CONTRACT_VERSION + 1)) '${CONTRACT_DIGEST}' ${CONTRACT_MIGRATION_COUNT}" \
+  "${CONTRACT_VERSION} '$(printf '0%.0s' {1..64})' ${CONTRACT_MIGRATION_COUNT}" \
+  "${CONTRACT_VERSION} '${CONTRACT_DIGEST}' $((CONTRACT_MIGRATION_COUNT + 1))"; do
+  read -r version digest count <<<"$mismatch"
+  result="$("${PSQL[@]}" -qAt -d "$DB" -c \
+    "set role service_role; select public.verify_schema_contract_v2(${version}, ${digest}, ${count})")"
+  if [[ "$result" != "f" ]]; then
+    echo "Mismatched v2 schema contract was accepted: $mismatch" >&2
+    exit 1
+  fi
+done
+SCHEMA_CONTRACT_ROWS="$("${PSQL[@]}" -qAt -d "$DB" -c \
+  "select count(*) from public.schema_contract_attestations")"
+if [[ "$SCHEMA_CONTRACT_ROWS" != "2" ]]; then
+  echo "Schema contract v2 replay created unexpected attestation rows" >&2
+  exit 1
+fi
+for role in anon authenticated; do
+  if "${PSQL[@]}" -qAt -d "$DB" -c \
+    "set role ${role}; select public.verify_schema_contract_v2(${CONTRACT_VERSION}, '${CONTRACT_DIGEST}', ${CONTRACT_MIGRATION_COUNT})" \
+    >/dev/null 2>&1; then
+    echo "$role can execute the service-only v2 schema contract RPC" >&2
     exit 1
   fi
 done

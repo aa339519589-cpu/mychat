@@ -11,10 +11,9 @@ import type { SearchMode } from "@/lib/search-mode"
 import type { ClientGenerationPatch, ClientGenerationState } from "@/lib/generation-client"
 import { isRunning, reduceClientGenerationState } from "@/lib/generation-client"
 import {
-  insertConversation,
-  insertMessage,
   updateConversationTitle,
 } from "@/lib/data"
+import type { ChatTurnAuthority } from '@/lib/llm/chat-request'
 import {
   runChatStream,
   type HistoryMessage,
@@ -63,7 +62,6 @@ export function useChatGeneration(options: UseChatGenerationOptions) {
     deepResearch,
     historyRetrieval,
     authorityReady,
-    setActiveId,
     setConversations,
     setMemories,
     setOpenArtifactId,
@@ -141,10 +139,12 @@ export function useChatGeneration(options: UseChatGenerationOptions) {
     attachments?: AttachedFile[],
     projectContext?: ProjectContext,
     generationId?: string,
+    turn?: ChatTurnAuthority,
+    onAccepted?: () => void,
   ) {
     if (!user) {
       markGeneration(conversationId, { status: "error", generationId, assistantMessageId })
-      return { content: "", status: "error" } satisfies RunChatStreamResult
+      return { content: "", status: "error", accepted: false } satisfies RunChatStreamResult
     }
     return runChatStream({
       userId: user.id,
@@ -163,6 +163,8 @@ export function useChatGeneration(options: UseChatGenerationOptions) {
       searchMode,
       deepResearch,
       historyRetrieval,
+      turn,
+      onAccepted,
       setConversations,
       setMemories,
       markGeneration,
@@ -207,52 +209,35 @@ export function useChatGeneration(options: UseChatGenerationOptions) {
     const generationId = crypto.randomUUID()
 
     setConversations(previous => previous.map(conversation => conversation.id === draftId
-      ? { ...conversation, draft: false, messages: [...conversation.messages, userMessage, assistantMessage] }
+      ? { ...conversation, messages: [...conversation.messages, userMessage, assistantMessage] }
       : conversation))
     markGeneration(draftId, { status: "running", generationId, assistantMessageId, begin: true })
 
-    let conversationId = draftId
+    const conversationId = draftId
     try {
-      if (wasDraft) {
-        const realId = await insertConversation(user.id, "未命名的篇章", active.projectId ?? undefined)
-        if (!realId) {
-          setConversations(previous => previous.map(conversation => conversation.id === draftId ? {
-            ...conversation,
-            draft: true,
-            messages: conversation.messages.map(message => message.id === assistantMessageId
-              ? { ...message, content: "创建会话失败，请重试", isError: true }
-              : message),
-          } : conversation))
-          markGeneration(draftId, { status: "error", generationId, assistantMessageId })
-          return
-        }
-        conversationId = realId
-        loadedRef.current.add(realId)
-        draftIdRef.current = null
-        setGenerationByConversation(previous => {
-          const { [draftId]: _drop, ...rest } = previous
-          return {
-            ...rest,
-            [realId]: { conversationId: realId, status: "running", generationId, assistantMessageId },
-          }
-        })
-        setConversations(previous => previous.map(conversation => conversation.id === draftId
-          ? { ...conversation, id: realId }
-          : conversation))
-        setActiveId(realId)
-        onConversationCreated?.(realId)
-        await insertMessage(user.id, realId, userMessage)
-        await insertMessage(user.id, realId, assistantMessage)
-      } else {
-        await insertMessage(user.id, conversationId, userMessage)
-        await insertMessage(user.id, conversationId, assistantMessage)
+      const turn: ChatTurnAuthority = {
+        schemaVersion: 1,
+        createConversation: wasDraft,
+        title: active.title || '未命名的篇章',
+        projectId: active.projectId ?? null,
       }
+      const onAccepted = wasDraft ? () => {
+        loadedRef.current.add(conversationId)
+        draftIdRef.current = null
+        setConversations(previous => previous.map(conversation => conversation.id === draftId
+          ? { ...conversation, draft: false }
+          : conversation))
+        onConversationCreated?.(conversationId)
+      } : undefined
 
       const history = [...baseHistory, userMessage].map(toHistoryMessage)
       const projectContext = await getProjectContext(active.projectId)
       const controller = new AbortController()
       abortByConversationRef.current.set(conversationId, controller)
-      const result = await startStream(history, assistantMessageId, conversationId, controller, files?.length ? files : undefined, projectContext, generationId)
+      const result = await startStream(
+        history, assistantMessageId, conversationId, controller,
+        files?.length ? files : undefined, projectContext, generationId, turn, onAccepted,
+      )
 
       if (isFirstExchange && result.status === "completed" && result.content) {
         if (activeEndpoint && activeEndpoint.outputKind !== "chat") {

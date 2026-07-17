@@ -30,6 +30,22 @@ test('sanitizeSvg closes unfinished svg fragments defensively', () => {
   assert.match(clean ?? '', /<svg/)
 })
 
+test('sanitizeSvg keeps safe vector primitives and removes active or remote content', () => {
+  const clean = sanitizeSvg(`<svg width="100" height="50" onload="alert(1)">
+    <defs><linearGradient id="paint"><stop offset="0" stop-color="#fff" /></linearGradient></defs>
+    <rect width="100" height="50" fill="url(#paint)" />
+    <rect width="10" height="10" fill="url(https://evil.test/paint)" style="background:url(https://evil.test/x)" />
+    <script>alert(1)</script><foreignObject><iframe src="https://evil.test"></iframe></foreignObject>
+    <image href="https://evil.test/pixel" /><use href="#paint" /><animate attributeName="x" />
+    <style>@import url(https://evil.test/style.css)</style>
+  </svg>`)
+
+  assert.match(clean ?? '', /<linearGradient id="paint">/)
+  assert.match(clean ?? '', /fill="url\(#paint\)"/)
+  assert.doesNotMatch(clean ?? '', /script|foreignObject|iframe|<image|<use|animate|<style/i)
+  assert.doesNotMatch(clean ?? '', /onload|https:|javascript:|style=/i)
+})
+
 test('sanitizeSvg removes executable content before live DOM rendering', () => {
   const clean = sanitizeSvg('<svg viewBox="0 0 10 10"><script>alert(1)</script><circle onclick="alert(2)" cx="5" cy="5" r="4" /></svg>')
   assert.doesNotMatch(clean ?? '', /<script|onclick=/i)

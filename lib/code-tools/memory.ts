@@ -1,4 +1,4 @@
-import type { SupabaseClient } from "@supabase/supabase-js"
+import type { SupabaseClient } from "@/lib/supabase/types"
 import { isRecord } from "@/lib/unknown-value"
 import type { ToolEvent } from "./definitions"
 

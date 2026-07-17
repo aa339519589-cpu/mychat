@@ -123,24 +123,26 @@ test('payload cleanup publishes only after its fenced object deletion', async ()
   assert.equal(fixture.calls.published.length, 1)
 })
 
-test('known lifecycle topics require an observer before acknowledgement', async () => {
+test('a non-deliverable lifecycle topic is never acknowledged as published', async () => {
   const lifecycle = message({ topic: 'jobs.poison', attempt: 3, lockVersion: 9 })
-  const fixture = repositoryFixture({ claimed: lifecycle })
-  const observed: JobOutboxMessage[] = []
+  let claimedTopics: readonly string[] = []
+  const fixture = repositoryFixture({ claimed: null })
+  const repository = {
+    ...fixture.repository,
+    claim: async (input: Parameters<JobOutboxRepository['claim']>[0]) => {
+      claimedTopics = input.topics
+      return { acquired: false, message: null } as const
+    },
+  }
   const dispatcher = new JobOutboxDispatcher({
-    repository: fixture.repository,
+    repository,
     workerId: 'outbox-worker',
     sleep: abortableSleep,
-    observe: entry => { observed.push(entry) },
   })
-  assert.equal(await dispatcher.runOnce(), true)
-  assert.deepEqual(observed, [lifecycle])
-  assert.equal(fixture.calls.cleaned, 0)
-  assert.deepEqual(fixture.calls.published[0], {
-    outboxId: lifecycle.id,
-    workerId: 'outbox-worker',
-    lockVersion: 9,
-  })
+  assert.equal(await dispatcher.runOnce(), false)
+  assert.deepEqual(claimedTopics, ['assets.cleanup', 'payloads.cleanup'])
+  assert.equal(claimedTopics.includes(lifecycle.topic), false)
+  assert.deepEqual(fixture.calls.published, [])
 })
 
 test('empty outbox performs no delivery mutation', async () => {

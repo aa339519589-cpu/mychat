@@ -1,6 +1,7 @@
-import type { SupabaseClient } from "@supabase/supabase-js"
+import type { SupabaseClient } from "@/lib/supabase/types"
 import type { AgentTaskStep, AgentToolCall, StepKind, ToolCallStatus } from "../types"
 import { mapStep, mapToolCall } from "../data-mappers"
+import { toJson } from '@/lib/supabase/json'
 
 async function touchTask(supabase: SupabaseClient, userId: string, taskId: string) {
   await supabase
@@ -53,7 +54,7 @@ export async function addToolCall(
       user_id: userId,
       step_id: toolCall.stepId ?? null,
       tool_name: toolCall.toolName,
-      input: toolCall.input ?? null,
+      input: toolCall.input ? toJson(toolCall.input) : null,
       status: toolCall.status ?? "pending",
       started_at: new Date().toISOString(),
     })
@@ -90,7 +91,7 @@ export async function completeToolCall(
     .from("agent_tool_calls")
     .update({
       status: result.status,
-      output: result.output ?? null,
+      output: result.output ? toJson(result.output) : null,
       error: result.error ?? null,
       finished_at: finishedAt,
       duration_ms: durationMs,

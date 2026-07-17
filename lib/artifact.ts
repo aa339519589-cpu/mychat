@@ -1,3 +1,5 @@
+import { sanitizeArtifactSvg } from './artifact-security'
+
 export type ArtifactParsed = {
   display: string
   // 面板 artifact（需要自己的视觉环境，如红色立方体、复杂报告）
@@ -133,7 +135,7 @@ function normalizeSvgRoot(svg: string): string {
 
 // 从内联内容里提取并安全清洗 SVG，直接注入对话 DOM 渲染
 // - 流式时若未闭合，临时补 </svg> 让浏览器容错渲染
-// - 去掉 script / foreignObject / on* 事件 / javascript: 协议，防 XSS
+// - 通过严格 SVG allowlist 去掉脚本、外部资源、事件和危险命名空间
 // - 归一化根 SVG：保留 viewBox，移除固定宽高，避免手机端被大图撑爆
 export function sanitizeSvg(input: string): string | null {
   if (!input) return null
@@ -148,16 +150,8 @@ export function sanitizeSvg(input: string): string | null {
     svg = input.slice(open) + '</svg>'
   }
 
-  svg = svg
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<script[\s\S]*$/gi, '')
-    .replace(/<foreignObject[\s\S]*?<\/foreignObject>/gi, '')
-    .replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, '')
-    .replace(/\son[a-z]+\s*=\s*'[^']*'/gi, '')
-    .replace(/(xlink:href|href)\s*=\s*"\s*javascript:[^"]*"/gi, '')
-    .replace(/(xlink:href|href)\s*=\s*'\s*javascript:[^']*'/gi, '')
-
-  return normalizeSvgRoot(svg)
+  const sanitized = sanitizeArtifactSvg(svg)
+  return sanitized.includes('<svg') ? normalizeSvgRoot(sanitized) : null
 }
 
 // 从 artifact HTML 里猜标题，给对话流卡片入口用

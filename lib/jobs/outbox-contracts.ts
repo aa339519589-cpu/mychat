@@ -9,6 +9,12 @@ export const JOB_OUTBOX_TOPICS = [
   'jobs.terminal',
 ] as const
 
+/** Only topics with an owned, durable side effect are eligible for dispatch. */
+export const DELIVERABLE_JOB_OUTBOX_TOPICS = [
+  'assets.cleanup',
+  'payloads.cleanup',
+] as const satisfies readonly JobOutboxTopic[]
+
 export type JobOutboxTopic = typeof JOB_OUTBOX_TOPICS[number]
 
 export type JobOutboxMessage = {

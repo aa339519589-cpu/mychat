@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { resolveAuth } from '@/lib/api/guard'
 import { appendGitHubOAuthStateCookie, appendLegacyGitHubCookieCleanup } from '@/lib/github-cookies'
 import { githubCredentialEncryptionConfigured } from '@/lib/github-credential'
+import { resolveGitHubOAuthBaseUrl } from '@/lib/github-oauth-flow'
 import { createGitHubOAuthState } from '@/lib/github-oauth-state'
 import { isAdminConfigured } from '@/lib/supabase/admin'
 
@@ -15,7 +16,12 @@ export async function GET(req: NextRequest) {
   const auth = await resolveAuth()
   if (!auth.userId) return new Response('请先登录 MyChat', { status: 401 })
 
-  const origin = process.env.AGENT_PUBLIC_URL?.trim().replace(/\/$/, '') || req.nextUrl.origin
+  let origin: string
+  try {
+    origin = resolveGitHubOAuthBaseUrl(process.env.AGENT_PUBLIC_URL, req.nextUrl.origin)
+  } catch {
+    return new Response('GitHub OAuth 配置无效', { status: 503 })
+  }
   const redirectUri = `${origin}/api/auth/github/callback`
 
   // state 同时绑定当前 Supabase user，避免 OAuth 期间切换账号后串绑。

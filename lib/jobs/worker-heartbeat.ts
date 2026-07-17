@@ -1,23 +1,16 @@
-import type { SupabaseClient } from '@supabase/supabase-js'
+import { typedRpc, type RpcArgs, type SupabaseClient } from '@/lib/supabase/types'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { log } from '@/lib/logger'
 import { isJobIdentifier, isJobName } from './contracts'
 import { defaultJobSleep } from './worker-config'
+import { toJson } from '@/lib/supabase/json'
 
-type HeartbeatRpcResponse = {
-  data: unknown
-  error: { code?: string } | null
-}
-
-type HeartbeatRpc = PromiseLike<HeartbeatRpcResponse> & {
-  abortSignal?: (signal: AbortSignal) => PromiseLike<HeartbeatRpcResponse>
-}
+type HeartbeatRpcName = 'heartbeat_job_worker_v2' | 'mark_job_worker_draining'
 
 export type JobWorkerHeartbeatOptions = {
   workerId: string
   revision: string
-  queues: readonly string[]
-  capacity: number
+  queueCapacities: Readonly<Record<string, number>>
   draining?: boolean
   intervalMs?: number
   rpcTimeoutMs?: number
@@ -36,8 +29,7 @@ function boundedInteger(value: number, minimum: number, maximum: number, name: s
 export class JobWorkerHeartbeat {
   private readonly workerId: string
   private readonly revision: string
-  private readonly queues: string[]
-  private readonly capacity: number
+  private readonly queueCapacities: Readonly<Record<string, number>>
   private readonly draining: boolean
   private readonly intervalMs: number
   private readonly rpcTimeoutMs: number
@@ -46,18 +38,20 @@ export class JobWorkerHeartbeat {
   private readonly sleep: (milliseconds: number, signal: AbortSignal) => Promise<void>
 
   constructor(options: JobWorkerHeartbeatOptions) {
-    const queues = [...new Set(options.queues)]
+    const queueCapacities = Object.entries(options.queueCapacities)
+    const totalCapacity = queueCapacities.reduce((sum, [, capacity]) => sum + capacity, 0)
     if (!isJobIdentifier(options.workerId)
       || !/^(?:unknown|[0-9a-f]{7,64})$/.test(options.revision)
-      || queues.length < 1 || queues.length > 32
-      || queues.some(queue => !isJobName(queue, 64))
+      || queueCapacities.length < 1 || queueCapacities.length > 32
+      || queueCapacities.some(([queue, capacity]) => !isJobName(queue, 64)
+        || !Number.isSafeInteger(capacity) || capacity < 1 || capacity > 16)
+      || totalCapacity > 256
       || !Number.isFinite(Date.parse(options.startedAt ?? new Date().toISOString()))) {
       throw new TypeError('Invalid job worker heartbeat identity')
     }
     this.workerId = options.workerId
     this.revision = options.revision
-    this.queues = queues
-    this.capacity = boundedInteger(options.capacity, 1, 256, 'worker capacity')
+    this.queueCapacities = Object.freeze(Object.fromEntries(queueCapacities))
     this.draining = options.draining === true
     this.intervalMs = boundedInteger(options.intervalMs ?? 5_000, 100, 60_000, 'heartbeat interval')
     this.rpcTimeoutMs = boundedInteger(options.rpcTimeoutMs ?? 3_000, 100, 10_000, 'heartbeat timeout')
@@ -98,11 +92,11 @@ export class JobWorkerHeartbeat {
     return client
   }
 
-  private async rpc(name: string, args: Record<string, unknown>): Promise<unknown> {
+  private async rpc<Name extends HeartbeatRpcName>(name: Name, args: RpcArgs<Name>): Promise<unknown> {
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
-      const request = this.client().rpc(name, args) as unknown as HeartbeatRpc
+      const request = typedRpc(this.client(), name, args)
       const operation = typeof request.abortSignal === 'function'
         ? request.abortSignal(controller.signal)
         : request
@@ -123,11 +117,10 @@ export class JobWorkerHeartbeat {
   }
 
   private async heartbeat(draining: boolean): Promise<void> {
-    const result = await this.rpc('heartbeat_job_worker', {
+    const result = await this.rpc('heartbeat_job_worker_v2', {
       input_worker_id: this.workerId,
       input_revision: this.revision,
-      input_queues: this.queues,
-      input_capacity: this.capacity,
+      input_queue_capacities: toJson(this.queueCapacities),
       input_started_at: this.startedAt,
       input_draining: draining,
     })

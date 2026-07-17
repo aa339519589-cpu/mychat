@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import test from 'node:test'
+import { resolveRuntimeConfiguration, type RuntimeEnvironment } from '../lib/runtime-config'
 
 const root = process.cwd()
 const read = (path: string) => readFileSync(resolve(root, path), 'utf8')
@@ -95,7 +96,7 @@ test('release images are digest-pinned, attested, and generated only after verif
 test('CI loads and starts the exact revision-bearing production container', () => {
   const verify = read('.github/workflows/verify.yml')
   assert.match(verify, /npm ci --ignore-scripts --legacy-peer-deps/)
-  assert.match(verify, /postgres:16@sha256:[0-9a-f]{64}/)
+  assert.match(verify, /pgvector\/pgvector:pg16@sha256:[0-9a-f]{64}/)
   assert.match(verify, /name: Container runtime/)
   assert.match(verify, /docker\/build-push-action@[0-9a-f]{40}/)
   assert.match(verify, /load:\s*true/)
@@ -104,9 +105,32 @@ test('CI loads and starts the exact revision-bearing production container', () =
   const smoke = read('scripts/smoke-production-container.sh')
   assert.match(smoke, /docker image inspect[\s\S]*?\.Config\.Cmd/)
   assert.match(smoke, /docker run --detach --name/)
-  assert.match(smoke, /MYCHAT_RUNTIME_ROLE=all/)
-  assert.match(smoke, /MYCHAT_MAINTENANCE_MODE=drain/)
-  assert.match(smoke, /METRICS_BEARER_TOKEN=[0-9a-f]{64}/)
+  const smokeEnvironment = Object.fromEntries(
+    [...smoke.matchAll(/^\s*--env ([A-Z0-9_]+)=([^\\\s]+) \\$/gm)]
+      .map(([, name, value]) => [name, value]),
+  ) as RuntimeEnvironment
+  assert.deepEqual(Object.keys(smokeEnvironment).sort(), [
+    'AGENT_CREDENTIAL_KEY',
+    'AGENT_PUBLIC_URL',
+    'DEEPSEEK_API_KEY',
+    'E2B_API_KEY',
+    'GITHUB_CLIENT_ID',
+    'GITHUB_CLIENT_SECRET',
+    'METRICS_BEARER_TOKEN',
+    'MYCHAT_MAINTENANCE_MODE',
+    'MYCHAT_RUNTIME_ROLE',
+    'NEXT_PUBLIC_SUPABASE_ANON_KEY',
+    'NEXT_PUBLIC_SUPABASE_URL',
+    'STREAM_ADMISSION_HASH_KEY',
+    'SUPABASE_SERVICE_ROLE_KEY',
+  ])
+  assert.equal(smokeEnvironment.MYCHAT_RUNTIME_ROLE, 'all')
+  assert.equal(smokeEnvironment.MYCHAT_MAINTENANCE_MODE, 'drain')
+  assert.doesNotThrow(() => resolveRuntimeConfiguration({
+    ...smokeEnvironment,
+    NODE_ENV: 'production',
+    MYCHAT_BUILD_REVISION: '0'.repeat(40),
+  }))
   assert.match(smoke, /http:\/\/127\.0\.0\.1:3000\/api\/live/)
   assert.match(smoke, /verified_sha:0:12/)
   assert.match(smoke, /docker top "\$container" -eo pid,args/)

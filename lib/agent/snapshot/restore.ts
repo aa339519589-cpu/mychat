@@ -1,7 +1,7 @@
 import { chmodSync, lstatSync, mkdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "fs"
 import type { Stats } from "fs"
 import { dirname } from "path"
-import type { SupabaseClient } from "@supabase/supabase-js"
+import type { SupabaseClient } from "@/lib/supabase/types"
 import { errorMessage } from "@/lib/unknown-value"
 import type { RestoreResult } from "../types"
 import { workspaceRoot } from "../workspace-paths"

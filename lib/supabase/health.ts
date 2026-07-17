@@ -8,6 +8,7 @@ import { jobMaintenanceMode } from '@/lib/jobs/maintenance'
 import { streamAdmissionHashKey } from '@/lib/jobs/stream-admission'
 import { metricsBearerToken } from '@/lib/observability/metrics-auth'
 import { MIGRATION_CONTRACT } from '@/lib/supabase/migration-contract'
+import type { SupabaseClient } from '@/lib/supabase/types'
 
 type HealthEnvironment = {
   [key: string]: string | undefined
@@ -29,9 +30,10 @@ type HealthRpcResponse = { data: unknown; error: unknown }
 type HealthRpcRequest = PromiseLike<HealthRpcResponse> & {
   abortSignal?: (signal: AbortSignal) => PromiseLike<HealthRpcResponse>
 }
-type HealthRpcClient = {
+export type HealthRpcClient = {
   rpc: (name: string, args?: Record<string, unknown>) => HealthRpcRequest
 }
+type HealthClient = HealthRpcClient | SupabaseClient
 
 export type RuntimeHealth = {
   ready: boolean
@@ -64,8 +66,8 @@ export type RuntimeHealthOptions = {
   timeoutMs?: number
 }
 
-const RUNTIME_HEALTHCHECK_RPC = 'verify_schema_contract_v1'
-const WORKER_READINESS_RPC = 'read_job_worker_readiness_v2'
+const RUNTIME_HEALTHCHECK_RPC = 'verify_schema_contract_v2'
+const WORKER_READINESS_RPC = 'read_job_worker_readiness_v3'
 
 export function safeRevision(environment: HealthEnvironment = process.env): string {
   const raw = environment.MYCHAT_BUILD_REVISION?.trim()
@@ -100,16 +102,15 @@ function isReadyResult(data: unknown): boolean {
 }
 
 async function probeRpc(
-  client: HealthRpcClient | null,
-  rpcName: string,
+  client: HealthClient | null,
+  invoke: (client: HealthClient) => HealthRpcRequest,
   timeoutMs: number,
-  args?: Record<string, unknown>,
 ): Promise<boolean> {
   if (!client) return false
   const controller = new AbortController()
   let timeout: ReturnType<typeof setTimeout> | undefined
   try {
-    const raw = client.rpc(rpcName, args)
+    const raw = invoke(client)
     const operation = typeof raw.abortSignal === 'function'
       ? raw.abortSignal(controller.signal)
       : raw
@@ -131,31 +132,64 @@ async function probeRpc(
   }
 }
 
-export async function probeWorker(
+export function probeWorker(
   client: HealthRpcClient | null,
+  timeoutMs?: number,
+  environment?: HealthEnvironment,
+): Promise<boolean>
+export function probeWorker(
+  client: SupabaseClient | null,
+  timeoutMs?: number,
+  environment?: HealthEnvironment,
+): Promise<boolean>
+export function probeWorker(
+  client: HealthClient | null,
   timeoutMs = 2_000,
   environment: HealthEnvironment = process.env,
 ): Promise<boolean> {
+  return probeWorkerClient(client, timeoutMs, environment)
+}
+
+async function probeWorkerClient(
+  client: HealthClient | null,
+  timeoutMs: number,
+  environment: HealthEnvironment,
+): Promise<boolean> {
   const revision = safeRevision(environment)
   if (environment.NODE_ENV === 'production' && revision === 'unknown') return false
-  return probeRpc(client, WORKER_READINESS_RPC, boundedTimeoutMs(timeoutMs), {
+  return probeRpc(client, current => current.rpc(WORKER_READINESS_RPC, {
     input_required_queues: [...REQUIRED_JOB_WORKER_QUEUES],
     input_max_age_seconds: 20,
     input_revision: revision,
-  })
+  }), boundedTimeoutMs(timeoutMs))
 }
 
-export async function probeDatabase(
+export function probeDatabase(
   client: HealthRpcClient | null,
+  timeoutMs?: number,
+): Promise<boolean>
+export function probeDatabase(
+  client: SupabaseClient | null,
+  timeoutMs?: number,
+): Promise<boolean>
+export function probeDatabase(
+  client: HealthClient | null,
   timeoutMs = 2_000,
 ): Promise<boolean> {
+  return probeDatabaseClient(client, timeoutMs)
+}
+
+async function probeDatabaseClient(
+  client: HealthClient | null,
+  timeoutMs: number,
+): Promise<boolean> {
   // The database compares this build's closed migration manifest with its
-  // immutable schema attestation and runtime v14 in one fail-closed RPC.
-  return probeRpc(client, RUNTIME_HEALTHCHECK_RPC, boundedTimeoutMs(timeoutMs), {
+  // immutable schema attestation and runtime v15 in one fail-closed RPC.
+  return probeRpc(client, current => current.rpc(RUNTIME_HEALTHCHECK_RPC, {
     input_contract_version: MIGRATION_CONTRACT.version,
     input_manifest_sha256: MIGRATION_CONTRACT.digest,
     input_migration_count: MIGRATION_CONTRACT.migrationCount,
-  })
+  }), boundedTimeoutMs(timeoutMs))
 }
 
 async function probeQueue(
@@ -179,9 +213,19 @@ async function probeQueue(
   }
 }
 
+export function getRuntimeHealth(
+  environment?: HealthEnvironment,
+  client?: HealthRpcClient | null,
+  options?: RuntimeHealthOptions,
+): Promise<RuntimeHealth>
+export function getRuntimeHealth(
+  environment: HealthEnvironment | undefined,
+  client: SupabaseClient | null,
+  options?: RuntimeHealthOptions,
+): Promise<RuntimeHealth>
 export async function getRuntimeHealth(
   environment: HealthEnvironment = process.env,
-  client: HealthRpcClient | null = createAdminClient(),
+  client: HealthClient | null = createAdminClient(),
   options: RuntimeHealthOptions = {},
 ): Promise<RuntimeHealth> {
   const authConfigured = isAuthConfigured(environment)
@@ -198,8 +242,8 @@ export async function getRuntimeHealth(
   const observabilityReady = environment.NODE_ENV !== 'production' || metricsToken !== null
   const [databaseReady, observedWorkerReady] = adminConfigured
     ? await Promise.all([
-        probeDatabase(client, options.timeoutMs),
-        probeWorker(client, options.timeoutMs, environment),
+        probeDatabaseClient(client, options.timeoutMs ?? 2_000),
+        probeWorkerClient(client, options.timeoutMs ?? 2_000, environment),
       ])
     : [false, false]
   // A maintenance instance remains ready for reads and status/cancel queries,

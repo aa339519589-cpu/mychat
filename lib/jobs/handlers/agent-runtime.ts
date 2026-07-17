@@ -22,9 +22,10 @@ export function createAgentRuntime(
 ) {
   const recorder = createRecorder({ supabase: input.client, userId: input.userId, taskId: input.taskId })
   const executionBackend = agentExecutionBackend()
-  const canExecute = executionBackend !== 'disabled'
+  const hasWorkspace = input.workspaceReady && Boolean(input.repo)
+  const canExecute = hasWorkspace && executionBackend !== 'disabled'
   const tools = buildCodeTools({
-    isWorkspace: true,
+    isWorkspace: hasWorkspace,
     executePermission: executionBackend === 'isolated'
       ? '在当前任务独享的 Linux 沙箱中执行经过白名单审计的命令'
       : '在 workspace 中执行受控命令',
@@ -36,6 +37,7 @@ export function createAgentRuntime(
     recordStep: (kind, label) => { void recorder.step(kind, label) },
   })
   const workspaceHasChanges = () => {
+    if (!hasWorkspace) return false
     const changed = getChangedFiles(input.taskId, input.userId)
     return changed.ok && changed.data.files.length > 0
   }
@@ -48,7 +50,7 @@ export function createAgentRuntime(
     repoIsPrivate: input.repoIsPrivate,
     supabase: input.client,
     userId: input.userId,
-    wsReady: true,
+    wsReady: hasWorkspace,
     wsTaskId: input.taskId,
     wsUserId: input.userId,
     tavilyApiKey: process.env.TAVILY_API_KEY ?? '',
@@ -78,7 +80,7 @@ export function createAgentRuntime(
     }
     const dryRun = name === 'apply_patch' && args && typeof args === 'object'
       && !Array.isArray(args) && (args as { dryRun?: unknown }).dryRun === true
-    if (CHECKPOINT_TOOLS.has(name) && !dryRun) {
+    if (hasWorkspace && CHECKPOINT_TOOLS.has(name) && !dryRun) {
       await advanceWorkspaceAuthority(
         context, input.client, input.userId, input.taskId, `after-tool:${toolCallId}`,
       )

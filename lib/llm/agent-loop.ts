@@ -1,14 +1,10 @@
-// 唯一的多轮 agent 循环：两个 route（chat / code）共用，差异完全靠配置开关表达，
-// 不再各自复制一份循环导致行为漂移。
-//
-// 流程：循环 N 轮 → 每轮一次 runTurn →（可选）泄漏重试 → 有工具调用则执行并回灌、继续；
-// 无工具调用则结束 → 若结束时仍带工具调用，补一轮纯文本 → （可选）length 截断自动续写。
+// Shared multi-round Agent loop for both chat and code jobs. Provider calls,
+// durable usage, checkpoints, and tool effects intentionally stay ordered.
 import { runTurn, type RunTurnOptions, type TurnResult } from './turn'
 import type { Emit } from './events'
 import type { ProviderAdapterId } from './provider-adapters'
 import type { ModelMessage, ModelToolDefinition } from './types'
 
-// 执行单个工具，返回回灌给模型的文字；工具自身需要的前端事件由实现内部 emit。
 export type ExecuteTool = (
   name: string,
   input: unknown,
@@ -16,6 +12,7 @@ export type ExecuteTool = (
 ) => Promise<string>
 
 type TurnPhase = 'round' | 'leaked-retry' | 'final-text' | 'continue'
+type RoundAction = 'continue' | 'break'
 
 export type AgentLoopOpts = {
   url: string
@@ -24,170 +21,295 @@ export type AgentLoopOpts = {
   adapter?: ProviderAdapterId
   thinking: boolean
   reasoningEffort?: import('./provider-adapters').ReasoningEffort | null
-  messages: ModelMessage[]   // 原地追加 assistant / tool 消息
-  tools: ModelToolDefinition[] // provider 格式的工具数组（空数组 = 不带工具）
+  messages: ModelMessage[]
+  tools: ModelToolDefinition[]
   emit: Emit
   executeTool: ExecuteTool
   maxRounds?: number
-  // chat：工具协议泄漏成正文且无可用内容时，关工具重试一轮
   leakedRetry?: boolean
-  // chat：finish_reason === 'length' 时自动续写，前端无感拼接
   autoContinue?: { maxContinuations?: number }
   idleContinuation?: {
     maxContinuations?: number
     prompt: (info: { turn: TurnResult; idleCount: number }) => string | null | Promise<string | null>
   }
-  // 诊断日志钩子（循环本身不做日志，交给调用方）
   onTurn?: (info: { phase: TurnPhase; round?: number; turn: TurnResult }) => void
-  // Code Agent 用它把最新模型轨迹持久化，进程重启后可从工具结果之后继续。
   onCheckpoint?: (messages: ModelMessage[]) => void | Promise<void>
-  // 每次收到 usage 都上报累计值；即使后续工具或网络异常，调用方也能正确记账。
   onUsage?: (totalTokens: number) => void | Promise<void>
   turnOptions?: Omit<RunTurnOptions, 'thinking' | 'adapter'>
 }
 
-export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ totalTokens: number }> {
-  const { url, apiKey, model, adapter, thinking, reasoningEffort, messages: msgs, tools, emit, executeTool, maxRounds, leakedRetry, autoContinue, idleContinuation, onTurn, onCheckpoint, onUsage, turnOptions } = opts
-  let totalTokens = 0
-  const addUsage = async (tokens: number) => {
-    totalTokens += tokens
-    await onUsage?.(totalTokens)
+type AgentLoopState = {
+  totalTokens: number
+  lastHadToolCalls: boolean
+  lastTurn: TurnResult | null
+  consecutiveFailures: number
+  idleCount: number
+  activeTurnTools: ModelToolDefinition[]
+}
+
+type AgentLoopContext = {
+  options: AgentLoopOpts
+  state: AgentLoopState
+  sharedTurnOptions: RunTurnOptions
+}
+
+const MAX_CONSECUTIVE_FAILURES = 2
+const MAX_LEAKED_RETRIES_PER_ROUND = 2
+const LEAKED_RETRY_PROMPT = '继续完成你的回复。禁止在正文中使用 DSML 或任何 <｜ ｜> 标记来调用工具——你必须使用标准的 function calling。如果你的上一条回复被截断了，请重新完整输出。'
+const OUTPUT_CONTINUATION_PROMPT = '紧接上文继续输出剩余内容，不要重复已经写过的部分，也不要加任何开场白。如果之前在正文中使用了 DSML 工具调用格式，请改用标准的 function calling 或直接用文字说明。'
+
+function createContext(options: AgentLoopOpts): AgentLoopContext {
+  return {
+    options,
+    state: {
+      totalTokens: 0,
+      lastHadToolCalls: false,
+      lastTurn: null,
+      consecutiveFailures: 0,
+      idleCount: 0,
+      activeTurnTools: options.tools,
+    },
+    sharedTurnOptions: {
+      ...options.turnOptions,
+      mediaBudget: options.turnOptions?.mediaBudget ?? { remaining: 4, seen: new Set<string>() },
+    },
   }
-  let lastHadToolCalls = false
-  let lastTurn: TurnResult | null = null
-  let consecutiveFailures = 0
-  const MAX_CONSECUTIVE_FAILURES = 2
-  const MAX_LEAKED_RETRIES_PER_ROUND = 2
-  let idleCount = 0
-  let activeTurnTools = tools
-  const sharedTurnOptions: RunTurnOptions = {
-    ...turnOptions,
-    mediaBudget: turnOptions?.mediaBudget ?? { remaining: 4, seen: new Set<string>() },
+}
+
+async function recordUsage(context: AgentLoopContext, tokens: number): Promise<void> {
+  context.state.totalTokens += tokens
+  await context.options.onUsage?.(context.state.totalTokens)
+}
+
+async function executeTurn(
+  context: AgentLoopContext,
+  tools: ModelToolDefinition[],
+  phase: TurnPhase,
+  round?: number,
+): Promise<TurnResult> {
+  const options = context.options
+  const turn = await runTurn(
+    options.url,
+    options.apiKey,
+    options.model,
+    options.messages,
+    tools,
+    options.emit,
+    {
+      thinking: options.thinking,
+      adapter: options.adapter,
+      reasoningEffort: options.reasoningEffort,
+      ...context.sharedTurnOptions,
+      emitErrors: false,
+    },
+  )
+  await recordUsage(context, turn.totalTokens)
+  options.onTurn?.(round === undefined ? { phase, turn } : { phase, round, turn })
+  return turn
+}
+
+function shouldFallbackWithoutTools(context: AgentLoopContext, turn: TurnResult): boolean {
+  return turn.failed
+    && context.options.adapter === 'generic-openai'
+    && context.state.activeTurnTools.length > 0
+}
+
+async function executeRoundTurn(
+  context: AgentLoopContext,
+  round: number,
+): Promise<TurnResult | null> {
+  let turn = await executeTurn(context, context.state.activeTurnTools, 'round', round)
+  if (shouldFallbackWithoutTools(context, turn)) {
+    context.state.activeTurnTools = []
+    turn = await executeTurn(context, context.state.activeTurnTools, 'round', round)
   }
-
-  for (let round = 0; maxRounds === undefined || round < maxRounds; round++) {
-    let turn = await runTurn(url, apiKey, model, msgs, activeTurnTools, emit, { thinking, adapter, reasoningEffort, ...sharedTurnOptions, emitErrors: false })
-    await addUsage(turn.totalTokens)
-    onTurn?.({ phase: 'round', round, turn })
-
-    // OpenAI-compatible gateways vary widely in function-calling support. A plain-chat
-    // retry keeps otherwise compatible models usable without leaking the first error.
-    if (turn.failed && adapter === 'generic-openai' && activeTurnTools.length > 0) {
-      activeTurnTools = []
-      turn = await runTurn(url, apiKey, model, msgs, activeTurnTools, emit, { thinking, adapter, reasoningEffort, ...sharedTurnOptions, emitErrors: false })
-      await addUsage(turn.totalTokens)
-      onTurn?.({ phase: 'round', round, turn })
+  if (turn.failed && context.state.consecutiveFailures < MAX_CONSECUTIVE_FAILURES) {
+    context.state.consecutiveFailures++
+    await new Promise(resolve => setTimeout(resolve, 1_000))
+    turn = await executeTurn(context, context.state.activeTurnTools, 'round', round)
+  }
+  if (turn.failed) {
+    context.state.consecutiveFailures++
+    context.state.lastTurn = turn
+    if (context.state.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+      throw new Error(turn.error || '模型连接连续失败')
     }
+    return null
+  }
+  context.state.consecutiveFailures = 0
+  return turn
+}
 
-    // 网络级失败重试（延迟 1s，给上游恢复时间）
-    if (turn.failed && consecutiveFailures < MAX_CONSECUTIVE_FAILURES) {
-      consecutiveFailures++
-      await new Promise(r => setTimeout(r, 1000))
-      turn = await runTurn(url, apiKey, model, msgs, activeTurnTools, emit, { thinking, adapter, reasoningEffort, ...sharedTurnOptions, emitErrors: false })
-      await addUsage(turn.totalTokens)
-      onTurn?.({ phase: 'round', round, turn })
+function needsLeakedRetry(context: AgentLoopContext, turn: TurnResult): boolean {
+  return context.options.leakedRetry === true
+    && turn.leaked
+    && turn.toolCalls.length === 0
+    && !turn.failed
+}
+
+async function handleLeakedRetry(
+  context: AgentLoopContext,
+  initialTurn: TurnResult,
+  round: number,
+): Promise<RoundAction> {
+  let turn = initialTurn
+  let retries = 0
+  while (retries < MAX_LEAKED_RETRIES_PER_ROUND
+    && turn.leaked
+    && turn.toolCalls.length === 0
+    && !turn.failed) {
+    retries++
+    if (turn.content.trim()) {
+      context.options.messages.push({ role: 'assistant', content: turn.content })
     }
-    if (turn.failed) {
-      consecutiveFailures++
-      lastTurn = turn
-      if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) throw new Error(turn.error || '模型连接连续失败')
+    context.options.messages.push({ role: 'user', content: LEAKED_RETRY_PROMPT })
+    await context.options.onCheckpoint?.(context.options.messages)
+    turn = await executeTurn(context, [], 'leaked-retry', round)
+  }
+  context.state.lastTurn = turn
+  if (!turn.failed && turn.content.trim()) {
+    context.options.messages.push({ role: 'assistant', content: turn.content })
+    await context.options.onCheckpoint?.(context.options.messages)
+    return 'continue'
+  }
+  if (turn.failed) return 'continue'
+  context.state.lastHadToolCalls = false
+  return 'break'
+}
+
+function mayContinueIdle(context: AgentLoopContext): boolean {
+  const continuation = context.options.idleContinuation
+  return Boolean(continuation)
+    && (continuation?.maxContinuations === undefined
+      || context.state.idleCount < continuation.maxContinuations)
+}
+
+async function handleIdleTurn(context: AgentLoopContext, turn: TurnResult): Promise<RoundAction> {
+  if (!mayContinueIdle(context)) return 'break'
+  const prompt = await context.options.idleContinuation?.prompt({
+    turn,
+    idleCount: context.state.idleCount,
+  })
+  if (!prompt) return 'break'
+  if (turn.content.trim()) {
+    context.options.messages.push({ role: 'assistant', content: turn.content })
+  }
+  context.options.messages.push({ role: 'user', content: prompt })
+  await context.options.onCheckpoint?.(context.options.messages)
+  context.state.idleCount++
+  return 'continue'
+}
+
+function parseToolInput(arguments_: string): { valid: true; value: unknown } | { valid: false } {
+  try {
+    return { valid: true, value: JSON.parse(arguments_ || '{}') as unknown }
+  } catch {
+    return { valid: false }
+  }
+}
+
+async function executeToolCalls(context: AgentLoopContext, turn: TurnResult): Promise<void> {
+  if (turn.assistantMessage) context.options.messages.push(turn.assistantMessage)
+  // Persist provider-issued call ids before the first external side effect.
+  await context.options.onCheckpoint?.(context.options.messages)
+  for (const toolCall of turn.toolCalls) {
+    const input = parseToolInput(toolCall.args)
+    if (!input.valid) {
+      context.options.messages.push({
+        role: 'tool',
+        tool_call_id: toolCall.id,
+        content: '工具参数不是有效 JSON，未执行。请修正参数后重新调用。',
+      })
       continue
     }
-    consecutiveFailures = 0
-
-    // 工具协议泄漏：content 里有 DSML 等标记被剥掉了，但标准 tool_calls 为空。
-    // 关工具让模型重述一轮。关键：重试后不 break，继续下一轮（重开工具），agent 可以持续工作。
-    if (leakedRetry && turn.leaked && turn.toolCalls.length === 0 && !turn.failed) {
-      let leakedRetries = 0
-      while (leakedRetries < MAX_LEAKED_RETRIES_PER_ROUND && turn.leaked && turn.toolCalls.length === 0 && !turn.failed) {
-        leakedRetries++
-        if (turn.content.trim()) {
-          msgs.push({ role: 'assistant', content: turn.content })
-        }
-        msgs.push({ role: 'user', content: '继续完成你的回复。禁止在正文中使用 DSML 或任何 <｜ ｜> 标记来调用工具——你必须使用标准的 function calling。如果你的上一条回复被截断了，请重新完整输出。' })
-        await onCheckpoint?.(msgs)
-        turn = await runTurn(url, apiKey, model, msgs, [], emit, { thinking, adapter, reasoningEffort, ...sharedTurnOptions, emitErrors: false })
-        await addUsage(turn.totalTokens)
-        onTurn?.({ phase: 'leaked-retry', round, turn })
-      }
-      lastTurn = turn
-      // 重试后仍无工具调用 ≠ 任务完成，只是模型在这一轮被强制走纯文本。
-      // 继续下一轮（工具会重新打开），让 agent 接着干活。
-      if (!turn.failed && turn.content.trim()) {
-        msgs.push({ role: 'assistant', content: turn.content })
-        await onCheckpoint?.(msgs)
-        continue
-      }
-      if (turn.failed) continue
-      // 重试后 content 也空 → 真没东西了
-      lastHadToolCalls = false
-      break
-    }
-
-    lastTurn = turn
-    lastHadToolCalls = turn.toolCalls.length > 0
-    if (!lastHadToolCalls) {
-      if (idleContinuation && (idleContinuation.maxContinuations === undefined || idleCount < idleContinuation.maxContinuations)) {
-        const prompt = await idleContinuation.prompt({ turn, idleCount })
-        if (prompt) {
-          if (turn.content.trim()) msgs.push({ role: 'assistant', content: turn.content })
-          msgs.push({ role: 'user', content: prompt })
-          await onCheckpoint?.(msgs)
-          idleCount++
-          continue
-        }
-      }
-      break
-    }
-
-    idleCount = 0
-    if (turn.assistantMessage) msgs.push(turn.assistantMessage)
-    // Persist the provider-issued tool_call ids before any side effect starts.
-    // A replacement worker can then reuse the effect receipt instead of
-    // guessing whether a previous invocation ran.
-    await onCheckpoint?.(msgs)
-    for (const tc of turn.toolCalls) {
-      let input: unknown
-      try {
-        input = JSON.parse(tc.args || '{}')
-      } catch {
-        msgs.push({ role: 'tool', tool_call_id: tc.id, content: '工具参数不是有效 JSON，未执行。请修正参数后重新调用。' })
-        continue
-      }
-      const result = await executeTool(tc.name, input, { toolCallId: tc.id })
-      msgs.push({ role: 'tool', tool_call_id: tc.id, content: result })
-    }
-    await onCheckpoint?.(msgs)
+    const result = await context.options.executeTool(
+      toolCall.name,
+      input.value,
+      { toolCallId: toolCall.id },
+    )
+    context.options.messages.push({
+      role: 'tool',
+      tool_call_id: toolCall.id,
+      content: result,
+    })
   }
+  await context.options.onCheckpoint?.(context.options.messages)
+}
 
-  // 轮次用完但最后一轮还有工具调用 → 补一轮纯文本请求，确保有完整回复
-  if (lastHadToolCalls) {
-    lastTurn = await runTurn(url, apiKey, model, msgs, [], emit, { thinking, adapter, reasoningEffort, ...sharedTurnOptions, emitErrors: false })
-    await addUsage(lastTurn.totalTokens)
-    onTurn?.({ phase: 'final-text', turn: lastTurn })
+async function processSuccessfulTurn(
+  context: AgentLoopContext,
+  turn: TurnResult,
+  round: number,
+): Promise<RoundAction> {
+  if (needsLeakedRetry(context, turn)) return handleLeakedRetry(context, turn, round)
+  context.state.lastTurn = turn
+  context.state.lastHadToolCalls = turn.toolCalls.length > 0
+  if (!context.state.lastHadToolCalls) return handleIdleTurn(context, turn)
+  context.state.idleCount = 0
+  await executeToolCalls(context, turn)
+  return 'continue'
+}
+
+async function executeRounds(context: AgentLoopContext): Promise<void> {
+  const maximum = context.options.maxRounds
+  for (let round = 0; maximum === undefined || round < maximum; round++) {
+    const turn = await executeRoundTurn(context, round)
+    if (!turn) continue
+    if (await processSuccessfulTurn(context, turn, round) === 'break') break
   }
+}
 
-  // 长度截断自动续写 / 异常中断 / 不完整工具调用续写
-  if (autoContinue && lastTurn && !lastTurn.failed) {
-    let cur = lastTurn
-    let cont = 0
-    while ((autoContinue.maxContinuations === undefined || cont < autoContinue.maxContinuations) && !cur.failed) {
-      const needContinue = cur.finishReason === 'length' || cur.truncated || cur.hasIncompleteToolCall
-      if (!needContinue) break
-      cont++
-      msgs.push({ role: 'assistant', content: cur.content })
-      msgs.push({ role: 'user', content: '紧接上文继续输出剩余内容，不要重复已经写过的部分，也不要加任何开场白。如果之前在正文中使用了 DSML 工具调用格式，请改用标准的 function calling 或直接用文字说明。' })
-      await onCheckpoint?.(msgs)
-      cur = await runTurn(url, apiKey, model, msgs, [], emit, { thinking, adapter, reasoningEffort, ...sharedTurnOptions, emitErrors: false })
-      await addUsage(cur.totalTokens)
-      onTurn?.({ phase: 'continue', round: cont, turn: cur })
-    }
-    if (!cur.failed && cur.finishReason === 'length' && autoContinue.maxContinuations !== undefined && cont >= autoContinue.maxContinuations) {
-      emit({ text: '\n\n（内容较长，已输出至上限，可回复”继续”获取后续。）' })
-    } else if (!cur.failed && (cur.truncated || cur.hasIncompleteToolCall)) {
-      emit({ text: '\n\n（回复异常中断，请点击重新生成。）' })
-    }
+async function requestFinalText(context: AgentLoopContext): Promise<void> {
+  if (!context.state.lastHadToolCalls) return
+  context.state.lastTurn = await executeTurn(context, [], 'final-text')
+}
+
+function needsOutputContinuation(turn: TurnResult): boolean {
+  return turn.finishReason === 'length' || turn.truncated || turn.hasIncompleteToolCall
+}
+
+function continuationAvailable(context: AgentLoopContext, count: number): boolean {
+  const maximum = context.options.autoContinue?.maxContinuations
+  return maximum === undefined || count < maximum
+}
+
+function emitContinuationWarning(
+  context: AgentLoopContext,
+  turn: TurnResult,
+  count: number,
+): void {
+  if (turn.failed) return
+  const maximum = context.options.autoContinue?.maxContinuations
+  if (turn.finishReason === 'length' && maximum !== undefined && count >= maximum) {
+    context.options.emit({ text: '\n\n（内容较长，已输出至上限，可回复”继续”获取后续。）' })
+    return
   }
+  if (turn.truncated || turn.hasIncompleteToolCall) {
+    context.options.emit({ text: '\n\n（回复异常中断，请点击重新生成。）' })
+  }
+}
 
-  return { totalTokens }
+async function continueOutput(context: AgentLoopContext): Promise<void> {
+  if (!context.options.autoContinue
+    || !context.state.lastTurn
+    || context.state.lastTurn.failed) return
+  let turn = context.state.lastTurn
+  let count = 0
+  while (continuationAvailable(context, count) && !turn.failed) {
+    if (!needsOutputContinuation(turn)) break
+    count++
+    context.options.messages.push({ role: 'assistant', content: turn.content })
+    context.options.messages.push({ role: 'user', content: OUTPUT_CONTINUATION_PROMPT })
+    await context.options.onCheckpoint?.(context.options.messages)
+    turn = await executeTurn(context, [], 'continue', count)
+  }
+  emitContinuationWarning(context, turn, count)
+}
+
+export async function runAgentLoop(options: AgentLoopOpts): Promise<{ totalTokens: number }> {
+  const context = createContext(options)
+  await executeRounds(context)
+  await requestFinalText(context)
+  await continueOutput(context)
+  return { totalTokens: context.state.totalTokens }
 }

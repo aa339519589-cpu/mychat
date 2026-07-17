@@ -2,6 +2,7 @@ import type { PlanAction } from "@/lib/code-data"
 
 export const MONO = "ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Courier New',monospace"
 export const ACCENT = "var(--code-accent)"
+export const CONTROL_FOCUS = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--code-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background"
 
 export type RepoItem = { name: string; full_name: string; private: boolean; description: string }
 export type Overlay = null | "model" | "memory" | "resume" | "context" | "tasks"

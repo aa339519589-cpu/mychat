@@ -6,7 +6,7 @@ function source(path: string) {
   return readFileSync(new URL(`../${path}`, import.meta.url), "utf8")
 }
 
-test("public surfaces present the phone-first Code workflow consistently", () => {
+test("public identity stays phone-first while Code opens as an operational workspace", () => {
   const layout = source("app/layout.tsx")
   const login = source("components/login-screen.tsx")
   const code = source("components/code-console/presentation.tsx")
@@ -17,9 +17,11 @@ test("public surfaces present the phone-first Code workflow consistently", () =>
   assert.match(login, />MyChat</)
   assert.match(login, /Build &amp; ship from your phone/)
   assert.doesNotMatch(login, />简</)
-  assert.match(code, /Your phone is the command center/)
-  assert.match(code, /max-w-\[42vw\]/)
+  assert.match(code, /选择工作区/)
+  assert.match(code, /max-w-\[34vw\]/)
   assert.match(code, /className="truncate">\{repo\}/)
+  assert.match(code, /min-h-11/)
+  assert.doesNotMatch(code, /Your phone is the command center/)
   assert.equal(smoke.match(/toHaveTitle\(\/MyChat\/\)/g)?.length, 2)
   assert.doesNotMatch(smoke, /toHaveTitle\(\/My Chat\/\)/)
 })

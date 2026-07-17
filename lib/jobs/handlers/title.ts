@@ -1,4 +1,4 @@
-import type { SupabaseClient } from '@supabase/supabase-js'
+import type { SupabaseClient } from '@/lib/supabase/types'
 import type { SupabaseServer } from '@/lib/api/guard'
 import { generateTitleText } from '@/lib/chat/title-generation'
 import { resolveChatModelSelection } from '@/lib/chat/model-selection'

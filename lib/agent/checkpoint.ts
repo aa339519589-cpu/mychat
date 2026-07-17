@@ -1,7 +1,7 @@
 import { createHash } from "crypto"
 import { execFileSync, execSync } from "child_process"
 import { gzipSync, gunzipSync } from "zlib"
-import type { SupabaseClient } from "@supabase/supabase-js"
+import type { SupabaseClient } from "@/lib/supabase/types"
 import { mergeTaskMeta } from "./meta"
 import { workspacePath } from "./workspace-paths"
 import { redactSensitive } from "./path-security"
@@ -85,12 +85,13 @@ export async function restoreLatestWorkspaceCheckpoint(
     .eq("user_id", userId)
     .single()
   if (error) return { ok: false, error: error.message }
-  const checkpoint = data?.meta?.workspaceCheckpoint
-  if (!checkpoint?.content) return { ok: true, empty: true }
+  const meta = isRecord(data?.meta) ? data.meta : null
+  const checkpoint = isRecord(meta?.workspaceCheckpoint) ? meta.workspaceCheckpoint : null
+  if (!checkpoint || typeof checkpoint.content !== 'string') return { ok: true, empty: true }
 
   try {
     const diff = gunzipSync(Buffer.from(checkpoint.content, "base64")).toString("utf8")
-    const expected = checkpoint.sha256
+    const expected = typeof checkpoint.sha256 === 'string' ? checkpoint.sha256 : null
     if (expected && digest(diff) !== expected) return { ok: false, error: "后台检查点校验失败" }
     execSync("git apply --binary --whitespace=nowarn", {
       cwd: workspacePath(userId, taskId),

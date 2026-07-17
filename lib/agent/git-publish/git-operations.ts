@@ -1,5 +1,5 @@
 import { existsSync } from "fs"
-import type { SupabaseClient } from "@supabase/supabase-js"
+import type { SupabaseClient } from "@/lib/supabase/types"
 
 import { addArtifact, addStep, getTaskDetail, updateTaskStatus } from "../data"
 import { redactSensitive } from "../path-security"

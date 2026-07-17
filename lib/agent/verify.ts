@@ -2,7 +2,7 @@
 // 每步记录 steps / tool_calls / artifacts，解析错误
 
 import { existsSync } from "fs"
-import type { SupabaseClient } from "@supabase/supabase-js"
+import type { SupabaseClient } from "@/lib/supabase/types"
 import { workspaceRoot } from "./workspace"
 import { detectProjectCommands } from "./project-detect"
 import { parseAllErrors, type VerificationErrors } from "./error-parser"

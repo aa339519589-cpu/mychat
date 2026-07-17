@@ -4,7 +4,7 @@
 import { spawn } from "child_process"
 import { existsSync } from "fs"
 import { join } from "path"
-import type { SupabaseClient } from "@supabase/supabase-js"
+import type { SupabaseClient } from "@/lib/supabase/types"
 import { workspacePath } from "./workspace"
 import { checkCommand, sanitizeCommandOutput } from "./command-security"
 import { safeResolve } from "./path-security"

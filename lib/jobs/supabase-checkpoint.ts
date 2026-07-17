@@ -6,9 +6,14 @@ import type {
   JobCheckpointAccountingReason,
 } from './repository-types'
 import { malformed, nullableInteger, statusOf } from './supabase-parsing'
+import type { RpcArgs } from '@/lib/supabase/types'
+import { toJson } from '@/lib/supabase/json'
 
 type CheckpointInput = Parameters<JobRepository['checkpointWithAccounting']>[0]
-type Rpc = (name: string, args: Record<string, unknown>) => Promise<Record<string, unknown>>
+type Rpc = (
+  name: 'checkpoint_job_with_accounting',
+  args: RpcArgs<'checkpoint_job_with_accounting'>,
+) => Promise<Record<string, unknown>>
 
 const CHECKPOINT_REASONS = new Set<JobCheckpointAccountingReason>([
   'not_found', 'terminal', 'cancel_requested', 'stale_fence', 'stale_attempt',
@@ -38,7 +43,7 @@ export async function checkpointSupabaseJobWithAccounting(
     input_progress: input.progress ?? {},
     input_resumable: input.resumable,
     input_status: input.status ?? 'running',
-    input_ledger_entries: input.ledgerEntries,
+    input_ledger_entries: toJson([...input.ledgerEntries]),
   })
   const checkpointVersion = nullableInteger(result.checkpointVersion)
   const reason = typeof result.reason === 'string' ? result.reason : null

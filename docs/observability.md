@@ -11,6 +11,8 @@ counter/histogram，因为它们不能代表独立 Worker。数据库、任一 R
 `objective` 和 `condition` 都是闭集标签；响应和 exporter 均不包含 user、job、
 request、provider、URL、object key 等高基数字段。
 
+Worker presence 以进程为单位：一个进程通过 `heartbeat_job_worker_v2` 在同一行报告全部队列及逐队列容量，`read_job_worker_readiness_v3` 只接受相同 revision 的新鲜、非 draining 行。Outbox exporter 只把 `assets.cleanup` 与 `payloads.cleanup` 当作可交付工作；没有真实外部消费者的 Job lifecycle topic 在写入时被抑制，终态与 poison 指标直接来自权威 Job/audit 数据。
+
 ## 指标语义
 
 数据库权威指标使用 `mychat_authoritative_` 前缀，均为 scrape 时重新计算的
@@ -24,7 +26,7 @@ gauge：
 - `job_retry_waiting`：已经执行过至少一次、当前等待重试的作业。
 - `job_poison_window`：窗口内耗尽尝试或不可安全恢复的失败作业。
 - `outbox_pending|ready|expired_leases|retrying|dead` 及
-  `outbox_oldest_ready_age_seconds`：跨进程 outbox 的交付状态。
+  `outbox_oldest_ready_age_seconds`：跨进程清理 outbox 的交付状态；不得把不存在消费者的 lifecycle event 当成 backlog 或 published event。
 - `asset_cleanup{condition="pending|dead|orphan"}`：私有媒体清理收敛状态。
   `pending` 只包含 `deleting`，或终态作业上泄漏的 `reserved/uploaded` asset；
   活跃媒体作业正常上传中的 receipt 不会触发告警。`orphan` 是终态作业下超过
@@ -32,7 +34,7 @@ gauge：
 - `slo_window_good|eligible|ratio{objective=...,job_type=...}`：最近一小时的
   SLO 分子、分母和比率。无合格样本时 ratio 为 `NaN`，不视为 0%。
 - `worker_fleet_ready|active_workers|total_capacity|stale_workers|draining_workers`：
-  数据库权威 worker fleet 状态；不是 Web 进程内计数。
+  数据库权威、revision-scoped 的进程 fleet 状态；一个进程只计一次，不是 Web 进程内计数。
 - `worker_fleet_freshest_heartbeat_age_seconds` / `oldest_active_heartbeat_age_seconds`：
   整体 heartbeat 新鲜度边界；无样本输出 `NaN`。
 - `worker_queue_ready|active_workers|total_capacity|freshest_heartbeat_age_seconds{queue=...}`：
@@ -123,7 +125,7 @@ clamp_min(sum by (objective) (mychat_authoritative_slo_window_eligible), 1)
 - `job_lease_expired > 0` 持续 2 分钟：page；一次短暂非零可由进程退出并被
   reclaim，持续非零表示恢复循环失效。
 - `outbox_expired_leases > 0` 持续 2 分钟或 `outbox_dead > 0`：page；dead-letter
-  必须人工判断是否重放，禁止直接改表绕过 lock version。
+  必须人工判断清理副作用是否已发生再决定是否重放，禁止直接改表绕过 lock version；若出现 lifecycle topic，应先按 schema/runtime contract 异常处理，而不是启动一个虚假的 publisher。
 - `asset_cleanup{condition="dead"} > 0` 或 `orphan > 0`：page；优先核对私有
   Storage 对象与 receipt，再通过受控补偿流程重投。
 - `billing_snapshot_age_seconds > 600`、`billing_mismatches_total > 0`、

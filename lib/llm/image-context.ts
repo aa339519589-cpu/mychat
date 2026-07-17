@@ -3,7 +3,7 @@ import type { RawMsg } from './types'
 import { imageRefsFromMessage } from './context'
 import { summarizeImages } from '@/lib/mimo'
 import { log } from '@/lib/logger'
-import type { SupabaseClient } from '@supabase/supabase-js'
+import type { SupabaseClient } from '@/lib/supabase/types'
 
 type SummaryOptions = {
   supabase: SupabaseClient | null

@@ -1,4 +1,4 @@
-import type { SupabaseClient } from "@supabase/supabase-js"
+import type { SupabaseClient } from "@/lib/supabase/types"
 import type { RestoreResult, SnapshotRecord } from "../types"
 import { listSnapshotsFromArtifacts } from "./artifact"
 import { listLocalSnapshotRecords } from "./cas-local"

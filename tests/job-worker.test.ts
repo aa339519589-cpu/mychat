@@ -3,6 +3,7 @@ import test from 'node:test'
 import type { JobRecord } from '../lib/jobs/contracts'
 import type { JobRepository } from '../lib/jobs/repository'
 import { JobWorker, nextJobBackoff, type JobHandler } from '../lib/jobs/worker'
+import { jitteredJobInterval } from '../lib/jobs/worker-config'
 import { JobRuntimeError } from '../lib/jobs/errors'
 
 function claimedJob(overrides: Partial<JobRecord> = {}): JobRecord {
@@ -350,6 +351,55 @@ test('graceful shutdown stops claiming then aborts an over-grace active handler'
   assert.equal(accountedTokens, 5)
 })
 
+test('worker schedules a two-minute lease renewal near one third with jitter', async () => {
+  const shutdown = new AbortController()
+  let now = 0
+  let claims = 0
+  const waits: number[] = []
+  const repository = fakeRepository({
+    claim: async () => {
+      claims += 1
+      return claims === 1
+        ? {
+            acquired: true,
+            reason: 'claimed',
+            job: claimedJob({
+              lease: { owner: 'worker-1', version: 9, expiresAt: new Date(120_000).toISOString() },
+            }),
+          }
+        : { acquired: false, reason: 'empty', job: null }
+    },
+    renew: async () => {
+      shutdown.abort()
+      return { state: 'lost', status: null, leaseExpiresAt: null, cancelRequested: false }
+    },
+  })
+  const worker = new JobWorker({
+    repository,
+    workerId: 'worker-1',
+    queues: ['chat'],
+    handlers: {
+      'chat.generation': async context => new Promise<never>((_resolve, reject) => {
+        context.signal.addEventListener('abort', () => reject(context.signal.reason), { once: true })
+      }),
+    },
+    leaseSeconds: 120,
+    now: () => now,
+    random: () => 0,
+    sleep: async (milliseconds, signal) => {
+      if (signal.aborted) throw signal.reason
+      waits.push(milliseconds)
+      now += milliseconds
+      await Promise.resolve()
+    },
+  })
+
+  await worker.run(shutdown.signal)
+
+  assert.equal(claims, 1)
+  assert.deepEqual(waits, [36_000])
+})
+
 test('renewal outage fails closed at the existing lease deadline', async () => {
   const shutdown = new AbortController()
   let now = 0
@@ -384,6 +434,7 @@ test('renewal outage fails closed at the existing lease deadline', async () => {
     },
     now: () => now,
     renewIntervalMs: 100,
+    renewJitter: 0,
     sleep: async (milliseconds, signal) => {
       if (signal.aborted) throw signal.reason
       now += milliseconds
@@ -580,7 +631,7 @@ test('an unsafe retry is terminally poisoned with a stable error code', async ()
   const shutdown = new AbortController()
   let claims = 0
   let terminalCode = ''
-  let poisonKind = ''
+  let outboxCount = -1
   const observedTerminals: string[] = []
   const repository = fakeRepository({
     claim: async () => {
@@ -599,7 +650,7 @@ test('an unsafe retry is terminally poisoned with a stable error code', async ()
     }),
     finalize: async request => {
       terminalCode = request.error?.code ?? ''
-      poisonKind = request.outbox?.[0]?.kind ?? ''
+      outboxCount = request.outbox?.length ?? 0
       shutdown.abort()
       return { accepted: true, replayed: false, status: request.status, result: null, error: request.error ?? null, eventSeq: 3 }
     },
@@ -616,11 +667,19 @@ test('an unsafe retry is terminally poisoned with a stable error code', async ()
     onFinalized: ({ status }) => { observedTerminals.push(status) },
   }).run(shutdown.signal)
   assert.equal(terminalCode, 'JOB_RETRY_UNSAFE')
-  assert.equal(poisonKind, 'jobs.poison')
+  assert.equal(outboxCount, 0)
   assert.deepEqual(observedTerminals, ['failed'])
 })
 
 test('backoff grows to its cap and applies bounded jitter', () => {
   assert.deepEqual(nextJobBackoff(100, 250, 0, () => 0), { waitMs: 100, nextMs: 200 })
   assert.deepEqual(nextJobBackoff(200, 250, 0.5, () => 1), { waitMs: 250, nextMs: 250 })
+})
+
+test('lease renewal jitter stays around one third of the lease', () => {
+  const oneThirdOfTwoMinutes = 40_000
+  assert.equal(jitteredJobInterval(oneThirdOfTwoMinutes, 0.1, () => 0), 36_000)
+  assert.equal(jitteredJobInterval(oneThirdOfTwoMinutes, 0.1, () => 0.5), 40_000)
+  assert.equal(jitteredJobInterval(oneThirdOfTwoMinutes, 0.1, () => 1), 44_000)
+  assert.equal(jitteredJobInterval(oneThirdOfTwoMinutes, 0.1, () => Number.NaN), 40_000)
 })

@@ -1,6 +1,8 @@
 // Code 板块的数据访问层：会话 / 消息 / 记忆，全部独立于主聊天的表。
 // 受 RLS 隔离（用户只能读写自己的）。主聊天侧栏永远不碰这些表。
 import { createClient } from "@/lib/supabase/client"
+import { toJson } from '@/lib/supabase/json'
+import { provisionalRepositoryForSession } from '@/lib/code-agent/provisional-repository'
 
 type CodeRole = "user" | "assistant"
 
@@ -72,10 +74,11 @@ export async function fetchCodeSessions(repo: string): Promise<CodeSession[]> {
   }))
 }
 
-export async function createCodeSession(userId: string, repo: string, title: string): Promise<string | null> {
+export async function createCodeSession(userId: string, repo: string | null, title: string): Promise<string | null> {
   const supabase = createClient()
   const id = crypto.randomUUID()
-  const { error } = await supabase.from("code_sessions").insert({ id, user_id: userId, repo, title })
+  const storedRepo = repo ?? provisionalRepositoryForSession(id)
+  const { error } = await supabase.from("code_sessions").insert({ id, user_id: userId, repo: storedRepo, title })
   return error ? null : id
 }
 
@@ -114,7 +117,7 @@ export async function insertCodeMessage(
   if (msg.taskId) meta.taskId = msg.taskId
   const { error } = await supabase.from("code_messages").insert({
     id: msg.id, session_id: sessionId, user_id: userId, role: msg.role, content: msg.content,
-    meta: Object.keys(meta).length ? meta : null,
+    meta: Object.keys(meta).length ? toJson(meta) : null,
   })
   if (error) throw new Error(`Code message persistence failed: ${error.code ?? 'unknown'}`)
 }

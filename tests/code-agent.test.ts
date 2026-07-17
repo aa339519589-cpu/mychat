@@ -171,6 +171,27 @@ test('thinking tool calls preserve reasoning_content for the next model turn', {
   assert.equal(turn.assistantMessage?.reasoning_content, '需要先读取文件。')
 })
 
+test('nested OpenAI reasoning objects preserve their text instead of stringifying the object', { concurrency: false }, async t => {
+  const originalFetch = globalThis.fetch
+  t.after(() => { globalThis.fetch = originalFetch })
+  globalThis.fetch = async () => Response.json({
+    choices: [{
+      finish_reason: 'stop',
+      message: {
+        reasoning: { content: 'nested reasoning' },
+        content: 'answer',
+      },
+    }],
+  })
+  const events: ChatEvent[] = []
+  const turn = await runTurn(
+    'https://example.com', 'key', 'model', [], [], event => { events.push(event) },
+  )
+  assert.equal(turn.reasoningContent, 'nested reasoning')
+  assert.equal(events.some(event => 'thinking' in event && event.thinking === 'nested reasoning'), true)
+  assert.doesNotMatch(turn.reasoningContent, /\[object Object\]/)
+})
+
 test('Pages is ready only after GitHub reports built and the URL responds', { concurrency: false }, async t => {
   const originalFetch = globalThis.fetch
   t.after(() => { globalThis.fetch = originalFetch })

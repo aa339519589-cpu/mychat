@@ -114,6 +114,8 @@ test("web search validates and deduplicates untrusted provider results", { concu
         { title: "One", url: "https://one.example", content: "first" },
         { title: "Duplicate", url: "https://ONE.example", content: "duplicate" },
         { title: "Two", url: "https://two.example", content: "second" },
+        { title: "Script", url: "javascript:alert(1)", content: "unsafe" },
+        { title: "Credentials", url: "https://user:pass@example.com", content: "unsafe" },
         { title: 3, url: null },
       ],
     })

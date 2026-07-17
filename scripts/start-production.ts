@@ -1,25 +1,37 @@
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  resolveRuntimeConfiguration,
+  runtimeRole,
+  type RuntimeEnvironment,
+  type RuntimeRole,
+} from '../lib/runtime-config'
 
-const RUNTIME_ROLES = new Set(['all', 'web', 'worker'])
 const FORCE_STOP_AFTER_MS = 250_000
 
-export function resolveRuntimeRole(value) {
-  const role = value?.trim() || 'all'
-  if (!RUNTIME_ROLES.has(role)) {
-    throw new Error(`Invalid MYCHAT_RUNTIME_ROLE "${role}"; expected all, web, or worker`)
-  }
-  return role
+type Service = {
+  name: 'web' | 'worker'
+  command: string
+  args: string[]
 }
 
+type StartProductionOptions = {
+  env?: RuntimeEnvironment
+  forwardedArgs?: string[]
+  execPath?: string
+  spawnChild?: typeof spawn
+}
+
+export const resolveRuntimeRole = runtimeRole
+
 export function servicesForRuntimeRole(
-  role,
+  role: RuntimeRole | string | undefined,
   forwardedArgs = process.argv.slice(2),
   execPath = process.execPath,
-) {
-  const selectedRole = resolveRuntimeRole(role)
-  const services = [
+): Service[] {
+  const selectedRole = runtimeRole(role)
+  const services: Service[] = [
     {
       name: 'web',
       command: execPath,
@@ -36,10 +48,11 @@ export function servicesForRuntimeRole(
     : services.filter(service => service.name === selectedRole)
 }
 
-export async function startProduction(options = {}) {
+export async function startProduction(options: StartProductionOptions = {}): Promise<number> {
   const environment = options.env ?? process.env
+  const configuration = resolveRuntimeConfiguration(environment)
   const services = servicesForRuntimeRole(
-    resolveRuntimeRole(environment.MYCHAT_RUNTIME_ROLE),
+    configuration.role,
     options.forwardedArgs ?? process.argv.slice(2),
     options.execPath ?? process.execPath,
   )
@@ -47,16 +60,16 @@ export async function startProduction(options = {}) {
   const children = services.map(service => ({
     ...service,
     child: spawnChild(service.command, service.args, {
-      env: environment,
+      env: environment as NodeJS.ProcessEnv,
       stdio: 'inherit',
-    }),
+    }) as ChildProcess,
   }))
 
   let stopping = false
   let exitCode = 0
-  let forceTimer
+  let forceTimer: ReturnType<typeof setTimeout> | undefined
 
-  function stop(signal = 'SIGTERM', code = 0) {
+  function stop(signal: NodeJS.Signals = 'SIGTERM', code = 0): void {
     if (stopping) return
     stopping = true
     exitCode = code
@@ -73,8 +86,8 @@ export async function startProduction(options = {}) {
     forceTimer.unref()
   }
 
-  const signalHandlers = new Map()
-  for (const signal of ['SIGTERM', 'SIGINT']) {
+  const signalHandlers = new Map<NodeJS.Signals, () => void>()
+  for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     const handler = () => stop(signal, 0)
     signalHandlers.set(signal, handler)
     process.once(signal, handler)
@@ -94,8 +107,8 @@ export async function startProduction(options = {}) {
   }
 
   try {
-    await Promise.all(children.map(({ child }) => new Promise(resolveClose => {
-      child.once('close', resolveClose)
+    await Promise.all(children.map(({ child }) => new Promise<void>(resolveClose => {
+      child.once('close', () => resolveClose())
     })))
   } finally {
     if (forceTimer) clearTimeout(forceTimer)

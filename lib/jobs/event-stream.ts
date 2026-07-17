@@ -1,4 +1,4 @@
-import type { SupabaseClient } from '@supabase/supabase-js'
+import type { SupabaseClient } from '@/lib/supabase/types'
 import { isTerminalJobStatus, type JobStatus } from './contracts'
 import { readOwnedJob, readOwnedJobEvents } from './read-model'
 

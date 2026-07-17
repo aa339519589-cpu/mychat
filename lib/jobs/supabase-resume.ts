@@ -6,10 +6,11 @@ import {
 import { JobRuntimeError } from './errors'
 import type { JobRepository } from './repository'
 import type { JobResumeReason, JobResumeResult } from './repository-types'
+import type { RpcArgs } from '@/lib/supabase/types'
 
 type Rpc = (
-  name: string,
-  args: Record<string, unknown>,
+  name: 'resume_awaiting_job',
+  args: RpcArgs<'resume_awaiting_job'>,
 ) => Promise<Record<string, unknown>>
 
 function malformed(): never {

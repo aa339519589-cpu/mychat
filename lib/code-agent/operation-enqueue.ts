@@ -1,4 +1,4 @@
-import type { SupabaseClient } from '@supabase/supabase-js'
+import type { SupabaseClient } from '@/lib/supabase/types'
 import { createConfirmationRequest } from '@/lib/agent/permissions'
 import { createAgentConfirmationToken, sha256 } from '@/lib/agent/confirmation-plan'
 import { sha256JobValue } from '@/lib/jobs/canonical'

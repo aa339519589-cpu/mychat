@@ -3,14 +3,9 @@ import type { User } from "@supabase/supabase-js"
 import type { Conversation, Message } from "@/lib/chat-data"
 import type { AttachedFile } from "@/lib/file-extract"
 import type { ClientGenerationPatch } from "@/lib/generation-client"
+import type { ChatTurnAuthority } from "@/lib/llm/chat-request"
 import type { ProjectContext } from "@/lib/project-data"
-import {
-  cacheConversationMessages,
-  deleteMessageRow,
-  deleteMessageRows,
-  insertMessage,
-  updateMessageContent,
-} from "@/lib/data"
+import { cacheConversationMessages } from "@/lib/data"
 import type { HistoryMessage, RunChatStreamResult } from "./chat-stream-service"
 import { toHistoryMessage } from "./message-history"
 
@@ -22,6 +17,8 @@ type StartStream = (
   attachments?: AttachedFile[],
   projectContext?: ProjectContext,
   generationId?: string,
+  turn?: ChatTurnAuthority,
+  onAccepted?: () => void,
 ) => Promise<RunChatStreamResult>
 
 type RegenerationContext = {
@@ -59,48 +56,51 @@ export async function regenerateLastAssistant(context: RegenerationContext) {
     .find(({ message }) => message.role === "assistant")?.index ?? -1
   if (lastAssistantIndex === -1) return
   const lastAssistantMessage = messages[lastAssistantIndex]
-  const history = messages.slice(0, lastAssistantIndex).map(toHistoryMessage)
+  const retainedMessages = messages.slice(0, lastAssistantIndex)
+  const history = retainedMessages.map(toHistoryMessage)
   const assistantMessageId = crypto.randomUUID()
-  let oldReplyDeleted = false
   const generationId = crypto.randomUUID()
+  const replacement: Message = {
+    id: assistantMessageId, role: "assistant", content: "", thinking: "", time: "此刻",
+  }
+  const authority: ChatTurnAuthority = {
+    schemaVersion: 2,
+    operation: 'replace-assistant',
+    expectedTailMessageId: lastAssistantMessage.id,
+    targetAssistantMessageId: lastAssistantMessage.id,
+  }
+  let accepted = false
   markGeneration(activeId, { status: "running", generationId, assistantMessageId, begin: true })
 
   try {
     const projectContext = await getProjectContext(active.projectId)
-    await deleteMessageRow(lastAssistantMessage.id)
-    oldReplyDeleted = true
-    const retainedMessages = messages.slice(0, lastAssistantIndex)
-    cacheConversationMessages(activeId, retainedMessages)
-    const replacement: Message = { id: assistantMessageId, role: "assistant", content: "", thinking: "", time: "此刻" }
-    setConversations(previous => previous.map(conversation => conversation.id !== activeId ? conversation : {
-      ...conversation,
-      messages: [...retainedMessages, replacement],
-    }))
-    await insertMessage(user.id, activeId, replacement)
     const controller = new AbortController()
     registerAbort(activeId, controller)
-    await startStream(history, assistantMessageId, activeId, controller, undefined, projectContext, generationId)
+    const result = await startStream(
+      history, assistantMessageId, activeId, controller, undefined, projectContext, generationId,
+      authority, () => {
+        accepted = true
+        cacheConversationMessages(activeId, [...retainedMessages, replacement])
+        setConversations(previous => previous.map(conversation => conversation.id !== activeId ? conversation : {
+          ...conversation,
+          messages: [...retainedMessages, replacement],
+        }))
+      },
+    )
+    if (!result.accepted) throw new Error('regeneration_not_accepted')
   } catch (error) {
-    console.error("handleRegenerate failed", error)
-    let restored = !oldReplyDeleted
-    if (oldReplyDeleted) {
-      try {
-        await insertMessage(user.id, activeId, lastAssistantMessage)
-        cacheConversationMessages(activeId, messages)
-        restored = true
-      } catch {
-        restored = false
-      }
+    if (!(error instanceof Error && error.message === 'regeneration_not_accepted')) {
+      console.error("handleRegenerate failed", error)
     }
     markGeneration(activeId, { status: "error", generationId, assistantMessageId })
     setConversations(previous => previous.map(conversation => conversation.id !== activeId ? conversation : {
       ...conversation,
-      messages: restored
-        ? messages.map(message => message.id === lastAssistantMessage.id
-          ? { ...message, outputWarning: "无法开始重新生成，原回复已保留。请检查网络后重试。" }
+      messages: accepted
+        ? conversation.messages.map(message => message.id === assistantMessageId
+          ? { ...message, content: message.content || "重新生成失败，请重试。", isError: true }
           : message)
-        : conversation.messages.map(message => message.id === assistantMessageId
-          ? { ...message, content: "重新生成失败，且原回复未能恢复。请刷新页面检查历史记录。", isError: true }
+        : messages.map(message => message.id === lastAssistantMessage.id
+          ? { ...message, outputWarning: "无法开始重新生成，原回复已保留。请检查网络后重试。" }
           : message),
     }))
   }
@@ -137,65 +137,58 @@ export async function regenerateFromUser(context: RegenerationContext & {
   const removed = messages.slice(userIndex + 1)
   const assistantMessageId = crypto.randomUUID()
   const assistantMessage: Message = { id: assistantMessageId, role: "assistant", content: "", thinking: "", time: "此刻" }
-  const contentChanged = nextContent !== sourceUser.content.trim()
-  let contentUpdated = false
-  let branchDeleted = false
+  const retainedMessages = [...messages.slice(0, userIndex), nextUser]
+  const expectedTailMessageId = messages.at(-1)?.id ?? sourceUser.id
+  const authority: ChatTurnAuthority = {
+    schemaVersion: 2,
+    operation: 'replace-from-user',
+    expectedTailMessageId,
+  }
+  let accepted = false
   const generationId = crypto.randomUUID()
   markGeneration(conversationId, { status: "running", generationId, assistantMessageId, begin: true })
 
   try {
     const projectContext = await getProjectContext(active.projectId)
-    if (contentChanged) {
-      await updateMessageContent(conversationId, sourceUser.id, nextContent)
-      contentUpdated = true
-    }
-    await deleteMessageRows(removed.map(message => message.id))
-    branchDeleted = true
-    const retainedMessages = [...messages.slice(0, userIndex), nextUser]
-    cacheConversationMessages(conversationId, retainedMessages)
-    setConversations(previous => previous.map(conversation => conversation.id !== conversationId ? conversation : {
-      ...conversation,
-      messages: [...retainedMessages, assistantMessage],
-    }))
-    await insertMessage(user.id, conversationId, assistantMessage)
     const controller = new AbortController()
     registerAbort(conversationId, controller)
-    await startStream(retainedMessages.map(toHistoryMessage), assistantMessageId, conversationId, controller, undefined, projectContext, generationId)
+    const result = await startStream(
+      retainedMessages.map(toHistoryMessage), assistantMessageId, conversationId, controller,
+      undefined, projectContext, generationId, authority, () => {
+        accepted = true
+        const nextMessages = [...retainedMessages, assistantMessage]
+        cacheConversationMessages(conversationId, nextMessages)
+        setConversations(previous => previous.map(conversation => conversation.id !== conversationId ? conversation : {
+          ...conversation,
+          messages: nextMessages,
+        }))
+      },
+    )
+    if (!result.accepted) throw new Error('regeneration_not_accepted')
   } catch (error) {
-    console.error("regenerateFromUserMessage failed", error)
-    let restored = !branchDeleted
-    if (branchDeleted) {
-      try {
-        if (contentUpdated) await updateMessageContent(conversationId, sourceUser.id, sourceUser.content)
-        for (const message of removed) await insertMessage(user.id, conversationId, message)
-        cacheConversationMessages(conversationId, messages)
-        restored = true
-      } catch {
-        restored = false
-      }
+    if (!(error instanceof Error && error.message === 'regeneration_not_accepted')) {
+      console.error("regenerateFromUserMessage failed", error)
     }
     markGeneration(conversationId, { status: "error" })
     setConversations(previous => previous.map(conversation => conversation.id !== conversationId ? conversation : {
       ...conversation,
-      messages: restored ? (() => {
+      messages: accepted ? conversation.messages.map(message => message.id === assistantMessageId ? {
+        ...message,
+        content: message.content || "重新回复失败，请重试。",
+        isError: true,
+      } : message) : (() => {
         const warningTarget = [...removed].reverse().find(message => message.role === "assistant")?.id
-        const restoredMessages = messages.map(message => message.id === sourceUser.id && contentUpdated && !branchDeleted
-          ? { ...message, content: nextContent }
-          : message.id === warningTarget
+        const unchangedMessages = messages.map(message => message.id === warningTarget
             ? { ...message, outputWarning: "无法开始重新回复，原有内容已保留。请检查网络后重试。" }
             : message)
-        return warningTarget ? restoredMessages : [...restoredMessages, {
+        return warningTarget ? unchangedMessages : [...unchangedMessages, {
           id: assistantMessageId,
           role: "assistant" as const,
           content: "无法开始重新回复，请检查网络后重试。",
           time: "此刻",
           isError: true,
         }]
-      })() : conversation.messages.map(message => message.id === assistantMessageId ? {
-        ...message,
-        content: "重新回复失败，且原有分支未能恢复。请刷新页面检查历史记录。",
-        isError: true,
-      } : message),
+      })(),
     }))
   }
 }

@@ -1,6 +1,7 @@
 import type { Message } from "@/lib/chat-data"
 import { hasInlineGeneratedMedia, normalizeGeneratedMediaList } from "@/lib/generated-media"
 import { generationTerminalWarning, normalizeMessageGeneration } from "@/lib/generation-message"
+import { normalizeSearchNotes } from "@/lib/search-notes"
 import { isRecord } from "@/lib/unknown-value"
 
 // ───────────── 本地消息缓存 ─────────────
@@ -37,29 +38,53 @@ function cacheKey(conversationId: string) {
   return `${MESSAGE_CACHE_PREFIX}${conversationId}`
 }
 
+function cachedStatusFields(
+  value: Record<string, unknown>,
+  generation: Message['generation'],
+): Pick<Message, 'isError' | 'outputWarning'> {
+  return {
+    isError: generation?.status === 'failed' || value.isError === true ? true : undefined,
+    outputWarning: typeof value.outputWarning === 'string'
+      ? value.outputWarning
+      : generationTerminalWarning(generation),
+  }
+}
+
+function cachedTextFields(
+  value: Record<string, unknown>,
+): Pick<Message, 'time' | 'ts' | 'thinking' | 'imageSummary'> {
+  return {
+    time: typeof value.time === 'string' ? value.time : '',
+    ts: typeof value.ts === 'string' ? value.ts : undefined,
+    thinking: typeof value.thinking === 'string' && value.thinking ? value.thinking : undefined,
+    imageSummary: typeof value.imageSummary === 'string' ? value.imageSummary : undefined,
+  }
+}
+
+function stringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const strings = value.filter((item): item is string => typeof item === 'string')
+  return strings.length ? strings : undefined
+}
+
 function normalizeCachedMessage(value: unknown): Message | null {
   if (!isRecord(value) || typeof value.id !== "string") return null
   if (value.role !== "user" && value.role !== "assistant") return null
   if (typeof value.content !== "string") return null
   const media = normalizeGeneratedMediaList(value.media)
   const generation = normalizeMessageGeneration(value.generation)
+  const searchNotes = normalizeSearchNotes(value.searchNotes)
   return {
     id: value.id,
     role: value.role,
     content: value.content,
-    time: typeof value.time === "string" ? value.time : "",
-    ts: typeof value.ts === "string" ? value.ts : undefined,
-    isError: generation?.status === "failed" || value.isError === true ? true : undefined,
-    outputWarning: typeof value.outputWarning === "string"
-      ? value.outputWarning
-      : generationTerminalWarning(generation),
-    thinking: typeof value.thinking === "string" && value.thinking ? value.thinking : undefined,
-    images: Array.isArray(value.images) ? value.images.filter((x: unknown): x is string => typeof x === "string") : undefined,
-    imageSummary: typeof value.imageSummary === "string" ? value.imageSummary : undefined,
+    ...cachedTextFields(value),
+    ...cachedStatusFields(value, generation),
+    images: stringArray(value.images),
     media: media.length ? media : undefined,
-    memoryNotes: Array.isArray(value.memoryNotes) ? value.memoryNotes.filter((x: unknown): x is string => typeof x === "string") : undefined,
-    files: Array.isArray(value.files) ? value.files.filter((x: unknown): x is string => typeof x === "string") : undefined,
-    searchNotes: Array.isArray(value.searchNotes) ? value.searchNotes : undefined,
+    memoryNotes: stringArray(value.memoryNotes),
+    files: stringArray(value.files),
+    searchNotes: searchNotes.length ? searchNotes : undefined,
     generation,
   }
 }

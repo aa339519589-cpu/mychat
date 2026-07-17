@@ -463,6 +463,29 @@ function inspect(root, config) {
 
   const budgets = config.budgets ?? {}
   const exceptions = config.exceptions ?? {}
+  const generatedFiles = new Set(config.generatedFiles ?? [])
+  for (const path of generatedFiles) {
+    const file = files.find(candidate => candidate.path === path)
+    if (!file) {
+      violations.push(violation(
+        "stale-generated-file",
+        path,
+        undefined,
+        "generated file declaration points to a missing source file",
+      ))
+    } else if (!file.source.startsWith("// Generated ")) {
+      violations.push(violation(
+        "invalid-generated-file",
+        path,
+        1,
+        "generated files must start with an explicit generated-code marker",
+      ))
+    }
+  }
+  const localDependents = new Map(files.map((file) => [file.path, new Set()]))
+  for (const [path, dependencies] of graph) {
+    for (const dependency of dependencies) localDependents.get(dependency)?.add(path)
+  }
   const metrics = []
   for (const file of files) {
     const layer = layerFor(file.path)
@@ -470,16 +493,18 @@ function inspect(root, config) {
     const budget = { ...defaultBudget, ...(exceptions[file.path] ?? {}) }
     const lines = lineCount(file.source)
     const localDependencies = new Set((imports.get(file.path) ?? [])
+      .filter((entry) => !entry.typeOnly)
       .map((entry) => entry.target)
       .filter(Boolean)).size
     metrics.push({
       path: file.path,
       lines,
       localDependencies,
+      localDependents: localDependents.get(file.path)?.size ?? 0,
       maxLines: budget.maxLines,
       maxLocalDependencies: budget.maxLocalDependencies,
     })
-    if (lines > budget.maxLines) {
+    if (!generatedFiles.has(file.path) && lines > budget.maxLines) {
       violations.push(violation(
         "line-budget",
         file.path,
@@ -487,7 +512,7 @@ function inspect(root, config) {
         `${lines} lines exceeds the ${budget.maxLines}-line budget`,
       ))
     }
-    if (localDependencies > budget.maxLocalDependencies) {
+    if (!generatedFiles.has(file.path) && localDependencies > budget.maxLocalDependencies) {
       violations.push(violation(
         "dependency-budget",
         file.path,

@@ -3,7 +3,7 @@
 // ② 项目记忆（项目内）：remember_project / update_project_memory / forget_project → 写 project_memories 表
 import type { ToolDef, ToolContext, ToolOutcome, ToolSchema } from './types'
 import { log } from '@/lib/logger'
-import type { SupabaseClient } from '@supabase/supabase-js'
+import type { SupabaseClient } from '@/lib/supabase/types'
 import { isRecord } from '@/lib/unknown-value'
 
 type MemoryResult = { action: 'create' | 'update' | 'delete' | 'duplicate'; id?: string; content?: string; ok: boolean; timestamp?: string }
@@ -26,15 +26,21 @@ function charBigramJaccard(a: string, b: string): number {
 const DEDUP_THRESHOLD = 0.55  // Jaccard > 0.55 → 判定为重复/高度相似
 const MAX_MEMORY_CHARS = 5000
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+type MemoryTable = 'memories' | 'project_memories'
 
 // 查询已有记忆，如果有高度相似的则返回那条记忆（用于更新），否则返回 null
 async function findSimilarMemory(
-  supabase: SupabaseClient, table: string, userId: string, content: string, projectId?: string | null,
+  supabase: SupabaseClient, table: MemoryTable, userId: string, content: string, projectId?: string | null,
 ): Promise<{ id: string; content: string } | null> {
   try {
-    let query = supabase.from(table).select('id, content').eq('user_id', userId)
-    if (projectId && table === 'project_memories') query = query.eq('project_id', projectId)
-    const { data } = await query
+    const result = table === 'project_memories'
+      ? projectId
+        ? await supabase.from('project_memories').select('id, content')
+            .eq('user_id', userId).eq('project_id', projectId)
+        : null
+      : await supabase.from('memories').select('id, content').eq('user_id', userId)
+    if (!result) return null
+    const { data } = result
     if (!Array.isArray(data) || !data.length) return null
     let best: { id: string; content: string; score: number } | null = null
     for (const rawRow of data) {
@@ -50,7 +56,7 @@ async function findSimilarMemory(
   }
 }
 
-async function runMemoryOp(ctx: ToolContext, opName: string, table: string, input: unknown): Promise<MemoryResult> {
+async function runMemoryOp(ctx: ToolContext, opName: string, table: MemoryTable, input: unknown): Promise<MemoryResult> {
   const { supabase, userId, projectId } = ctx
   if (!supabase || !userId) return { action: 'create', ok: false }
   const params = isRecord(input) ? input : {}
@@ -76,9 +82,11 @@ async function runMemoryOp(ctx: ToolContext, opName: string, table: string, inpu
       }
 
       const id = crypto.randomUUID()
-      const row: Record<string, unknown> = { id, user_id: userId, content }
-      if (projectId && table === 'project_memories') row.project_id = projectId
-      const { error } = await supabase.from(table).insert(row)
+      const { error } = table === 'project_memories'
+        ? await supabase.from('project_memories').insert({
+            id, user_id: userId, project_id: projectId as string, content,
+          })
+        : await supabase.from('memories').insert({ id, user_id: userId, content })
       if (error) log.error('memory', `remember 写入失败 (${table})`, error)
       else log.info('memory', `remember 成功`, { table, projectId: projectId ?? null })
       return { action: 'create', id, content, ok: !error, timestamp: ts }
@@ -88,18 +96,29 @@ async function runMemoryOp(ctx: ToolContext, opName: string, table: string, inpu
       const content = String(params.content ?? '').trim()
       if (!UUID_RE.test(id) || !content || content.length > MAX_MEMORY_CHARS) return { action: 'update', id, content, ok: false }
       const ts = new Date().toISOString()
-      let query = supabase.from(table).update({ content, updated_at: ts }).eq('id', id).eq('user_id', userId)
-      if (table === 'project_memories') query = query.eq('project_id', projectId)
-      const { error } = await query
+      let error: unknown
+      if (table === 'project_memories') {
+        if (!projectId) return { action: 'update', id, content, ok: false }
+        ;({ error } = await supabase.from('project_memories').update({ content, updated_at: ts })
+          .eq('id', id).eq('user_id', userId).eq('project_id', projectId))
+      } else {
+        ;({ error } = await supabase.from('memories').update({ content, updated_at: ts })
+          .eq('id', id).eq('user_id', userId))
+      }
       if (error) log.error('memory', `update 失败 (${table})`, error)
       return { action: 'update', id, content, ok: !error, timestamp: ts }
     }
     if (opName === 'forget' || opName === 'forget_project') {
       const id = String(params.id ?? '')
       if (!UUID_RE.test(id)) return { action: 'delete', id, ok: false }
-      let query = supabase.from(table).delete().eq('id', id).eq('user_id', userId)
-      if (table === 'project_memories') query = query.eq('project_id', projectId)
-      const { error } = await query
+      let error: unknown
+      if (table === 'project_memories') {
+        if (!projectId) return { action: 'delete', id, ok: false }
+        ;({ error } = await supabase.from('project_memories').delete()
+          .eq('id', id).eq('user_id', userId).eq('project_id', projectId))
+      } else {
+        ;({ error } = await supabase.from('memories').delete().eq('id', id).eq('user_id', userId))
+      }
       if (error) log.error('memory', `forget 失败 (${table})`, error)
       return { action: 'delete', id, ok: !error }
     }
@@ -109,7 +128,7 @@ async function runMemoryOp(ctx: ToolContext, opName: string, table: string, inpu
   return { action: 'create', ok: false }
 }
 
-function memoryTool(name: string, description: string, table: string, schema: ToolSchema, isProject: boolean): ToolDef {
+function memoryTool(name: string, description: string, table: MemoryTable, schema: ToolSchema, isProject: boolean): ToolDef {
   return {
     name,
     description,

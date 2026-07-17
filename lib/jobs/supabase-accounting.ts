@@ -3,9 +3,14 @@ import { JobRuntimeError } from './errors'
 import type { JobRepository } from './repository'
 import type { JobAccountingMutationResult } from './repository-types'
 import { statusOf } from './supabase-parsing'
+import type { RpcArgs } from '@/lib/supabase/types'
+import { toJson } from '@/lib/supabase/json'
 
 type AccountingInput = Parameters<JobRepository['recordAccounting']>[0]
-type Rpc = (name: string, args: Record<string, unknown>) => Promise<Record<string, unknown>>
+type Rpc = (
+  name: 'record_job_accounting',
+  args: RpcArgs<'record_job_accounting'>,
+) => Promise<Record<string, unknown>>
 
 export async function recordSupabaseJobAccounting(
   input: AccountingInput,
@@ -21,7 +26,7 @@ export async function recordSupabaseJobAccounting(
     input_worker_id: input.workerId,
     input_lease_version: input.leaseVersion,
     input_attempt: input.attempt,
-    input_ledger_entries: input.ledgerEntries,
+    input_ledger_entries: toJson([...input.ledgerEntries]),
   })
   return {
     accepted: result.recorded === true,

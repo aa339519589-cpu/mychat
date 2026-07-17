@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process"
 import { createHash, randomBytes } from "node:crypto"
 import { createReadStream, existsSync, lstatSync, readlinkSync } from "node:fs"
 import { resolve, sep } from "node:path"
-import type { SupabaseClient } from "@supabase/supabase-js"
+import type { SupabaseClient } from "@/lib/supabase/types"
 
 import { getChangedFiles, workspaceRoot } from "./workspace"
 

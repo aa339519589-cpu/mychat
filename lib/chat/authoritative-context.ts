@@ -1,4 +1,4 @@
-import type { SupabaseClient } from '@supabase/supabase-js'
+import type { SupabaseClient } from '@/lib/supabase/types'
 import type { Memory } from '@/lib/memory-data'
 import type { ProjectContext } from '@/lib/project-data'
 import type { RawMsg } from '@/lib/llm/types'

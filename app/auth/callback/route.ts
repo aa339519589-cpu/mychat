@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr"
 import { cookies } from "next/headers"
 import { NextResponse, type NextRequest } from "next/server"
+import type { Database } from "@/lib/supabase/database.types"
 
 // 谷歌等第三方登录跳转回来后，在这里交换登录凭证
 export async function GET(request: NextRequest) {
@@ -10,7 +11,7 @@ export async function GET(request: NextRequest) {
 
   if (code) {
     const cookieStore = await cookies()
-    const supabase = createServerClient(
+    const supabase = createServerClient<Database>(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
       {

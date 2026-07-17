@@ -1,4 +1,4 @@
-import type { SupabaseClient } from '@supabase/supabase-js'
+import type { SupabaseClient } from '@/lib/supabase/types'
 import type { GeneratedMedia } from '@/lib/generated-media'
 import type { DurableMediaStorageDependencies } from '@/lib/generation/media-storage'
 import type { JobFence } from './contracts'

@@ -8,7 +8,13 @@ import { useWorkspaceActions } from "@/components/agent-tasks/use-workspace-acti
 
 const MONO = "ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,'Courier New',monospace"
 
-export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
+export function AgentTasksPanel({
+  onClose,
+  showHeaderClose = true,
+}: {
+  onClose: () => void
+  showHeaderClose?: boolean
+}) {
   const [tasks, setTasks] = useState<AgentTask[] | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [detail, setDetail] = useState<AgentTaskDetail | null>(null)
@@ -59,7 +65,7 @@ export function AgentTasksPanel({ onClose }: { onClose: () => void }) {
           tasks={tasks}
           loading={loading}
           error={error}
-          onClose={onClose}
+          onClose={showHeaderClose ? onClose : undefined}
           onRefresh={fetchList}
           onSelect={selectTask}
         />

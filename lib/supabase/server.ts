@@ -1,11 +1,12 @@
 import { createServerClient } from "@supabase/ssr"
 import { cookies } from "next/headers"
+import type { Database } from "./database.types"
 
 // 服务器端 Supabase 客户端：用于 API 路由和服务器组件，读取登录用户身份
 export async function createClient() {
   const cookieStore = await cookies()
 
-  return createServerClient(
+  return createServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {

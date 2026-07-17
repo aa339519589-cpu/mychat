@@ -1,5 +1,6 @@
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
+import { headers } from 'next/headers'
 import { Noto_Serif_SC, Source_Serif_4 } from 'next/font/google'
 import './globals.css'
 import './dark-background.css'
@@ -61,11 +62,13 @@ export const viewport: Viewport = {
   ],
 }
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode
 }>) {
+  // Keep HTML request-bound so Next applies Proxy's nonce to framework scripts.
+  await headers()
   return (
     <html lang="zh-CN" className={`${notoSerifSc.variable} ${sourceSerif.variable} bg-background`}>
       <body className="font-sans antialiased">

@@ -10,7 +10,10 @@ import { JobRuntimeError, isJobRuntimeError, normalizeJobError } from './errors'
 import type { JobRepository } from './repository'
 import { decideJobRetry } from './retry-policy'
 import { JobBudgetController } from './budget'
-import { boundedJobInteger, defaultJobSleep, nextJobBackoff } from './worker-config'
+import {
+  boundedJobInteger, defaultJobSleep, jobLeaseRenewalSchedule,
+  nextJobBackoff, nextJobLeaseRenewalDelay,
+} from './worker-config'
 import { createActiveExecution, type ActiveExecution } from './worker-execution'
 import {
   createJobExecutionContext,
@@ -29,6 +32,7 @@ export class JobWorker {
   private readonly concurrency: number
   private readonly leaseSeconds: number
   private readonly renewIntervalMs: number
+  private readonly renewJitter: number
   private readonly idleBackoffMinimumMs: number
   private readonly idleBackoffMaximumMs: number
   private readonly backoffJitter: number
@@ -65,12 +69,9 @@ export class JobWorker {
       JOB_LIMITS.leaseSecondsMaximum,
       'job lease duration',
     )
-    this.renewIntervalMs = boundedJobInteger(
-      options.renewIntervalMs ?? Math.floor(this.leaseSeconds * 1_000 / 3),
-      100,
-      this.leaseSeconds * 500,
-      'job lease renewal interval',
-    )
+    const renewal = jobLeaseRenewalSchedule(this.leaseSeconds, options.renewIntervalMs, options.renewJitter)
+    this.renewIntervalMs = renewal.intervalMs
+    this.renewJitter = renewal.jitter
     this.idleBackoffMinimumMs = boundedJobInteger(
       options.idleBackoffMinimumMs ?? 100,
       1,
@@ -258,8 +259,16 @@ export class JobWorker {
 
   private async renewLease(fence: JobFence, execution: ActiveExecution): Promise<void> {
     while (!execution.renewStop.signal.aborted) {
+      const remainingLeaseMs = execution.leaseDeadline - this.now()
+      if (remainingLeaseMs <= 0) {
+        execution.controller.abort(new JobRuntimeError('JOB_LEASE_STALE', 'Job lease expired'))
+        return
+      }
+      const renewAfterMs = nextJobLeaseRenewalDelay(
+        remainingLeaseMs, this.renewIntervalMs, this.renewJitter, this.random,
+      )
       try {
-        await this.sleep(this.renewIntervalMs, execution.renewStop.signal)
+        await this.sleep(renewAfterMs, execution.renewStop.signal)
       } catch {
         return
       }
@@ -349,6 +358,13 @@ export class JobWorker {
       if (retry.action === 'stop') return
       terminalError = retry.error
       poisonReason = retry.poisonReason
+      if (poisonReason) log.error('jobs', 'Job exhausted safe retry policy', {
+        jobId: context.job.id,
+        type: context.job.type,
+        attempt: context.job.attempt,
+        reason: poisonReason,
+        lastErrorCode: normalized.code,
+      })
     }
     try {
       if (terminalError.code !== 'JOB_CANCEL_REQUESTED'
@@ -357,17 +373,6 @@ export class JobWorker {
         ...context.fence,
         status: terminalError.code === 'JOB_CANCEL_REQUESTED' ? 'cancelled' : 'failed',
         error: terminalError.code === 'JOB_CANCEL_REQUESTED' ? undefined : terminalError.toFailure(),
-        outbox: poisonReason ? [{
-          kind: 'jobs.poison',
-          dedupeKey: `${context.job.id}:poison`,
-          payload: {
-            jobId: context.job.id,
-            type: context.job.type,
-            reason: poisonReason,
-            attempt: context.job.attempt,
-            lastErrorCode: normalized.code,
-          },
-        }] : undefined,
       })
       const execution = this.active.get(context.job.id)
       if (!execution) throw new JobRuntimeError('JOB_LEASE_STALE', 'Job execution is no longer active')

@@ -5,7 +5,6 @@ import type { GenerationTerminalSnapshot } from "@/lib/generation/types"
 import {
   cacheGenerationTerminal,
   conversationExcerpt,
-  insertMessage,
   touchConversation,
   updateMessageFields,
 } from "@/lib/data"
@@ -32,7 +31,6 @@ export async function finalizeChatStream(options: {
   flushStreamMessage: (warning?: string) => void
 }): Promise<ClientGenerationState["status"]> {
   const {
-    userId,
     conversationId,
     assistantMessageId,
     controller,
@@ -134,22 +132,11 @@ export async function finalizeChatStream(options: {
         : conversation))
     } else {
       try {
-        try {
-          await updateMessageFields(conversationId, assistantMessageId, {
-            content: fullReply,
-            thinking: fullThinking || null,
-            media: durableMedia.length ? durableMedia : undefined,
-          })
-        } catch {
-          await insertMessage(userId, conversationId, {
-            id: assistantMessageId,
-            role: "assistant",
-            content: fullReply,
-            thinking: fullThinking || undefined,
-            media: durableMedia.length ? durableMedia : undefined,
-            time: "",
-          })
-        }
+        await updateMessageFields(conversationId, assistantMessageId, {
+          content: fullReply,
+          thinking: fullThinking || null,
+          media: durableMedia.length ? durableMedia : undefined,
+        })
         await touchConversation(conversationId)
         setConversations(previous => previous.map(conversation => conversation.id === conversationId
           ? { ...conversation, excerpt: conversationExcerpt(fullReply), date: "今日" }

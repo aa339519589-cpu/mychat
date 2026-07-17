@@ -3,7 +3,7 @@ import test from 'node:test'
 import {
   resolveRuntimeRole,
   servicesForRuntimeRole,
-} from '../scripts/start-production.mjs'
+} from '../scripts/start-production'
 
 test('production runtime role defaults to the co-located deployment', () => {
   assert.equal(resolveRuntimeRole(undefined), 'all')

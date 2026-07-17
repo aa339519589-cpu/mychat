@@ -1,0 +1,2 @@
+# Deterministic hexadecimal runtime-config fixture from the platform-v2 commit.
+bc9f120b838462ba0a2522e4b9a551d7b173e03d:tests/runtime-config.test.ts:generic-api-key:10

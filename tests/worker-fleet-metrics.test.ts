@@ -84,7 +84,7 @@ test('worker fleet reader calls the bounded readiness RPC and fails closed', asy
   })
   assert.equal(parsed.ready, true)
   assert.deepEqual(calls, [{
-    name: 'read_job_worker_readiness_v2',
+    name: 'read_job_worker_readiness_v3',
     args: {
       input_required_queues: [...WORKER_FLEET_QUEUES],
       input_max_age_seconds: 20,

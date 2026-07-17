@@ -7,7 +7,7 @@ import test from "node:test"
 
 const checker = resolve(process.cwd(), "scripts/check-architecture.mjs")
 
-function runFixture(files: Record<string, string>) {
+function runFixture(files: Record<string, string>, arguments_: string[] = []) {
   const root = mkdtempSync(join(tmpdir(), "mychat-architecture-"))
   try {
     for (const [path, source] of Object.entries(files)) {
@@ -15,7 +15,7 @@ function runFixture(files: Record<string, string>) {
       mkdirSync(dirname(absolutePath), { recursive: true })
       writeFileSync(absolutePath, source)
     }
-    return spawnSync(process.execPath, [checker, "--root", root], { encoding: "utf8" })
+    return spawnSync(process.execPath, [checker, "--root", root, ...arguments_], { encoding: "utf8" })
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -29,6 +29,58 @@ test("architecture checker accepts a valid dependency direction", () => {
   })
 
   assert.equal(result.status, 0, result.stderr)
+})
+
+test("architecture checker reports local dependency fan-in and fan-out", () => {
+  const result = runFixture({
+    "lib/domain.ts": "export const answer = 42\n",
+    "components/result.tsx": "import { answer } from '@/lib/domain'\nexport const Result = () => <p>{answer}</p>\n",
+    "app/page.tsx": "import { Result } from '@/components/result'\nimport { answer } from '@/lib/domain'\nexport default function Page() { return <Result key={answer} /> }\n",
+  }, ["--json"])
+
+  assert.equal(result.status, 0, result.stderr)
+  const report = JSON.parse(result.stdout) as {
+    metrics: Array<{ path: string; localDependencies: number; localDependents: number }>
+  }
+  const metrics = new Map(report.metrics.map(metric => [metric.path, metric]))
+  assert.equal(metrics.get("lib/domain.ts")?.localDependencies, 0)
+  assert.equal(metrics.get("lib/domain.ts")?.localDependents, 2)
+  assert.equal(metrics.get("app/page.tsx")?.localDependencies, 2)
+  assert.equal(metrics.get("app/page.tsx")?.localDependents, 0)
+})
+
+test("architecture dependency budgets count runtime imports rather than type-only contracts", () => {
+  const typeModules = Object.fromEntries(Array.from({ length: 19 }, (_, index) => [
+    `lib/type-${index}.ts`,
+    `export type Type${index} = string\n`,
+  ]))
+  const imports = Array.from({ length: 19 }, (_, index) =>
+    `import type { Type${index} } from '@/lib/type-${index}'`).join("\n")
+  const result = runFixture({
+    ...typeModules,
+    "components/types.tsx": `${imports}\nexport const Types = () => null\n`,
+  })
+
+  assert.equal(result.status, 0, result.stderr)
+})
+
+test("architecture budgets exempt only declared and marked generated source", () => {
+  const generated = `// Generated fixture.\n${Array.from({ length: 401 }, (_, index) =>
+    `export type Value${index} = string`).join("\n")}\n`
+  const accepted = runFixture({
+    "app/page.tsx": "import type { Value0 } from '@/lib/generated'\nexport default function Page() { return null as Value0 | null }\n",
+    "lib/generated.ts": generated,
+    "scripts/architecture-baseline.json": JSON.stringify({ generatedFiles: ["lib/generated.ts"] }),
+  })
+  assert.equal(accepted.status, 0, accepted.stderr)
+
+  const rejected = runFixture({
+    "app/page.tsx": "import type { Value0 } from '@/lib/generated'\nexport default function Page() { return null as Value0 | null }\n",
+    "lib/generated.ts": generated.replace("// Generated fixture.", "// Handwritten fixture."),
+    "scripts/architecture-baseline.json": JSON.stringify({ generatedFiles: ["lib/generated.ts"] }),
+  })
+  assert.equal(rejected.status, 1)
+  assert.match(rejected.stderr, /invalid-generated-file/)
 })
 
 test("architecture checker rejects library modules owned only by tests", () => {

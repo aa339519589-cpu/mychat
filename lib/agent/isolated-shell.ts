@@ -3,7 +3,7 @@ import {
   chmodSync, existsSync, mkdirSync, unlinkSync, writeFileSync,
 } from "fs"
 import { dirname } from "path"
-import type { SupabaseClient } from "@supabase/supabase-js"
+import type { SupabaseClient } from "@/lib/supabase/types"
 import { createWorkspaceSnapshot } from "./snapshot"
 import { workspacePath } from "./workspace"
 import { redactSensitive, validatePath } from "./path-security"

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "job-worker.ts",
+    "tests/**/*.test.ts",
+    "e2e/**/*.spec.ts"
+  ],
+  "project": [
+    "**/*.{js,jsx,ts,tsx,mjs,cjs}",
+    "!node_modules/**",
+    "!.next/**",
+    "!coverage/**"
+  ],
+  "ignore": [
+    "public/pdf.worker.min.mjs"
+  ],
+  "ignoreBinaries": [
+    "which"
+  ],
+  "ignoreDependencies": [
+    "shadcn",
+    "tailwindcss",
+    "tw-animate-css"
+  ]
+}

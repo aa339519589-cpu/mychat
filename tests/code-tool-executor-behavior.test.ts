@@ -57,6 +57,28 @@ function temporaryWorkspace(t: test.TestContext) {
   return { root, taskId, userId }
 }
 
+function workspaceExecutor(current: ReturnType<typeof temporaryWorkspace>) {
+  const events: ToolEvent[] = []
+  const progress = createCodeRunProgress(() => Boolean(getWorkspaceDiff(current.taskId, current.userId)))
+  const execute = createCodeToolExecutor({
+    repo: 'owner/repo',
+    login: 'architect',
+    token: 'test-token',
+    defaultBranch: 'main',
+    repoIsPrivate: false,
+    supabase: null,
+    userId: current.userId,
+    wsReady: true,
+    wsTaskId: current.taskId,
+    wsUserId: current.userId,
+    tavilyApiKey: '',
+    emit: event => events.push(event as ToolEvent),
+    state: progress.toolState,
+    canExecute: false,
+  })
+  return { events, execute, progress }
+}
+
 test('non-workspace tools build a complete deterministic publication plan', async () => {
   const { events, execute, progress } = executor()
 
@@ -109,8 +131,8 @@ test('tool validation and policy gates fail early without external side effects'
     path: 'a', old_string: 'old', new_string: 'new',
   }), '尚未选择仓库。')
   assert.equal(await fresh.execute('execute', {}), '缺少 command。')
-  assert.equal(await fresh.execute('execute', { command: 'npm test' }), '命令执行需要已就绪的隔离 workspace。')
-  assert.equal(await fresh.execute('verify', {}), 'verify 需要 workspace。')
+  assert.equal(await fresh.execute('execute', { command: 'npm test' }), '当前运行环境未启用命令执行。')
+  assert.equal(await fresh.execute('verify', {}), '当前运行环境未启用项目验证。')
   assert.equal(await fresh.execute('apply_patch', {}), '缺少 patch 内容。')
   assert.match(await fresh.execute('apply_patch', { patch: 'diff --git a/a b/a' }), /需要 workspace/)
   assert.equal(await fresh.execute('git_diff', {}), 'git_diff 需要 workspace。')
@@ -197,24 +219,7 @@ test('remote repository tools bind plans to fetched GitHub content', { concurren
 
 test('workspace tools perform real git-backed mutations and enforce file risk gates', async t => {
   const current = temporaryWorkspace(t)
-  const events: ToolEvent[] = []
-  const progress = createCodeRunProgress(() => Boolean(getWorkspaceDiff(current.taskId, current.userId)))
-  const execute = createCodeToolExecutor({
-    repo: 'owner/repo',
-    login: 'architect',
-    token: 'test-token',
-    defaultBranch: 'main',
-    repoIsPrivate: false,
-    supabase: null,
-    userId: current.userId,
-    wsReady: true,
-    wsTaskId: current.taskId,
-    wsUserId: current.userId,
-    tavilyApiKey: '',
-    emit: event => events.push(event as ToolEvent),
-    state: progress.toolState,
-    canExecute: false,
-  })
+  const { events, execute, progress } = workspaceExecutor(current)
 
   assert.match(await execute('list_files', {}), /src\/app\.ts/)
   assert.match(await execute('search_files', { query: 'NEEDLE' }), /src\/app\.ts:1/)
@@ -275,7 +280,7 @@ test('workspace tools perform real git-backed mutations and enforce file risk ga
   assert.notEqual(progress.toolState.getVerifiedDiff(), null)
   assert.match(await execute('publish', {}), /任务数据库暂时不可用/)
   assert.match(await execute('complete', {}), /未发布改动/)
-  assert.match(await execute('verify', {}), /需要 workspace/)
+  assert.match(await execute('verify', {}), /未启用项目验证/)
 
   execFileSync('git', ['add', '-A'], { cwd: current.root })
   execFileSync('git', ['commit', '-qm', 'test mutations'], { cwd: current.root })

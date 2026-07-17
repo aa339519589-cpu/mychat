@@ -1,4 +1,6 @@
-import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { createClient } from '@supabase/supabase-js'
+import type { SupabaseClient } from './types'
+import type { Database } from './database.types'
 
 type ServerEnvironment = {
   [key: string]: string | undefined
@@ -40,7 +42,7 @@ export function createAdminClient(): SupabaseClient | null {
   if (!config) return null
   if (globalAdmin.__mychatSupabaseAdmin) return globalAdmin.__mychatSupabaseAdmin
 
-  globalAdmin.__mychatSupabaseAdmin = createClient(config.url, config.serviceRoleKey, {
+  globalAdmin.__mychatSupabaseAdmin = createClient<Database>(config.url, config.serviceRoleKey, {
     auth: {
       autoRefreshToken: false,
       detectSessionInUrl: false,

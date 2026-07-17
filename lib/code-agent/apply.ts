@@ -1,4 +1,4 @@
-import type { SupabaseClient } from '@supabase/supabase-js'
+import type { SupabaseClient } from '@/lib/supabase/types'
 import type { CodeApplyOutcome } from './apply-contract'
 import type { CodeApplyRequest } from './apply-request'
 import { requestOrEnqueueAgentOperation } from './operation-enqueue'

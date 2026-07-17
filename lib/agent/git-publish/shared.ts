@@ -55,7 +55,9 @@ export async function ensureWorkspaceGitIdentity(
 }
 
 export function isValidGitHubRepository(repo: string): boolean {
-  return /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)
+  if (repo.length > 201 || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) return false
+  const [owner, name] = repo.split("/")
+  return Boolean(owner && name && owner !== "." && owner !== ".." && name !== "." && name !== "..")
 }
 
 export function commandError(error: unknown): string {

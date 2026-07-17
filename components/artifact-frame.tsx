@@ -1,8 +1,16 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import {
+  artifactContentSecurityPolicy,
+  createArtifactToken,
+  parseArtifactFrameMessage,
+  sanitizeArtifactHtml,
+} from "@/lib/artifact-security"
 
 type Colors = { fg: string; bg: string; scheme: "light" | "dark" }
+
+const MAX_ARTIFACT_HTML_CHARS = 1_000_000
 
 function readTheme(): Colors {
   if (typeof document === "undefined") return { fg: "#1a1a1a", bg: "#ffffff", scheme: "light" }
@@ -11,7 +19,7 @@ function readTheme(): Colors {
   const bg = cs.getPropertyValue("--background").trim() || "#ffffff"
   const root = document.documentElement
   const dark = root.classList.contains("dark") ||
-    (!root.classList.contains("light") && typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches)
+    (!root.classList.contains("light") && window.matchMedia("(prefers-color-scheme: dark)").matches)
   return { fg, bg, scheme: dark ? "dark" : "light" }
 }
 
@@ -20,9 +28,7 @@ function responsiveGuardCss(inline: boolean): string {
 html,body{width:100%;max-width:100%;overflow-x:hidden;overscroll-behavior:contain;}
 body{touch-action:pan-y;}
 img,svg,canvas,video{max-width:100%;}
-img,video{height:auto;}
-svg{height:auto;}
-canvas{height:auto;}
+img,video,svg,canvas{height:auto;}
 #__v{width:100%;max-width:100%;overflow:hidden;}
 #__v>*{max-width:100%;}
 @media (max-width:767px){
@@ -32,112 +38,101 @@ canvas{height:auto;}
   pre{max-width:100%;overflow-x:auto;}
   [style*="min-width"]{min-width:0!important;}
   [style*="width"]{max-width:100%!important;}
-}
-`
-}
-
-function mobileFitScript(): string {
-  return `
-<script>(function(){
-var WRAP_ID="__artifact_mobile_fit_wrap";
-var fitting=false;
-function shouldFit(){return window.matchMedia&&window.matchMedia("(max-width: 767px)").matches;}
-function ensureWrap(){
-  if(!document.body) return null;
-  var wrap=document.getElementById(WRAP_ID);
-  if(wrap) return wrap;
-  wrap=document.createElement("div");
-  wrap.id=WRAP_ID;
-  wrap.style.transformOrigin="top left";
-  while(document.body.firstChild) wrap.appendChild(document.body.firstChild);
-  document.body.appendChild(wrap);
-  return wrap;
-}
-function fit(){
-  if(fitting) return;
-  fitting=true;
-  requestAnimationFrame(function(){
-    fitting=false;
-    var wrap=ensureWrap();
-    if(!wrap) return;
-    wrap.style.transform="";
-    wrap.style.width="100%";
-    document.body.style.overflowX="hidden";
-    document.documentElement.style.overflowX="hidden";
-    document.body.style.minHeight="";
-    if(!shouldFit()) return;
-    var vw=document.documentElement.clientWidth||window.innerWidth||0;
-    if(!vw) return;
-    var natural=Math.max(wrap.scrollWidth,wrap.offsetWidth,document.body.scrollWidth,document.documentElement.scrollWidth);
-    if(natural<=vw+2) return;
-    var scale=Math.max(0.35,Math.min(1,vw/natural));
-    wrap.style.width=natural+"px";
-    wrap.style.transform="scale("+scale+")";
-    document.body.style.minHeight=Math.ceil(wrap.scrollHeight*scale)+"px";
-  });
-}
-window.addEventListener("load",function(){fit();[120,360,900,1800].forEach(function(t){setTimeout(fit,t);});});
-window.addEventListener("resize",fit);
-window.addEventListener("orientationchange",fit);
-if(window.ResizeObserver){try{new ResizeObserver(fit).observe(document.documentElement);}catch(e){}}
-})();</script>`
+}`
 }
 
-// 内联模式：透明背景，高度自适应，ResizeObserver 上报
-// 面板模式：铺满容器，背景由面板控制
-function bootstrap(c: Colors, inline: boolean): string {
-  const heightScript = inline ? `
-function __report(){
-  var h=Math.max(document.body.scrollHeight,document.documentElement.scrollHeight,document.body.offsetHeight,document.body.clientHeight);
-  parent.postMessage({__art:"h",v:h},"*");
-}
-if(window.ResizeObserver){try{new ResizeObserver(__report).observe(document.body);}catch(e){}}
-window.addEventListener("load",function(){__report();[200,600,1500].forEach(function(t){setTimeout(__report,t);});});
-` : ''
+export function buildArtifactFrameDocument(colors: Colors, inline: boolean, token: string): string {
+  const csp = artifactContentSecurityPolicy(token)
   const bodyStyle = inline
     ? `html,body{background:transparent;margin:0;padding:0;color:var(--fg);font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;}`
     : `html,body{background:transparent;margin:0;padding:16px;color:var(--fg);font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;min-height:100%;}`
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="${csp}">
 <style>
-:root{--fg:${c.fg};--bg:${c.bg};color-scheme:${c.scheme};}
+:root{--fg:${colors.fg};--bg:${colors.bg};color-scheme:${colors.scheme};}
 ${bodyStyle}
 *{box-sizing:border-box;}
 ${responsiveGuardCss(inline)}
 </style>
-<script>(function(){
-${heightScript}
-var __previewTimer=0,__previewHtml="";
-function __applyPreview(){var v=document.getElementById("__v");if(v){v.innerHTML=__previewHtml;${inline ? 'if(typeof __report==="function")setTimeout(__report,80);' : ''}}}
-window.addEventListener("message",function(e){var d=e.data||{};
-if(d.__art==="preview"){
-  __previewHtml=d.html||"";
-  if(!__previewTimer){__previewTimer=setTimeout(function(){__previewTimer=0;__applyPreview();},120);}
+<script nonce="${token}">(function(){
+"use strict";
+var TOKEN=${JSON.stringify(token)},port=null,previewTimer=0,previewHtml="",fitting=false;
+function send(message){if(port)port.postMessage(message);}
+function report(){
+  var h=Math.max(document.body.scrollHeight,document.documentElement.scrollHeight,document.body.offsetHeight,document.body.clientHeight);
+  send({type:"height",value:h});
 }
-else if(d.__art==="final"){document.open();document.write(d.html);document.close();}});
-parent.postMessage({__art:"ready"},"*");
+function shouldFit(){return window.matchMedia&&window.matchMedia("(max-width: 767px)").matches;}
+function ensureWrap(){
+  var id="__artifact_mobile_fit_wrap",wrap=document.getElementById(id);
+  if(wrap)return wrap;
+  var view=document.getElementById("__v");
+  if(!view)return null;
+  wrap=document.createElement("div");
+  wrap.id=id;
+  wrap.style.transformOrigin="top left";
+  view.parentNode.insertBefore(wrap,view);
+  wrap.appendChild(view);
+  return wrap;
+}
+function fit(){
+  if(fitting)return;
+  fitting=true;
+  requestAnimationFrame(function(){
+    fitting=false;
+    var wrap=ensureWrap();
+    if(!wrap)return;
+    wrap.style.transform="";
+    wrap.style.width="100%";
+    document.body.style.minHeight="";
+    if(shouldFit()){
+      var viewport=document.documentElement.clientWidth||window.innerWidth||0;
+      var natural=Math.max(wrap.scrollWidth,wrap.offsetWidth,document.body.scrollWidth,document.documentElement.scrollWidth);
+      if(viewport&&natural>viewport+2){
+        var scale=Math.max(0.35,Math.min(1,viewport/natural));
+        wrap.style.width=natural+"px";
+        wrap.style.transform="scale("+scale+")";
+        document.body.style.minHeight=Math.ceil(wrap.scrollHeight*scale)+"px";
+      }
+    }
+    report();
+  });
+}
+function apply(){
+  var view=document.getElementById("__v");
+  if(!view)return;
+  view.innerHTML=previewHtml;
+  [0,80,240,800].forEach(function(delay){setTimeout(fit,delay);});
+}
+function receive(event){
+  var message=event.data;
+  if(!message||typeof message!=="object"||typeof message.html!=="string"||message.html.length>${MAX_ARTIFACT_HTML_CHARS})return;
+  if(message.type==="preview"){
+    previewHtml=message.html;
+    if(!previewTimer)previewTimer=setTimeout(function(){previewTimer=0;apply();},120);
+  }else if(message.type==="final"){
+    if(previewTimer){clearTimeout(previewTimer);previewTimer=0;}
+    previewHtml=message.html;
+    apply();
+  }
+}
+function connect(event){
+  var message=event.data;
+  if(event.source!==parent||!message||message.type!=="connect"||message.token!==TOKEN||event.ports.length!==1)return;
+  window.removeEventListener("message",connect);
+  port=event.ports[0];
+  port.onmessage=receive;
+  port.start();
+  send({type:"ready"});
+  report();
+}
+window.addEventListener("message",connect);
+window.addEventListener("resize",fit);
+window.addEventListener("orientationchange",fit);
+if(window.ResizeObserver){try{new ResizeObserver(fit).observe(document.documentElement);}catch(error){}}
 })();</script>
 </head><body><div id="__v"></div></body></html>`
-}
-
-// 完成时写入完整文档（注入主题变量 + 可选的高度上报脚本 + 移动端缩放保护）
-function prepareFinal(raw: string, c: Colors, inline: boolean): string {
-  const heightScript = inline ? `
-<script>(function(){
-function __report(){var h=Math.max(document.body.scrollHeight,document.documentElement.scrollHeight,document.body.offsetHeight);parent.postMessage({__art:"h",v:h},"*");}
-if(window.ResizeObserver){try{new ResizeObserver(__report).observe(document.body);}catch(e){}}
-window.addEventListener("load",function(){__report();[300,800,2000].forEach(function(t){setTimeout(__report,t);});});
-})();</script>` : ''
-  const inject = `<style>
-:root{--fg:${c.fg};--bg:${c.bg};color-scheme:${c.scheme};}
-html,body{background:transparent!important;${inline ? 'margin:0;padding:0;' : ''}color:var(--fg);}
-*{box-sizing:border-box;}
-${responsiveGuardCss(inline)}
-</style>${heightScript}${mobileFitScript()}`
-  if (/<head[^>]*>/i.test(raw)) return raw.replace(/(<head[^>]*>)/i, `$1${inject}`)
-  if (/<\/head>/i.test(raw)) return raw.replace(/<\/head>/i, `${inject}</head>`)
-  if (/<body[^>]*>/i.test(raw)) return raw.replace(/(<body[^>]*>)/i, `$1${inject}`)
-  return inject + raw
 }
 
 export function ArtifactFrame({
@@ -148,46 +143,75 @@ export function ArtifactFrame({
   inline?: boolean
 }) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
+  const portRef = useRef<MessagePort | null>(null)
+  const finalizedRef = useRef(false)
   const [height, setHeight] = useState(40)
   const [ready, setReady] = useState(false)
-  const finalizedRef = useRef(false)
+  const [token, setToken] = useState<string | null>(null)
   const colors = useMemo(() => readTheme(), [])
-  const srcDoc = useMemo(() => bootstrap(colors, inline), [colors, inline])
+  const safeRaw = useMemo(
+    () => sanitizeArtifactHtml(raw.slice(0, MAX_ARTIFACT_HTML_CHARS)),
+    [raw],
+  )
+  const srcDoc = useMemo(
+    () => token ? buildArtifactFrameDocument(colors, inline, token) : "",
+    [colors, inline, token],
+  )
 
   useEffect(() => {
-    function onMsg(e: MessageEvent) {
-      if (e.source !== iframeRef.current?.contentWindow) return
-      const d = e.data || {}
-      if (d.__art === "ready") setReady(true)
-      else if (d.__art === "h" && typeof d.v === "number") {
-        if (inline) setHeight(Math.max(40, Math.min(d.v + 4, 2400)))
+    setToken(createArtifactToken())
+    return () => {
+      portRef.current?.close()
+      portRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!done) finalizedRef.current = false
+  }, [done])
+
+  const connectFrame = useCallback(() => {
+    const frame = iframeRef.current
+    if (!token || !frame?.contentWindow) return
+    portRef.current?.close()
+    setReady(false)
+    finalizedRef.current = false
+    const channel = new MessageChannel()
+    channel.port1.onmessage = event => {
+      const message = parseArtifactFrameMessage(event.data)
+      if (message?.type === "ready") setReady(true)
+      else if (message?.type === "height" && inline) {
+        setHeight(Math.max(40, Math.min(message.value + 4, 2400)))
       }
     }
-    window.addEventListener("message", onMsg)
-    return () => window.removeEventListener("message", onMsg)
-  }, [inline])
+    channel.port1.start()
+    portRef.current = channel.port1
+    // Sandboxed srcdoc has an opaque origin, so the one-time transferable-port
+    // handshake requires "*". The embedded random token and exact window bind it.
+    frame.contentWindow.postMessage({ type: "connect", token }, "*", [channel.port2])
+  }, [inline, token])
 
-  // 流式预览：降频写入 iframe，避免模型生成 artifact 时拖住主线程和滚动。
   useEffect(() => {
     if (!ready || done) return
     const timer = window.setTimeout(() => {
-      iframeRef.current?.contentWindow?.postMessage({ __art: "preview", html: raw }, "*")
+      portRef.current?.postMessage({ type: "preview", html: safeRaw })
     }, 80)
     return () => window.clearTimeout(timer)
-  }, [raw, ready, done])
+  }, [safeRaw, ready, done])
 
-  // 完成：document.write 完整文档，CDN 脚本执行
   useEffect(() => {
     if (!ready || !done || finalizedRef.current) return
-    iframeRef.current?.contentWindow?.postMessage({ __art: "final", html: prepareFinal(raw, colors, inline) }, "*")
+    portRef.current?.postMessage({ type: "final", html: safeRaw })
     finalizedRef.current = true
-  }, [ready, done, raw, colors, inline])
+  }, [ready, done, safeRaw])
 
   return (
     <iframe
       ref={iframeRef}
       srcDoc={srcDoc}
       sandbox="allow-scripts"
+      referrerPolicy="no-referrer"
+      onLoad={connectFrame}
       title="渲染"
       scrolling={inline ? "no" : "auto"}
       className="w-full border-0"
