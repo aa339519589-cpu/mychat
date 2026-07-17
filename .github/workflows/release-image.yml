@@ -282,12 +282,14 @@ jobs:
         id: phase
         run: |
           if EXPECTED_WORKER_DRAINING=true \
-            HEALTH_CHECK_ATTEMPTS=1 HEALTH_CHECK_TIMEOUT_MS=20000 \
+            HEALTH_CHECK_ATTEMPTS=3 HEALTH_CHECK_RETRY_MS=5000 \
+            HEALTH_CHECK_TIMEOUT_MS=60000 \
             node scripts/check-production-health.mjs "$PRODUCTION_READY_URL"; then
             echo "already_drained=true" >> "$GITHUB_OUTPUT"
           else
             EXPECTED_WORKER_DRAINING=false \
-              HEALTH_CHECK_ATTEMPTS=1 HEALTH_CHECK_TIMEOUT_MS=20000 \
+              HEALTH_CHECK_ATTEMPTS=3 HEALTH_CHECK_RETRY_MS=5000 \
+              HEALTH_CHECK_TIMEOUT_MS=60000 \
               node scripts/check-production-health.mjs "$PRODUCTION_READY_URL"
             echo "already_drained=false" >> "$GITHUB_OUTPUT"
           fi
