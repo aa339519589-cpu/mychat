@@ -22,6 +22,7 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+      checks: read
       security-events: write
     steps:
       - name: Checkout
@@ -34,6 +35,34 @@ jobs:
 
       - name: Analyze
         uses: github/codeql-action/analyze@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+
+      - name: Diagnose CodeQL merge gate
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MERGE_SHA: ${{ github.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          api() {
+            curl --fail-with-body --silent --show-error \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${REPOSITORY}/$1"
+          }
+          sleep 5
+          echo '=== Head check runs ==='
+          api "commits/${HEAD_SHA}/check-runs?filter=all&per_page=100" \
+            | jq -r '.check_runs[] | [.name, .status, (.conclusion // ""), (.app.slug // ""), (.output.title // ""), (.output.summary // "")] | @tsv'
+          echo '=== Merge check runs ==='
+          api "commits/${MERGE_SHA}/check-runs?filter=all&per_page=100" \
+            | jq -r '.check_runs[] | [.name, .status, (.conclusion // ""), (.app.slug // ""), (.output.title // ""), (.output.summary // "")] | @tsv'
+          echo '=== Open CodeQL alerts attributed to PR ==='
+          api "code-scanning/alerts?state=open&tool_name=CodeQL&pr=${PR_NUMBER}&per_page=100" \
+            | jq -r '.[] | [(.number|tostring), .rule.id, (.rule.security_severity_level // .rule.severity // ""), .most_recent_instance.location.path, (.most_recent_instance.location.start_line|tostring), (.most_recent_instance.message.text // "")] | @tsv'
 
   dependency-review:
     name: Dependency review
