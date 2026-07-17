@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { parseArtifact, sanitizeSvg } from '../lib/artifact'
 import { makeContentFilter } from '../lib/llm/content-filter'
 
@@ -27,6 +28,19 @@ test('sanitizeSvg closes unfinished svg fragments defensively', () => {
   const clean = sanitizeSvg('<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"')
   assert.ok(clean?.endsWith('</svg>'))
   assert.match(clean ?? '', /<svg/)
+})
+
+test('sanitizeSvg removes executable content before live DOM rendering', () => {
+  const clean = sanitizeSvg('<svg viewBox="0 0 10 10"><script>alert(1)</script><circle onclick="alert(2)" cx="5" cy="5" r="4" /></svg>')
+  assert.doesNotMatch(clean ?? '', /<script|onclick=/i)
+  assert.match(clean ?? '', /<circle/)
+})
+
+test('inline svg artifacts stay as live DOM instead of image snapshots', () => {
+  const source = readFileSync(new URL('../components/inline-artifact.tsx', import.meta.url), 'utf8')
+  assert.match(source, /dangerouslySetInnerHTML/)
+  assert.doesNotMatch(source, /data:image\/svg\+xml/)
+  assert.doesNotMatch(source, /next\/image/)
 })
 
 test('stream filter discards an unfinished tool block instead of leaking arguments', () => {
