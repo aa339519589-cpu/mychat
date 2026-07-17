@@ -66,6 +66,7 @@ contract_files=(
   supabase/migrations/20260713260000_stream_and_asset_lifecycle.sql
   supabase/migrations/20260713270000_tenant_relational_integrity.sql
   supabase/migrations/20260713280000_revision_scoped_worker_readiness.sql
+  supabase/migrations/20260713285000_pgcrypto_digest_bridge.sql
   supabase/migrations/20260713290000_billing_reconciliation_contract.sql
   supabase/migrations/20260713300000_atomic_checkpoint_accounting.sql
 )
@@ -123,8 +124,9 @@ where status = 'dead';
 | 9 | `20260713260000_stream_and_asset_lifecycle.sql` | SSE lease、HMAC admission、payload/tenant 资源上限与生命周期，升级到 runtime v11 |
 | 10 | `20260713270000_tenant_relational_integrity.sql` | 35 个 tenant composite FK 的 expand-only 验证；无总事务，保留全部 legacy FK，只能 roll forward |
 | 11 | `20260713280000_revision_scoped_worker_readiness.sql` | readiness v2 只接受相同 revision 的队列容量，升级到 runtime v12 |
-| 12 | `20260713290000_billing_reconciliation_contract.sql` | 不可变 price quote、balance movement/journal、billing v2 cutover 和权威 reconciliation，升级到 runtime v13 |
-| 13 | `20260713300000_atomic_checkpoint_accounting.sql` | fenced checkpoint CAS 与不可变 accounting delta 同事务提交，禁用 legacy checkpoint 执行路径，升级到 runtime v14 |
+| 12 | `20260713285000_pgcrypto_digest_bridge.sql` | 为 Supabase `extensions.digest` 安装仅 `service_role` 可执行的兼容桥，保持固定 `public` search path 的账务函数可解析 |
+| 13 | `20260713290000_billing_reconciliation_contract.sql` | 不可变 price quote、balance movement/journal、billing v2 cutover 和权威 reconciliation，升级到 runtime v13 |
+| 14 | `20260713300000_atomic_checkpoint_accounting.sql` | fenced checkpoint CAS 与不可变 accounting delta 同事务提交，禁用 legacy checkpoint 执行路径，升级到 runtime v14 |
 
 ### 兼容扩展：1900 → 2300
 
@@ -230,13 +232,15 @@ order by index_name;
 
 发现 invalid index 时停止，由单独评审的恢复变更对准确名称执行 `DROP INDEX CONCURRENTLY`，再重新创建；不要删除 valid index 或绕过 FK validation。最终必须有 35 个预期 composite FK 全部 `convalidated=true`，且 `runtime_healthcheck_v12()` 在 `2800` 后才能为 true。
 
-### `2800→3000`、reconciliation 与原子 checkpoint
+### `2800→3000`、pgcrypto bridge、reconciliation 与原子 checkpoint
 
-严格按顺序执行 `2800`、`2900`、`3000`。三者完成前保持停写；`2900` 是 billing contract cutover，`3000` 将运行时 checkpoint 切换到原子记账路径，都不是普通 metrics 增量：
+严格按顺序执行 `2800`、`2850`、`2900`、`3000`。四者完成前保持停写；`2850` 修复 Supabase 扩展 schema 与固定函数 search path 的解析差异，`2900` 是 billing contract cutover，`3000` 将运行时 checkpoint 切换到原子记账路径，都不是普通 metrics 增量：
 
 ```bash
 psql -X -v ON_ERROR_STOP=1 \
   -f supabase/migrations/20260713280000_revision_scoped_worker_readiness.sql
+psql -X -v ON_ERROR_STOP=1 \
+  -f supabase/migrations/20260713285000_pgcrypto_digest_bridge.sql
 psql -X -v ON_ERROR_STOP=1 \
   -f supabase/migrations/20260713290000_billing_reconciliation_contract.sql
 psql -X -v ON_ERROR_STOP=1 \
@@ -486,4 +490,4 @@ provider 链路另做一次短断网：切断请求后观察 timeout、退避、
 4. 新代码因缺少 v14 contract 时 `/api/ready` 必须 503；补齐/修复迁移，不降低 readiness 或回退到 v13。
 5. 第二次解除 drain 部署失败时，恢复 `drain` 并重新部署同一或更新的兼容 revision；确认数据库、reconciliation 和 heartbeat 后再尝试解除。
 
-最终发布记录至少包含：冻结 PR head 与 merge SHA、全部 13 个 migration SHA-256、`1900→3000` 每个实际执行时间和操作者、`2700` autocommit/索引/约束及 legacy FK 保留证据、v14 结果、atomic checkpoint replay/冲突证据、billing snapshot 全字段摘要、readiness v2 的 merge revision 与五队列容量、两次 Render deploy ID、最终线上 revision、stream/metrics secret 已配置的非明文证据、`/api/ready` 与 metrics 结果、烟测 Job ID、任何 redrive/audit request ID、密钥轮换状态、演练证据和未消除的零付费限制。只有全部阻断项清零后才能宣布成功部署。
+最终发布记录至少包含：冻结 PR head 与 merge SHA、全部 14 个 migration SHA-256、`1900→3000` 每个实际执行时间和操作者、`2700` autocommit/索引/约束及 legacy FK 保留证据、v14 结果、atomic checkpoint replay/冲突证据、billing snapshot 全字段摘要、readiness v2 的 merge revision 与五队列容量、两次 Render deploy ID、最终线上 revision、stream/metrics secret 已配置的非明文证据、`/api/ready` 与 metrics 结果、烟测 Job ID、任何 redrive/audit request ID、密钥轮换状态、演练证据和未消除的零付费限制。只有全部阻断项清零后才能宣布成功部署。

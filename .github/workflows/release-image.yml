@@ -247,8 +247,23 @@ jobs:
             exit 1
           fi
 
+      - name: Preflight the existing production runtime
+        id: phase
+        run: |
+          if EXPECTED_WORKER_DRAINING=true \
+            HEALTH_CHECK_ATTEMPTS=1 HEALTH_CHECK_TIMEOUT_MS=20000 \
+            node scripts/check-production-health.mjs "$PRODUCTION_READY_URL"; then
+            echo "already_drained=true" >> "$GITHUB_OUTPUT"
+          else
+            EXPECTED_WORKER_DRAINING=false \
+              HEALTH_CHECK_ATTEMPTS=1 HEALTH_CHECK_TIMEOUT_MS=20000 \
+              node scripts/check-production-health.mjs "$PRODUCTION_READY_URL"
+            echo "already_drained=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Put the existing production revision into drain
         env:
+          ALREADY_DRAINED: ${{ steps.phase.outputs.already_drained }}
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
         run: |
@@ -272,13 +287,15 @@ jobs:
             "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/MYCHAT_MAINTENANCE_MODE" \
             | jq --exit-status '.value == "drain"' >/dev/null
 
-          # Restart is sent exactly once. A lost response may leave production
-          # safely drained, and a later release run can continue from that state.
-          curl --fail-with-body --silent --show-error \
-            --connect-timeout 10 --max-time 60 \
-            --header "Authorization: Bearer $RENDER_API_KEY" \
-            --request POST \
-            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/restart" >/dev/null
+          if [[ "$ALREADY_DRAINED" != "true" ]]; then
+            # Restart is sent exactly once. A lost response may leave production
+            # safely drained, and a later release run can continue from that state.
+            curl --fail-with-body --silent --show-error \
+              --connect-timeout 10 --max-time 60 \
+              --header "Authorization: Bearer $RENDER_API_KEY" \
+              --request POST \
+              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/restart" >/dev/null
+          fi
 
       - name: Require the existing production revision to be drained
         env:

@@ -1167,6 +1167,27 @@ if [[ "$MESSAGE_SEQUENCE_SHAPE" != "2:1" ]]; then
   exit 1
 fi
 
+# Reproduce Supabase's extension topology before the billing cutover, then prove
+# the service-only compatibility bridge is replayable and browser-inaccessible.
+"${PSQL[@]}" -d "$DB" <<'SQL'
+create schema if not exists extensions;
+alter extension pgcrypto set schema extensions;
+grant usage on schema extensions to anon, authenticated, service_role;
+SQL
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713285000_pgcrypto_digest_bridge.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260713285000_pgcrypto_digest_bridge.sql" >/dev/null
+PGCRYPTO_BRIDGE_STATE="$("${PSQL[@]}" -qAt -d "$DB" -c \
+  "select (to_regprocedure('public.digest(bytea,text)') is not null)::text || ':' || has_function_privilege('service_role','public.digest(bytea,text)','execute')::text || ':' || has_function_privilege('authenticated','public.digest(bytea,text)','execute')::text || ':' || has_function_privilege('anon','public.digest(bytea,text)','execute')::text")"
+if [[ "$PGCRYPTO_BRIDGE_STATE" != "true:true:false:false" ]]; then
+  echo "Supabase pgcrypto bridge privileges are invalid: ${PGCRYPTO_BRIDGE_STATE}" >&2
+  exit 1
+fi
+PGCRYPTO_BRIDGE_DIGEST="$("${PSQL[@]}" -qAt -d "$DB" -c \
+  "set role service_role; select encode(public.digest(convert_to('mychat','UTF8'),'sha256'),'hex')")"
+if [[ ! "$PGCRYPTO_BRIDGE_DIGEST" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "Supabase pgcrypto bridge did not return a SHA-256 digest" >&2
+  exit 1
+fi
 # Install the immutable billing evidence contract only after the legacy control
 # plane fixtures have exercised their pre-cutover behavior. Apply it twice
 # before the fixture, then once more after new append-only history exists.
