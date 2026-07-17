@@ -1,116 +1,226 @@
 # MyChat Platform Refactor Status
 
-Updated: 2026-07-16T23:15:36-05:00
+Updated: 2026-07-17T00:31:33-05:00
 
-## Phase 0: Re-establish the factual baseline
+This is the authoritative continuation record for the platform refactor. The
+audit in `docs/refactor/full-platform-audit.md` describes the production baseline;
+this file records later branch changes without rewriting that baseline.
 
-Status: in_progress
+## Guardrails and identity
 
-Baseline SHA: `daacffad107a6513fa6b0ee5b63e512c102cdf2b`
+- Production baseline: `daacffad107a6513fa6b0ee5b63e512c102cdf2b`.
+- Working branch: `refactor/platform-v2`.
+- Implementation head covered by this status record:
+  `88de1d61b4f30d1c55782939a887f12bde6eef13`.
+- Production is intentionally unchanged by this branch. No merge, production
+  deploy, paid Render service, schema migration, or traffic change is authorized.
+- Production rollback remains an exact-commit Render deploy plus forward-only
+  database compatibility. Destructive database rollback is prohibited.
 
-Working branch: `refactor/platform-v2`
+## Current phase
 
-Environment:
+Phase: risk containment, workflow boundary, and pre-PR verification
 
-- Host: Darwin 27.0.0 arm64
-- Node.js: 26.5.0 locally; production and CI contract: 24
-- npm: 11.17.0
-- Git: 2.54.0
-- PostgreSQL client: 16.14
-- Playwright: 1.61.1
-- Local Docker CLI: unavailable; container verification runs in GitHub Actions
+Status: local verification complete; staging evidence not started
 
-Changes:
+The first P0 request boundary and the highest-risk artifact/CSP code paths have
+branch remediations. A provider-independent workflow boundary and reversible title
+vertical slice now exist. Every local repository gate passes; CI/container/security
+and real staging evidence are still required before any production claim.
 
-- Restored the production release path before starting the platform refactor.
-- Replaced the ineffective Render restart drain transition with an exact redeploy of the currently live commit.
-- Bound the old-runtime drain check, target drain deploy, activation, image digest, migration contract, and GitHub deployment evidence to immutable identities.
-- Created this status file as the authoritative continuation record for the refactor.
-- Added `docs/refactor/platform-inventory.md` with reproducible source-size, route,
-  RPC, storage/table identifier, migration, browser-write, event-path, provider,
-  configuration, complexity, dependency, duplication, dead-code, and test inventories.
-- Extended the architecture report with local dependency fan-in so shared-module
-  concentration is measured in addition to fan-out.
+## Completed branch work
 
-Deleted legacy code or complexity:
+### Baseline and audit
 
-- Removed the release workflow's Render restart path. No application-runtime code has been deleted in phase 0 yet.
+- Re-established the exact production release at `daacffad` before refactoring.
+- Added a reproducible platform inventory and a 16-finding audit with consequences,
+  acceptance tests, and remediation order.
+- Extended architecture reporting with local dependency fan-in.
+- Current architecture check: 362 files, 901 runtime edges, zero dependency cycles.
+- Baseline inventory: 581 scanned files and 71,869 effective lines, including
+  36,665 runtime TypeScript/JavaScript lines and 14,112 migration SQL lines. These
+  are baseline measurements, not silently relabelled as post-refactor counts.
+- The implementation head changes 50 files relative to the baseline with 5,175
+  inserted and 232 deleted physical lines. That delta includes documentation,
+  tests, and operations tooling and must not be reported as backend SLOC.
 
-Tests and results:
+### Request and worker containment
 
-- Local `npm run quality`: passed, 583 tests; 82.38% lines, 80.91% branches, 87.64% functions.
-- Main Verify run `29552401035`: passed, including PostgreSQL 16 migration/replay/concurrency/SIGKILL checks, production build, six Playwright desktop/mobile tests, container runtime smoke, production audit, Trivy, SBOM, provenance, and release manifest.
-- Main Security run `29552401040`: passed CodeQL and secret scan.
-- Release Image run `29552598051`: passed.
-- Activate Production run `29552925340`: passed.
-- Manual keepalive run `29553099519`: passed strict readiness and protected authoritative metrics.
-- Architecture graph: 356 files, 891 runtime edges, zero dependency cycles;
-  highest fan-in is 43 and highest fan-out is 18.
-- Static complexity baseline: 128 functions over complexity 15 and 68 functions
-  over 80 effective lines. The current maximum is `executeTool` at 175.
-- Knip 6.27.0: zero unused files or dependencies after correcting dynamic test
-  entries; 52 unused export candidates and 50 unused type candidates remain for
-  ownership review rather than blind deletion.
-- jscpd 5.0.12 in single-worker mode: 17 clone groups, 189 duplicated lines,
-  0.54% duplication. Automatic worker mode was non-progressing and is not used
-  as evidence.
+- `/api/messages/delete` now authenticates and applies distributed rate limiting
+  before reading a body, enforces a 16 KiB streaming cap and 100-UUID limit, and
+  returns stable v1 error envelopes.
+- Tests cover declared and chunked oversized bodies, no-read admission rejection,
+  rate-limit dependency failure, validation, use-case mappings, and success.
+- Job lease renewal changed from a fixed two-second interval to one-third of the
+  lease with bounded +/-10% jitter.
+- Renewal scheduling is extracted and tested, including fail-closed behavior at
+  the existing lease deadline.
 
-Runtime evidence:
+### Artifact and application CSP
 
-- Production revision: `daacffad107a6513fa6b0ee5b63e512c102cdf2b` (`/api/*` reports the safe prefix `daacffad107a`).
-- Published image digest: `sha256:3c6ac740315424c593a095cb7b00a2fb20ee217d9616ea5e52b50ad85b30da1a`.
-- Migration contract: version `1`, count `43`, digest `e5479e42cbba7c439a1a31ec3325344625f740d2cca37c3865dc4af00243dc0d`.
-- Production `/api/live`, `/api/ready`, and `/api/health`: HTTP 200 at the target revision.
-- Strict readiness: all required checks ready; worker `draining=false`.
-- Unauthenticated `/api/metrics`: HTTP 404; authenticated release metrics passed in activation and keepalive.
-- Render active deploy: `dep-d9cq85m1a83c739kbub0`.
-- No paid Render service was created.
+- Model-controlled HTML/SVG is sanitized with `isomorphic-dompurify`; SVG uses a
+  strict tag/attribute allowlist and local-resource rules.
+- Artifact `srcdoc` embeds a deny-by-default CSP. Only the nonce-bound bootstrap
+  script can execute; connect, forms, frames, workers, objects, and base navigation
+  are denied.
+- Parent/frame communication uses a random 192-bit capability token and a one-time
+  transferable `MessageChannel`; model output cannot use the control channel.
+- `document.write`/`document.open` were removed and Mermaid explicitly uses strict
+  security mode.
+- The main application CSP is generated per request with a random nonce,
+  `strict-dynamic`, and no production `script-src 'unsafe-inline'`. HTML is dynamic
+  and marked `private, no-store`.
+- Node and desktop/mobile Chromium tests cover sanitizer policy, channel binding,
+  malicious script/network payloads, unique per-response nonces, framework script
+  nonce propagation, and a usable page under enforcement.
 
-Resource use:
+### Workflow boundary
 
-- Render currently uses one free Web Service with an embedded worker process.
-- No representative load, database connection, memory-growth, or long-soak baseline has been recorded yet.
+- Added a provider-independent `WorkflowRuntime` contract for `start`, `cancel`,
+  `signal`, `status`, and ordered `events`.
+- `PostgresWorkflowRuntime` adapts the existing durable Job control plane; no live
+  durable state or worker handler changed.
+- `chat.title` is the first vertical slice. `postgres-v1` is the default and
+  `legacy` is the immediate code-path rollback.
+- Compatibility tests prove identical execution IDs, idempotency keys, input
+  payloads and digests, queues, budgets, retries, metrics, response shape, and
+  worker handler. An initially proposed payload version field was removed because
+  it would have caused an idempotency conflict with existing title jobs.
+- ADR 0002 keeps the PostgreSQL adapter now, rejects a low-value second PostgreSQL
+  queue migration, and targets a managed TypeScript workflow staging pilot only
+  after representative measurements.
 
-Baseline size and test surface:
+### Reliability evidence tooling
 
-- 581 scanned source files and 71,869 effective lines after excluding generated
-  output, dependencies, build output, coverage, and Git metadata.
-- 36,665 effective runtime TypeScript/JavaScript lines, 14,112 canonical
-  migration SQL lines, 2,420 script lines, 17,830 Node test lines, and 124
-  Playwright lines.
-- 45 API routes, including five HTTP 410 compatibility methods; 50 distinct RPC
-  names and 25 distinct `.from(...)` database/storage identifiers.
-- 44 canonical migrations. The first 43 are sealed by migration contract version
-  1 with digest `e5479e42cbba7c439a1a31ec3325344625f740d2cca37c3865dc4af00243dc0d`.
-- 133 Node test files produce 583 passing tests. One Playwright file supplies
-  three heavily mocked scenarios across two viewports; it is not treated as a
-  real transaction E2E suite.
+- Added repeatable `ops:load`, `ops:chaos`, and `ops:soak` commands with shared
+  bounded response parsing, secret-safe errors, configuration digests, JSONL event
+  records, and atomic manifests.
+- Mock chaos covers duplicate starts, cancellation races, client-abort recovery,
+  and dependency outage recovery.
+- Soak progress is atomically checkpointed after every operation and interval;
+  resume validates configuration, counters, and cumulative latency histograms.
+- Real mode is staging-only: it requires command and environment acknowledgements,
+  exact host and revision binding, strict readiness, and separate disposable-write
+  authorization. The known production host is permanently rejected.
+- The tools do not create a remote chaos endpoint or execute arbitrary hooks.
+  Worker/database/provider faults remain external staging operator actions.
+- Mock runs verify the harness only. They are not capacity, recovery, cost, or
+  production-readiness evidence.
 
-Commits:
+## Finding disposition
 
-- `8c7dbd2` establishes the isolated refactor baseline and status record.
-- `25ce74e` adds local dependency fan-in to the architecture report and fixture.
+| ID | Branch state | Remaining acceptance work |
+| --- | --- | --- |
+| F-01 | Closed on branch | Independent review and any later production rollout remain. |
+| F-02 | Closed on branch | Independent review remains. |
+| F-03 | Open | Split Web/worker topology and independently kill/restart roles in staging. |
+| F-04 | Open | Promote one immutable CI-built digest through staging and production. |
+| F-05 | Open | Replace per-client PostgreSQL polling/admission bottleneck and measure 2x peak. |
+| F-06 | Open | Move one complete browser mutation/replay path to server authority. |
+| F-07 | Open | Generate database types, typed RPCs, runtime schemas, and drift CI. |
+| F-08 | Partially remediated | Renewal pressure is reduced; heartbeat ownership and measured RPC budget remain. |
+| F-09 | Partially remediated | Code and browser gates pass; monitored rollout evidence remains. |
+| F-10 | Open | One workflow enum is typed, but role-wide startup config remains scattered. |
+| F-11 | Open | Security browser tests are real Chromium, but critical transaction E2E is absent. |
+| F-12 | Partially remediated | Tools exist; staging, paging, restore, and 30m/6h/24h records do not. |
+| F-13 | Open | Lifecycle topics still need real consumers or removal. |
+| F-14 | Open | Tombstone traffic/deprecation evidence and schema baseline are absent. |
+| F-15 | Open | High-complexity functions have not yet been systematically reduced. |
+| F-16 | Open | Agent requested/effective budget still has two source values. |
 
-Risks and rollback:
+No open or partially remediated finding is waived by test count or by the absence
+of a current incident.
 
-- Web and worker still share one Render service and one supervisor failure domain.
-- Render rebuilds from Git even though CI attests a GHCR digest; the release record binds them, but runtime artifact identity is still split.
-- The custom PostgreSQL workflow control plane, per-client event polling, browser write authority, broad database casts, and artifact/CSP risks remain open pending measurement.
-- Production rollback remains an exact-commit Render deploy plus forward-compatible database roll-forward; destructive database rollback is prohibited.
+## Verification record
 
-Next:
+Current implementation-head local verification on 2026-07-17:
 
-1. Write `docs/refactor/full-platform-audit.md` and decision ADRs with evidence,
-   consequences, fixes, and acceptance tests.
-2. Bound and rate-limit `/api/messages/delete`, then verify oversized declared and
-   chunked bodies plus rate-limit failure behavior.
-3. Replace the explicit two-second worker lease renewal with a lease-relative,
-   jittered cadence and focused failure-timing tests.
-4. Implement the first architecture vertical slice, load/chaos/soak tooling, and
-   artifact isolation fixes before opening a draft PR. Do not merge or change
-   production from this branch.
+- `npm run quality`: passed.
+- Architecture: 362 files, 901 runtime edges, zero baseline cycles.
+- Migration contract: 43 sealed files with digest
+  `e5479e42cbba7c439a1a31ec3325344625f740d2cca37c3865dc4af00243dc0d`.
+- TypeScript, backend ESLint, and repository-wide ESLint including `ops/`: passed.
+- 139 Node test files: 611 passed, zero failed/skipped/cancelled.
+- Coverage: 82.48% lines, 80.60% branches, 87.48% functions.
+- `npm audit --omit=dev --audit-level=high`: zero production vulnerabilities.
+- PostgreSQL 16 migration/replay/concurrency/SIGKILL verification: passed.
+- Next.js 16.2.6 optimized production build and route collection: passed.
+- Playwright: 10/10 passed across desktop Chromium and Pixel 7. This includes
+  artifact network/script containment, unique application CSP nonces, framework
+  script nonce binding, and the existing shell/navigation scenarios.
+- Reliability harness regression: mock load/chaos, resumable soak extension,
+  corrupt checkpoint rejection, required staging acknowledgements, and permanent
+  production-host rejection all passed inside the 611-test suite.
 
-Blockers and minimum user decision required:
+Still pending outside local repository scope:
 
-- None for local analysis and implementation.
-- A production-like staging topology and external monitoring destinations will be required before production-grade soak, restore, paging, and topology claims can be closed.
+- Draft-PR CI on the pushed commit, including Linux container build/runtime smoke,
+  CodeQL, secret scan, Trivy, SBOM, and provenance jobs.
+- Independent review.
+- Production-like staging load, role-isolation chaos, restore, paging, and long
+  soak evidence.
+
+## Production evidence retained from the baseline
+
+- Production revision: `daacffad107a6513fa6b0ee5b63e512c102cdf2b`.
+- Published image digest:
+  `sha256:3c6ac740315424c593a095cb7b00a2fb20ee217d9616ea5e52b50ad85b30da1a`.
+- Migration contract: version 1, count 43, digest
+  `e5479e42cbba7c439a1a31ec3325344625f740d2cca37c3865dc4af00243dc0d`.
+- Baseline activation, strict readiness, protected metrics, keepalive, CodeQL,
+  secret scan, container smoke, Trivy, SBOM, and provenance checks passed for the
+  baseline release.
+- Render uses one free Web Service with the worker embedded. No paid Render service
+  was created.
+
+These retained facts do not say the refactor branch is deployed or production-
+verified.
+
+## Remaining risks and evidence gaps
+
+- Web and worker still share one service, supervisor, artifact build path, and
+  broad failure domain.
+- Render rebuilds Git source instead of executing the CI-attested GHCR digest.
+- Event delivery still polls PostgreSQL per connection and admission retains a
+  global serialized path.
+- The browser still coordinates business writes and multiple cache projections.
+- Database contracts, role config, lifecycle outbox ownership, compatibility
+  retirement, core-function complexity, and Agent budget sources remain unresolved.
+- The custom PostgreSQL workflow control plane remains operationally owned by
+  MyChat even though it now has a provider-independent boundary.
+- No representative arrival rate, database connection/QPS budget, memory-growth
+  baseline, production-like staging topology, external page, restore drill, or
+  long-soak record exists.
+
+## Commits
+
+- `8c7dbd2` Establish platform refactor baseline
+- `25ce74e` Report architecture dependency fan-in
+- `682d05b` Document platform refactor inventory
+- `ac42704` Audit platform production risks
+- `db2534d` Harden message deletion requests
+- `04417b7` Reduce job lease renewal pressure
+- `e9e6528` Extract lease renewal scheduling
+- `1dd883c` Isolate untrusted artifact rendering
+- `5e7a69f` Enforce nonce-bound application CSP
+- `5f960ff` Introduce chat title workflow boundary
+- `cb4f3d9` Record durable workflow runtime decision
+- `88de1d6` Add guarded workflow reliability harnesses
+
+## Next actions
+
+1. Commit this current-head evidence record.
+2. Push `refactor/platform-v2` and open a draft PR.
+3. Require draft-PR CI and independent review; do not merge or deploy this branch.
+4. Create a production-like staging topology before running real load/chaos/soak,
+   restore, paging, or role-isolation acceptance gates.
+5. Continue the next architecture slice only in small reversible commits with this
+   status file updated after each evidence boundary.
+
+## Blockers and required decisions
+
+- No blocker exists for local verification, branch push, or a draft PR.
+- Production-like staging resources, isolated disposable fixtures, and external
+  monitoring ownership are required before F-03/F-04/F-11/F-12 can close.
+- Merge, vendor commitment, paid service creation, production canary, and production
+  deployment require separate explicit authorization.
