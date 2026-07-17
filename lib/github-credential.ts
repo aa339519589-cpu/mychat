@@ -1,6 +1,14 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+  scryptSync,
+} from 'node:crypto'
 
 const PREFIX = 'github-credential:v1'
+const OAUTH_FALLBACK_SALT = Buffer.from(`mychat:${PREFIX}:oauth-fallback`, 'utf8')
+const derivedFallbackKeys = new Map<string, Buffer>()
 
 export type GitHubCredentialContext = {
   userId: string
@@ -15,30 +23,51 @@ function oauthFallbackSecret(): string {
   return process.env.GITHUB_CLIENT_SECRET?.trim() ?? ''
 }
 
-function configuredSecret(): string {
-  const dedicated = dedicatedSecret()
-  // GitHub OAuth already requires a server-only client secret. Reuse it only as
-  // an availability fallback when the newer dedicated credential key has not
-  // yet been provisioned on an existing production service.
-  return dedicated.length >= 32 ? dedicated : oauthFallbackSecret()
-}
-
 function previousSecret(): string {
   return process.env.AGENT_CREDENTIAL_KEY_PREVIOUS?.trim() ?? ''
 }
 
-function key(secret = configuredSecret()): Buffer {
+function dedicatedKey(secret: string): Buffer {
   return createHash('sha256')
     .update(`mychat:${PREFIX}:${secret}`)
     .digest()
 }
 
+function oauthFallbackKey(secret = oauthFallbackSecret()): Buffer | null {
+  if (secret.length < 32) return null
+  const cached = derivedFallbackKeys.get(secret)
+  if (cached) return cached
+
+  // The OAuth client secret is high-entropy server key material, but the
+  // compatibility path still uses a memory-hard KDF rather than a single hash.
+  const derived = scryptSync(secret, OAUTH_FALLBACK_SALT, 32, {
+    N: 16_384,
+    r: 8,
+    p: 1,
+    maxmem: 64 * 1024 * 1024,
+  })
+  derivedFallbackKeys.set(secret, derived)
+  return derived
+}
+
+function configuredKey(): Buffer {
+  const dedicated = dedicatedSecret()
+  if (dedicated.length >= 32) return dedicatedKey(dedicated)
+  const fallback = oauthFallbackKey()
+  if (!fallback) throw new Error('GitHub 凭据加密未配置')
+  return fallback
+}
+
 function decryptionKeys(): Buffer[] {
-  // Keep the OAuth fallback in the read set after a dedicated key is added so
-  // connections created during the compatibility window remain decryptable.
-  return [...new Set([configuredSecret(), previousSecret(), oauthFallbackSecret()])]
-    .filter(secret => secret.length >= 32)
-    .map(secret => key(secret))
+  const candidates: Buffer[] = []
+  const dedicated = dedicatedSecret()
+  const previous = previousSecret()
+  if (dedicated.length >= 32) candidates.push(dedicatedKey(dedicated))
+  if (previous.length >= 32) candidates.push(dedicatedKey(previous))
+  const fallback = oauthFallbackKey()
+  if (fallback) candidates.push(fallback)
+
+  return [...new Map(candidates.map(candidate => [candidate.toString('hex'), candidate])).values()]
 }
 
 function authenticatedData(context: GitHubCredentialContext): Buffer {
@@ -46,7 +75,7 @@ function authenticatedData(context: GitHubCredentialContext): Buffer {
 }
 
 export function githubCredentialEncryptionConfigured(): boolean {
-  return configuredSecret().length >= 32
+  return dedicatedSecret().length >= 32 || oauthFallbackSecret().length >= 32
 }
 
 export function sealGitHubCredential(
@@ -60,7 +89,7 @@ export function sealGitHubCredential(
     throw new Error('GitHub 凭据上下文无效')
   }
   const iv = randomBytes(12)
-  const cipher = createCipheriv('aes-256-gcm', key(), iv)
+  const cipher = createCipheriv('aes-256-gcm', configuredKey(), iv)
   cipher.setAAD(authenticatedData(context))
   const encrypted = Buffer.concat([cipher.update(token, 'utf8'), cipher.final()])
   return [
