@@ -29,6 +29,22 @@ test('sanitizeSvg closes unfinished svg fragments defensively', () => {
   assert.match(clean ?? '', /<svg/)
 })
 
+test('sanitizeSvg keeps safe vector primitives and removes active or remote content', () => {
+  const clean = sanitizeSvg(`<svg width="100" height="50" onload="alert(1)">
+    <defs><linearGradient id="paint"><stop offset="0" stop-color="#fff" /></linearGradient></defs>
+    <rect width="100" height="50" fill="url(#paint)" />
+    <rect width="10" height="10" fill="url(https://evil.test/paint)" style="background:url(https://evil.test/x)" />
+    <script>alert(1)</script><foreignObject><iframe src="https://evil.test"></iframe></foreignObject>
+    <image href="https://evil.test/pixel" /><use href="#paint" /><animate attributeName="x" />
+    <style>@import url(https://evil.test/style.css)</style>
+  </svg>`)
+
+  assert.match(clean ?? '', /<linearGradient id="paint">/)
+  assert.match(clean ?? '', /fill="url\(#paint\)"/)
+  assert.doesNotMatch(clean ?? '', /script|foreignObject|iframe|<image|<use|animate|<style/i)
+  assert.doesNotMatch(clean ?? '', /onload|https:|javascript:|style=/i)
+})
+
 test('stream filter discards an unfinished tool block instead of leaking arguments', () => {
   const filter = makeContentFilter()
   const visible = filter.feed('安全正文<｜DSML｜tool_calls>{"secret":"do-not-leak"}') + filter.flush()

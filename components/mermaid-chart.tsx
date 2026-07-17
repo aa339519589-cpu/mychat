@@ -53,6 +53,7 @@ export function MermaidChart({ code, done }: { code: string; done: boolean }) {
           window.matchMedia("(prefers-color-scheme: dark)").matches
         mermaid.initialize({
           startOnLoad: false,
+          securityLevel: "strict",
           theme: isDark ? "dark" : "neutral",
           fontFamily: "inherit",
           fontSize: 14,

@@ -27,6 +27,7 @@ export default defineConfig({
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,
     env: {
+      MYCHAT_RUNTIME_ROLE: 'web',
       NEXT_PUBLIC_SUPABASE_URL: 'https://example.supabase.co',
       NEXT_PUBLIC_SUPABASE_ANON_KEY: 'e2e-public-anon-key',
     },
