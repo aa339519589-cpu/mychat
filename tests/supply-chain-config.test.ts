@@ -88,6 +88,8 @@ test('release images are digest-pinned, attested, and generated only after verif
   assert.match(dockerfile, /ARG MYCHAT_BUILD_REVISION=unknown/)
   assert.match(dockerfile, /LABEL org\.opencontainers\.image\.revision=\$MYCHAT_BUILD_REVISION/)
   assert.match(dockerfile, /MYCHAT_BUILD_REVISION=\$MYCHAT_BUILD_REVISION/)
+  assert.match(dockerfile, /\/app\/supabase\/migrations\.manifest\.json \.\/supabase\/migrations\.manifest\.json/)
+  assert.match(read('scripts/smoke-production-container.sh'), /Container migration contract does not match the verified checkout/)
 })
 
 test('CI loads and starts the exact revision-bearing production container', () => {

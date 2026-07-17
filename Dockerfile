@@ -29,6 +29,7 @@ COPY --from=build --chown=node:node /app/.next ./.next
 COPY --from=build --chown=node:node /app/public ./public
 COPY --from=build --chown=node:node /app/lib ./lib
 COPY --from=build --chown=node:node /app/scripts ./scripts
+COPY --from=build --chown=node:node /app/supabase/migrations.manifest.json ./supabase/migrations.manifest.json
 COPY --from=build --chown=node:node /app/job-worker.ts /app/next.config.mjs /app/tsconfig.json ./
 
 USER node
