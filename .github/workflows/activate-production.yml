@@ -1,6 +1,13 @@
 name: Activate Production
 
 on:
+  workflow_run:
+    workflows:
+      - Release Image
+    branches:
+      - main
+    types:
+      - completed
   workflow_dispatch:
     inputs:
       revision:
@@ -26,12 +33,20 @@ jobs:
     name: Validate drain release evidence
     if: >-
       github.repository == 'aa339519589-cpu/mychat' &&
-      github.ref == 'refs/heads/main'
+      (
+        (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+        (github.event_name == 'workflow_run' &&
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.event == 'workflow_run' &&
+          github.event.workflow_run.head_branch == 'main' &&
+          github.event.workflow_run.head_repository.full_name == github.repository)
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
       digest: ${{ steps.manifest.outputs.digest }}
       drain_deployment_id: ${{ steps.manifest.outputs.drain_deployment_id }}
+      drain_release_run_id: ${{ steps.release.outputs.drain_release_run_id }}
       image: ${{ steps.manifest.outputs.image }}
       migration_contract_digest: ${{ steps.manifest.outputs.migration_contract_digest }}
       migration_contract_version: ${{ steps.manifest.outputs.migration_contract_version }}
@@ -42,9 +57,9 @@ jobs:
       - name: Resolve exact successful drain release
         id: release
         env:
-          DRAIN_RELEASE_RUN_ID: ${{ inputs.drain_release_run_id }}
+          DRAIN_RELEASE_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || inputs.drain_release_run_id }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REQUESTED_REVISION: ${{ inputs.revision }}
+          REQUESTED_REVISION: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.revision }}
         run: |
           if [[ ! "$REQUESTED_REVISION" =~ ^[0-9a-f]{40}$ ]] \
             || [[ ! "$DRAIN_RELEASE_RUN_ID" =~ ^[0-9]+$ ]]; then
@@ -88,6 +103,7 @@ jobs:
           fi
           echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
           echo "release_run_attempt=$run_attempt" >> "$GITHUB_OUTPUT"
+          echo "drain_release_run_id=$DRAIN_RELEASE_RUN_ID" >> "$GITHUB_OUTPUT"
           echo "revision=$REQUESTED_REVISION" >> "$GITHUB_OUTPUT"
 
       - name: Checkout exact activation revision
@@ -108,13 +124,13 @@ jobs:
           path: production-drain-manifest
           github-token: ${{ secrets.GITHUB_TOKEN }}
           repository: ${{ github.repository }}
-          run-id: ${{ inputs.drain_release_run_id }}
+          run-id: ${{ steps.release.outputs.drain_release_run_id }}
 
       - name: Validate release, verification, security, and deployment evidence
         id: manifest
         env:
           DRAIN_RELEASE_RUN_ATTEMPT: ${{ steps.release.outputs.release_run_attempt }}
-          DRAIN_RELEASE_RUN_ID: ${{ inputs.drain_release_run_id }}
+          DRAIN_RELEASE_RUN_ID: ${{ steps.release.outputs.drain_release_run_id }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TARGET_SHA: ${{ steps.release.outputs.revision }}
         run: |
