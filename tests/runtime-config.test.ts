@@ -7,7 +7,7 @@ import {
   type RuntimeRole,
 } from '../lib/runtime-config'
 
-const encodedSecret = '0123456789abcdef'.repeat(4)
+const encodedSecret = '0'.repeat(64)
 
 function productionEnvironment(overrides: Partial<RuntimeEnvironment> = {}): RuntimeEnvironment {
   return {
