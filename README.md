@@ -1,5 +1,86 @@
 # MyChat
 
+**Build and ship real software from your phone.**<br>
+**只用手机完成真实软件开发与上线，不需要电脑。**
+
+[Live demo](https://mychat-nm6x.onrender.com/) · [OpenAI Build Week submission notes](docs/BUILD_WEEK_SUBMISSION.md) · [Architecture](docs/architecture.md)
+
+MyChat is a mobile-first AI workspace for conversation and real software delivery. Its standout feature, **Code**, turns a phone into the command center for an end-to-end development loop backed by GitHub and an isolated cloud sandbox.
+
+## The standout feature: Code
+
+> **Your phone is the command center. The cloud sandbox is the computer.**
+
+Most coding agents still assume that a developer is sitting at a laptop with an editor and terminal open. MyChat Code removes that dependency. From a mobile browser, a user can:
+
+1. connect GitHub and open an existing repository, or describe a new project;
+2. ask the agent to inspect the codebase, plan a change, edit files, and run commands and tests in an E2B sandbox;
+3. follow durable, reconnectable progress from a phone, including after a mobile network interruption;
+4. review security-sensitive actions and the final publication step; and
+5. commit and push the result, open a Pull Request, and deploy supported projects without opening a laptop.
+
+This is not a remote desktop or a miniature mobile IDE. The user expresses intent and makes the important decisions; the cloud runtime performs the heavy development work against a real repository.
+
+## Judge quick start
+
+1. Open the [live demo](https://mychat-nm6x.onrender.com/) on a phone or desktop browser.
+2. Choose **“以游客身份继续”** (Continue as guest) to enter without creating an account.
+3. Open **“代码”** (Code) from the sidebar.
+4. Connect a GitHub account, select a disposable test repository or start a new project, then describe the outcome you want.
+5. Watch the task progress, inspect the proposed publication action, and confirm only when ready.
+
+Code requires GitHub authorization because its output is a real repository change. No sample dataset is required. The primary interface is designed for current iOS/Android browsers, with desktop Chrome, Safari, Firefox, and Edge also supported.
+
+## Built with Codex and GPT-5.6
+
+Codex running GPT-5.6 Sol was used as the implementation and review partner for the Build Week work. It accelerated architecture tracing, cross-layer implementation, PostgreSQL migrations, failure-mode analysis, test generation, CI hardening, and release verification.
+
+The human decisions remained the product direction and trust boundaries: making the phone the control surface, keeping GitHub as the publication source of truth, isolating execution in E2B, requiring confirmation before consequential publication, and choosing which reliability trade-offs were acceptable on a single free deployment service.
+
+MyChat's runtime models are configurable and are separate from the Build Week development workflow. GPT-5.6 was used through Codex to build and harden the project.
+
+## OpenAI Build Week scope
+
+MyChat existed before the event and was meaningfully extended during Build Week. The separation is intentionally explicit:
+
+| Scope | Before July 13, 2026 | Built or substantially hardened during Build Week |
+| --- | --- | --- |
+| Product | Working chat experience, model routing, history, an early mobile Code workflow, and GitHub integration | Mobile Code flow prepared for reliable real-world delivery, clearer publication state, and production judge access |
+| Agent runtime | Request-scoped agent execution and basic workspace operations | Database-authoritative jobs, leases, fencing, cancellation, checkpoint recovery, idempotent tool effects, and outbox redrive |
+| Mobile reliability | Responsive interface | Durable event history, reconnectable SSE, revision-scoped worker readiness, and recovery after transient mobile/network disconnects |
+| Security | Authentication, RLS, path boundaries, and basic GitHub controls | E2B-only production execution, encrypted credentials, private media validation, confirmation gates, CodeQL, secret scanning, dependency review, and release evidence |
+| Operations | Single-service deployment | Health/readiness contracts, observability, container verification, migration gates, drain/promotion controls, and schema attestation |
+
+The pre-event baseline is commit [`c1f22de`](https://github.com/aa339519589-cpu/mychat/commit/c1f22de9da5f7806e39517933e12850de1ed70eb). The main Build Week implementation is visible in [PR #25](https://github.com/aa339519589-cpu/mychat/pull/25), [PR #26](https://github.com/aa339519589-cpu/mychat/pull/26), [PR #27](https://github.com/aa339519589-cpu/mychat/pull/27), [PR #36](https://github.com/aa339519589-cpu/mychat/pull/36), and the subsequent release commits. A baseline-to-current comparison contains more than 47,000 insertions across hundreds of files.
+
+## Local setup
+
+Requirements: Node.js 24+, a Supabase project, and the provider credentials for the features you want to run. Production Code execution also requires E2B and GitHub OAuth.
+
+```bash
+npm install --legacy-peer-deps
+cp .env.example .env.local
+npm run dev
+```
+
+Run the complete validation suite before publishing:
+
+```bash
+npm run verify
+```
+
+The latest release evidence recorded in [PR #36](https://github.com/aa339519589-cpu/mychat/pull/36) and [PR #38](https://github.com/aa339519589-cpu/mychat/pull/38) includes 583 automated tests, 6 Playwright end-to-end tests, PostgreSQL 16 migration checks, production builds, coverage gates, and an npm audit with zero known vulnerabilities.
+
+Architecture, deployment, and acceptance-test documents are linked in the Chinese technical documentation below. The project is released under the [MIT License](LICENSE).
+
+See [`.env.example`](.env.example), [the deployment guide](DEPLOYMENT_GUIDE.md), and [the test checklist](TEST_CHECKLIST.md) for the full setup.
+
+The authoritative Codex interaction evidence is the `/feedback` Session ID supplied in the Devpost form; private session transcripts are not committed to this public repository.
+
+---
+
+## 中文技术文档
+
 MyChat 是一个基于 Next.js 16、Supabase、DeepSeek/MiMo、E2B 和 GitHub 的对话与代码代理应用。后端负责认证、配额、模型流式调用、历史检索、任务状态机、隔离执行、工作区快照以及 Pull Request 发布。
 
 ## 本地启动

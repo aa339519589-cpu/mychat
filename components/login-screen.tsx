@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Loader2 } from "lucide-react"
+import { Code2, Loader2 } from "lucide-react"
 import { CompanionAvatar } from "@/components/companion-avatar"
 
 export function LoginScreen() {
@@ -75,8 +75,15 @@ export function LoginScreen() {
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center text-center">
           <CompanionAvatar size={72} eager className="size-16" />
-          <h1 className="mt-4 font-heading text-2xl tracking-wide text-foreground">简</h1>
-          <p className="mt-1.5 text-xs italic tracking-wider text-muted-foreground">
+          <h1 className="mt-4 font-heading text-2xl tracking-wide text-foreground">MyChat</h1>
+          <p className="mt-1.5 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-primary">
+            <Code2 className="size-3" aria-hidden="true" />
+            Build &amp; ship from your phone
+          </p>
+          <p className="mt-2 max-w-xs text-xs leading-relaxed text-muted-foreground">
+            不用电脑。连接 GitHub，让 Code 在云端读仓库、改代码、跑测试并发布上线。
+          </p>
+          <p className="mt-2 text-xs italic tracking-wider text-muted-foreground">
             {mode === "signin" ? "回来了，先登录吧" : "新朋友，先注册一个"}
           </p>
         </div>

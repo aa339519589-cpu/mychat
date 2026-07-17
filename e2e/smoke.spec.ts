@@ -94,7 +94,7 @@ test('root page reaches the authentication shell without client exceptions', asy
 
   await page.goto('/', { waitUntil: 'domcontentloaded' })
 
-  await expect(page).toHaveTitle(/My Chat/)
+  await expect(page).toHaveTitle(/MyChat/)
   await expect(page.getByPlaceholder('邮箱')).toBeVisible()
   await expect(page.getByRole('button', { name: '登录', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: '以游客身份继续' })).toBeVisible()
@@ -104,7 +104,7 @@ test('root page reaches the authentication shell without client exceptions', asy
 test('conversation deep links preserve the application shell', async ({ page }) => {
   await page.goto('/c/550e8400-e29b-41d4-a716-446655440000', { waitUntil: 'domcontentloaded' })
 
-  await expect(page).toHaveTitle(/My Chat/)
+  await expect(page).toHaveTitle(/MyChat/)
   await expect(page.getByPlaceholder('邮箱')).toBeVisible()
 })
 

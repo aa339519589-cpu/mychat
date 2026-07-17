@@ -22,9 +22,16 @@ const sourceSerif = Source_Serif_4({
 })
 
 export const metadata: Metadata = {
-  title: 'My Chat',
-  description: 'My Chat AI 对谈空间',
-  generator: 'v0.app',
+  metadataBase: new URL('https://mychat-nm6x.onrender.com'),
+  title: 'MyChat — Build and ship from your phone',
+  description: 'A mobile-first AI workspace for conversation, coding, testing, GitHub delivery, and deployment without a laptop.',
+  applicationName: 'MyChat',
+  openGraph: {
+    type: 'website',
+    siteName: 'MyChat',
+    title: 'MyChat — Build and ship from your phone',
+    description: 'Turn your phone into the command center for coding, testing, GitHub delivery, and deployment.',
+  },
   icons: {
     icon: [
       {
