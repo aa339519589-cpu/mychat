@@ -108,6 +108,7 @@ test('CI loads and starts the exact revision-bearing production container', () =
 })
 
 test('release promotion ties one verified SHA to the image digest and exact Render deploy', () => {
+  const activation = read('.github/workflows/activate-production.yml')
   const release = read('.github/workflows/release-image.yml')
   const render = read('render.yaml')
 
@@ -147,6 +148,15 @@ test('release promotion ties one verified SHA to the image digest and exact Rend
   assert.match(release, /EXPECTED_WORKER_DRAINING:\s*'true'/)
   assert.match(release, /node scripts\/check-production-health\.mjs "\$PRODUCTION_READY_URL"/)
   assert.doesNotMatch(release, /\.checks\.worker\.draining == false/)
+  assert.match(release, /drainDeploymentId:\s*\$drainDeploymentId/)
+  assert.match(release, /schemaVersion:\s*2/)
+  assert.match(activation, /\.drainDeploymentId \| type == "number"/)
+  assert.match(activation, /drain_deployment_id="\$\(jq -er '\.drainDeploymentId'/)
+  assert.match(activation, /deployments\/\$drain_deployment_id"/)
+  assert.match(activation, /\.payload\.promotion == "render-api-exact-commit-drain"/)
+  assert.match(activation, /any\(\.\[\];[\s\S]*?\.state == "success"/)
+  assert.doesNotMatch(activation, /deployments\?sha=\$TARGET_SHA/)
+  assert.doesNotMatch(activation, /statuses\?per_page=1"/)
   assert.match(render, /autoDeployTrigger:\s*off/)
   assert.match(render, /npm ci --ignore-scripts --legacy-peer-deps && npm run build/)
   assert.match(render, /key:\s*MYCHAT_MAINTENANCE_MODE\s*\n\s*sync:\s*false/)

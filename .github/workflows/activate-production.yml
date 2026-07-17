@@ -123,11 +123,13 @@ jobs:
             --arg revision "$TARGET_SHA" \
             --argjson releaseAttempt "$DRAIN_RELEASE_RUN_ATTEMPT" \
             --argjson releaseRunId "$DRAIN_RELEASE_RUN_ID" \
-            'type == "object" and .schemaVersion == 1 and
+            'type == "object" and .schemaVersion == 2 and
              .image == $image and .revision == $revision and
              .releaseRunId == $releaseRunId and
              .releaseRunAttempt == $releaseAttempt and
              (.digest | test("^sha256:[0-9a-f]{64}$")) and
+             (.drainDeploymentId | type == "number") and
+             .drainDeploymentId > 0 and
              (.verifyRunId | type == "number") and
              (.verifyRunAttempt | type == "number") and
              (.securityRunId | type == "number") and
@@ -162,20 +164,40 @@ jobs:
             succeeded("CodeQL") and succeeded("Secret scan")
           ' <<<"$security_jobs" >/dev/null
 
-          deployments="$(gh api \
-            "repos/$GITHUB_REPOSITORY/deployments?sha=$TARGET_SHA&environment=Production-Drain&per_page=20")"
-          drain_deployment_id="$(jq -er '.[0].id' <<<"$deployments")"
-          status="$(gh api \
-            "repos/$GITHUB_REPOSITORY/deployments/$drain_deployment_id/statuses?per_page=1" \
-            --jq '.[0].state')"
-          if [[ "$status" != "success" ]]; then
-            echo "Production-Drain deployment is not successful" >&2
-            exit 1
-          fi
+          digest="$(jq -er '.digest' "$manifest")"
+          drain_deployment_id="$(jq -er '.drainDeploymentId' "$manifest")"
+          image="$(jq -er '.image' "$manifest")"
+          render_deploy_id="$(jq -er '.renderDeployId' "$manifest")"
+          deployment="$(gh api \
+            "repos/$GITHUB_REPOSITORY/deployments/$drain_deployment_id")"
+          jq --exit-status \
+            --arg digest "$digest" \
+            --arg image "$image@$digest" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg revision "$TARGET_SHA" \
+            --argjson deploymentId "$drain_deployment_id" \
+            '.id == $deploymentId and .sha == $revision and
+             .repository_url == ("https://api.github.com/repos/" + $repository) and
+             .environment == "Production-Drain" and
+             .task == "deploy" and .payload.image == $image and
+             .payload.imageDigest == $digest and
+             .payload.promotion == "render-api-exact-commit-drain"' \
+            <<<"$deployment" >/dev/null
+          statuses="$(gh api \
+            "repos/$GITHUB_REPOSITORY/deployments/$drain_deployment_id/statuses?per_page=100")"
+          jq --exit-status --arg renderDeployId "$render_deploy_id" '
+            any(.[];
+              .state == "success" and .environment == "Production-Drain" and
+              .description == "Verified revision is staged on Render in drain mode" and
+              (.log_url | test(
+                "^https://dashboard\\.render\\.com/web/srv-[a-z0-9]+/deploys/"
+                + $renderDeployId + "$"
+              )))
+          ' <<<"$statuses" >/dev/null
 
-          echo "digest=$(jq -er '.digest' "$manifest")" >> "$GITHUB_OUTPUT"
-          echo "image=$(jq -er '.image' "$manifest")" >> "$GITHUB_OUTPUT"
-          echo "render_deploy_id=$(jq -er '.renderDeployId' "$manifest")" >> "$GITHUB_OUTPUT"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "render_deploy_id=$render_deploy_id" >> "$GITHUB_OUTPUT"
           echo "drain_deployment_id=$drain_deployment_id" >> "$GITHUB_OUTPUT"
 
   activate:

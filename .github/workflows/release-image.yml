@@ -456,6 +456,7 @@ jobs:
 
       - name: Create immutable drain release manifest
         env:
+          DRAIN_DEPLOYMENT_ID: ${{ steps.audit.outputs.deployment_id }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RENDER_DEPLOY_ID: ${{ steps.render.outputs.deploy_id }}
           UPSTREAM_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
@@ -465,6 +466,7 @@ jobs:
             --event push --limit 10 --json databaseId,status,conclusion \
             --jq '[.[] | select(.status == "completed" and .conclusion == "success")][0].databaseId // empty')"
           if [[ ! "$security_run_id" =~ ^[0-9]+$ ]] \
+            || [[ ! "$DRAIN_DEPLOYMENT_ID" =~ ^[0-9]+$ ]] \
             || [[ ! "$RENDER_DEPLOY_ID" =~ ^dep-[a-z0-9]+$ ]]; then
             echo "Drain release evidence is incomplete" >&2
             exit 1
@@ -474,6 +476,7 @@ jobs:
           jq --compact-output --null-input --sort-keys \
             --arg checkedAt "$(date --utc +%Y-%m-%dT%H:%M:%SZ)" \
             --arg digest "$IMAGE_DIGEST" \
+            --argjson drainDeploymentId "$DRAIN_DEPLOYMENT_ID" \
             --arg image "$IMAGE_NAME" \
             --arg renderDeployId "$RENDER_DEPLOY_ID" \
             --arg revision "$VERIFIED_SHA" \
@@ -483,10 +486,11 @@ jobs:
             --argjson verifyRunAttempt "$UPSTREAM_RUN_ATTEMPT" \
             --argjson verifyRunId "$UPSTREAM_RUN_ID" \
             '{
-              schemaVersion: 1,
+              schemaVersion: 2,
               revision: $revision,
               image: $image,
               digest: $digest,
+              drainDeploymentId: $drainDeploymentId,
               verifyRunId: $verifyRunId,
               verifyRunAttempt: $verifyRunAttempt,
               securityRunId: $securityRunId,
