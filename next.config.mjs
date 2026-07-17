@@ -1,6 +1,9 @@
 const contentSecurityPolicy = [
   "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${process.env.NODE_ENV === 'production' ? '' : " 'unsafe-eval'"}`,
+  // function-plot compiles user-entered math expressions at runtime with
+  // Function/eval. This explicit exception is required in production or the
+  // browser blocks function graph rendering. Script origins remain self-only.
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",
