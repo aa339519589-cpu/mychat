@@ -1,5 +1,65 @@
 # MyChat
 
+**OpenAI Build Week 2026 submission** · [Live demo](https://mychat-nm6x.onrender.com)
+
+MyChat is a production-oriented AI conversation and code-agent application built with Next.js 16, Supabase, E2B, and GitHub. It turns a chat request into durable, auditable work: the application can stream model responses, recover background jobs after restarts, run code in an isolated sandbox, preserve workspace snapshots, and publish a pull request.
+
+## Why it matters
+
+Most agent demos are tied to one browser request and lose state when a worker restarts. MyChat treats each generation or code task as a database-authoritative job with leases, fencing, cancellation, recovery, quota accounting, and observable state. The goal is a useful product that behaves predictably under real deployment failures.
+
+## Judge quick start
+
+1. Open the [live demo](https://mychat-nm6x.onrender.com).
+2. Start or sign in to a session, create a conversation, and send a prompt.
+3. Inspect streaming, conversation persistence, model selection, and history retrieval.
+4. For the code-agent flow, connect GitHub, choose a repository, run a task in the isolated workspace, review the snapshot, and publish a pull request.
+
+The Devpost demo video provides the shortest end-to-end judging path for any feature that depends on preconfigured third-party credentials. Setup instructions for a local review are included below.
+
+## Build Week contribution
+
+MyChat had a working chat and code-agent foundation before the submission window. During the official July 13–21, 2026 Build Week window, it was meaningfully extended with:
+
+- a database-authoritative, leased worker control plane for chat generations and agent tasks;
+- generation claim/lease/fencing, cross-instance cancellation, recovery, and durable cleanup receipts;
+- strict E2B-isolated execution, GitHub OAuth ownership checks, workspace snapshots, and pull-request publication;
+- atomic quota accounting, tightened Supabase RLS, private media handling, SSRF protections, and credential encryption;
+- expand-contract PostgreSQL migrations, deployment health gates, observability, and a reproducible release-verification pipeline.
+
+Timestamped implementation evidence:
+
+- [PR #25 — durable job control plane](https://github.com/aa339519589-cpu/mychat/pull/25)
+- [PR #26 — free web-runtime supervisor](https://github.com/aa339519589-cpu/mychat/pull/26)
+- [PR #36 — schema contract and release evidence](https://github.com/aa339519589-cpu/mychat/pull/36)
+- [PR #38 — release reliability hardening](https://github.com/aa339519589-cpu/mychat/pull/38)
+
+These timestamped changes distinguish the Build Week work from the earlier project base.
+
+## Built with Codex and GPT-5.6
+
+MyChat was developed through an iterative human–Codex workflow. The human author made the final product, architecture, UX, security, and release decisions. Codex and GPT-5.6 supported codebase inspection, architecture review, implementation and refactoring, test generation, failure diagnosis, CI/deployment hardening, and release documentation.
+
+Key human decisions included moving job authority out of individual HTTP requests, using fenced leases and compare-and-swap workspace snapshots, requiring isolated production execution, and enforcing ownership at both the service layer and Supabase RLS layer. The authoritative model-interaction evidence is the Codex session ID supplied in the Devpost submission; private session transcripts are not committed to this public repository.
+
+MyChat's user-facing runtime supports DeepSeek, MiMo, and OpenAI-compatible endpoints. Those runtime choices are separate from the Codex/GPT-5.6 development workflow used to build and harden the project.
+
+## Verification
+
+Run the complete local verification pipeline with:
+
+```bash
+npm run verify
+```
+
+The latest release evidence recorded in [PR #36](https://github.com/aa339519589-cpu/mychat/pull/36) and [PR #38](https://github.com/aa339519589-cpu/mychat/pull/38) includes 583 automated tests, 6 Playwright end-to-end tests, PostgreSQL 16 migration checks, production builds, coverage gates, and an npm audit with zero known vulnerabilities.
+
+Architecture, deployment, and acceptance-test documents are linked in the Chinese technical documentation below. The project is released under the [MIT License](LICENSE).
+
+---
+
+## 中文技术文档
+
 MyChat 是一个基于 Next.js 16、Supabase、DeepSeek/MiMo、E2B 和 GitHub 的对话与代码代理应用。后端负责认证、配额、模型流式调用、历史检索、任务状态机、隔离执行、工作区快照以及 Pull Request 发布。
 
 ## 本地启动
