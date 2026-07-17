@@ -11,7 +11,7 @@ const SESSION_FREE_PATHS = new Set(["/api/live", "/api/ready", "/api/metrics"])
 export async function proxy(request: NextRequest) {
   const requestId = crypto.randomUUID()
   const nonce = createContentSecurityPolicyNonce()
-  const policy = contentSecurityPolicy(nonce, process.env.NODE_ENV === "production")
+  const policy = contentSecurityPolicy(nonce)
   const requestHeaders = new Headers(request.headers)
   requestHeaders.set("x-request-id", requestId)
   requestHeaders.set("x-nonce", nonce)

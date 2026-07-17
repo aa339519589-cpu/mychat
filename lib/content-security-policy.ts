@@ -4,11 +4,13 @@ export function createContentSecurityPolicyNonce(): string {
   return crypto.randomUUID().replaceAll('-', '')
 }
 
-export function contentSecurityPolicy(nonce: string, production: boolean): string {
+export function contentSecurityPolicy(nonce: string): string {
   if (!CSP_NONCE.test(nonce)) throw new TypeError('Invalid content security policy nonce')
   return [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${production ? '' : " 'unsafe-eval'"}`,
+    // function-plot compiles user-entered math expressions with Function/eval.
+    // Keep that exception explicit while nonce-binding every executable script.
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic' 'unsafe-eval'`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
     "font-src 'self' data:",

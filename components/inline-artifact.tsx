@@ -1,7 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
-import Image from "next/image"
+import { useEffect, useMemo, useState, type CSSProperties } from "react"
 import { sanitizeSvg } from "@/lib/artifact"
 import { Maximize2, X } from "lucide-react"
 
@@ -37,18 +36,35 @@ function fitWidthForViewport(aspect: number | null): string {
   return `min(100%, ${width}px)`
 }
 
-// 内联 SVG 渲染：已清洗内容通过 Data URL 与对话 DOM 隔离
-// - 桌面/手机分开限制：手机按视口高度收缩，桌面保留更大预览
-// - 背景透明，融入页面
+function LiveSvg({
+  svg,
+  label,
+  className,
+  style,
+}: {
+  svg: string
+  label: string
+  className: string
+  style?: CSSProperties
+}) {
+  return (
+    <div
+      role="img"
+      aria-label={label}
+      className={className}
+      style={style}
+      dangerouslySetInnerHTML={{ __html: svg }}
+    />
+  )
+}
+
+// 内联 SVG 渲染：清洗后直接写入 DOM，让流式输出每增加一段就立即重绘。
+// sanitizeSvg 会为未完成的流临时补齐 </svg>，因此不需要等待整张图生成完。
 export function InlineArtifact({ svg, done }: { svg: string; done: boolean }) {
   const [zoom, setZoom] = useState(false)
   const clean = sanitizeSvg(svg)
   const aspect = useMemo(() => clean ? svgAspect(clean) : null, [clean])
   const [fitWidth, setFitWidth] = useState(() => fitWidthForViewport(aspect))
-  const src = useMemo(
-    () => clean ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(clean)}` : "",
-    [clean],
-  )
 
   useEffect(() => {
     const update = () => setFitWidth(fitWidthForViewport(aspect))
@@ -62,7 +78,6 @@ export function InlineArtifact({ svg, done }: { svg: string; done: boolean }) {
   }, [aspect])
 
   if (!clean) {
-    // 流式中还没输出 <svg> 时给个占位；已完成却非 SVG 则静默（文字部分通常已有内容）
     return done ? null : (
       <div className="my-3 text-xs italic text-muted-foreground/50">图形生成中……</div>
     )
@@ -70,18 +85,15 @@ export function InlineArtifact({ svg, done }: { svg: string; done: boolean }) {
 
   return (
     <>
-      {/* 桌面端限制最大宽度，手机端按屏幕高度动态收缩 */}
       <div className="group/svg relative my-3 flex w-full min-w-0 justify-center overflow-hidden animate-in fade-in duration-300 md:max-w-2xl">
-        <Image
-          src={src}
-          alt="生成的图形"
-          width={1024}
-          height={aspect ? Math.max(1, Math.round(1024 / aspect)) : 1024}
-          unoptimized
+        <LiveSvg
+          svg={clean}
+          label="生成的图形"
           style={{ width: fitWidth }}
-          className="block h-auto min-w-0 max-h-[42dvh] max-w-full object-contain md:max-h-[62dvh]"
+          className="min-w-0 max-w-full [&>svg]:block [&>svg]:h-auto [&>svg]:w-full [&>svg]:max-w-full"
         />
         <button
+          type="button"
           onClick={() => setZoom(true)}
           className="absolute right-1 top-1 flex size-6 items-center justify-center rounded-full bg-background/40 text-muted-foreground/50 opacity-0 backdrop-blur transition-opacity hover:text-foreground group-hover/svg:opacity-100"
           aria-label="放大查看"
@@ -96,6 +108,7 @@ export function InlineArtifact({ svg, done }: { svg: string; done: boolean }) {
           onClick={() => setZoom(false)}
         >
           <button
+            type="button"
             onClick={() => setZoom(false)}
             className="absolute right-4 top-4 flex size-9 items-center justify-center rounded-full bg-card text-foreground shadow"
             aria-label="关闭"
@@ -104,15 +117,12 @@ export function InlineArtifact({ svg, done }: { svg: string; done: boolean }) {
           </button>
           <div
             className="max-h-full w-full max-w-4xl"
-            onClick={e => e.stopPropagation()}
+            onClick={event => event.stopPropagation()}
           >
-            <Image
-              src={src}
-              alt="生成的图形（放大）"
-              width={1024}
-              height={aspect ? Math.max(1, Math.round(1024 / aspect)) : 1024}
-              unoptimized
-              className="mx-auto block h-auto max-h-[88dvh] max-w-full object-contain"
+            <LiveSvg
+              svg={clean}
+              label="生成的图形（放大）"
+              className="w-full [&>svg]:mx-auto [&>svg]:block [&>svg]:h-auto [&>svg]:max-h-[88dvh] [&>svg]:w-full [&>svg]:max-w-full"
             />
           </div>
         </div>
