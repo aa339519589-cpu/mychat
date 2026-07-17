@@ -37,10 +37,10 @@ jobs:
       PGPASSWORD: postgres
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: npm
@@ -60,7 +60,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
@@ -124,13 +124,36 @@ jobs:
           exit 1
 
       - name: Checkout verified push revision
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Confirm checkout identity
         run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Use the production Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Resolve sealed migration contract
+        id: contract
+        run: |
+          node scripts/check-migration-contract.mjs
+          manifest="supabase/migrations.manifest.json"
+          digest="$(jq -er '.contractDigest' "$manifest")"
+          version="$(jq -er '.contractVersion' "$manifest")"
+          count="$(jq -er '.migrationCount' "$manifest")"
+          if [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]] \
+            || [[ ! "$version" =~ ^[1-9][0-9]*$ ]] \
+            || [[ ! "$count" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Migration contract identity is malformed" >&2
+            exit 1
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
@@ -164,6 +187,9 @@ jobs:
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            io.mychat.schema-contract.digest=${{ steps.contract.outputs.digest }}
+            io.mychat.schema-contract.version=${{ steps.contract.outputs.version }}
+            io.mychat.schema-contract.migration-count=${{ steps.contract.outputs.count }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: mode=max
@@ -207,9 +233,15 @@ jobs:
         env:
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
           IMAGE_NAME: ${{ steps.image.outputs.name }}
+          MIGRATION_CONTRACT_DIGEST: ${{ steps.contract.outputs.digest }}
+          MIGRATION_CONTRACT_VERSION: ${{ steps.contract.outputs.version }}
+          MIGRATION_COUNT: ${{ steps.contract.outputs.count }}
           VERIFIED_SHA: ${{ github.sha }}
         run: |
           if [[ ! "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] \
+            || [[ ! "$MIGRATION_CONTRACT_DIGEST" =~ ^[0-9a-f]{64}$ ]] \
+            || [[ ! "$MIGRATION_CONTRACT_VERSION" =~ ^[1-9][0-9]*$ ]] \
+            || [[ ! "$MIGRATION_COUNT" =~ ^[1-9][0-9]*$ ]] \
             || [[ ! "$VERIFIED_SHA" =~ ^[0-9a-f]{40}$ ]] \
             || [[ ! "$GITHUB_RUN_ID" =~ ^[0-9]+$ ]] \
             || [[ ! "$GITHUB_RUN_ATTEMPT" =~ ^[0-9]+$ ]]; then
@@ -221,13 +253,19 @@ jobs:
           jq --compact-output --null-input --sort-keys \
             --arg image "$IMAGE_NAME" \
             --arg digest "$IMAGE_DIGEST" \
+            --arg migrationContractDigest "$MIGRATION_CONTRACT_DIGEST" \
+            --argjson migrationContractVersion "$MIGRATION_CONTRACT_VERSION" \
+            --argjson migrationCount "$MIGRATION_COUNT" \
             --arg revision "$VERIFIED_SHA" \
             --argjson runId "$GITHUB_RUN_ID" \
             --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
             '{
-              schemaVersion: 1,
+              schemaVersion: 2,
               image: $image,
               digest: $digest,
+              migrationContractDigest: $migrationContractDigest,
+              migrationContractVersion: $migrationContractVersion,
+              migrationCount: $migrationCount,
               revision: $revision,
               runId: $runId,
               runAttempt: $runAttempt

@@ -16,9 +16,9 @@
 一次发布只有同时满足以下条件才完成：
 
 1. 冻结的 PR head 同时通过 `Verify`、CodeQL、Dependency review 和 Secret scan；合并后的 `main` 检查也成功。
-2. `1800→3000` 的文件顺序、SHA-256 和生产执行结果都有不可变发布记录，没有用函数名相同或 SQL Editor 历史代替 checksum 证据。
+2. `1800→3100` 的文件顺序、SHA-256 和生产执行结果都有不可变发布记录，没有用函数名相同或 SQL Editor 历史代替 checksum 证据。
 3. 所有兼容性迁移先完成；进入 `2400` 前，generation admission 与 planned command write 已真实冻结，非终态 Job 和待交付 outbox 已收敛。
-4. 数据库只接受 `runtime_healthcheck_v14()`；计费 reconciliation 新鲜、healthy、release ready，全部 blocker 为 0。
+4. 数据库只接受当前代码携带的精确 schema contract version、SHA-256 和 migration count；该检查同时要求 `runtime_healthcheck_v14()`、新鲜且 release-ready 的计费 reconciliation 和零 blocker。
 5. 代码只从 GitHub 合并后的 `main` 部署，线上 revision 与 merge commit 匹配；五个固定队列只能由同一 revision 的新鲜 Worker heartbeat 满足 readiness v2。
 6. `/api/ready` 严格成功，Worker 不处于 draining；受保护 `/api/metrics` 可读，关键 dead、expired、orphan 和 billing 指标无未解释异常。
 7. 聊天、标题或媒体、Agent、取消、SSE 与恢复中和本次改动相关的真实用户边界烟测通过。
@@ -37,7 +37,7 @@ npx playwright install chromium
 npm run verify
 ```
 
-`npm run verify` 包含架构门禁、严格 TypeScript、零 warning ESLint、覆盖率门禁、生产依赖审计、PostgreSQL 16 迁移/并发/恢复验证、生产构建和桌面/移动浏览器烟测。`npm run test:migrations` 会创建并删除本地测试数据库，还会真实 `SIGKILL` 一个已 claim 的客户端；只能在本地或 CI 的一次性 PostgreSQL 16 上运行，不能把它指向生产集群。
+`npm run verify` 包含架构门禁、闭合 migration contract、严格 TypeScript、零 warning ESLint、覆盖率门禁、生产依赖审计、PostgreSQL 16 迁移/并发/恢复验证、生产构建和桌面/移动浏览器烟测。`npm run test:migrations` 会创建并删除本地测试数据库，还会真实 `SIGKILL` 一个已 claim 的客户端；只能在本地或 CI 的一次性 PostgreSQL 16 上运行，不能把它指向生产集群。
 
 若本地因环境条件不能完成某项，GitHub CI 仍必须完整通过；“本机没有工具”不能作为跳过 CI 的理由。Docker release image 是独立产物；只有 Release Image workflow 实际构建并产生 digest、SBOM 和 provenance，才能把容器产物记为成功，静态配置测试不能替代构建。
 
@@ -69,6 +69,7 @@ contract_files=(
   supabase/migrations/20260713285000_pgcrypto_digest_bridge.sql
   supabase/migrations/20260713290000_billing_reconciliation_contract.sql
   supabase/migrations/20260713300000_atomic_checkpoint_accounting.sql
+  supabase/migrations/20260713310000_schema_contract_attestation.sql
 )
 
 export MIGRATION_MANIFEST="$RELEASE_EVIDENCE_DIR/mychat-$PR_HEAD_SHA-migrations.sha256"
@@ -78,9 +79,13 @@ done > "$MIGRATION_MANIFEST"
 shasum -a 256 -c "$MIGRATION_MANIFEST"
 ```
 
-manifest 是本次发布证据，不是数据库 secret；将它保存在受控证据目录而不是工作树，并作为只写一次的 release artifact 绑定 PR head。每次执行某文件前都重新运行 `shasum -a 256 -c "$MIGRATION_MANIFEST"`；结果必须与冻结 PR 完全一致。Supabase Dashboard 没有 managed migration 记录并不能证明 schema 未变，SQL Editor 历史也不能证明执行内容等于冻结文件；以 checksum、对象 contract 和只读数据检查三者共同判定。
+上面的 checksum manifest 覆盖本批 `1800→3100` 的 15 个操作文件，是本次发布证据，不是数据库 secret。将它保存在受控证据目录而不是工作树，并作为只写一次的 release artifact 绑定 PR head。每次执行某文件前都重新运行 `shasum -a 256 -c "$MIGRATION_MANIFEST"`；结果必须与冻结 PR 完全一致。
 
-## 3. 生产数据库：1800 → 3000
+仓库中的 `supabase/migrations.manifest.json` 是另一种证据：它闭合列出 seal 之前的全部 43 个 SQL 文件及各自 SHA-256，并计算 contract digest。`3100` 不参与自身 digest，以避免递归哈希；它把 version、digest 和 count 作为不可变 tuple 写入数据库。运行 `node scripts/check-migration-contract.mjs` 必须成功。Verify 生成的 OCI 标签、verified-image artifact、drain artifact 和 activation checkout 都携带并逐跳核对该 tuple。
+
+`schema_contract_attestations` 只声明“生产 schema 已按对象、数据和 runtime gate 核验后绑定到此仓库契约”，不伪装成 `supabase_migrations.schema_migrations` 执行历史。Supabase Dashboard 没有 managed migration 记录并不能证明 schema 未变，SQL Editor 历史也不能证明执行内容等于冻结文件；以 checksum、不可变 schema attestation、对象 contract 和只读数据检查共同判定。
+
+## 3. 生产数据库：1800 → 3100
 
 ### 本次生产起点
 
@@ -127,6 +132,7 @@ where status = 'dead';
 | 12 | `20260713285000_pgcrypto_digest_bridge.sql` | 为 Supabase `extensions.digest` 安装仅 `service_role` 可执行的兼容桥，保持固定 `public` search path 的账务函数可解析 |
 | 13 | `20260713290000_billing_reconciliation_contract.sql` | 不可变 price quote、balance movement/journal、billing v2 cutover 和权威 reconciliation，升级到 runtime v13 |
 | 14 | `20260713300000_atomic_checkpoint_accounting.sql` | fenced checkpoint CAS 与不可变 accounting delta 同事务提交，禁用 legacy checkpoint 执行路径，升级到 runtime v14 |
+| 15 | `20260713310000_schema_contract_attestation.sql` | 把全部 43 个既有迁移的闭合 manifest tuple 追加封印；仅 service role 可执行精确契约检查 |
 
 ### 兼容扩展：1900 → 2300
 
@@ -232,9 +238,9 @@ order by index_name;
 
 发现 invalid index 时停止，由单独评审的恢复变更对准确名称执行 `DROP INDEX CONCURRENTLY`，再重新创建；不要删除 valid index 或绕过 FK validation。最终必须有 35 个预期 composite FK 全部 `convalidated=true`，且 `runtime_healthcheck_v12()` 在 `2800` 后才能为 true。
 
-### `2800→3000`、pgcrypto bridge、reconciliation 与原子 checkpoint
+### `2800→3100`、reconciliation、原子 checkpoint 与 schema seal
 
-严格按顺序执行 `2800`、`2850`、`2900`、`3000`。四者完成前保持停写；`2850` 修复 Supabase 扩展 schema 与固定函数 search path 的解析差异，`2900` 是 billing contract cutover，`3000` 将运行时 checkpoint 切换到原子记账路径，都不是普通 metrics 增量：
+严格按顺序执行 `2800`、`2850`、`2900`、`3000`，确认 v14 与 reconciliation 后再执行 `3100`。五者完成前保持停写；`2850` 修复 Supabase 扩展 schema 与固定函数 search path 的解析差异，`2900` 是 billing contract cutover，`3000` 将运行时 checkpoint 切换到原子记账路径，`3100` 将核验后的 schema 绑定到仓库 manifest，都不是普通 metrics 增量：
 
 ```bash
 psql -X -v ON_ERROR_STOP=1 \
@@ -257,6 +263,65 @@ select public.read_billing_reconciliation_v1();
 
 必须同时看到：runtime v14 为 true；`checkpoint_job_with_accounting(...)` 仅 service role 可执行，legacy `checkpoint_job(...)` 调用明确失败；`healthy=true`、`releaseReady=true`、`releaseBlockers=0`、`totalMismatches=0`、`activeLegacyJobs=0`；所有细分 mismatch 为 0；`generatedAt` 距当前小于 10 分钟。`healthy=true` 但 `releaseReady=false` 表示仍有 pre-cutover legacy Job，仍然禁止发布。不得直接改 snapshot；修复源记录或让 legacy Job 通过权威 Worker 收敛，再重新 refresh。
 
+以上结果全部成立后，重新核对冻结 checksum，验证生成的 manifest，并执行 seal：
+
+```bash
+shasum -a 256 -c "$MIGRATION_MANIFEST"
+node scripts/check-migration-contract.mjs
+psql -X -v ON_ERROR_STOP=1 \
+  -f supabase/migrations/20260713310000_schema_contract_attestation.sql
+```
+
+用 service role 验证精确 tuple；第一列必须为 true，后三列必须为 false：
+
+```sql
+select
+  public.verify_schema_contract_v1(
+    1,
+    'e5479e42cbba7c439a1a31ec3325344625f740d2cca37c3865dc4af00243dc0d',
+    43
+  ) as exact_contract,
+  public.verify_schema_contract_v1(
+    2,
+    'e5479e42cbba7c439a1a31ec3325344625f740d2cca37c3865dc4af00243dc0d',
+    43
+  ) as wrong_version,
+  public.verify_schema_contract_v1(
+    1,
+    repeat('0', 64),
+    43
+  ) as wrong_digest,
+  public.verify_schema_contract_v1(
+    1,
+    'e5479e42cbba7c439a1a31ec3325344625f740d2cca37c3865dc4af00243dc0d',
+    44
+  ) as wrong_count;
+
+select
+  has_function_privilege(
+    'service_role',
+    'public.verify_schema_contract_v1(integer,text,integer)',
+    'EXECUTE'
+  ) as service_can_verify,
+  has_function_privilege(
+    'anon',
+    'public.verify_schema_contract_v1(integer,text,integer)',
+    'EXECUTE'
+  ) as anon_can_verify,
+  has_function_privilege(
+    'authenticated',
+    'public.verify_schema_contract_v1(integer,text,integer)',
+    'EXECUTE'
+  ) as authenticated_can_verify,
+  has_table_privilege(
+    'service_role',
+    'public.schema_contract_attestations',
+    'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'
+  ) as service_has_direct_table_access;
+```
+
+权限结果必须依次为 true、false、false、false。不要给 service role 表级读取权限；应用只通过 SECURITY DEFINER 的精确验证 RPC 读取布尔结果。新版本 `/api/ready` 不再直接调用 v14，而是发送构建内置的 version、digest 和 count 给该 RPC；RPC 内部仍强制 v14。
+
 `3000` 只对 Worker 已收到并形成累计 usage 报告的用量提供 fenced ledger durability，以及 checkpoint/ledger 原子性，不提供 provider exactly-once。每次 usage callback 会在模型循环继续或返回前落账；但 provider 已完成、进程在 usage 解析或 callback 提交前死亡时仍没有权威数值，usage 已提交而响应 checkpoint 尚未形成时也可能按相同 Idempotency-Key 重发请求。这些窗口仍需 provider response receipt、账单导入和差异补录；外部能力当前未实现，必须作为发布残余风险记录，不能用 v14 健康结果掩盖。
 
 新代码部署前没有当前 merge revision 的 Worker heartbeat，readiness v2 为 false 是预期现象，不代表可以跳过它。只有第二次、解除 drain 的部署才能用 merge revision 验证：
@@ -272,10 +337,10 @@ select public.read_job_worker_readiness_v2(
 ### 迁移失败的统一处理
 
 1. 立即停止后续 SQL、merge 和解除停写，保留完整错误、文件名、checksum、时间和操作者。
-2. `1900→2600`、`2800→3000` 失败时先证明该文件事务回滚；`2700` 按部分完成处理。
+2. `1900→2600`、`2800→3100` 失败时先证明该文件事务回滚；`2700` 按部分完成处理。
 3. 不手工伪造函数、constraint、snapshot 或 migration history 来越过 gate。
 4. `2400` 之后只允许 roll forward 到兼容新 contract 的应用；不要恢复 `5068c9b` 接收 planned writes。
-5. 修复必须经过新 PR/CI 和新 checksum；从失败点恢复后重新运行 v14、reconciliation、约束、Job/outbox 全部检查。
+5. 修复必须经过新 PR/CI 和新 checksum；从失败点恢复后重新运行精确 schema contract、reconciliation、约束、Job/outbox 全部检查。
 
 ## 4. Render 配置与第一次 drain 部署
 
@@ -302,7 +367,7 @@ MYCHAT_MAINTENANCE_MODE=drain
 
 ## 5. 解除 drain 的第二次部署
 
-第一次部署的 v14、reconciliation、secret 和 revision 检查都通过后，将 `MYCHAT_MAINTENANCE_MODE=off`，用同一 merge commit 再触发一次 Render 部署。必须记录第二次 deploy ID；仅修改环境却没有完成新部署不算解除 drain。
+第一次部署的精确 schema contract、reconciliation、secret 和 revision 检查都通过后，将 `MYCHAT_MAINTENANCE_MODE=off`，用同一 merge commit 再触发一次 Render 部署。必须记录第二次 deploy ID；仅修改环境却没有完成新部署不算解除 drain。
 
 第二次部署后等待旧 draining heartbeat 退出、新 revision 的五个 queue heartbeat 全部新鲜。`read_job_worker_readiness_v2(..., merge-revision)` 必须返回 `ready=true`、`missingQueues=[]`、每个队列 `ready=true` 且容量符合配置。旧 revision heartbeat 可以留作 stale observability，但不能计入容量。
 
@@ -316,7 +381,7 @@ export EXPECTED_REVISION='<merge-commit-sha>'
 node scripts/check-production-health.mjs "$MYCHAT_HEALTH_URL"
 ```
 
-脚本只接受 HTTPS 的精确 `/api/ready` 路径，要求 revision 匹配，并验证 `auth`、`database`、`distributedRateLimit`、`queue`、`worker`、`stream` 和 `sandbox` 全部 configured/ready；draining Worker 会失败。随后再次执行 v14、readiness v2 和 billing reconciliation 三组 SQL，不能只依赖 HTTP 聚合结果。
+脚本只接受 HTTPS 的精确 `/api/ready` 路径，要求 revision 匹配，并验证 `auth`、`database`、`distributedRateLimit`、`queue`、`worker`、`stream` 和 `sandbox` 全部 configured/ready；draining Worker 会失败。随后再次执行精确 schema contract、readiness v2 和 billing reconciliation 三组 SQL，不能只依赖 HTTP 聚合结果。
 
 验证 metrics 的隐藏、授权读取、五队列和 billing release gate：
 
@@ -487,7 +552,7 @@ provider 链路另做一次短断网：切断请求后观察 timeout、退避、
 1. 保持 generation 与 planned command write freeze；如果新版本已经在 drain，绝不先设 `off`。
 2. 若仍在 `2300` 前，可选择经过兼容验证的 bridge；`2400` 后统一 roll forward，不能以“旧页面能打开”为兼容证据。
 3. 修复走新 PR，重新跑全部 CI、生成新 checksum，并重新核对生产 schema 差异。
-4. 新代码因缺少 v14 contract 时 `/api/ready` 必须 503；补齐/修复迁移，不降低 readiness 或回退到 v13。
+4. 新代码因缺少精确 schema contract（其中包含 v14）时 `/api/ready` 必须 503；补齐/修复迁移，不降低 readiness 或绕过 manifest tuple。
 5. 第二次解除 drain 部署失败时，恢复 `drain` 并重新部署同一或更新的兼容 revision；确认数据库、reconciliation 和 heartbeat 后再尝试解除。
 
-最终发布记录至少包含：冻结 PR head 与 merge SHA、全部 14 个 migration SHA-256、`1900→3000` 每个实际执行时间和操作者、`2700` autocommit/索引/约束及 legacy FK 保留证据、v14 结果、atomic checkpoint replay/冲突证据、billing snapshot 全字段摘要、readiness v2 的 merge revision 与五队列容量、两次 Render deploy ID、最终线上 revision、stream/metrics secret 已配置的非明文证据、`/api/ready` 与 metrics 结果、烟测 Job ID、任何 redrive/audit request ID、密钥轮换状态、演练证据和未消除的零付费限制。只有全部阻断项清零后才能宣布成功部署。
+最终发布记录至少包含：冻结 PR head 与 merge SHA、全部 15 个本批 migration SHA-256、`1900→3100` 每个实际执行时间和操作者、43-file schema contract 的 version/digest/count 及错误 tuple 拒绝证据、`2700` autocommit/索引/约束及 legacy FK 保留证据、v14 结果、atomic checkpoint replay/冲突证据、billing snapshot 全字段摘要、readiness v2 的 merge revision 与五队列容量、两次 Render deploy ID、最终线上 revision、stream/metrics secret 已配置的非明文证据、`/api/ready` 与 metrics 结果、烟测 Job ID、任何 redrive/audit request ID、密钥轮换状态、演练证据和未消除的零付费限制。只有全部阻断项清零后才能宣布成功部署。

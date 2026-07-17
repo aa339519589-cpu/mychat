@@ -7,6 +7,7 @@ import {
   probeWorker,
   safeRevision,
 } from '../lib/supabase/health'
+import { MIGRATION_CONTRACT } from '../lib/supabase/migration-contract'
 
 const METRICS_TOKEN = '0123456789abcdef'.repeat(4)
 
@@ -29,14 +30,21 @@ test('health revision is allow-listed, shortened, and prefers the built artifact
 
 test('database readiness requires a successful migration-aware RPC', async () => {
   let rpcName = ''
+  let rpcArgs: Record<string, unknown> | undefined
   assert.equal(await probeDatabase(null), false)
   assert.equal(await probeDatabase({
-    rpc: async name => {
+    rpc: async (name, args) => {
       rpcName = name
+      rpcArgs = args
       return { data: true, error: null }
     },
   }), true)
-  assert.equal(rpcName, 'runtime_healthcheck_v14')
+  assert.equal(rpcName, 'verify_schema_contract_v1')
+  assert.deepEqual(rpcArgs, {
+    input_contract_version: MIGRATION_CONTRACT.version,
+    input_manifest_sha256: MIGRATION_CONTRACT.digest,
+    input_migration_count: MIGRATION_CONTRACT.migrationCount,
+  })
   assert.equal(await probeDatabase({
     rpc: async () => ({ data: null, error: { code: 'missing_function' } }),
   }), false)
@@ -67,7 +75,7 @@ test('production readiness never falls back to an older infrastructure contract'
   })
 
   assert.equal(ready, false)
-  assert.deepEqual(calls, ['runtime_healthcheck_v14'])
+  assert.deepEqual(calls, ['verify_schema_contract_v1'])
 })
 
 test('local development also refuses an older infrastructure contract', async () => {
@@ -75,14 +83,14 @@ test('local development also refuses an older infrastructure contract', async ()
   const ready = await probeDatabase({
     rpc: async name => {
       calls.push(name)
-      return name === 'runtime_healthcheck_v14'
+      return name === 'verify_schema_contract_v1'
         ? { data: null, error: { code: 'missing_function' } }
         : { data: true, error: null }
     },
   })
 
   assert.equal(ready, false)
-  assert.deepEqual(calls, ['runtime_healthcheck_v14'])
+  assert.deepEqual(calls, ['verify_schema_contract_v1'])
 })
 
 test('readiness timeout aborts an abortable PostgREST request', async () => {
@@ -192,7 +200,7 @@ test('runtime readiness fails closed when worker coverage is stale', async () =>
     RENDER_GIT_COMMIT: 'abcdef0123456789abcdef0123456789abcdef01',
   }
   const health = await getRuntimeHealth(environment, {
-    rpc: async name => name === 'runtime_healthcheck_v14'
+    rpc: async name => name === 'verify_schema_contract_v1'
       ? { data: true, error: null }
       : { data: { ready: false, missingQueues: ['agent'] }, error: null },
   })
@@ -213,7 +221,7 @@ test('maintenance drain remains read-ready while exposing the intentional worker
     RENDER_GIT_COMMIT: 'abcdef0123456789abcdef0123456789abcdef01',
   }
   const health = await getRuntimeHealth(environment, {
-    rpc: async name => name === 'runtime_healthcheck_v14'
+    rpc: async name => name === 'verify_schema_contract_v1'
       ? { data: true, error: null }
       : { data: { ready: false, missingQueues: ['chat'] }, error: null },
   })
@@ -232,7 +240,7 @@ test('maintenance drain cannot hide an unidentified production release', async (
     STREAM_ADMISSION_HASH_KEY: 'stream-admission-test-key-material-00000001',
     METRICS_BEARER_TOKEN: METRICS_TOKEN,
   }, {
-    rpc: async name => name === 'runtime_healthcheck_v14'
+    rpc: async name => name === 'verify_schema_contract_v1'
       ? { data: true, error: null }
       : { data: { ready: true }, error: null },
   })

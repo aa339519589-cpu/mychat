@@ -33,6 +33,9 @@ jobs:
       digest: ${{ steps.manifest.outputs.digest }}
       drain_deployment_id: ${{ steps.manifest.outputs.drain_deployment_id }}
       image: ${{ steps.manifest.outputs.image }}
+      migration_contract_digest: ${{ steps.manifest.outputs.migration_contract_digest }}
+      migration_contract_version: ${{ steps.manifest.outputs.migration_contract_version }}
+      migration_count: ${{ steps.manifest.outputs.migration_count }}
       render_deploy_id: ${{ steps.manifest.outputs.render_deploy_id }}
       revision: ${{ steps.release.outputs.revision }}
     steps:
@@ -87,6 +90,17 @@ jobs:
           echo "release_run_attempt=$run_attempt" >> "$GITHUB_OUTPUT"
           echo "revision=$REQUESTED_REVISION" >> "$GITHUB_OUTPUT"
 
+      - name: Checkout exact activation revision
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ steps.release.outputs.revision }}
+          persist-credentials: false
+
+      - name: Use the production Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
       - name: Download immutable drain release manifest
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -117,16 +131,31 @@ jobs:
           )
           test "$(jq --compact-output --sort-keys . "$manifest")" = "$(cat "$manifest")"
 
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          node scripts/check-migration-contract.mjs
+          contract_manifest="$GITHUB_WORKSPACE/supabase/migrations.manifest.json"
+          expected_contract_digest="$(jq -er '.contractDigest' "$contract_manifest")"
+          expected_contract_version="$(jq -er '.contractVersion' "$contract_manifest")"
+          expected_migration_count="$(jq -er '.migrationCount' "$contract_manifest")"
           expected_image="$(printf '%s' "ghcr.io/$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
           jq --exit-status \
             --arg image "$expected_image" \
+            --arg migrationContractDigest "$expected_contract_digest" \
+            --argjson migrationContractVersion "$expected_contract_version" \
+            --argjson migrationCount "$expected_migration_count" \
             --arg revision "$TARGET_SHA" \
             --argjson releaseAttempt "$DRAIN_RELEASE_RUN_ATTEMPT" \
             --argjson releaseRunId "$DRAIN_RELEASE_RUN_ID" \
-            'type == "object" and .schemaVersion == 2 and
+            'type == "object" and
+             keys == ["checkedAt","digest","drainDeploymentId","image","migrationContractDigest","migrationContractVersion","migrationCount","releaseRunAttempt","releaseRunId","renderDeployId","revision","schemaVersion","securityRunId","verifyRunAttempt","verifyRunId"] and
+             .schemaVersion == 3 and
              .image == $image and .revision == $revision and
+             .migrationContractDigest == $migrationContractDigest and
+             .migrationContractVersion == $migrationContractVersion and
+             .migrationCount == $migrationCount and
              .releaseRunId == $releaseRunId and
              .releaseRunAttempt == $releaseAttempt and
+             (.checkedAt | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")) and
              (.digest | test("^sha256:[0-9a-f]{64}$")) and
              (.drainDeploymentId | type == "number") and
              .drainDeploymentId > 0 and
@@ -173,6 +202,9 @@ jobs:
           jq --exit-status \
             --arg digest "$digest" \
             --arg image "$image@$digest" \
+            --arg migrationContractDigest "$expected_contract_digest" \
+            --argjson migrationContractVersion "$expected_contract_version" \
+            --argjson migrationCount "$expected_migration_count" \
             --arg repository "$GITHUB_REPOSITORY" \
             --arg revision "$TARGET_SHA" \
             --argjson deploymentId "$drain_deployment_id" \
@@ -181,6 +213,9 @@ jobs:
              .environment == "Production-Drain" and
              .task == "deploy" and .payload.image == $image and
              .payload.imageDigest == $digest and
+             .payload.migrationContractDigest == $migrationContractDigest and
+             .payload.migrationContractVersion == $migrationContractVersion and
+             .payload.migrationCount == $migrationCount and
              .payload.promotion == "render-api-exact-commit-drain"' \
             <<<"$deployment" >/dev/null
           statuses="$(gh api \
@@ -197,6 +232,9 @@ jobs:
 
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "migration_contract_digest=$expected_contract_digest" >> "$GITHUB_OUTPUT"
+          echo "migration_contract_version=$expected_contract_version" >> "$GITHUB_OUTPUT"
+          echo "migration_count=$expected_migration_count" >> "$GITHUB_OUTPUT"
           echo "render_deploy_id=$render_deploy_id" >> "$GITHUB_OUTPUT"
           echo "drain_deployment_id=$drain_deployment_id" >> "$GITHUB_OUTPUT"
 
@@ -216,13 +254,13 @@ jobs:
       TARGET_SHA: ${{ needs.validate.outputs.revision }}
     steps:
       - name: Checkout exact activation revision
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ needs.validate.outputs.revision }}
           persist-credentials: false
 
       - name: Use the production Node runtime
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
 
@@ -252,11 +290,17 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           IMAGE_DIGEST: ${{ needs.validate.outputs.digest }}
           IMAGE_NAME: ${{ needs.validate.outputs.image }}
+          MIGRATION_CONTRACT_DIGEST: ${{ needs.validate.outputs.migration_contract_digest }}
+          MIGRATION_CONTRACT_VERSION: ${{ needs.validate.outputs.migration_contract_version }}
+          MIGRATION_COUNT: ${{ needs.validate.outputs.migration_count }}
         run: |
           request="$(jq -nc \
             --arg ref "$TARGET_SHA" \
             --arg image "$IMAGE_NAME@$IMAGE_DIGEST" \
             --arg digest "$IMAGE_DIGEST" \
+            --arg migrationContractDigest "$MIGRATION_CONTRACT_DIGEST" \
+            --argjson migrationContractVersion "$MIGRATION_CONTRACT_VERSION" \
+            --argjson migrationCount "$MIGRATION_COUNT" \
             '{
               ref: $ref,
               task: "deploy",
@@ -267,6 +311,9 @@ jobs:
               payload: {
                 image: $image,
                 imageDigest: $digest,
+                migrationContractDigest: $migrationContractDigest,
+                migrationContractVersion: $migrationContractVersion,
+                migrationCount: $migrationCount,
                 promotion: "render-api-exact-commit-activation"
               }
             }')"
@@ -454,13 +501,13 @@ jobs:
       TARGET_SHA: ${{ needs.validate.outputs.revision }}
     steps:
       - name: Checkout exact recovery revision
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ needs.validate.outputs.revision }}
           persist-credentials: false
 
       - name: Use the production Node runtime
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
 

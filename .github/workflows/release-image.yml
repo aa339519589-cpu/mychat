@@ -33,6 +33,9 @@ jobs:
     outputs:
       digest: ${{ steps.manifest.outputs.digest }}
       image: ${{ steps.manifest.outputs.image }}
+      migration_contract_digest: ${{ steps.manifest.outputs.migration_contract_digest }}
+      migration_contract_version: ${{ steps.manifest.outputs.migration_contract_version }}
+      migration_count: ${{ steps.manifest.outputs.migration_count }}
     permissions:
       actions: read
       attestations: read
@@ -54,13 +57,18 @@ jobs:
           fi
 
       - name: Checkout verified revision
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
 
       - name: Confirm checkout identity
         run: test "$(git rev-parse HEAD)" = "$VERIFIED_SHA"
+
+      - name: Use the production Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
 
       - name: Require Security for the verified revision
         env:
@@ -152,15 +160,26 @@ jobs:
             exit 1
           fi
 
+          node scripts/check-migration-contract.mjs
+          contract_manifest="$GITHUB_WORKSPACE/supabase/migrations.manifest.json"
+          expected_contract_digest="$(jq -er '.contractDigest' "$contract_manifest")"
+          expected_contract_version="$(jq -er '.contractVersion' "$contract_manifest")"
+          expected_migration_count="$(jq -er '.migrationCount' "$contract_manifest")"
           expected_image="$(printf '%s' "ghcr.io/$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
           jq --exit-status \
             --arg image "$expected_image" \
+            --arg migrationContractDigest "$expected_contract_digest" \
+            --argjson migrationContractVersion "$expected_contract_version" \
+            --argjson migrationCount "$expected_migration_count" \
             --arg revision "$VERIFIED_SHA" \
             --argjson attempt "$UPSTREAM_RUN_ATTEMPT" \
             --argjson runId "$UPSTREAM_RUN_ID" \
             'type == "object" and
-             keys == ["digest","image","revision","runAttempt","runId","schemaVersion"] and
-             .schemaVersion == 1 and .image == $image and
+             keys == ["digest","image","migrationContractDigest","migrationContractVersion","migrationCount","revision","runAttempt","runId","schemaVersion"] and
+             .schemaVersion == 2 and .image == $image and
+             .migrationContractDigest == $migrationContractDigest and
+             .migrationContractVersion == $migrationContractVersion and
+             .migrationCount == $migrationCount and
              .revision == $revision and .runId == $runId and
              .runAttempt == $attempt and
              (.digest | test("^sha256:[0-9a-f]{64}$"))' \
@@ -169,6 +188,9 @@ jobs:
           digest="$(jq --raw-output '.digest' "$manifest")"
           echo "image=$image" >> "$GITHUB_OUTPUT"
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "migration_contract_digest=$expected_contract_digest" >> "$GITHUB_OUTPUT"
+          echo "migration_contract_version=$expected_contract_version" >> "$GITHUB_OUTPUT"
+          echo "migration_count=$expected_migration_count" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -181,6 +203,9 @@ jobs:
         env:
           IMAGE_DIGEST: ${{ steps.manifest.outputs.digest }}
           IMAGE_NAME: ${{ steps.manifest.outputs.image }}
+          MIGRATION_CONTRACT_DIGEST: ${{ steps.manifest.outputs.migration_contract_digest }}
+          MIGRATION_CONTRACT_VERSION: ${{ steps.manifest.outputs.migration_contract_version }}
+          MIGRATION_COUNT: ${{ steps.manifest.outputs.migration_count }}
         run: |
           docker pull "$IMAGE_NAME@$IMAGE_DIGEST" >/dev/null
           revision="$(docker image inspect \
@@ -193,6 +218,9 @@ jobs:
           docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' \
             "$IMAGE_NAME@$IMAGE_DIGEST" \
             | grep --fixed-strings --line-regexp "MYCHAT_BUILD_REVISION=$VERIFIED_SHA"
+          test "$(docker image inspect --format '{{ index .Config.Labels "io.mychat.schema-contract.digest" }}' "$IMAGE_NAME@$IMAGE_DIGEST")" = "$MIGRATION_CONTRACT_DIGEST"
+          test "$(docker image inspect --format '{{ index .Config.Labels "io.mychat.schema-contract.version" }}' "$IMAGE_NAME@$IMAGE_DIGEST")" = "$MIGRATION_CONTRACT_VERSION"
+          test "$(docker image inspect --format '{{ index .Config.Labels "io.mychat.schema-contract.migration-count" }}' "$IMAGE_NAME@$IMAGE_DIGEST")" = "$MIGRATION_COUNT"
 
       - name: Verify published image attestation
         env:
@@ -222,17 +250,20 @@ jobs:
     env:
       IMAGE_DIGEST: ${{ needs.resolve.outputs.digest }}
       IMAGE_NAME: ${{ needs.resolve.outputs.image }}
+      MIGRATION_CONTRACT_DIGEST: ${{ needs.resolve.outputs.migration_contract_digest }}
+      MIGRATION_CONTRACT_VERSION: ${{ needs.resolve.outputs.migration_contract_version }}
+      MIGRATION_COUNT: ${{ needs.resolve.outputs.migration_count }}
       PRODUCTION_READY_URL: https://mychat-nm6x.onrender.com/api/ready
       VERIFIED_SHA: ${{ github.event.workflow_run.head_sha }}
     steps:
       - name: Checkout verified revision
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
 
       - name: Use the production Node runtime
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
 
@@ -317,6 +348,9 @@ jobs:
             --arg ref "$VERIFIED_SHA" \
             --arg image "$IMAGE_NAME@$IMAGE_DIGEST" \
             --arg digest "$IMAGE_DIGEST" \
+            --arg migrationContractDigest "$MIGRATION_CONTRACT_DIGEST" \
+            --argjson migrationContractVersion "$MIGRATION_CONTRACT_VERSION" \
+            --argjson migrationCount "$MIGRATION_COUNT" \
             '{
               ref: $ref,
               task: "deploy",
@@ -327,6 +361,9 @@ jobs:
               payload: {
                 image: $image,
                 imageDigest: $digest,
+                migrationContractDigest: $migrationContractDigest,
+                migrationContractVersion: $migrationContractVersion,
+                migrationCount: $migrationCount,
                 promotion: "render-api-exact-commit-drain"
               }
             }')"
@@ -478,6 +515,9 @@ jobs:
             --arg digest "$IMAGE_DIGEST" \
             --argjson drainDeploymentId "$DRAIN_DEPLOYMENT_ID" \
             --arg image "$IMAGE_NAME" \
+            --arg migrationContractDigest "$MIGRATION_CONTRACT_DIGEST" \
+            --argjson migrationContractVersion "$MIGRATION_CONTRACT_VERSION" \
+            --argjson migrationCount "$MIGRATION_COUNT" \
             --arg renderDeployId "$RENDER_DEPLOY_ID" \
             --arg revision "$VERIFIED_SHA" \
             --argjson releaseRunAttempt "$GITHUB_RUN_ATTEMPT" \
@@ -486,10 +526,13 @@ jobs:
             --argjson verifyRunAttempt "$UPSTREAM_RUN_ATTEMPT" \
             --argjson verifyRunId "$UPSTREAM_RUN_ID" \
             '{
-              schemaVersion: 2,
+              schemaVersion: 3,
               revision: $revision,
               image: $image,
               digest: $digest,
+              migrationContractDigest: $migrationContractDigest,
+              migrationContractVersion: $migrationContractVersion,
+              migrationCount: $migrationCount,
               drainDeploymentId: $drainDeploymentId,
               verifyRunId: $verifyRunId,
               verifyRunAttempt: $verifyRunAttempt,
