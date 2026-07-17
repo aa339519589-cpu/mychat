@@ -1,6 +1,6 @@
 # MyChat Platform Refactor Status
 
-Updated: 2026-07-17T00:31:33-05:00
+Updated: 2026-07-17T00:38:38-05:00
 
 This is the authoritative continuation record for the platform refactor. The
 audit in `docs/refactor/full-platform-audit.md` describes the production baseline;
@@ -10,8 +10,11 @@ this file records later branch changes without rewriting that baseline.
 
 - Production baseline: `daacffad107a6513fa6b0ee5b63e512c102cdf2b`.
 - Working branch: `refactor/platform-v2`.
-- Implementation head covered by this status record:
-  `88de1d61b4f30d1c55782939a887f12bde6eef13`.
+- Integrated implementation head covered by this status record:
+  `9f3434ad4df6a8c5ca3858238cbfd62b194fabdc`.
+- The branch includes `origin/main` through
+  `fa6dd1267d77a8747660f9a22bcd984370fb7728` without losing the request-bound
+  nonce rendering in `app/layout.tsx`.
 - Production is intentionally unchanged by this branch. No merge, production
   deploy, paid Render service, schema migration, or traffic change is authorized.
 - Production rollback remains an exact-commit Render deploy plus forward-only
@@ -40,8 +43,9 @@ and real staging evidence are still required before any production claim.
 - Baseline inventory: 581 scanned files and 71,869 effective lines, including
   36,665 runtime TypeScript/JavaScript lines and 14,112 migration SQL lines. These
   are baseline measurements, not silently relabelled as post-refactor counts.
-- The implementation head changes 50 files relative to the baseline with 5,175
-  inserted and 232 deleted physical lines. That delta includes documentation,
+- The integrated head changes 59 files relative to the audit baseline with 5,580
+  inserted and 251 deleted physical lines. That delta includes concurrent mainline
+  product changes as well as documentation,
   tests, and operations tooling and must not be reported as backend SLOC.
 
 ### Request and worker containment
@@ -133,15 +137,15 @@ of a current incident.
 
 ## Verification record
 
-Current implementation-head local verification on 2026-07-17:
+Current integrated-head local verification on 2026-07-17:
 
-- `npm run quality`: passed.
+- Full `npm run verify`: passed after merging the latest `main`.
 - Architecture: 362 files, 901 runtime edges, zero baseline cycles.
 - Migration contract: 43 sealed files with digest
   `e5479e42cbba7c439a1a31ec3325344625f740d2cca37c3865dc4af00243dc0d`.
 - TypeScript, backend ESLint, and repository-wide ESLint including `ops/`: passed.
-- 139 Node test files: 611 passed, zero failed/skipped/cancelled.
-- Coverage: 82.48% lines, 80.60% branches, 87.48% functions.
+- 140 Node test files: 613 passed, zero failed/skipped/cancelled.
+- Coverage: 82.20% lines, 80.62% branches, 87.48% functions.
 - `npm audit --omit=dev --audit-level=high`: zero production vulnerabilities.
 - PostgreSQL 16 migration/replay/concurrency/SIGKILL verification: passed.
 - Next.js 16.2.6 optimized production build and route collection: passed.
@@ -150,12 +154,12 @@ Current implementation-head local verification on 2026-07-17:
   script nonce binding, and the existing shell/navigation scenarios.
 - Reliability harness regression: mock load/chaos, resumable soak extension,
   corrupt checkpoint rejection, required staging acknowledgements, and permanent
-  production-host rejection all passed inside the 611-test suite.
+  production-host rejection all passed inside the 613-test suite.
 
 Still pending outside local repository scope:
 
-- Draft-PR CI on the pushed commit, including Linux container build/runtime smoke,
-  CodeQL, secret scan, Trivy, SBOM, and provenance jobs.
+- Draft-PR CI on the final pushed merge head, including Linux container
+  build/runtime smoke, CodeQL, secret scan, Trivy, SBOM, and provenance jobs.
 - Independent review.
 - Production-like staging load, role-isolation chaos, restore, paging, and long
   soak evidence.
@@ -206,12 +210,15 @@ verified.
 - `5f960ff` Introduce chat title workflow boundary
 - `cb4f3d9` Record durable workflow runtime decision
 - `88de1d6` Add guarded workflow reliability harnesses
+- `75e6f38` Record refactor verification evidence
+- `9f3434a` Merge latest main into platform refactor
 
 ## Next actions
 
-1. Commit this current-head evidence record.
-2. Push `refactor/platform-v2` and open a draft PR.
-3. Require draft-PR CI and independent review; do not merge or deploy this branch.
+1. Commit this integrated-head evidence record.
+2. Push the final `refactor/platform-v2` head to draft PR #42.
+3. Require final draft-PR CI and independent review; do not merge or deploy this
+   branch.
 4. Create a production-like staging topology before running real load/chaos/soak,
    restore, paging, or role-isolation acceptance gates.
 5. Continue the next architecture slice only in small reversible commits with this
