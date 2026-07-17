@@ -21,9 +21,12 @@ test('HTML responses use unique nonces on every framework script', async ({ page
   expect(first.headers()['cache-control']).toContain('no-store')
 
   const html = await first.text()
-  const scriptTags = html.match(/<script\b[^>]*>/g) ?? []
-  expect(scriptTags.length).toBeGreaterThan(0)
-  for (const tag of scriptTags) expect(tag).toContain(`nonce="${firstNonce}"`)
+  const scriptNonces = await page.evaluate(markup => {
+    const parsed = new DOMParser().parseFromString(markup, 'text/html')
+    return [...parsed.scripts].map(script => script.getAttribute('nonce'))
+  }, html)
+  expect(scriptNonces.length).toBeGreaterThan(0)
+  for (const nonce of scriptNonces) expect(nonce).toBe(firstNonce)
 
   const pageErrors: string[] = []
   page.on('pageerror', error => pageErrors.push(error.message))
