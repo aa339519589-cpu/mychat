@@ -7,7 +7,7 @@ import test from "node:test"
 
 const checker = resolve(process.cwd(), "scripts/check-architecture.mjs")
 
-function runFixture(files: Record<string, string>) {
+function runFixture(files: Record<string, string>, arguments_: string[] = []) {
   const root = mkdtempSync(join(tmpdir(), "mychat-architecture-"))
   try {
     for (const [path, source] of Object.entries(files)) {
@@ -15,7 +15,7 @@ function runFixture(files: Record<string, string>) {
       mkdirSync(dirname(absolutePath), { recursive: true })
       writeFileSync(absolutePath, source)
     }
-    return spawnSync(process.execPath, [checker, "--root", root], { encoding: "utf8" })
+    return spawnSync(process.execPath, [checker, "--root", root, ...arguments_], { encoding: "utf8" })
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -29,6 +29,24 @@ test("architecture checker accepts a valid dependency direction", () => {
   })
 
   assert.equal(result.status, 0, result.stderr)
+})
+
+test("architecture checker reports local dependency fan-in and fan-out", () => {
+  const result = runFixture({
+    "lib/domain.ts": "export const answer = 42\n",
+    "components/result.tsx": "import { answer } from '@/lib/domain'\nexport const Result = () => <p>{answer}</p>\n",
+    "app/page.tsx": "import { Result } from '@/components/result'\nimport { answer } from '@/lib/domain'\nexport default function Page() { return <Result key={answer} /> }\n",
+  }, ["--json"])
+
+  assert.equal(result.status, 0, result.stderr)
+  const report = JSON.parse(result.stdout) as {
+    metrics: Array<{ path: string; localDependencies: number; localDependents: number }>
+  }
+  const metrics = new Map(report.metrics.map(metric => [metric.path, metric]))
+  assert.equal(metrics.get("lib/domain.ts")?.localDependencies, 0)
+  assert.equal(metrics.get("lib/domain.ts")?.localDependents, 2)
+  assert.equal(metrics.get("app/page.tsx")?.localDependencies, 2)
+  assert.equal(metrics.get("app/page.tsx")?.localDependents, 0)
 })
 
 test("architecture checker rejects library modules owned only by tests", () => {

@@ -463,6 +463,10 @@ function inspect(root, config) {
 
   const budgets = config.budgets ?? {}
   const exceptions = config.exceptions ?? {}
+  const localDependents = new Map(files.map((file) => [file.path, new Set()]))
+  for (const [path, dependencies] of graph) {
+    for (const dependency of dependencies) localDependents.get(dependency)?.add(path)
+  }
   const metrics = []
   for (const file of files) {
     const layer = layerFor(file.path)
@@ -476,6 +480,7 @@ function inspect(root, config) {
       path: file.path,
       lines,
       localDependencies,
+      localDependents: localDependents.get(file.path)?.size ?? 0,
       maxLines: budget.maxLines,
       maxLocalDependencies: budget.maxLocalDependencies,
     })
