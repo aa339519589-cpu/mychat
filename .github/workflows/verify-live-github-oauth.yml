@@ -1,205 +1,28 @@
-name: Repair and verify live GitHub OAuth
+name: Diagnose Render GitHub OAuth environment
 
 on:
   pull_request:
     paths:
       - .github/workflows/verify-live-github-oauth.yml
+      - scripts/diagnose-render-oauth-env.sh
 
 permissions:
   contents: read
 
 jobs:
-  production-repair:
-    name: Repair Render OAuth environment
+  diagnose:
+    name: Render OAuth environment diagnostic
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 10
     env:
-      EXPECTED_SHA: 26ce1f03b1f0fec37d708c0c10b08edbb26ee999
-      EXPECTED_REVISION: 26ce1f03b1f0
-      READY_URL: https://mychat-nm6x.onrender.com/api/ready
-      OAUTH_URL: https://mychat-nm6x.onrender.com/api/auth/github
       RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
       RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
       REPO_GITHUB_CLIENT_ID: ${{ secrets.GITHUB_CLIENT_ID }}
       REPO_GITHUB_CLIENT_SECRET: ${{ secrets.GITHUB_CLIENT_SECRET }}
       REPO_AGENT_CREDENTIAL_KEY: ${{ secrets.AGENT_CREDENTIAL_KEY }}
     steps:
-      - name: Inspect and repair server-only Render OAuth variables
-        id: repair
-        run: |
-          set -euo pipefail
-          if [[ -z "$RENDER_API_KEY" ]] || [[ ! "$RENDER_SERVICE_ID" =~ ^srv-[a-z0-9]+$ ]]; then
-            echo 'Render release credentials are unavailable.' >&2
-            exit 1
-          fi
+      - name: Checkout temporary diagnostics
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
-          render_api() {
-            curl --fail-with-body --silent --show-error \
-              --retry 4 --retry-all-errors --connect-timeout 10 --max-time 60 \
-              --header "Authorization: Bearer $RENDER_API_KEY" \
-              --header 'Content-Type: application/json' \
-              "$@"
-          }
-          get_env() {
-            local key="$1" response code body
-            response="$(curl --silent --show-error --connect-timeout 10 --max-time 60 \
-              --header "Authorization: Bearer $RENDER_API_KEY" \
-              --header 'Content-Type: application/json' \
-              --write-out $'\n%{http_code}' \
-              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/$key")"
-            code="${response##*$'\n'}"
-            body="${response%$'\n'*}"
-            case "$code" in
-              200) jq -r '.value // ""' <<<"$body" ;;
-              404) printf '' ;;
-              *)
-                echo "Unable to inspect Render variable $key (HTTP $code)." >&2
-                exit 1
-                ;;
-            esac
-          }
-          put_env() {
-            local key="$1" value="$2"
-            render_api --request PUT \
-              --data "$(jq -nc --arg value "$value" '{value: $value}')" \
-              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/$key" >/dev/null
-          }
-          state() {
-            if [[ -n "$1" ]]; then printf 'present'; else printf 'missing'; fi
-          }
-
-          render_client_id="$(get_env GITHUB_CLIENT_ID)"
-          render_client_secret="$(get_env GITHUB_CLIENT_SECRET)"
-          render_agent_key="$(get_env AGENT_CREDENTIAL_KEY)"
-
-          # Migrate only explicit legacy OAuth aliases; never print their values.
-          if [[ -z "$render_client_id" ]]; then
-            render_client_id="$(get_env GITHUB_OAUTH_CLIENT_ID)"
-          fi
-          if [[ -z "$render_client_secret" ]]; then
-            render_client_secret="$(get_env GITHUB_OAUTH_CLIENT_SECRET)"
-          fi
-
-          echo "Render GITHUB_CLIENT_ID: $(state "$render_client_id")"
-          echo "Render GITHUB_CLIENT_SECRET: $(state "$render_client_secret")"
-          echo "Render AGENT_CREDENTIAL_KEY: $(state "$render_agent_key") (optional for this compatibility release)"
-          echo "Repository GITHUB_CLIENT_ID backup: $(state "$REPO_GITHUB_CLIENT_ID")"
-          echo "Repository GITHUB_CLIENT_SECRET backup: $(state "$REPO_GITHUB_CLIENT_SECRET")"
-
-          if [[ -z "$render_client_id" ]]; then
-            render_client_id="$REPO_GITHUB_CLIENT_ID"
-          fi
-          if [[ -z "$render_client_secret" ]]; then
-            render_client_secret="$REPO_GITHUB_CLIENT_SECRET"
-          fi
-          if [[ -z "$render_client_id" || -z "$render_client_secret" ]]; then
-            echo 'GitHub OAuth client credentials are absent from both Render and repository secrets.' >&2
-            exit 1
-          fi
-
-          put_env GITHUB_CLIENT_ID "$render_client_id"
-          put_env GITHUB_CLIENT_SECRET "$render_client_secret"
-          if [[ -z "$render_agent_key" && -n "$REPO_AGENT_CREDENTIAL_KEY" ]]; then
-            put_env AGENT_CREDENTIAL_KEY "$REPO_AGENT_CREDENTIAL_KEY"
-          fi
-
-          test "$(get_env GITHUB_CLIENT_ID)" = "$render_client_id"
-          test "$(get_env GITHUB_CLIENT_SECRET)" = "$render_client_secret"
-          echo 'OAuth variables are stored in Render without exposing their values.'
-
-      - name: Redeploy the exact merged revision with the repaired environment
-        id: deploy
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          current_main="$(curl --fail-with-body --silent --show-error \
-            --header 'Accept: application/vnd.github+json' \
-            --header "Authorization: Bearer $GH_TOKEN" \
-            --header 'X-GitHub-Api-Version: 2022-11-28' \
-            "https://api.github.com/repos/$GITHUB_REPOSITORY/git/ref/heads/main" \
-            | jq -er '.object.sha')"
-          if [[ "$current_main" != "$EXPECTED_SHA" ]]; then
-            echo 'Main changed during the OAuth repair; refusing to redeploy a stale revision.' >&2
-            exit 1
-          fi
-
-          response="$(curl --fail-with-body --silent --show-error \
-            --connect-timeout 10 --max-time 60 \
-            --header "Authorization: Bearer $RENDER_API_KEY" \
-            --header 'Content-Type: application/json' \
-            --request POST \
-            --data "$(jq -nc --arg commitId "$EXPECTED_SHA" '{commitId: $commitId}')" \
-            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys")"
-          deploy_id="$(jq -er '.id' <<<"$response")"
-          if [[ ! "$deploy_id" =~ ^dep-[a-z0-9]+$ ]]; then
-            echo 'Render did not return a valid deployment ID.' >&2
-            exit 1
-          fi
-          echo "deploy_id=$deploy_id" >> "$GITHUB_OUTPUT"
-
-      - name: Wait for Render and verify the OAuth contract
-        env:
-          DEPLOY_ID: ${{ steps.deploy.outputs.deploy_id }}
-        run: |
-          set -euo pipefail
-          render_api() {
-            curl --fail-with-body --silent --show-error \
-              --retry 4 --retry-all-errors --connect-timeout 10 --max-time 60 \
-              --header "Authorization: Bearer $RENDER_API_KEY" \
-              "$@"
-          }
-          for attempt in $(seq 1 180); do
-            response="$(render_api "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys/$DEPLOY_ID")"
-            deploy_status="$(jq -er '.status' <<<"$response")"
-            deploy_commit="$(jq -r '.commit.id // empty' <<<"$response")"
-            echo "deploy_attempt=$attempt status=$deploy_status"
-            if [[ -n "$deploy_commit" && "$deploy_commit" != "$EXPECTED_SHA" ]]; then
-              echo 'Render deployment resolved a different commit.' >&2
-              exit 1
-            fi
-            case "$deploy_status" in
-              live) break ;;
-              build_failed|update_failed|pre_deploy_failed|canceled|deactivated)
-                echo "Render deployment failed with status $deploy_status." >&2
-                exit 1
-                ;;
-            esac
-            sleep 10
-          done
-
-          ready_body="$(mktemp)"
-          oauth_body="$(mktemp)"
-          trap 'rm -f "$ready_body" "$oauth_body"' EXIT
-          ready=false
-          for attempt in $(seq 1 60); do
-            ready_code="$(curl --silent --show-error --max-time 30 \
-              --output "$ready_body" --write-out '%{http_code}' \
-              -H 'Cache-Control: no-cache' \
-              "${READY_URL}?probe=${GITHUB_RUN_ID}-${attempt}" || true)"
-            revision="$(jq -r '.revision // "unknown"' "$ready_body" 2>/dev/null || printf 'unknown')"
-            status="$(jq -r '.status // "invalid"' "$ready_body" 2>/dev/null || printf 'invalid')"
-            echo "ready_attempt=$attempt http=${ready_code:-000} status=$status revision=$revision"
-            if [[ "$ready_code" == '200' && "$status" == 'ok' && "$revision" == "$EXPECTED_REVISION" ]]; then
-              ready=true
-              break
-            fi
-            sleep 10
-          done
-          if [[ "$ready" != true ]]; then
-            echo 'The repaired production deployment did not become ready.' >&2
-            cat "$ready_body" >&2 || true
-            exit 1
-          fi
-
-          oauth_code="$(curl --silent --show-error --max-time 30 \
-            --output "$oauth_body" --write-out '%{http_code}' \
-            -H 'Cache-Control: no-cache' \
-            "${OAUTH_URL}?probe=${GITHUB_RUN_ID}" || true)"
-          oauth_text="$(cat "$oauth_body")"
-          echo "oauth_http=${oauth_code:-000} oauth_body=$oauth_text"
-          if [[ "$oauth_code" != '401' || "$oauth_text" != *'请先登录 MyChat'* ]]; then
-            echo 'Production GitHub OAuth is still unavailable after environment repair.' >&2
-            exit 1
-          fi
-          echo "Production revision $EXPECTED_REVISION now exposes a working GitHub OAuth entry point."
+      - name: Report configuration presence without exposing values
+        run: bash scripts/diagnose-render-oauth-env.sh
