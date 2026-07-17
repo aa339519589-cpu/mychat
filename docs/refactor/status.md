@@ -1,6 +1,6 @@
 # MyChat Platform Refactor Status
 
-Updated: 2026-07-17T00:38:38-05:00
+Updated: 2026-07-17T00:46:38-05:00
 
 This is the authoritative continuation record for the platform refactor. The
 audit in `docs/refactor/full-platform-audit.md` describes the production baseline;
@@ -11,7 +11,7 @@ this file records later branch changes without rewriting that baseline.
 - Production baseline: `daacffad107a6513fa6b0ee5b63e512c102cdf2b`.
 - Working branch: `refactor/platform-v2`.
 - Integrated implementation head covered by this status record:
-  `9f3434ad4df6a8c5ca3858238cbfd62b194fabdc`.
+  `6fb708f81b7c2e70caebb91420bffaea6effede6`.
 - The branch includes `origin/main` through
   `fa6dd1267d77a8747660f9a22bcd984370fb7728` without losing the request-bound
   nonce rendering in `app/layout.tsx`.
@@ -43,7 +43,7 @@ and real staging evidence are still required before any production claim.
 - Baseline inventory: 581 scanned files and 71,869 effective lines, including
   36,665 runtime TypeScript/JavaScript lines and 14,112 migration SQL lines. These
   are baseline measurements, not silently relabelled as post-refactor counts.
-- The integrated head changes 59 files relative to the audit baseline with 5,580
+- The integrated head changes 59 files relative to the audit baseline with 5,590
   inserted and 251 deleted physical lines. That delta includes concurrent mainline
   product changes as well as documentation,
   tests, and operations tooling and must not be reported as backend SLOC.
@@ -152,14 +152,24 @@ Current integrated-head local verification on 2026-07-17:
 - Playwright: 10/10 passed across desktop Chromium and Pixel 7. This includes
   artifact network/script containment, unique application CSP nonces, framework
   script nonce binding, and the existing shell/navigation scenarios.
+- GitHub Advanced Security initially reported one high-severity alert because the
+  CSP E2E test parsed script tags with a case-sensitive regular expression. The
+  test now uses browser `DOMParser`; targeted ESLint, TypeScript, and Playwright
+  passed, and CodeQL marks the alert fixed.
 - Reliability harness regression: mock load/chaos, resumable soak extension,
   corrupt checkpoint rejection, required staging acknowledgements, and permanent
   production-host rejection all passed inside the 613-test suite.
 
-Still pending outside local repository scope:
+Draft PR #42 evidence on implementation head `6fb708f`:
 
-- Draft-PR CI on the final pushed merge head, including Linux container
-  build/runtime smoke, CodeQL, secret scan, Trivy, SBOM, and provenance jobs.
+- Linux Verify and container build/runtime smoke: passed.
+- Security CodeQL analysis, CodeQL new-alert gate, secret scan, and dependency
+  review: passed.
+- Vercel Preview and Preview Comments: passed.
+- Image publication was skipped as designed for a pull request.
+
+Still pending outside automated repository scope:
+
 - Independent review.
 - Production-like staging load, role-isolation chaos, restore, paging, and long
   soak evidence.
@@ -179,6 +189,16 @@ Still pending outside local repository scope:
 
 These retained facts do not say the refactor branch is deployed or production-
 verified.
+
+Concurrent mainline production observation on 2026-07-17:
+
+- `main` revision `fa6dd1267d77a8747660f9a22bcd984370fb7728` completed Verify,
+  Security, immutable image publication, and automatic activation independently of
+  this draft branch.
+- Activation run `29557953992` completed successfully.
+- Production `/api/live` and strict `/api/ready` report revision `fa6dd1267d77`;
+  every required dependency is ready and worker `draining=false`.
+- No refactor-only commit from PR #42 is deployed.
 
 ## Remaining risks and evidence gaps
 
@@ -212,16 +232,16 @@ verified.
 - `88de1d6` Add guarded workflow reliability harnesses
 - `75e6f38` Record refactor verification evidence
 - `9f3434a` Merge latest main into platform refactor
+- `666fdd0` Refresh evidence after main integration
+- `6fb708f` Parse CSP script tags with the DOM
 
 ## Next actions
 
-1. Commit this integrated-head evidence record.
-2. Push the final `refactor/platform-v2` head to draft PR #42.
-3. Require final draft-PR CI and independent review; do not merge or deploy this
-   branch.
-4. Create a production-like staging topology before running real load/chaos/soak,
+1. Push this evidence-only update to draft PR #42 and require its final CI.
+2. Obtain independent review; do not merge or deploy this branch.
+3. Create a production-like staging topology before running real load/chaos/soak,
    restore, paging, or role-isolation acceptance gates.
-5. Continue the next architecture slice only in small reversible commits with this
+4. Continue the next architecture slice only in small reversible commits with this
    status file updated after each evidence boundary.
 
 ## Blockers and required decisions
