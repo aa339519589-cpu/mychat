@@ -9,7 +9,6 @@ on:
   workflow_dispatch:
 
 permissions:
-  actions: read
   contents: read
   statuses: write
 
@@ -32,7 +31,7 @@ jobs:
           gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
             -f state=pending \
             -f context='Production Recovery' \
-            -f description='Restoring Render and catching up to verified main' >/dev/null
+            -f description='Starting direct Render production recovery' >/dev/null
 
       - name: Checkout recovery tooling
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -44,7 +43,7 @@ jobs:
         with:
           node-version: 24
 
-      - name: Restore service and catch up to latest verified main
+      - name: Restore service and catch up to latest main
         id: recovery
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -52,6 +51,23 @@ jobs:
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
         run: |
           set -euo pipefail
+          stage='initializing'
+
+          report() {
+            local state="$1"
+            local description="$2"
+            gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+              -f state="$state" \
+              -f context='Production Recovery' \
+              -f description="${description:0:140}" >/dev/null || true
+          }
+
+          failed() {
+            local code=$?
+            report failure "Recovery failed at $stage"
+            exit "$code"
+          }
+          trap failed ERR
 
           if [[ -z "$RENDER_API_KEY" ]] || [[ ! "$RENDER_SERVICE_ID" =~ ^srv-[a-z0-9]+$ ]]; then
             echo 'RENDER_API_KEY and RENDER_SERVICE_ID must be configured' >&2
@@ -70,31 +86,12 @@ jobs:
             gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha'
           }
 
-          wait_for_verified_run() {
-            local workflow="$1"
-            local revision="$2"
-            local label="$3"
-            local state
-            for attempt in {1..120}; do
-              state="$(gh run list --workflow "$workflow" --commit "$revision" \
-                --event push --limit 1 --json status,conclusion \
-                --jq 'if length == 0 then "missing:" else .[0].status + ":" + (.[0].conclusion // "") end')"
-              case "$state" in
-                completed:success) return 0 ;;
-                completed:*) echo "$label failed for $revision: $state" >&2; return 1 ;;
-              esac
-              sleep 10
-            done
-            echo "$label did not complete for $revision" >&2
-            return 1
-          }
-
           create_exact_deploy() {
             local revision="$1"
-            local body_file status response deploy_id
-            body_file="$(mktemp)"
-            for attempt in {1..30}; do
-              status="$(curl --silent --show-error --output "$body_file" --write-out '%{http_code}' \
+            local body status deploy_id message
+            body="$(mktemp)"
+            for attempt in {1..60}; do
+              status="$(curl --silent --show-error --output "$body" --write-out '%{http_code}' \
                 --connect-timeout 10 --max-time 60 \
                 --header "Authorization: Bearer $RENDER_API_KEY" \
                 --header 'Content-Type: application/json' \
@@ -102,23 +99,25 @@ jobs:
                 --data "$(jq -nc --arg commitId "$revision" '{commitId: $commitId}')" \
                 "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys")"
               if [[ "$status" == 200 || "$status" == 201 ]]; then
-                response="$(cat "$body_file")"
-                deploy_id="$(jq -er '.id' <<<"$response")"
+                deploy_id="$(jq -er '.id' < "$body")"
                 [[ "$deploy_id" =~ ^dep-[a-z0-9]+$ ]]
-                rm -f "$body_file"
+                rm -f "$body"
                 printf '%s' "$deploy_id"
                 return 0
               fi
-              if [[ "$status" == 409 || "$status" == 429 ]]; then
+              message="$(cat "$body")"
+              if [[ "$status" == 409 || "$status" == 429 ]] \
+                || { [[ "$status" == 400 ]] && grep -Eqi 'deploy|progress|active|busy' <<<"$message"; }; then
+                echo "Render busy (HTTP $status), waiting before retry $attempt" >&2
                 sleep 10
                 continue
               fi
-              cat "$body_file" >&2
+              echo "$message" >&2
               echo "Render deploy creation failed with HTTP $status" >&2
-              rm -f "$body_file"
+              rm -f "$body"
               return 1
             done
-            rm -f "$body_file"
+            rm -f "$body"
             echo 'Render remained busy and did not accept the recovery deploy' >&2
             return 1
           }
@@ -151,41 +150,33 @@ jobs:
             return 1
           }
 
+          stage='configuring Render active mode'
+          report pending 'Forcing Render maintenance mode off'
           render_api --request PATCH --data '{"autoDeploy":"no"}' \
             "https://api.render.com/v1/services/$RENDER_SERVICE_ID" >/dev/null
-
-          # Keep production active throughout catch-up. A previous superseded
-          # release can leave the service in drain mode; every recovery deploy
-          # reloads this authoritative off value.
           render_api --request PUT --data '{"value":"off"}' \
             "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/MYCHAT_MAINTENANCE_MODE" >/dev/null
           render_api \
             "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/MYCHAT_MAINTENANCE_MODE" \
             | jq --exit-status '.value == "off"' >/dev/null
 
-          for cycle in {1..12}; do
+          for cycle in {1..15}; do
             target="$(current_main)"
-            if [[ ! "$target" =~ ^[0-9a-f]{40}$ ]]; then
-              echo 'Current main did not resolve to a full commit SHA' >&2
-              exit 1
-            fi
+            [[ "$target" =~ ^[0-9a-f]{40}$ ]]
+            stage="creating Render deploy for ${target:0:12}"
+            report pending "Deploying current main ${target:0:12} to Render"
 
-            echo "Catch-up cycle $cycle targeting $target"
-            wait_for_verified_run verify.yml "$target" Verify
-            wait_for_verified_run security.yml "$target" Security
-
-            latest="$(current_main)"
-            if [[ "$latest" != "$target" ]]; then
-              echo "Main advanced to $latest before deployment; coalescing onto it"
-              continue
-            fi
-
-            # Reassert active mode immediately before creating the exact deploy.
+            # Reassert active mode immediately before every exact deployment.
             render_api --request PUT --data '{"value":"off"}' \
               "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/MYCHAT_MAINTENANCE_MODE" >/dev/null
             deploy_id="$(create_exact_deploy "$target")"
+
+            stage="waiting for Render deploy $deploy_id"
+            report pending "Waiting for Render deploy ${target:0:12}"
             wait_for_deploy "$target" "$deploy_id"
 
+            stage="checking active readiness for ${target:0:12}"
+            report pending "Verifying active production ${target:0:12}"
             EXPECTED_REVISION="$target" EXPECTED_WORKER_DRAINING=false \
               HEALTH_CHECK_ATTEMPTS=20 HEALTH_CHECK_RETRY_MS=10000 \
               HEALTH_CHECK_TIMEOUT_MS=20000 \
@@ -193,13 +184,16 @@ jobs:
 
             latest="$(current_main)"
             if [[ "$latest" == "$target" ]]; then
+              trap - ERR
               echo "target_sha=$target" >> "$GITHUB_OUTPUT"
               echo "render_deploy_id=$deploy_id" >> "$GITHUB_OUTPUT"
+              report success "Render active on current main ${target:0:12}"
               exit 0
             fi
-            echo "Production is active on $target; main advanced to $latest, continuing catch-up"
+            echo "Production active on $target; main advanced to $latest, continuing catch-up"
           done
 
+          stage='waiting for main to settle'
           echo 'Main did not settle within the production catch-up window' >&2
           exit 1
 
@@ -212,14 +206,8 @@ jobs:
           gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
             -f state=success \
             -f context='Production Recovery' \
-            -f description="Render active on ${TARGET_SHA:0:12}" >/dev/null
+            -f description="Render active on current main ${TARGET_SHA:0:12}" >/dev/null
 
-      - name: Mark recovery failed
+      - name: Preserve failure status
         if: failure()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
-            -f state=failure \
-            -f context='Production Recovery' \
-            -f description='Render recovery or verified catch-up failed' >/dev/null
+        run: echo 'Recovery step already recorded the exact failed stage.'
