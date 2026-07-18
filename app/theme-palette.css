@@ -42,33 +42,43 @@
 }
 
 .dark {
-  --code-accent: #011A38;
-  --primary: #011A38;
-  --primary-foreground: #FCF7F1;
-  --accent: #011A38;
-  --accent-foreground: #FCF7F1;
-  --ring: #011A38;
-  --chart-1: #011A38;
-  --sidebar-primary: #011A38;
-  --sidebar-primary-foreground: #FCF7F1;
-  --sidebar-accent: #011A38;
-  --sidebar-accent-foreground: #FCF7F1;
-  --sidebar-ring: #011A38;
+  /* Keep light mode on the sampled deep navy, but raise dark-mode luminance
+     so active surfaces remain clearly separated from the charcoal sidebar. */
+  --code-accent: #2F6FB3;
+  --primary: #2F6FB3;
+  --primary-foreground: #F7FBFF;
+  --accent: #2F6FB3;
+  --accent-foreground: #F7FBFF;
+  --ring: #79B8F3;
+  --chart-1: #4A90D9;
+  --sidebar-primary: #2F6FB3;
+  --sidebar-primary-foreground: #F7FBFF;
+  --sidebar-accent: rgb(47 111 179 / 18%);
+  --sidebar-accent-foreground: #B9DCFF;
+  --sidebar-ring: #79B8F3;
+}
+
+.dark ::selection {
+  background: rgb(79 150 219 / 38%);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not(.light) {
-    --code-accent: #011A38;
-    --primary: #011A38;
-    --primary-foreground: #FCF7F1;
-    --accent: #011A38;
-    --accent-foreground: #FCF7F1;
-    --ring: #011A38;
-    --chart-1: #011A38;
-    --sidebar-primary: #011A38;
-    --sidebar-primary-foreground: #FCF7F1;
-    --sidebar-accent: #011A38;
-    --sidebar-accent-foreground: #FCF7F1;
-    --sidebar-ring: #011A38;
+    --code-accent: #2F6FB3;
+    --primary: #2F6FB3;
+    --primary-foreground: #F7FBFF;
+    --accent: #2F6FB3;
+    --accent-foreground: #F7FBFF;
+    --ring: #79B8F3;
+    --chart-1: #4A90D9;
+    --sidebar-primary: #2F6FB3;
+    --sidebar-primary-foreground: #F7FBFF;
+    --sidebar-accent: rgb(47 111 179 / 18%);
+    --sidebar-accent-foreground: #B9DCFF;
+    --sidebar-ring: #79B8F3;
+  }
+
+  :root:not(.light) ::selection {
+    background: rgb(79 150 219 / 38%);
   }
 }
