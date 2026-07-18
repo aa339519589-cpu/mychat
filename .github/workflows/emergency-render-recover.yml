@@ -103,7 +103,7 @@ jobs:
                 --header 'Content-Type: application/json' --request POST \
                 --data "$(jq -nc --arg commitId "$target" '{commitId: $commitId}')" \
                 "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys")"
-              if [[ "$http" == 200 || "$http" == 201 ]]; then
+              if [[ "$http" == 200 || "$http" == 201 || "$http" == 202 ]]; then
                 deploy_id="$(jq -er '.id' < "$body")"
                 break
               fi
@@ -138,6 +138,7 @@ jobs:
             stage="ready-${target:0:12}"
             report pending "verifying-${target:0:12}"
             ready=''
+            short=''
             for attempt in {1..20}; do
               if ready="$(curl --fail-with-body --silent --show-error \
                 --connect-timeout 10 --max-time 20 \
