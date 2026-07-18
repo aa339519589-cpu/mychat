@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  issues: write
 
 concurrency:
   group: diagnose-quality-${{ github.event.pull_request.number }}
@@ -17,12 +16,9 @@ jobs:
   diagnose:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      PR_NUMBER: ${{ github.event.pull_request.number }}
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d199d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
       - name: Set up Node.js
@@ -31,24 +27,27 @@ jobs:
           node-version: 24
           cache: npm
       - name: Install dependencies
-        run: npm ci
-      - name: Capture coverage failure
+        run: npm ci --ignore-scripts --legacy-peer-deps
+      - name: Capture coverage output
+        id: coverage
         shell: bash
         run: |
           set +e
           npm run test:coverage > coverage.log 2>&1
           status=$?
           set -e
-          if [[ "$status" -ne 0 ]]; then
-            {
-              echo '### Coverage diagnostic'
-              echo
-              echo '```text'
-              tail -n 180 coverage.log
-              echo '```'
-            } > coverage-comment.md
-            jq --raw-input --slurp '{body: .}' coverage-comment.md \
-              | gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --input - >/dev/null
-            cat coverage.log
-            exit "$status"
-          fi
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+      - name: Upload coverage log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-log-${{ github.run_id }}-${{ github.run_attempt }}
+          path: coverage.log
+          if-no-files-found: error
+          compression-level: 0
+          overwrite: false
+          include-hidden-files: false
+          retention-days: 1
+      - name: Fail on coverage error
+        if: steps.coverage.outputs.status != '0'
+        run: exit 1
