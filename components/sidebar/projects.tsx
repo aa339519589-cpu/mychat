@@ -140,9 +140,9 @@ export function ProjectDetailScreen({
       {/* 起新对谈：本项目的主要入口 */}
       <button
         onClick={() => onNewChat(project.id)}
-        className="flex w-full items-center gap-2.5 rounded-2xl bg-sidebar-primary/12 px-4 py-3 text-sm font-medium text-foreground transition-colors hover:bg-sidebar-primary/20 active:scale-[0.99]"
+        className="fluid-press flex w-full items-center gap-2.5 rounded-2xl bg-sidebar-primary px-4 py-3 text-sm font-semibold text-sidebar-primary-foreground shadow-[0_8px_22px_rgb(2_26_56/0.18)] transition-[transform,background-color,box-shadow] hover:bg-sidebar-primary/92 active:scale-[0.99]"
       >
-        <Plus className="size-4 text-sidebar-primary" />在此项目中起新对谈
+        <Plus className="size-4 text-sidebar-primary-foreground" />在此项目中起新对谈
       </button>
 
       {/* 对谈列表 */}
