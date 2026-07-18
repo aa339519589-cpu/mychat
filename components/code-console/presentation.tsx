@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react"
 import { createPortal } from "react-dom"
+import { AnimatePresence, motion, useReducedMotion } from "motion/react"
 import {
   Check,
   ChevronDown,
@@ -26,14 +27,15 @@ import {
   type CodeSession,
 } from "@/lib/code-data"
 import { cn } from "@/lib/utils"
+import { PANEL_SPRING, POPOVER_SPRING, transitionFor } from "@/components/motion/fluid"
 import { ACCENT, CONTROL_FOCUS, MONO, type RepoItem } from "./shared"
 
 export { MessageView, ThinkingTimer } from "./message-view"
 export { computeDiff } from "./diff"
 export { ACCENT, COMMANDS, MONO, planSummary, type Overlay, type RepoItem } from "./shared"
 
-const HEADER_CONTROL = "inline-flex min-h-11 items-center justify-center rounded-md transition-colors hover:bg-secondary"
-const ICON_CONTROL = "inline-flex size-11 shrink-0 items-center justify-center rounded-md transition-colors"
+const HEADER_CONTROL = "fluid-press inline-flex min-h-11 items-center justify-center rounded-md hover:bg-secondary"
+const ICON_CONTROL = "fluid-press fluid-icon-press inline-flex size-11 shrink-0 items-center justify-center rounded-md"
 
 export function Shell({ children, onExit, repo, login, onSwitchRepo, onGhMenu, ghMenu, onCloseGh, onDisconnect, auto, onToggleAuto }: {
   children: ReactNode
@@ -48,6 +50,7 @@ export function Shell({ children, onExit, repo, login, onSwitchRepo, onGhMenu, g
   auto?: boolean
   onToggleAuto?: () => void
 }) {
+  const reducedMotion = useReducedMotion()
   return (
     <div className="paper-grain fixed inset-0 z-[60] flex flex-col overflow-hidden bg-background">
       <header className="flex min-w-0 shrink-0 items-center gap-1.5 border-b border-border px-2 py-1.5 sm:gap-2 sm:px-4 md:px-8">
@@ -80,21 +83,31 @@ export function Shell({ children, onExit, repo, login, onSwitchRepo, onGhMenu, g
                 className={cn(HEADER_CONTROL, CONTROL_FOCUS, "min-w-0 max-w-[24vw] gap-1 px-2 text-[11px] text-muted-foreground sm:max-w-none")} style={{ fontFamily: MONO }}>
                 <span className="truncate">{login ? `@${login}` : "GitHub"}</span><ChevronDown className="size-3 shrink-0" aria-hidden="true" />
               </button>
+              <AnimatePresence initial={false}>
               {ghMenu && (
-                <>
+                <motion.div key="github-menu-layer" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={transitionFor(reducedMotion)}>
                   <div className="fixed inset-0 z-10" aria-hidden="true" onMouseDown={onCloseGh} />
-                  <div id="code-github-menu" role="menu" className="absolute right-0 z-20 mt-1 w-44 overflow-hidden rounded-lg border border-border bg-card shadow-lg">
+                  <motion.div
+                    id="code-github-menu"
+                    role="menu"
+                    initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: -4, scale: 0.97 }}
+                    transition={transitionFor(reducedMotion, POPOVER_SPRING)}
+                    className="fluid-material-strong absolute right-0 z-20 mt-1 w-44 origin-top-right overflow-hidden rounded-lg border border-border p-1"
+                  >
                     <a role="menuitem" href="https://github.com/settings/applications" target="_blank" rel="noopener noreferrer"
-                      className={cn("flex min-h-11 items-center gap-2 px-3 text-[11px] text-foreground transition-colors hover:bg-secondary", CONTROL_FOCUS)}>
+                      className={cn("fluid-press flex min-h-11 items-center gap-2 rounded-md px-3 text-[11px] text-foreground hover:bg-secondary", CONTROL_FOCUS)}>
                       <ExternalLink className="size-3.5" aria-hidden="true" />管理授权
                     </a>
                     <button type="button" role="menuitem" onClick={onDisconnect}
-                      className={cn("flex min-h-11 w-full items-center gap-2 border-t border-border/60 px-3 text-[11px] text-destructive transition-colors hover:bg-destructive/10", CONTROL_FOCUS)}>
+                      className={cn("fluid-press flex min-h-11 w-full items-center gap-2 rounded-md border-t border-border/60 px-3 text-[11px] text-destructive hover:bg-destructive/10", CONTROL_FOCUS)}>
                       <X className="size-3.5" aria-hidden="true" />断开 GitHub
                     </button>
-                  </div>
-                </>
+                  </motion.div>
+                </motion.div>
               )}
+              </AnimatePresence>
             </div>
           )}
         </div>
@@ -116,14 +129,14 @@ export function RepoPicker({ repos, hidden, onLoad, onPick, onHide, onReset }: {
   const visible = repos?.filter(repo => !hidden.includes(repo.full_name)) ?? null
   const hiddenCount = repos && visible ? repos.length - visible.length : 0
   return (
-    <div className="flex-1 overflow-y-auto px-4 py-6 md:px-8">
+    <div className="fluid-scroll flex-1 overflow-y-auto px-4 py-6 md:px-8">
       <div className="mx-auto max-w-2xl space-y-2">
         <header className="mb-5">
           <h1 className="text-sm font-semibold text-foreground" style={{ fontFamily: MONO }}>选择工作区</h1>
           <p className="mt-1 text-[11px] text-muted-foreground">{visible?.length ?? 0} 个可用仓库</p>
         </header>
         <button type="button" onClick={() => onPick(null)}
-          className={cn("flex min-h-12 w-full items-center gap-3 rounded-lg border px-4 text-left transition-colors hover:bg-secondary/50", CONTROL_FOCUS)} style={{ borderColor: ACCENT }}>
+          className={cn("fluid-press flex min-h-12 w-full items-center gap-3 rounded-lg border px-4 text-left hover:bg-secondary/50", CONTROL_FOCUS)} style={{ borderColor: ACCENT }}>
           <Plus className="size-4 shrink-0" style={{ color: ACCENT }} aria-hidden="true" /><span className="text-[12px] font-medium text-foreground" style={{ fontFamily: MONO }}>新建项目</span>
         </button>
         <h2 className="px-1 pt-3 text-[11px] font-medium text-muted-foreground" style={{ fontFamily: MONO }}>已有仓库</h2>
@@ -183,6 +196,7 @@ function OverlayShell({ title, onClose, children }: { title: string; onClose: ()
   const titleId = useId()
   const dialogRef = useRef<HTMLDivElement>(null)
   const closeRef = useRef<HTMLButtonElement>(null)
+  const reducedMotion = useReducedMotion()
   useEffect(() => {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
     closeRef.current?.focus()
@@ -190,11 +204,20 @@ function OverlayShell({ title, onClose, children }: { title: string; onClose: ()
   }, [])
   if (typeof document === "undefined") return null
   return createPortal(
-    <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/50 sm:items-center"
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={transitionFor(reducedMotion)}
+      className="fixed inset-0 z-[70] flex items-end justify-center bg-black/50 sm:items-center"
       onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}
+      <motion.div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}
         onKeyDown={event => trapDialogFocus(event, dialogRef.current, onClose)}
-        className="relative max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-t-lg border border-border bg-card p-4 shadow-xl sm:rounded-lg">
+        initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 24, scale: 0.98 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 18, scale: 0.98 }}
+        transition={transitionFor(reducedMotion, PANEL_SPRING)}
+        className="fluid-material-strong fluid-scroll relative max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-t-xl border border-border p-4 sm:rounded-lg">
         <div className="mb-3 flex min-h-11 items-center justify-between gap-3">
           <h2 id={titleId} className="min-w-0 truncate text-[12px] font-medium text-foreground" style={{ fontFamily: MONO }}>{title}</h2>
           <button ref={closeRef} type="button" onClick={onClose} aria-label="关闭"
@@ -203,8 +226,8 @@ function OverlayShell({ title, onClose, children }: { title: string; onClose: ()
           </button>
         </div>
         {children}
-      </div>
-    </div>,
+      </motion.div>
+    </motion.div>,
     document.body,
   )
 }

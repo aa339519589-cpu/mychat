@@ -1,5 +1,5 @@
-import { LiteraryChat } from "@/components/literary-chat"
+import { MyChatApp } from "@/components/mychat-app"
 
 export default function Page() {
-  return <LiteraryChat />
+  return <MyChatApp />
 }

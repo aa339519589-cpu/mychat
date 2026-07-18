@@ -130,8 +130,25 @@ test('authenticated shell uses one responsive tree and synchronizes browser hist
   await expect(page.locator('main')).toHaveCount(1)
   await expect(page.locator('aside').filter({ has: page.getByText('My Chat', { exact: true }) })).toHaveCount(1)
 
+  const primaryControls = await page.evaluate(() => [
+    document.querySelector<HTMLElement>('main [aria-label="打开对话列表"], main [aria-label="收起侧栏"]'),
+    document.querySelector<HTMLElement>('[aria-label="添加"]'),
+    document.querySelector<HTMLElement>('[aria-label="选择模型"]'),
+    document.querySelector<HTMLElement>('[aria-label="发送"]'),
+  ].filter((element): element is HTMLElement => element !== null).map(element => ({
+    width: Math.round(element.getBoundingClientRect().width),
+    height: Math.round(element.getBoundingClientRect().height),
+  })))
+  expect(primaryControls).toHaveLength(4)
+  expect(primaryControls.every(({ width, height }) => width >= 44 && height >= 44)).toBe(true)
+
   if ((page.viewportSize()?.width ?? 0) < 768) {
     await page.getByRole('button', { name: '打开对话列表' }).click()
+    const drawer = page.getByTestId('responsive-sidebar-drawer')
+    await expect.poll(async () => drawer.evaluate(element => {
+      const transform = getComputedStyle(element).transform
+      return transform === 'none' ? 0 : new DOMMatrix(transform).m41
+    })).toBeGreaterThan(-1)
   }
   await page.locator('aside').getByRole('button').filter({ hasText: 'Beta' }).click()
   await expect(page).toHaveURL(new RegExp(`/c/${CONVERSATION_B}$`))
@@ -147,5 +164,42 @@ test('authenticated shell uses one responsive tree and synchronizes browser hist
   await expect(page).toHaveURL(new RegExp(`/c/${CONVERSATION_B}$`))
   await page.goBack()
   await expect(page).toHaveURL(new RegExp(`/c/${CONVERSATION_A}$`))
+  expect(pageErrors).toEqual([])
+})
+
+test('mobile drawer follows the pointer and model picker respects reduced motion', async ({ page }) => {
+  test.skip((page.viewportSize()?.width ?? 0) >= 768, 'mobile interaction contract')
+  const pageErrors: string[] = []
+  page.on('pageerror', error => pageErrors.push(error.message))
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await mockAuthenticatedWorkspace(page)
+  await page.goto(`/c/${CONVERSATION_A}`, { waitUntil: 'domcontentloaded' })
+
+  await page.getByRole('button', { name: '选择模型' }).click()
+  const picker = page.getByRole('dialog', { name: '选择模型' })
+  await expect(picker).toBeVisible()
+  await expect.poll(async () => picker.evaluate(element => getComputedStyle(element).transform)).toBe('none')
+  await page.keyboard.press('Escape')
+  await expect(picker).toBeHidden()
+
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.getByRole('button', { name: '打开对话列表' }).click()
+  const drawer = page.getByTestId('responsive-sidebar-drawer')
+  await expect.poll(async () => drawer.evaluate(element => {
+    const transform = getComputedStyle(element).transform
+    return transform === 'none' ? 0 : new DOMMatrix(transform).m41
+  })).toBeGreaterThan(-1)
+  const handleBounds = await page.getByTestId('sidebar-drag-handle').boundingBox()
+  if (!handleBounds) throw new Error('mobile drawer handle has no layout box')
+  const startX = handleBounds.x + handleBounds.width * 0.45
+  const startY = handleBounds.y + handleBounds.height * 0.5
+  await page.mouse.move(startX, startY)
+  await page.mouse.down()
+  await page.mouse.move(24, startY, { steps: 8 })
+  await page.mouse.up()
+  await expect.poll(async () => drawer.evaluate(element => {
+    const transform = getComputedStyle(element).transform
+    return transform === 'none' ? 0 : new DOMMatrix(transform).m41
+  })).toBeLessThan(-200)
   expect(pageErrors).toEqual([])
 })
