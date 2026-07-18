@@ -126,7 +126,15 @@ export async function loadChatJob(job: JobRecord): Promise<LoadedChatJob> {
   const billingClass = jobInput?.billingClass
   try {
     const [authoritativeContext, selection] = await Promise.all([
-      loadAuthoritativeChatContext({ client, userId, conversationId, userMessageId }),
+      loadAuthoritativeChatContext({
+        client,
+        userId,
+        conversationId,
+        userMessageId,
+        allowInstant: parsedCommand.searchMode === 'off'
+          && !parsedCommand.deepResearch
+          && !parsedCommand.attachments?.length,
+      }),
       resolveChatModelSelection({
         tier: parsedCommand.tier,
         deepResearch: parsedCommand.deepResearch,
