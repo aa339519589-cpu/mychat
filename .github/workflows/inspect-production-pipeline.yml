@@ -25,8 +25,8 @@ jobs:
           gh run list --repo "$GITHUB_REPOSITORY" --commit "$TARGET_SHA" --limit 20 \
             --json databaseId,name,event,status,conclusion,headSha,url \
             --jq '.' || true
-          echo 'Failed release logs:'
-          gh run view "$RELEASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --log-failed || true
+          echo 'Failed release log tail:'
+          gh run view "$RELEASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --log-failed 2>&1 | tail -n 80 || true
           echo 'Current production readiness:'
           curl --silent --show-error --max-time 30 "$READY_URL" || true
           echo
