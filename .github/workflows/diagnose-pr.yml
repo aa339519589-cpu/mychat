@@ -27,6 +27,7 @@ jobs:
       - name: Architecture
         run: npm run architecture
       - name: Complexity
+        if: success() || failure()
         run: npm run complexity
       - name: Typecheck
         if: success() || failure()
