@@ -6,9 +6,33 @@ on:
       - .github/workflows/production-dark-accent-probe.yml
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
+  diagnose-release:
+    name: Capture failed production release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Capture failed release log tail
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_RUN_ID: '29649520652'
+        run: |
+          set -euo pipefail
+          gh run view "$RELEASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --log-failed \
+            | tail -n 180 > release-failure.log
+          test -s release-failure.log
+
+      - name: Upload failed release log tail
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-failure-log
+          path: release-failure.log
+          if-no-files-found: error
+          retention-days: 1
+
   probe:
     name: Confirm dark accent is live
     runs-on: ubuntu-latest
