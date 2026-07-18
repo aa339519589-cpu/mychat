@@ -69,16 +69,40 @@ const handlers: Record<string, JobHandler> = {
 const finalized: NonNullable<ConstructorParameters<typeof JobWorker>[0]['onFinalized']> = (
   { job, status, durationMs },
 ) => {
-    const type = metricType(job)
-    jobMetrics.recordTerminal(type, status)
-    jobMetrics.observeRunDuration(type, status, durationMs)
-  }
+  const type = metricType(job)
+  jobMetrics.recordTerminal(type, status)
+  jobMetrics.observeRunDuration(type, status, durationMs)
+}
 const workerSpecs = [
   { name: 'chat', queue: 'chat', concurrency: runtimeConfiguration.workerConcurrency.chat },
   { name: 'media', queue: 'media', concurrency: runtimeConfiguration.workerConcurrency.media },
   { name: 'title', queue: 'title', concurrency: runtimeConfiguration.workerConcurrency.title },
   { name: 'agent', queue: 'agent', concurrency: runtimeConfiguration.workerConcurrency.agent },
 ] as const
+
+function createWorker(
+  spec: (typeof workerSpecs)[number],
+  name: string,
+  concurrency: number,
+  hot = false,
+): JobWorker {
+  return new JobWorker({
+    repository,
+    workerId: `${baseWorkerId}:${name}`,
+    queues: [spec.queue],
+    handlers,
+    concurrency,
+    leaseSeconds: 120,
+    shutdownGraceMs: 240_000,
+    onFinalized: finalized,
+    ...(hot ? {
+      idleBackoffMinimumMs: 20,
+      idleBackoffMaximumMs: 150,
+      backoffJitter: 0.05,
+    } : {}),
+  })
+}
+
 const workerStartedAt = new Date().toISOString()
 const heartbeat = new JobWorkerHeartbeat({
   workerId: baseWorkerId,
@@ -90,16 +114,14 @@ const heartbeat = new JobWorkerHeartbeat({
   draining: maintenanceMode === 'drain',
   startedAt: workerStartedAt,
 })
-const workers = workerSpecs.map(spec => new JobWorker({
-  repository,
-  workerId: `${baseWorkerId}:${spec.name}`,
-  queues: [spec.queue],
-  handlers,
-  concurrency: spec.concurrency,
-  leaseSeconds: 120,
-  shutdownGraceMs: 240_000,
-  onFinalized: finalized,
-}))
+const workers = workerSpecs.flatMap(spec => {
+  if (spec.queue !== 'chat') return [createWorker(spec, spec.name, spec.concurrency)]
+  const hotWorker = createWorker(spec, 'chat-hot', 1, true)
+  const remainingConcurrency = spec.concurrency - 1
+  return remainingConcurrency > 0
+    ? [hotWorker, createWorker(spec, 'chat-bulk', remainingConcurrency)]
+    : [hotWorker]
+})
 const outbox = new JobOutboxDispatcher({
   repository: new SupabaseJobOutboxRepository(),
   workerId: `${baseWorkerId}:outbox`,
