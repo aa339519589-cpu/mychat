@@ -3,6 +3,7 @@ import type { Metadata, Viewport } from 'next'
 import { headers } from 'next/headers'
 import { Noto_Serif_SC, Source_Serif_4 } from 'next/font/google'
 import './globals.css'
+import './theme-palette.css'
 import './dark-background.css'
 import './thinking-flow.css'
 import 'katex/dist/katex.min.css'
@@ -57,7 +58,7 @@ export const viewport: Viewport = {
   viewportFit: 'cover',
   colorScheme: 'light dark',
   themeColor: [
-    { media: '(prefers-color-scheme: light)', color: '#F5EFE3' },
+    { media: '(prefers-color-scheme: light)', color: '#FDF2E2' },
     { media: '(prefers-color-scheme: dark)', color: '#222221' },
   ],
 }
