@@ -16,6 +16,7 @@ export async function DELETE(_request: NextRequest, ctx: { params: Promise<{ id:
   if (result.kind === 'active_generation') {
     return Response.json({ error: '会话仍在生成，请先停止并等待终态确认' }, { status: 409, headers: { 'Retry-After': '1' } })
   }
-  if (result.kind === 'not_found') return Response.json({ error: '会话不存在' }, { status: 404 })
+  // DELETE is idempotent: a retry after a lost response must still succeed.
+  if (result.kind === 'not_found') return Response.json({ ok: true, alreadyDeleted: true })
   return Response.json({ error: '删除服务暂时不可用，请稍后再试' }, { status: 503, headers: { 'Retry-After': '2' } })
 }

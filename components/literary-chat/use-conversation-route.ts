@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 
 const CONVERSATION_PATH = /^\/c\/([^/]+)\/?$/
 
@@ -25,21 +25,31 @@ function currentConversationId(): string | null {
 
 export function useConversationRoute() {
   const [conversationId, setConversationId] = useState<string | null>(currentConversationId)
+  const historyWriteRevisionRef = useRef(0)
 
   useEffect(() => {
-    const syncFromHistory = () => setConversationId(currentConversationId())
+    const syncFromHistory = () => {
+      historyWriteRevisionRef.current += 1
+      setConversationId(currentConversationId())
+    }
     window.addEventListener("popstate", syncFromHistory)
     return () => window.removeEventListener("popstate", syncFromHistory)
   }, [])
 
   const update = useCallback((id: string | null, replace = false) => {
     const path = conversationPath(id)
-    if (window.location.pathname !== path || window.location.search) {
-      // Next patches the native history methods and copies its private router state.
-      // Passing custom data (instead of cloning __NA) keeps its canonical URL in sync.
-      window.history[replace ? "replaceState" : "pushState"]({ conversationId: id }, "", path)
-    }
+    const revision = ++historyWriteRevisionRef.current
+
+    // Commit the in-app route immediately. Next patches native history writes,
+    // so deferring that bookkeeping keeps New Chat and conversation switches
+    // off the click-to-paint critical path.
     setConversationId(id)
+    window.setTimeout(() => {
+      if (historyWriteRevisionRef.current !== revision) return
+      if (window.location.pathname !== path || window.location.search) {
+        window.history[replace ? "replaceState" : "pushState"]({ conversationId: id }, "", path)
+      }
+    }, 0)
   }, [])
 
   return {
