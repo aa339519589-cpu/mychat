@@ -21,7 +21,7 @@ jobs:
 
       - name: Wait for a production revision containing the dark accent fix
         env:
-          REQUIRED_SHA: 67f7c1661e3aa1e100e3e6800c781e0956a2101f
+          REQUIRED_SHA: bf69bed42e48a3d07fe298bfb57ab61a018530c4
           READY_URL: https://mychat-nm6x.onrender.com/api/ready
         run: |
           set -euo pipefail
