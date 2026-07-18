@@ -93,7 +93,9 @@ export function ProjectsScreen({ projects, conversations, onCreate, onOpen, onDe
                   </div>
                   <button
                     onClick={e => { e.stopPropagation(); onDelete(p.id) }}
-                    className="shrink-0 rounded-lg p-1 text-muted-foreground/40 transition-colors hover:bg-sidebar-accent hover:text-destructive opacity-0 group-hover:opacity-100"
+                    aria-label={`删除项目 ${p.name}`}
+                    title="删除项目"
+                    className="fluid-press fluid-icon-press fluid-touch-target flex size-11 shrink-0 items-center justify-center rounded-full text-muted-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-destructive md:size-auto md:p-1 md:opacity-0 md:group-hover:opacity-100"
                   >
                     <Trash2 className="size-3.5" />
                   </button>
