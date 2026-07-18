@@ -42,33 +42,35 @@
 }
 
 .dark {
-  --code-accent: #011A38;
-  --primary: #011A38;
+  /* Dark surfaces use a separate, higher-luminance ocean blue so active
+     controls remain visibly distinct from the charcoal background. */
+  --code-accent: #78A9DD;
+  --primary: #265F9E;
   --primary-foreground: #FCF7F1;
-  --accent: #011A38;
+  --accent: #265F9E;
   --accent-foreground: #FCF7F1;
-  --ring: #011A38;
-  --chart-1: #011A38;
-  --sidebar-primary: #011A38;
+  --ring: #78A9DD;
+  --chart-1: #3E78B6;
+  --sidebar-primary: #265F9E;
   --sidebar-primary-foreground: #FCF7F1;
-  --sidebar-accent: #011A38;
+  --sidebar-accent: rgb(38 95 158 / 28%);
   --sidebar-accent-foreground: #FCF7F1;
-  --sidebar-ring: #011A38;
+  --sidebar-ring: #78A9DD;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not(.light) {
-    --code-accent: #011A38;
-    --primary: #011A38;
+    --code-accent: #78A9DD;
+    --primary: #265F9E;
     --primary-foreground: #FCF7F1;
-    --accent: #011A38;
+    --accent: #265F9E;
     --accent-foreground: #FCF7F1;
-    --ring: #011A38;
-    --chart-1: #011A38;
-    --sidebar-primary: #011A38;
+    --ring: #78A9DD;
+    --chart-1: #3E78B6;
+    --sidebar-primary: #265F9E;
     --sidebar-primary-foreground: #FCF7F1;
-    --sidebar-accent: #011A38;
+    --sidebar-accent: rgb(38 95 158 / 28%);
     --sidebar-accent-foreground: #FCF7F1;
-    --sidebar-ring: #011A38;
+    --sidebar-ring: #78A9DD;
   }
 }
