@@ -1,0 +1,55 @@
+name: Production Dark Accent Probe
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/production-dark-accent-probe.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Confirm dark accent is live
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Wait for a production revision containing the dark accent fix
+        env:
+          REQUIRED_SHA: 67f7c1661e3aa1e100e3e6800c781e0956a2101f
+          READY_URL: https://mychat-nm6x.onrender.com/api/ready
+        run: |
+          set -euo pipefail
+          for attempt in {1..100}; do
+            payload="$(curl --fail-with-body --silent --show-error \
+              --connect-timeout 10 --max-time 30 \
+              --header 'Accept: application/json' \
+              "$READY_URL" 2>/dev/null || true)"
+            revision="$(jq -r '.revision // empty' <<<"$payload" 2>/dev/null || true)"
+
+            if [[ "$revision" =~ ^[0-9a-f]{7,40}$ ]]; then
+              git fetch origin main --quiet
+              resolved="$(git rev-parse "$revision^{commit}" 2>/dev/null || true)"
+              if [[ "$resolved" =~ ^[0-9a-f]{40}$ ]] \
+                && git merge-base --is-ancestor "$REQUIRED_SHA" "$resolved"; then
+                palette="$(git show "$resolved:app/theme-palette.css")"
+                grep --fixed-strings --quiet -- '--primary: #2F6FB3;' <<<"$palette"
+                grep --fixed-strings --quiet -- '--sidebar-primary: #2F6FB3;' <<<"$palette"
+                grep --fixed-strings --quiet -- '--ring: #79B8F3;' <<<"$palette"
+                echo "Production is live on $resolved and contains the dark accent fix."
+                echo "$payload"
+                exit 0
+              fi
+            fi
+
+            echo "Attempt $attempt: production revision '$revision' is not ready with the required fix yet."
+            sleep 15
+          done
+
+          echo "Production did not publish a revision containing $REQUIRED_SHA before timeout." >&2
+          exit 1
