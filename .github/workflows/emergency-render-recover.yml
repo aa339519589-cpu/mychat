@@ -74,6 +74,21 @@ jobs:
           current_main() {
             gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha'
           }
+          find_deploy() {
+            local revision="$1" response
+            response="$(render_api "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys?limit=20")"
+            jq -r --arg revision "$revision" '
+              [.. | objects
+                | select((.id? // "") | startswith("dep-"))
+                | select((.commit.id? // "") == $revision)
+                | select((.status? // "") != "build_failed")
+                | select((.status? // "") != "update_failed")
+                | select((.status? // "") != "pre_deploy_failed")
+                | select((.status? // "") != "canceled")
+                | select((.status? // "") != "deactivated")]
+              | first | .id // empty
+            ' <<<"$response"
+          }
 
           stage='render-auth'
           report pending 'checking-render-api-access'
@@ -94,29 +109,42 @@ jobs:
             stage="create-${target:0:12}"
             report pending "creating-${target:0:12}"
 
-            body="$(mktemp)"
-            deploy_id=''
-            for attempt in {1..60}; do
-              http="$(curl --silent --show-error --output "$body" --write-out '%{http_code}' \
-                --connect-timeout 10 --max-time 60 \
-                --header "Authorization: Bearer $RENDER_API_KEY" \
-                --header 'Content-Type: application/json' --request POST \
-                --data "$(jq -nc --arg commitId "$target" '{commitId: $commitId}')" \
-                "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys")"
-              if [[ "$http" == 200 || "$http" == 201 || "$http" == 202 ]]; then
-                deploy_id="$(jq -er '.id' < "$body")"
-                break
-              fi
-              if [[ "$http" == 409 || "$http" == 429 ]] \
-                || { [[ "$http" == 400 ]] && grep -Eqi 'deploy|progress|active|busy' "$body"; }; then
-                sleep 10
-                continue
-              fi
-              stage="create-http-$http"
-              cat "$body" >&2
-              false
-            done
-            rm -f "$body"
+            deploy_id="$(find_deploy "$target")"
+            if [[ ! "$deploy_id" =~ ^dep-[a-z0-9]+$ ]]; then
+              body="$(mktemp)"
+              deploy_id=''
+              for attempt in {1..60}; do
+                http="$(curl --silent --show-error --output "$body" --write-out '%{http_code}' \
+                  --connect-timeout 10 --max-time 60 \
+                  --header "Authorization: Bearer $RENDER_API_KEY" \
+                  --header 'Content-Type: application/json' --request POST \
+                  --data "$(jq -nc --arg commitId "$target" '{commitId: $commitId}')" \
+                  "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys")"
+                if [[ "$http" == 200 || "$http" == 201 || "$http" == 202 ]]; then
+                  deploy_id="$(jq -r '.id // .deploy.id // empty' < "$body")"
+                  if [[ ! "$deploy_id" =~ ^dep-[a-z0-9]+$ ]]; then
+                    for lookup in {1..12}; do
+                      sleep 5
+                      deploy_id="$(find_deploy "$target")"
+                      [[ "$deploy_id" =~ ^dep-[a-z0-9]+$ ]] && break
+                    done
+                  fi
+                  break
+                fi
+                if [[ "$http" == 409 || "$http" == 429 ]] \
+                  || { [[ "$http" == 400 ]] && grep -Eqi 'deploy|progress|active|busy' "$body"; }; then
+                  deploy_id="$(find_deploy "$target")"
+                  [[ "$deploy_id" =~ ^dep-[a-z0-9]+$ ]] && break
+                  sleep 10
+                  continue
+                fi
+                stage="create-http-$http"
+                cat "$body" >&2
+                false
+              done
+              rm -f "$body"
+            fi
+            stage="deploy-id-${deploy_id:-empty}"
             [[ "$deploy_id" =~ ^dep-[a-z0-9]+$ ]]
 
             stage="wait-${target:0:12}"
