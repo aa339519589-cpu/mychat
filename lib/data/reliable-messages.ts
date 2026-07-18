@@ -10,7 +10,9 @@ async function fetchFreshRemoteMessages(conversationId: string): Promise<Message
     .from("messages")
     .select("id, role, content, images, thinking, created_at")
     .eq("conversation_id", conversationId)
-    .order("created_at", { ascending: false })
+    // User timestamps may originate on the device. Clock skew can therefore put
+    // an assistant row before its user row after reload. `seq` is database-owned.
+    .order("seq", { ascending: false })
     .limit(REMOTE_MESSAGE_LIMIT)
 
   if (error) throw new Error("消息同步暂时不可用", { cause: error })
