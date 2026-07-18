@@ -1,0 +1,10 @@
+{
+  "purpose": "production-rollout-verification",
+  "requestedAt": "2026-07-18T13:50:32Z",
+  "includes": [
+    "deep-navy-emphasis",
+    "larger-my-chat-wordmark",
+    "aligned-sidebar-navigation",
+    "durable-chat-recovery"
+  ]
+}
