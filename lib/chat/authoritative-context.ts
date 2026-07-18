@@ -352,7 +352,7 @@ export async function loadAuthoritativeChatContext(
   const projectId = typeof conversationResult.data.project_id === 'string'
     ? conversationResult.data.project_id
     : null
-  const userMessageRow = userMessageResult.data as MessageRow
+  const userMessageRow = userMessageResult.data as unknown as MessageRow
   const quick = input.allowInstant ? instantContext(input, projectId, rawMessage(userMessageRow)) : null
   return quick ?? fullContext(input, projectId, userMessageRow)
 }
