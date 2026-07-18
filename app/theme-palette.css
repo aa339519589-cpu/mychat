@@ -1,0 +1,52 @@
+:root {
+  --fluid-material: rgb(253 242 226 / 82%);
+  --fluid-material-strong: rgb(255 249 240 / 90%);
+  --fluid-shadow: 0 18px 50px rgb(13 42 74 / 14%);
+  --background: #FDF2E2;
+  --code-accent: #0D2A4A;
+  --foreground: #17283B;
+  --card: #FFF9F0;
+  --card-foreground: #17283B;
+  --popover: #FFF9F0;
+  --popover-foreground: #17283B;
+  --primary: #0D2A4A;
+  --primary-foreground: #FFF9F0;
+  --secondary: #F2E4D1;
+  --secondary-foreground: #21354A;
+  --muted: #F7EBDD;
+  --muted-foreground: #5F6872;
+  --accent: #DDE7F0;
+  --accent-foreground: #0D2A4A;
+  --border: #DFCDB6;
+  --input: #D6C0A3;
+  --ring: #0D2A4A;
+  --chart-1: #0D2A4A;
+  --sidebar: #F8EBD8;
+  --sidebar-foreground: #21354A;
+  --sidebar-primary: #0D2A4A;
+  --sidebar-primary-foreground: #FFF9F0;
+  --sidebar-accent: #E2E7EA;
+  --sidebar-accent-foreground: #0D2A4A;
+  --sidebar-border: #DECBB3;
+  --sidebar-ring: #0D2A4A;
+}
+
+.dark {
+  --code-accent: #0D2A4A;
+  --primary: #0D2A4A;
+  --primary-foreground: #F3F5F6;
+  --chart-1: #0D2A4A;
+  --sidebar-primary: #0D2A4A;
+  --sidebar-primary-foreground: #F3F5F6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --code-accent: #0D2A4A;
+    --primary: #0D2A4A;
+    --primary-foreground: #F3F5F6;
+    --chart-1: #0D2A4A;
+    --sidebar-primary: #0D2A4A;
+    --sidebar-primary-foreground: #F3F5F6;
+  }
+}

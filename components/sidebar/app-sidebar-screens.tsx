@@ -6,7 +6,7 @@ import type { Project } from "@/lib/project-data"
 import type { AppSidebarProps } from "@/components/app-sidebar"
 import { ProjectDetailScreen, ProjectsScreen, ProjectTitleEditor } from "@/components/sidebar/projects"
 import { SettingsScreen } from "@/components/sidebar/settings"
-import { ScreenPanel } from "@/components/sidebar/primitives"
+import { ScreenPanel } from "@/components/sidebar/screen-panel"
 import { sidebarScreenStyle, type SidebarAnchor, type SidebarScreen } from "./shared"
 
 type ScreenData = Pick<AppSidebarProps, "conversation" | "memory" | "project" | "model">
