@@ -1,0 +1,90 @@
+name: Recover Production Active
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recover-production-active
+  cancel-in-progress: true
+
+jobs:
+  recover:
+    if: github.repository == 'aa339519589-cpu/mychat' && github.head_ref == 'diag/release-438dbbb'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Restore the currently deployed revision to active mode
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+          READY_URL: https://mychat-nm6x.onrender.com/api/ready
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$RENDER_API_KEY" ]] || [[ ! "$RENDER_SERVICE_ID" =~ ^srv-[a-z0-9]+$ ]]; then
+            echo "Render recovery credentials are unavailable" >&2
+            exit 1
+          fi
+
+          ready_payload="$(curl --fail-with-body --silent --show-error --retry 4 --retry-all-errors --connect-timeout 10 --max-time 60 "$READY_URL")"
+          runtime_revision="$(jq -er '.revision | select(type == "string" and test("^[0-9a-f]{7,12}$"))' <<<"$ready_payload")"
+          existing_revision="$(gh api "repos/$GITHUB_REPOSITORY/commits/$runtime_revision" --jq '.sha')"
+          [[ "$existing_revision" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${existing_revision:0:${#runtime_revision}}" == "$runtime_revision" ]]
+
+          render_api() {
+            curl --fail-with-body --silent --show-error \
+              --retry 4 --retry-all-errors --connect-timeout 10 --max-time 60 \
+              --header "Authorization: Bearer $RENDER_API_KEY" \
+              --header 'Content-Type: application/json' \
+              "$@"
+          }
+
+          render_api --request PATCH --data '{"autoDeploy":"no"}' \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID" >/dev/null
+          render_api --request PUT --data '{"value":"off"}' \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/MYCHAT_MAINTENANCE_MODE" >/dev/null
+          render_api "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/MYCHAT_MAINTENANCE_MODE" \
+            | jq --exit-status '.value == "off"' >/dev/null
+
+          response="$(render_api --request POST \
+            --data "$(jq -nc --arg commitId "$existing_revision" '{commitId: $commitId}')" \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys")"
+          deploy_id="$(jq -er '.id' <<<"$response")"
+          [[ "$deploy_id" =~ ^dep-[a-z0-9]+$ ]]
+
+          for attempt in {1..180}; do
+            response="$(render_api "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys/$deploy_id")"
+            status="$(jq -er '.status' <<<"$response")"
+            commit="$(jq -r '.commit.id // empty' <<<"$response")"
+            [[ -z "$commit" || "$commit" == "$existing_revision" ]]
+            case "$status" in
+              live)
+                [[ "$commit" == "$existing_revision" ]]
+                break
+                ;;
+              build_failed|update_failed|pre_deploy_failed|canceled|deactivated)
+                echo "Render recovery failed with status $status" >&2
+                exit 1
+                ;;
+            esac
+            sleep 10
+          done
+
+          for attempt in {1..30}; do
+            ready_payload="$(curl --fail-with-body --silent --show-error --connect-timeout 10 --max-time 60 "$READY_URL")"
+            revision="$(jq -r '.revision // empty' <<<"$ready_payload")"
+            draining="$(jq -r '.checks.worker.draining // empty' <<<"$ready_payload")"
+            if [[ "${existing_revision:0:${#revision}}" == "$revision" && "$draining" == "false" ]]; then
+              echo "Production recovered on $existing_revision"
+              exit 0
+            fi
+            sleep 10
+          done
+
+          echo "Production did not return to active mode" >&2
+          exit 1
