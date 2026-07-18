@@ -12,32 +12,39 @@ jobs:
   probe:
     name: Verify deployed chat-order fix
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 45
     env:
       FIX_SHA: e609c6bd2576ea632fbfd5245c9ffe27864c3db3
       PRODUCTION_READY_URL: https://mychat-nm6x.onrender.com/api/ready
     steps:
-      - name: Require healthy production containing the fix
+      - name: Wait for healthy production containing the fix
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          payload="$(curl --fail-with-body --silent --show-error \
-            --retry 12 --retry-all-errors --retry-delay 10 \
-            --connect-timeout 10 --max-time 60 \
-            --header 'Accept: application/json' \
-            "$PRODUCTION_READY_URL")"
-          echo "Production readiness payload:"
-          jq . <<<"$payload"
-          jq --exit-status '
-            .status == "ok" and .ready == true and
-            .checks.worker.ready == true and
-            .checks.worker.draining == false
-          ' <<<"$payload" >/dev/null
-          revision="$(jq -er '.revision | select(test("^[0-9a-f]{7,12}$"))' <<<"$payload")"
-          live_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$revision" --jq '.sha')"
-          comparison_status="$(gh api "repos/$GITHUB_REPOSITORY/compare/$FIX_SHA...$live_sha" --jq '.status')"
-          echo "Resolved live SHA: $live_sha"
-          echo "Fix-to-live comparison: $comparison_status"
-          test "$comparison_status" = "ahead" -o "$comparison_status" = "identical"
-          echo "Production is healthy at $live_sha and contains fix $FIX_SHA"
+          for attempt in {1..80}; do
+            payload="$(curl --fail-with-body --silent --show-error \
+              --retry 3 --retry-all-errors --retry-delay 5 \
+              --connect-timeout 10 --max-time 60 \
+              --header 'Accept: application/json' \
+              "$PRODUCTION_READY_URL")"
+            if jq --exit-status '
+              .status == "ok" and .ready == true and
+              .checks.worker.ready == true and
+              .checks.worker.draining == false
+            ' <<<"$payload" >/dev/null; then
+              revision="$(jq -er '.revision | select(test("^[0-9a-f]{7,12}$"))' <<<"$payload")"
+              live_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$revision" --jq '.sha')"
+              comparison_status="$(gh api "repos/$GITHUB_REPOSITORY/compare/$FIX_SHA...$live_sha" --jq '.status')"
+              echo "Attempt $attempt: live=$live_sha comparison=$comparison_status"
+              if [[ "$comparison_status" == "ahead" || "$comparison_status" == "identical" ]]; then
+                echo "Production is healthy at $live_sha and contains fix $FIX_SHA"
+                exit 0
+              fi
+            else
+              echo "Attempt $attempt: production is transitioning or not strictly ready"
+            fi
+            sleep 30
+          done
+          echo "Production did not activate a revision containing $FIX_SHA before the deadline" >&2
+          exit 1
