@@ -149,6 +149,11 @@ test('authenticated shell uses one responsive tree and synchronizes browser hist
       const transform = getComputedStyle(element).transform
       return transform === 'none' ? 0 : new DOMMatrix(transform).m41
     })).toBeGreaterThan(-1)
+  } else {
+    await page.getByRole('button', { name: '收起侧栏' }).click()
+    await expect(page.getByRole('button', { name: '展开侧栏' })).toBeVisible()
+    await page.getByRole('button', { name: '展开侧栏' }).click()
+    await expect(page.getByRole('button', { name: '收起侧栏' })).toBeVisible()
   }
   await page.locator('aside').getByRole('button').filter({ hasText: 'Beta' }).click()
   await expect(page).toHaveURL(new RegExp(`/c/${CONVERSATION_B}$`))

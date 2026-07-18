@@ -13,6 +13,7 @@ import { UI_SPRING, transitionFor } from "@/components/motion/fluid"
 
 type ChatPaneProps = {
   mobile: boolean
+  sidebarCollapsed: boolean
   active?: Conversation
   activeProject: Project | null
   scrollRef: RefObject<HTMLDivElement | null>
@@ -29,6 +30,7 @@ type ChatPaneProps = {
 
 export function ChatPane({
   mobile,
+  sidebarCollapsed,
   active,
   activeProject,
   scrollRef,
@@ -44,7 +46,7 @@ export function ChatPane({
 }: ChatPaneProps) {
   return (
     <main className={cn("flex min-w-0 flex-1 flex-col overflow-hidden", !mobile && "ml-0")}>
-      <ChatHeader mobile={mobile} active={active} activeProject={activeProject} menuAnchor={menuAnchor} renaming={renaming} onOpenSidebar={onOpenSidebar} onToggleSidebar={onToggleSidebar} onMenuAnchorChange={onMenuAnchorChange} onRenamingChange={onRenamingChange} onRename={onRename} />
+      <ChatHeader mobile={mobile} sidebarCollapsed={sidebarCollapsed} active={active} activeProject={activeProject} menuAnchor={menuAnchor} renaming={renaming} onOpenSidebar={onOpenSidebar} onToggleSidebar={onToggleSidebar} onMenuAnchorChange={onMenuAnchorChange} onRenamingChange={onRenamingChange} onRename={onRename} />
 
       <div
         ref={scrollRef}
@@ -64,8 +66,9 @@ export function ChatPane({
   )
 }
 
-function ChatHeader({ mobile, active, activeProject, menuAnchor, renaming, onOpenSidebar, onToggleSidebar, onMenuAnchorChange, onRenamingChange, onRename }: {
+function ChatHeader({ mobile, sidebarCollapsed, active, activeProject, menuAnchor, renaming, onOpenSidebar, onToggleSidebar, onMenuAnchorChange, onRenamingChange, onRename }: {
   mobile: boolean
+  sidebarCollapsed: boolean
   active?: Conversation
   activeProject: Project | null
   menuAnchor: { bottom: number; left: number } | null
@@ -79,7 +82,7 @@ function ChatHeader({ mobile, active, activeProject, menuAnchor, renaming, onOpe
   const reducedMotion = useReducedMotion()
   return (
     <header className={cn("fluid-material z-10 flex shrink-0 items-center gap-2", mobile ? "px-4 pb-2 pt-[max(0.75rem,env(safe-area-inset-top))]" : "px-8 py-4")}>
-      <button onClick={mobile ? onOpenSidebar : onToggleSidebar} className="fluid-press fluid-icon-press flex size-11 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-secondary hover:text-foreground" aria-label={mobile ? "打开对话列表" : "收起侧栏"}><PanelLeft className="size-5" /></button>
+      <button onClick={mobile ? onOpenSidebar : onToggleSidebar} className="fluid-press fluid-icon-press flex size-11 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-secondary hover:text-foreground" aria-label={mobile ? "打开对话列表" : sidebarCollapsed ? "展开侧栏" : "收起侧栏"}><PanelLeft className="size-5" /></button>
       {renaming && active ? <ConversationRename value={active.title} onCommit={title => { if (title.trim()) onRename(active.id, title.trim()); onRenamingChange(false) }} onCancel={() => onRenamingChange(false)} className="min-w-0 flex-1 rounded-lg bg-secondary/60 px-3 py-1.5 text-sm outline-none focus:bg-secondary/80" />
         : active ? <ConversationTitle active={active} activeProject={activeProject} menuAnchor={menuAnchor} reducedMotion={reducedMotion} onMenuAnchorChange={onMenuAnchorChange} />
         : <span className="flex-1" />}
