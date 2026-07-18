@@ -1,0 +1,175 @@
+name: Emergency Render Recover
+
+on:
+  push:
+    branches:
+      - ops/emergency-production-catchup
+    paths:
+      - .github/workflows/emergency-render-recover.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: emergency-render-recover
+  cancel-in-progress: false
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mark recovery pending
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state=pending -f context='Production Recovery' \
+            -f description='Starting observable Render recovery' \
+            -f target_url="https://github.com/$GITHUB_REPOSITORY/actions?query=recovery-start" >/dev/null
+
+  recover:
+    needs: announce
+    runs-on: ubuntu-latest
+    environment:
+      name: Production-Drain
+      url: https://mychat-nm6x.onrender.com
+    timeout-minutes: 90
+    steps:
+      - name: Restore and deploy current main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+          stage='boot'
+
+          report() {
+            local state="$1" message="$2" slug
+            slug="$(printf '%s' "$message" | tr '[:upper:] ' '[:lower:]-' | tr -cd 'a-z0-9._-')"
+            gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+              -f state="$state" -f context='Production Recovery' \
+              -f description="${message:0:140}" \
+              -f target_url="https://github.com/$GITHUB_REPOSITORY/actions?query=$slug" >/dev/null || true
+          }
+          fail() {
+            local code=$?
+            report failure "failed-$stage"
+            exit "$code"
+          }
+          trap fail ERR
+
+          stage='secret-check'
+          [[ -n "$RENDER_API_KEY" ]]
+          [[ "$RENDER_SERVICE_ID" =~ ^srv-[a-z0-9]+$ ]]
+
+          render_api() {
+            curl --fail-with-body --silent --show-error \
+              --retry 4 --retry-all-errors --connect-timeout 10 --max-time 60 \
+              --header "Authorization: Bearer $RENDER_API_KEY" \
+              --header 'Content-Type: application/json' "$@"
+          }
+          current_main() {
+            gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha'
+          }
+
+          stage='render-auth'
+          report pending 'checking-render-api-access'
+          render_api "https://api.render.com/v1/services/$RENDER_SERVICE_ID" >/dev/null
+
+          stage='disable-drain'
+          report pending 'forcing-maintenance-off'
+          render_api --request PATCH --data '{"autoDeploy":"no"}' \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID" >/dev/null
+          render_api --request PUT --data '{"value":"off"}' \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/MYCHAT_MAINTENANCE_MODE" >/dev/null
+          render_api "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/MYCHAT_MAINTENANCE_MODE" \
+            | jq -e '.value == "off"' >/dev/null
+
+          for cycle in {1..15}; do
+            target="$(current_main)"
+            [[ "$target" =~ ^[0-9a-f]{40}$ ]]
+            stage="create-${target:0:12}"
+            report pending "creating-${target:0:12}"
+
+            body="$(mktemp)"
+            deploy_id=''
+            for attempt in {1..60}; do
+              http="$(curl --silent --show-error --output "$body" --write-out '%{http_code}' \
+                --connect-timeout 10 --max-time 60 \
+                --header "Authorization: Bearer $RENDER_API_KEY" \
+                --header 'Content-Type: application/json' --request POST \
+                --data "$(jq -nc --arg commitId "$target" '{commitId: $commitId}')" \
+                "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys")"
+              if [[ "$http" == 200 || "$http" == 201 ]]; then
+                deploy_id="$(jq -er '.id' < "$body")"
+                break
+              fi
+              if [[ "$http" == 409 || "$http" == 429 ]] \
+                || { [[ "$http" == 400 ]] && grep -Eqi 'deploy|progress|active|busy' "$body"; }; then
+                sleep 10
+                continue
+              fi
+              stage="create-http-$http"
+              cat "$body" >&2
+              false
+            done
+            rm -f "$body"
+            [[ "$deploy_id" =~ ^dep-[a-z0-9]+$ ]]
+
+            stage="wait-${target:0:12}"
+            report pending "waiting-${target:0:12}"
+            for attempt in {1..180}; do
+              response="$(render_api "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys/$deploy_id")"
+              deploy_status="$(jq -er '.status' <<<"$response")"
+              commit="$(jq -r '.commit.id // empty' <<<"$response")"
+              [[ -z "$commit" || "$commit" == "$target" ]]
+              case "$deploy_status" in
+                live) [[ "$commit" == "$target" ]]; break ;;
+                build_failed|update_failed|pre_deploy_failed|canceled|deactivated)
+                  stage="deploy-$deploy_status"; false ;;
+              esac
+              sleep 10
+            done
+            [[ "$deploy_status" == live ]]
+
+            stage="ready-${target:0:12}"
+            report pending "verifying-${target:0:12}"
+            ready=''
+            for attempt in {1..20}; do
+              if ready="$(curl --fail-with-body --silent --show-error \
+                --connect-timeout 10 --max-time 20 \
+                --header 'Accept: application/json' \
+                https://mychat-nm6x.onrender.com/api/ready)"; then
+                short="$(jq -r '.revision // empty' <<<"$ready")"
+                if jq -e '
+                  .status == "ok" and .ready == true and
+                  .checks.auth.configured == true and .checks.auth.ready == true and
+                  .checks.database.configured == true and .checks.database.ready == true and
+                  .checks.distributedRateLimit.configured == true and .checks.distributedRateLimit.ready == true and
+                  .checks.queue.configured == true and .checks.queue.ready == true and
+                  .checks.worker.configured == true and .checks.worker.ready == true and .checks.worker.draining == false and
+                  .checks.stream.configured == true and .checks.stream.ready == true and
+                  .checks.observability.configured == true and .checks.observability.ready == true and
+                  .checks.sandbox.configured == true and .checks.sandbox.ready == true
+                ' <<<"$ready" >/dev/null \
+                  && [[ "$target" == "$short"* ]]; then
+                  break
+                fi
+              fi
+              sleep 10
+            done
+            [[ "$target" == "$short"* ]]
+
+            latest="$(current_main)"
+            if [[ "$latest" == "$target" ]]; then
+              trap - ERR
+              report success "render-active-${target:0:12}"
+              exit 0
+            fi
+          done
+
+          stage='main-never-settled'
+          false
