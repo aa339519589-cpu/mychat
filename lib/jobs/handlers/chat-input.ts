@@ -131,7 +131,8 @@ export async function loadChatJob(job: JobRecord): Promise<LoadedChatJob> {
         userId,
         conversationId,
         userMessageId,
-        allowInstant: parsedCommand.searchMode === 'off'
+        allowInstant: parsedCommand.outputKind === 'text'
+          && parsedCommand.searchMode === 'off'
           && !parsedCommand.deepResearch
           && !parsedCommand.attachments?.length,
       }),
