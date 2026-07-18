@@ -1,39 +1,41 @@
 :root {
-  /* Sampled directly from the supplied reference image:
-     ivory #FCF7F1 and deep navy #011A38. */
-  --fluid-material: rgb(252 247 241 / 86%);
-  --fluid-material-strong: rgb(252 247 241 / 96%);
-  --fluid-shadow: 0 18px 50px rgb(1 26 56 / 14%);
+  /* Light theme keeps the reference ivory/navy identity. Semantic surface
+     tokens are opaque precomposited colors so Tailwind /opacity modifiers
+     attenuate them instead of replacing an embedded alpha channel. */
+  --fluid-material: rgb(252 247 241 / 88%);
+  --fluid-material-strong: rgb(255 253 250 / 96%);
+  --fluid-shadow: 0 18px 50px rgb(1 26 56 / 12%);
   --background: #FCF7F1;
   --code-accent: #011A38;
   --foreground: #011A38;
-  --card: #FCF7F1;
+  --card: #FFFDF9;
   --card-foreground: #011A38;
-  --popover: #FCF7F1;
+  --popover: #FFFDF9;
   --popover-foreground: #011A38;
   --primary: #011A38;
   --primary-foreground: #FCF7F1;
-  --secondary: rgb(1 26 56 / 6%);
+  --secondary: #F0ECE7;
   --secondary-foreground: #011A38;
-  --muted: rgb(1 26 56 / 4%);
-  --muted-foreground: rgb(1 26 56 / 62%);
-  --accent: #011A38;
-  --accent-foreground: #FCF7F1;
-  --border: rgb(1 26 56 / 14%);
-  --input: rgb(1 26 56 / 22%);
+  --muted: #F5F1EC;
+  --muted-foreground: #5D6874;
+  --accent: #ECE7E1;
+  --accent-foreground: #011A38;
+  --destructive: #B42318;
+  --border: #D8D1C9;
+  --input: #C7BFB6;
   --ring: #011A38;
   --chart-1: #011A38;
-  --chart-2: rgb(1 26 56 / 82%);
-  --chart-3: rgb(1 26 56 / 68%);
-  --chart-4: rgb(1 26 56 / 52%);
-  --chart-5: rgb(1 26 56 / 36%);
+  --chart-2: #314A68;
+  --chart-3: #62758A;
+  --chart-4: #8D99A6;
+  --chart-5: #B2B8BE;
   --sidebar: #FCF7F1;
   --sidebar-foreground: #011A38;
   --sidebar-primary: #011A38;
   --sidebar-primary-foreground: #FCF7F1;
-  --sidebar-accent: #011A38;
-  --sidebar-accent-foreground: #FCF7F1;
-  --sidebar-border: rgb(1 26 56 / 14%);
+  --sidebar-accent: #EEE9E3;
+  --sidebar-accent-foreground: #011A38;
+  --sidebar-border: #D8D1C9;
   --sidebar-ring: #011A38;
 }
 
@@ -42,42 +44,89 @@
 }
 
 .dark {
-  /* The supplied reference navy is the only emphasis color in every theme. */
-  --code-accent: #011A38;
-  --primary: #011A38;
-  --primary-foreground: #FCF7F1;
-  --accent: #011A38;
-  --accent-foreground: #FCF7F1;
-  --ring: #011A38;
-  --chart-1: #011A38;
-  --sidebar-primary: #011A38;
-  --sidebar-primary-foreground: #FCF7F1;
-  --sidebar-accent: #011A38;
-  --sidebar-accent-foreground: #FCF7F1;
-  --sidebar-ring: #011A38;
+  /* Dark mode uses neutral charcoal surfaces and warm emphasis. Deep navy and
+     blue substitutes are intentionally excluded from interactive states. */
+  --fluid-material: rgb(23 26 29 / 80%);
+  --fluid-material-strong: rgb(32 37 42 / 92%);
+  --fluid-shadow: 0 20px 56px rgb(0 0 0 / 42%);
+  --background: #171A1D;
+  --code-accent: #E07A61;
+  --foreground: #F3F5F6;
+  --card: #20252A;
+  --card-foreground: #F3F5F6;
+  --popover: #20252A;
+  --popover-foreground: #F3F5F6;
+  --primary: #D47A63;
+  --primary-foreground: #171A1D;
+  --secondary: #2A3035;
+  --secondary-foreground: #F3F5F6;
+  --muted: #252B30;
+  --muted-foreground: #AEB9C1;
+  --accent: #2A3035;
+  --accent-foreground: #F3F5F6;
+  --destructive: #FF8A80;
+  --border: #343A3F;
+  --input: #444B51;
+  --ring: #E07A61;
+  --chart-1: #E07A61;
+  --chart-2: #C7A66A;
+  --chart-3: #7FA38A;
+  --chart-4: #B48EAD;
+  --chart-5: #AEB9C1;
+  --sidebar: #1C2125;
+  --sidebar-foreground: #F3F5F6;
+  --sidebar-primary: #D47A63;
+  --sidebar-primary-foreground: #171A1D;
+  --sidebar-accent: #2A3035;
+  --sidebar-accent-foreground: #F3F5F6;
+  --sidebar-border: #343A3F;
+  --sidebar-ring: #E07A61;
 }
 
 .dark ::selection {
-  background: rgb(1 26 56 / 28%);
+  background: rgb(224 122 97 / 32%);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not(.light) {
-    --code-accent: #011A38;
-    --primary: #011A38;
-    --primary-foreground: #FCF7F1;
-    --accent: #011A38;
-    --accent-foreground: #FCF7F1;
-    --ring: #011A38;
-    --chart-1: #011A38;
-    --sidebar-primary: #011A38;
-    --sidebar-primary-foreground: #FCF7F1;
-    --sidebar-accent: #011A38;
-    --sidebar-accent-foreground: #FCF7F1;
-    --sidebar-ring: #011A38;
+    --fluid-material: rgb(23 26 29 / 80%);
+    --fluid-material-strong: rgb(32 37 42 / 92%);
+    --fluid-shadow: 0 20px 56px rgb(0 0 0 / 42%);
+    --background: #171A1D;
+    --code-accent: #E07A61;
+    --foreground: #F3F5F6;
+    --card: #20252A;
+    --card-foreground: #F3F5F6;
+    --popover: #20252A;
+    --popover-foreground: #F3F5F6;
+    --primary: #D47A63;
+    --primary-foreground: #171A1D;
+    --secondary: #2A3035;
+    --secondary-foreground: #F3F5F6;
+    --muted: #252B30;
+    --muted-foreground: #AEB9C1;
+    --accent: #2A3035;
+    --accent-foreground: #F3F5F6;
+    --destructive: #FF8A80;
+    --border: #343A3F;
+    --input: #444B51;
+    --ring: #E07A61;
+    --chart-1: #E07A61;
+    --chart-2: #C7A66A;
+    --chart-3: #7FA38A;
+    --chart-4: #B48EAD;
+    --chart-5: #AEB9C1;
+    --sidebar: #1C2125;
+    --sidebar-foreground: #F3F5F6;
+    --sidebar-primary: #D47A63;
+    --sidebar-primary-foreground: #171A1D;
+    --sidebar-accent: #2A3035;
+    --sidebar-accent-foreground: #F3F5F6;
+    --sidebar-border: #343A3F;
+    --sidebar-ring: #E07A61;
   }
 
   :root:not(.light) ::selection {
-    background: rgb(1 26 56 / 28%);
+    background: rgb(224 122 97 / 32%);
   }
 }
