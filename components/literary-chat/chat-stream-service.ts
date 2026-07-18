@@ -5,7 +5,7 @@ import type { Memory } from '@/lib/memory-data'
 import type { ModelEndpointSummary } from '@/lib/model-endpoints'
 import type { ProjectContext } from '@/lib/project-data'
 import type { SearchMode } from '@/lib/search-mode'
-import { errorMessage, isRecord } from '@/lib/unknown-value'
+import { errorMessage } from '@/lib/unknown-value'
 import type { ClientGenerationPatch, ClientGenerationState } from '@/lib/generation-client'
 import type { ChatTurnAuthority } from '@/lib/llm/chat-request'
 import { takeAcknowledgedGenerationTerminal } from './generation-terminal-registry'
@@ -132,7 +132,10 @@ function captureStreamFailure(
   state: ChatStreamState,
   error: unknown,
 ): void {
-  if ((isRecord(error) && error.name === 'AbortError') || options.controller.signal.aborted) {
+  // Only the explicit local controller represents a user cancellation. Browsers
+  // may surface AbortError while suspending or restoring a page; treating that as
+  // Stop removed the assistant placeholder even though the durable job continued.
+  if (options.controller.signal.aborted) {
     state.aborted = true
     return
   }
