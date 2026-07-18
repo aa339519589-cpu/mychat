@@ -47,13 +47,13 @@
   --primary-foreground: #FCF7F1;
   --accent: #011A38;
   --accent-foreground: #FCF7F1;
-  --ring: #36516D;
+  --ring: #011A38;
   --chart-1: #011A38;
   --sidebar-primary: #011A38;
   --sidebar-primary-foreground: #FCF7F1;
   --sidebar-accent: #011A38;
   --sidebar-accent-foreground: #FCF7F1;
-  --sidebar-ring: #36516D;
+  --sidebar-ring: #011A38;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -63,13 +63,13 @@
     --primary-foreground: #FCF7F1;
     --accent: #011A38;
     --accent-foreground: #FCF7F1;
-    --ring: #36516D;
+    --ring: #011A38;
     --chart-1: #011A38;
     --sidebar-primary: #011A38;
     --sidebar-primary-foreground: #FCF7F1;
     --sidebar-accent: #011A38;
     --sidebar-accent-foreground: #FCF7F1;
-    --sidebar-ring: #36516D;
+    --sidebar-ring: #011A38;
   }
 }
 
