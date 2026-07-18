@@ -103,7 +103,7 @@ function markWarning(
       ...conversation,
       messages: conversation.messages.map(message => message.id !== assistantMessageId
         ? message
-        : { ...message, outputWarning: '连接暂时中断，后台任务仍在继续；重新打开会话会自动恢复。' }),
+        : { ...message, outputWarning: '生成状态连接已中断；当前内容已保留，重新打开会话可再次同步。' }),
     }))
 }
 
@@ -211,13 +211,15 @@ export async function resumeConversationGeneration(options: {
     console.warn('resumeConversationGeneration', response)
     if (activeIdentity) {
       markGeneration(conversationId, {
-        status: 'running',
+        status: 'error',
         generationId: activeIdentity.id,
         assistantMessageId: activeIdentity.assistantMessageId,
       })
       markWarning(setConversations, conversationId, activeIdentity.assistantMessageId)
     }
-    report(false)
+    // A status endpoint outage is not a reason to keep the whole composer locked.
+    // Fresh history remains usable and the next activation will attempt reconciliation again.
+    report(true)
   } finally {
     if (controller) clearAbort(conversationId, controller)
   }
