@@ -1,0 +1,71 @@
+name: Mirror Production Status
+
+on:
+  deployment_status:
+
+permissions:
+  contents: read
+  'statuses': write
+
+jobs:
+  mirror:
+    name: Mirror exact Render activation
+    if: >-
+      github.repository == 'aa339519589-cpu/mychat' &&
+      github.event.deployment.environment == 'Production' &&
+      github.event.deployment.task == 'deploy' &&
+      github.event.deployment.payload.promotion == 'render-api-exact-commit-activation' &&
+      github.event.deployment_status.environment == 'Production' &&
+      (
+        github.event.deployment_status.state == 'success' ||
+        github.event.deployment_status.state == 'failure' ||
+        github.event.deployment_status.state == 'error'
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      DEPLOYMENT_DESCRIPTION: ${{ github.event.deployment_status.description }}
+      DEPLOYMENT_LOG_URL: ${{ github.event.deployment_status.log_url }}
+      ENVIRONMENT_URL: ${{ github.event.deployment_status.environment_url }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TARGET_SHA: ${{ github.event.deployment.sha }}
+      TERMINAL_STATE: ${{ github.event.deployment_status.state }}
+    steps:
+      - name: Validate exact current-main production evidence
+        run: |
+          if [[ ! "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Production deployment SHA is malformed" >&2
+            exit 1
+          fi
+          current_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          if [[ "$TARGET_SHA" != "$current_main" ]]; then
+            echo "Ignoring a superseded production deployment" >&2
+            exit 1
+          fi
+          if [[ "$TERMINAL_STATE" == "success" ]] \
+            && [[ "$DEPLOYMENT_DESCRIPTION" != "Verified revision is active and strictly ready" ]]; then
+            echo "Success status lacks strict readiness evidence" >&2
+            exit 1
+          fi
+
+      - name: Publish readable production commit status
+        run: |
+          if [[ "$TERMINAL_STATE" == "success" ]]; then
+            state="success"
+            description="Exact revision is active and strictly ready on Render"
+            target_url="$ENVIRONMENT_URL"
+          else
+            state="failure"
+            description="Render production activation failed"
+            target_url="$DEPLOYMENT_LOG_URL"
+          fi
+          if [[ -z "$target_url" ]]; then
+            target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$TARGET_SHA"
+          fi
+          jq -nc \
+            --arg context "Production / Render" \
+            --arg description "$description" \
+            --arg state "$state" \
+            --arg target_url "$target_url" \
+            '{context: $context, description: $description, state: $state, target_url: $target_url}' \
+            | gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$TARGET_SHA" --input - >/dev/null
