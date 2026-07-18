@@ -12,13 +12,13 @@ import {
   ensureProfile,
   fetchConversations,
   fetchMemories,
-  fetchMessages,
   fetchModelEndpoints,
   fetchProfile,
   fetchProjects,
   lastExcerpt,
-  mergeCachedMessages,
 } from "@/lib/data"
+import { fetchReliableMessages } from "@/lib/data/reliable-messages"
+import { reconcileRemoteMessages } from "@/lib/data/remote-message-reconciliation"
 
 type ChatBootstrapOptions = {
   user: User | null
@@ -106,16 +106,18 @@ export function useChatBootstrap({
       replaceConversation(selected.id)
       const reconciled = await synchronizeConversationState({
         hydrate: async () => {
-          const messages = await fetchMessages(selected.id, { fresh: true })
+          const messages = await fetchReliableMessages(selected.id)
           if (cancelled()) return
           loadedRef.current.add(selected.id)
-          setConversations(previous => previous.map(conversation => conversation.id === selected.id
-            ? {
+          setConversations(previous => previous.map(conversation => {
+            if (conversation.id !== selected.id) return conversation
+            const merged = reconcileRemoteMessages(conversation.messages, messages)
+            return {
               ...conversation,
-              messages: mergeCachedMessages(conversation.messages, messages),
-              excerpt: lastExcerpt(messages),
+              messages: merged,
+              excerpt: lastExcerpt(merged),
             }
-            : conversation))
+          }))
         },
         reconcile: () => onConversationHydrated?.(selected.id) ?? Promise.resolve(true),
         isCancelled: cancelled,
