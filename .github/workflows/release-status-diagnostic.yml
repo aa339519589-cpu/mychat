@@ -1,0 +1,48 @@
+name: Release Status Diagnostic
+
+on:
+  pull_request:
+
+permissions:
+  actions: read
+  contents: read
+  deployments: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TARGET_SHA: 438dbbb2145428bf6a1a83ba98a62a02a7a2c600
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Inspect workflows, deployments, and production readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$TARGET_SHA&per_page=100" \
+            --jq '{runs: [.workflow_runs[] | {id, name, event, status, conclusion, head_sha, head_branch, html_url, created_at, updated_at}]}' \
+            > workflow-runs.json
+          gh api "repos/$GITHUB_REPOSITORY/deployments?sha=$TARGET_SHA&per_page=100" \
+            --jq '[.[] | {id, environment, ref, sha, created_at, updated_at, statuses_url}]' \
+            > deployments.json
+          {
+            echo "HTTP response from production readiness endpoint:"
+            curl --fail --silent --show-error --location --max-time 30 \
+              --dump-header ready-headers.txt \
+              https://mychat-nm6x.onrender.com/api/ready
+          } > ready-body.txt 2> ready-error.txt || true
+
+      - name: Upload release diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-status-${{ github.run_id }}
+          path: |
+            workflow-runs.json
+            deployments.json
+            ready-headers.txt
+            ready-body.txt
+            ready-error.txt
+          if-no-files-found: warn
+          retention-days: 1
