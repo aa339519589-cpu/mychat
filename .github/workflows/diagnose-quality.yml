@@ -1,0 +1,70 @@
+name: Diagnose Quality
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: diagnose-quality-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
+        env:
+          POSTGRES_DB: mychat
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        options: >-
+          --health-cmd "pg_isready -U postgres -d mychat"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/mychat
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/mychat
+      NODE_ENV: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Architecture
+        run: npm run architecture
+      - name: Complexity
+        run: npm run complexity
+      - name: Migration contract
+        run: npm run migration:contract
+      - name: Typecheck
+        run: npm run check
+      - name: Backend lint
+        run: npm run lint:backend
+      - name: Full lint
+        run: npm run lint
+      - name: Coverage tests
+        run: npm run test:coverage
+      - name: Production audit
+        run: npm run audit:prod
+      - name: Database type check
+        run: npm run database:types:check
+      - name: Migration tests
+        run: npm run test:migrations
+      - name: Build
+        run: npm run build
