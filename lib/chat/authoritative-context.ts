@@ -23,6 +23,21 @@ export type MessageRow = {
   seq?: number | null
 }
 
+type LoadContextInput = {
+  client: SupabaseClient
+  userId: string
+  conversationId: string
+  userMessageId: string
+  allowInstant?: boolean
+}
+
+type AuthoritativeChatContext = {
+  messages: RawMsg[]
+  memories: Memory[]
+  memoryEnabled: boolean
+  project?: ProjectContext
+}
+
 export class AuthoritativeContextError extends Error {
   constructor(
     public readonly code:
@@ -260,30 +275,65 @@ async function loadMessageHistory(input: {
   return compiled.reverse()
 }
 
+function instantContext(
+  input: LoadContextInput,
+  projectId: string | null,
+  currentUserMessage: RawMsg,
+): AuthoritativeChatContext | null {
+  if (!input.allowInstant || projectId || !isInstantReplyCandidate({
+    messages: [currentUserMessage],
+    searchMode: 'off',
+    deepResearch: false,
+    inProject: false,
+  })) return null
+  return {
+    messages: [currentUserMessage],
+    memories: [],
+    memoryEnabled: false,
+  }
+}
+
+async function fullContext(
+  input: LoadContextInput,
+  projectId: string | null,
+  userMessageRow: MessageRow,
+): Promise<AuthoritativeChatContext> {
+  const userSequence = Number(userMessageRow.seq)
+  const messages = await loadMessageHistory({
+    client: input.client,
+    conversationId: input.conversationId,
+    userId: input.userId,
+    userMessageId: input.userMessageId,
+    userSequence: Number.isSafeInteger(userSequence) && userSequence > 0 ? userSequence : null,
+  })
+  if (projectId) {
+    const project = await loadProjectContext(input.client, input.userId, projectId)
+    assertContextBudget({ messages, project })
+    return { messages, memories: [], memoryEnabled: false, project }
+  }
+  const globalMemory = await loadGlobalMemories(input.client, input.userId)
+  assertContextBudget({ messages, memories: globalMemory.memories })
+  return {
+    messages,
+    memories: globalMemory.memories,
+    memoryEnabled: globalMemory.enabled,
+  }
+}
+
 /**
  * Rebuild model context from the database authority. Client-supplied history,
  * memories, and project documents are never promoted into the model request.
  */
-export async function loadAuthoritativeChatContext(input: {
-  client: SupabaseClient
-  userId: string
-  conversationId: string
-  userMessageId: string
-  allowInstant?: boolean
-}): Promise<{
-  messages: RawMsg[]
-  memories: Memory[]
-  memoryEnabled: boolean
-  project?: ProjectContext
-}> {
-  const { client, userId, conversationId, userMessageId } = input
+export async function loadAuthoritativeChatContext(
+  input: LoadContextInput,
+): Promise<AuthoritativeChatContext> {
   const [conversationResult, userMessageResult] = await Promise.all([
-    client.from('conversations').select('id, project_id').eq('id', conversationId)
-      .eq('user_id', userId).maybeSingle(),
-    client.from('messages')
+    input.client.from('conversations').select('id, project_id').eq('id', input.conversationId)
+      .eq('user_id', input.userId).maybeSingle(),
+    input.client.from('messages')
       .select('id, role, content, content_parts, media_refs, images, created_at, conversation_id, user_id, seq')
-      .eq('id', userMessageId).eq('conversation_id', conversationId)
-      .eq('user_id', userId).eq('role', 'user').maybeSingle(),
+      .eq('id', input.userMessageId).eq('conversation_id', input.conversationId)
+      .eq('user_id', input.userId).eq('role', 'user').maybeSingle(),
   ])
   if (conversationResult.error || userMessageResult.error) {
     throw new AuthoritativeContextError('CONTEXT_UNAVAILABLE', '对话上下文暂时不可用')
@@ -294,48 +344,10 @@ export async function loadAuthoritativeChatContext(input: {
   if (!userMessageResult.data) {
     throw new AuthoritativeContextError('USER_MESSAGE_NOT_FOUND', '用户消息不存在')
   }
-
   const projectId = typeof conversationResult.data.project_id === 'string'
     ? conversationResult.data.project_id
     : null
-  const currentUserMessage = rawMessage(userMessageResult.data as MessageRow)
-  if (input.allowInstant && !projectId && isInstantReplyCandidate({
-    messages: [currentUserMessage],
-    searchMode: 'off',
-    deepResearch: false,
-    inProject: false,
-  })) {
-    return {
-      messages: [currentUserMessage],
-      memories: [],
-      memoryEnabled: false,
-    }
-  }
-
-  const userSequence = Number(userMessageResult.data.seq)
-  const messages = await loadMessageHistory({
-    client,
-    conversationId,
-    userId,
-    userMessageId,
-    userSequence: Number.isSafeInteger(userSequence) && userSequence > 0 ? userSequence : null,
-  })
-
-  if (projectId) {
-    const project = await loadProjectContext(client, userId, projectId)
-    assertContextBudget({ messages, project })
-    return {
-      messages,
-      memories: [],
-      memoryEnabled: false,
-      project,
-    }
-  }
-  const globalMemory = await loadGlobalMemories(client, userId)
-  assertContextBudget({ messages, memories: globalMemory.memories })
-  return {
-    messages,
-    memories: globalMemory.memories,
-    memoryEnabled: globalMemory.enabled,
-  }
+  const userMessageRow = userMessageResult.data as MessageRow
+  const quick = instantContext(input, projectId, rawMessage(userMessageRow))
+  return quick ?? fullContext(input, projectId, userMessageRow)
 }
