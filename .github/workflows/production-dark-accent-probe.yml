@@ -38,12 +38,13 @@ jobs:
               if [[ "$resolved" =~ ^[0-9a-f]{40}$ ]] \
                 && git merge-base --is-ancestor "$REQUIRED_SHA" "$resolved"; then
                 palette="$(git show "$resolved:app/theme-palette.css")"
-                grep --fixed-strings --quiet -- '--primary: #2F6FB3;' <<<"$palette"
-                grep --fixed-strings --quiet -- '--sidebar-primary: #2F6FB3;' <<<"$palette"
-                grep --fixed-strings --quiet -- '--ring: #79B8F3;' <<<"$palette"
-                echo "Production is live on $resolved and contains the dark accent fix."
-                echo "$payload"
-                exit 0
+                if grep --fixed-strings --quiet -- '--primary: #2F6FB3;' <<<"$palette" \
+                  && grep --fixed-strings --quiet -- '--sidebar-primary: #2F6FB3;' <<<"$palette" \
+                  && grep --fixed-strings --quiet -- '--ring: #79B8F3;' <<<"$palette"; then
+                  echo "Production is live on $resolved and contains the dark accent fix."
+                  echo "$payload"
+                  exit 0
+                fi
               fi
             fi
 
