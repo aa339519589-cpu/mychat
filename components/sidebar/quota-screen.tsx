@@ -52,7 +52,6 @@ export function QuotaScreen() {
     }
   }
 
-
   function fmtNum(n: number) { return n.toLocaleString() }
   function pct(n: number, max: number) { return Math.min(100, (n / max) * 100) }
   function fmtRemaining(windowStart: string, windowMs: number): string {
@@ -79,22 +78,24 @@ export function QuotaScreen() {
     { tokens: '500 万', price: 78, popular: false },
   ]
 
+  const cardClass = "rounded-2xl border border-border bg-card shadow-sm"
+
   return (
     <div className="space-y-4 px-4">
 
       {/* 账户余额 */}
-      <div className="rounded-2xl bg-sidebar-primary/15 px-4 py-3 border border-sidebar-primary/30">
+      <div className={`${cardClass} px-4 py-3`}>
         <div className="text-[11px] text-muted-foreground">账户余额</div>
-        <div className="mt-1.5 text-[21px] font-semibold text-foreground">{fmtNum(quota?.balance ?? 0)}</div>
+        <div className="mt-1.5 text-[21px] font-semibold text-card-foreground">{fmtNum(quota?.balance ?? 0)}</div>
         <div className="mt-0.5 text-[10px] text-muted-foreground">token（不受时间窗口限制）</div>
       </div>
 
-      <div className="space-y-2.5 rounded-2xl bg-sidebar-accent/55 p-4 border border-sidebar-border">
+      <div className={`${cardClass} space-y-2.5 p-4`}>
         <div className="flex items-baseline justify-between">
-          <span className="text-[12px] font-medium text-foreground">5 小时用量</span>
+          <span className="text-[12px] font-medium text-card-foreground">5 小时用量</span>
           <span className="text-[10px] text-muted-foreground">{fmtRemaining(w5h, 5 * 3600 * 1000)}</span>
         </div>
-        <div className="h-1.5 overflow-hidden rounded-full bg-sidebar-accent/70">
+        <div className="h-1.5 overflow-hidden rounded-full bg-muted">
           <div className="h-full rounded-full bg-sidebar-primary transition-all" style={{ width: `${pct(t5h, max5h)}%` }} />
         </div>
         <div className="flex justify-between text-[10px] text-muted-foreground">
@@ -103,12 +104,12 @@ export function QuotaScreen() {
         </div>
       </div>
 
-      <div className="space-y-2.5 rounded-2xl bg-sidebar-accent/55 p-4 border border-sidebar-border">
+      <div className={`${cardClass} space-y-2.5 p-4`}>
         <div className="flex items-baseline justify-between">
-          <span className="text-[12px] font-medium text-foreground">7 天用量</span>
+          <span className="text-[12px] font-medium text-card-foreground">7 天用量</span>
           <span className="text-[10px] text-muted-foreground">{fmtRemaining(w7d, 7 * 86400 * 1000)}</span>
         </div>
-        <div className="h-1.5 overflow-hidden rounded-full bg-sidebar-accent/70">
+        <div className="h-1.5 overflow-hidden rounded-full bg-muted">
           <div className="h-full rounded-full bg-sidebar-primary transition-all" style={{ width: `${pct(t7d, max7d)}%` }} />
         </div>
         <div className="flex justify-between text-[10px] text-muted-foreground">
@@ -118,13 +119,13 @@ export function QuotaScreen() {
       </div>
 
       {/* 计费倍率简介 */}
-      <div className="rounded-2xl bg-sidebar-accent/55 px-4 py-3 border border-sidebar-border">
-        <div className="text-[11px] font-medium text-foreground">按模型计费倍率</div>
+      <div className={`${cardClass} px-4 py-3`}>
+        <div className="text-[11px] font-medium text-card-foreground">按模型计费倍率</div>
         <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
           <span>快速 <span className="font-medium text-foreground">×0.8</span></span>
-          <span className="text-sidebar-border">·</span>
+          <span className="text-border">·</span>
           <span>均衡 <span className="font-medium text-foreground">×1</span></span>
-          <span className="text-sidebar-border">·</span>
+          <span className="text-border">·</span>
           <span>深度／深研 <span className="font-medium text-foreground">×3</span></span>
         </div>
       </div>
@@ -137,7 +138,10 @@ export function QuotaScreen() {
             <button
               key={p.tokens}
               type="button"
-              className={`relative flex flex-col items-center gap-1 rounded-2xl px-3 py-4 border transition-transform active:scale-[0.98] ${p.popular ? 'bg-sidebar-primary/10 border-sidebar-primary/40' : 'bg-sidebar-accent/55 border-sidebar-border'}`}
+              className={cn(
+                "relative flex flex-col items-center gap-1 rounded-2xl border px-3 py-4 shadow-sm transition-transform active:scale-[0.98]",
+                p.popular ? "border-sidebar-primary/35 bg-secondary" : "border-border bg-card",
+              )}
             >
               {p.popular && (
                 <span className="absolute -top-2 rounded-full bg-sidebar-primary px-2 py-0.5 text-[9px] font-medium text-sidebar-primary-foreground">最划算</span>
@@ -149,7 +153,7 @@ export function QuotaScreen() {
           ))}
           <button
             type="button"
-            className="flex flex-col items-center justify-center gap-1 rounded-2xl px-3 py-4 border border-sidebar-border bg-sidebar-accent/55 transition-transform active:scale-[0.98]"
+            className="flex flex-col items-center justify-center gap-1 rounded-2xl border border-border bg-card px-3 py-4 shadow-sm transition-transform active:scale-[0.98]"
           >
             <span className="text-[14px] font-semibold text-foreground">自定义</span>
             <span className="text-[10px] text-muted-foreground">按需购买</span>
@@ -168,7 +172,7 @@ export function QuotaScreen() {
             onChange={e => setCodeInput(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') handleRedeemCode() }}
             placeholder="输入邀请码"
-            className="flex-1 rounded-xl bg-sidebar-accent/50 px-3 py-2 text-sm outline-none focus:bg-sidebar-accent/75 placeholder:text-muted-foreground/50"
+            className="flex-1 rounded-xl border border-input bg-card px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-ring/45"
             disabled={codeLoading}
           />
           <button
@@ -192,4 +196,3 @@ export function QuotaScreen() {
 
 // ── 设置（二级全屏页内容）：两个板块 —— 「基础与记忆」｜「使用额度」──
 // 装在 ScreenPanel 里（顶部统一返回头由外壳提供），标签切换两块内容，不再逐层滑入碎片子页。
-
