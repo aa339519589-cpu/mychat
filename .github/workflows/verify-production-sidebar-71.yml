@@ -1,0 +1,42 @@
+name: Verify production sidebar 71
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  production-ready:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout history
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Wait for production to contain sidebar fix
+        env:
+          EXPECTED_REVISION: ed7fea50e2a46315a4d7297ed47b76e358e389e3
+          READY_URL: https://mychat-nm6x.onrender.com/api/ready
+        run: |
+          for attempt in {1..180}; do
+            response="$(curl --silent --show-error --max-time 20 "$READY_URL" || true)"
+            echo "attempt=$attempt response=$response"
+            ready="$(jq --raw-output '.ready // false' <<<"$response" 2>/dev/null || true)"
+            revision="$(jq --raw-output '.revision // empty' <<<"$response" 2>/dev/null || true)"
+            if [[ "$ready" == "true" && "$revision" =~ ^[0-9a-f]{7,12}$ ]]; then
+              git fetch origin main --quiet
+              deployed="$(git rev-parse "${revision}^{commit}" 2>/dev/null || true)"
+              if [[ -n "$deployed" ]] && git merge-base --is-ancestor "$EXPECTED_REVISION" "$deployed"; then
+                echo "Production is ready on revision $deployed and contains $EXPECTED_REVISION"
+                exit 0
+              fi
+            fi
+            sleep 10
+          done
+          echo "Production never became ready with the sidebar fix" >&2
+          exit 1
