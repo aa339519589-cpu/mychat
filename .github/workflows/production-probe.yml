@@ -1,0 +1,39 @@
+name: Production Probe
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/production-probe.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Verify deployed chat-order fix
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      FIX_SHA: e609c6bd2576ea632fbfd5245c9ffe27864c3db3
+      PRODUCTION_READY_URL: https://mychat-nm6x.onrender.com/api/ready
+    steps:
+      - name: Require healthy production containing the fix
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          payload="$(curl --fail-with-body --silent --show-error \
+            --retry 12 --retry-all-errors --retry-delay 10 \
+            --connect-timeout 10 --max-time 60 \
+            --header 'Accept: application/json' \
+            "$PRODUCTION_READY_URL")"
+          jq --exit-status '
+            .status == "ok" and .ready == true and
+            .checks.worker.ready == true and
+            .checks.worker.draining == false
+          ' <<<"$payload" >/dev/null
+          revision="$(jq -er '.revision | select(test("^[0-9a-f]{7,12}$"))' <<<"$payload")"
+          live_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$revision" --jq '.sha')"
+          comparison="$(gh api "repos/$GITHUB_REPOSITORY/compare/$FIX_SHA...$live_sha")"
+          jq --exit-status '.status == "ahead" or .status == "identical"' <<<"$comparison" >/dev/null
+          echo "Production is healthy at $live_sha and contains fix $FIX_SHA"
