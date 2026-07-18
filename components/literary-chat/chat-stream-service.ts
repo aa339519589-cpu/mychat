@@ -137,6 +137,10 @@ function captureStreamFailure(
     return
   }
   state.terminalError = errorMessage(error, '模型生成失败')
+  // The event channel has exhausted its durable retries. Preserve any rendered
+  // prefix through the normal partial-output finalizer instead of replacing it
+  // with a blank "terminal missing" placeholder.
+  state.terminalProtocolExpected = false
 }
 
 function mergeAcknowledgedTerminal(options: RunChatStreamOptions, state: ChatStreamState): void {

@@ -4,15 +4,16 @@ import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react"
 import type { Conversation } from "@/lib/chat-data"
 import type { SearchMode } from "@/lib/search-mode"
 import {
+  cacheConversationMessages,
   deleteConversationRow,
-  fetchMessages,
   lastExcerpt,
-  mergeCachedMessages,
   setConversationPinned,
   setConversationProject,
   setConversationStarred,
   updateConversationTitle,
 } from "@/lib/data"
+import { fetchReliableMessages } from "@/lib/data/reliable-messages"
+import { reconcileRemoteMessages } from "@/lib/data/remote-message-reconciliation"
 import { createClient } from "@/lib/supabase/client"
 import { LoginScreen } from "@/components/login-screen"
 import type { AppSidebarProps } from "@/components/app-sidebar"
@@ -50,9 +51,11 @@ export function LiteraryChat() {
   const draftIdRef = useRef<string | null>(null)
   const rootConversationIdRef = useRef<string | null>(null)
   const conversationsRef = useRef(conversations)
+  const activeIdRef = useRef(activeId)
   const resumeHydratedRef = useRef<(id: string) => Promise<boolean>>(() => Promise.resolve(false))
   const activationTokenRef = useRef(0)
   conversationsRef.current = conversations
+  activeIdRef.current = activeId
 
   const memory = useMemories(user)
   const model = useModelSelection({ setSearchMode, setDeepResearch, setHistoryRetrieval })
@@ -114,6 +117,13 @@ export function LiteraryChat() {
     draftIdRef,
     getProjectContext: project.getProjectContext,
     onConversationCreated: id => {
+      const pendingDraft = conversationsRef.current.find(conversation => (
+        conversation.draft && conversation.id !== id && conversation.messages.length === 0
+      ))
+      draftIdRef.current = pendingDraft?.id ?? null
+      // A delayed enqueue acknowledgement must never pull the user out of a
+      // newer chat they already opened.
+      if (activeIdRef.current !== id) return
       rootConversationIdRef.current = id
       route.replaceConversation(id)
     },
@@ -130,6 +140,33 @@ export function LiteraryChat() {
     if (element) element.scrollTo({ top: element.scrollHeight, behavior: "smooth" })
   }, [active?.messages?.length, activeId])
 
+  // Keep a recent local snapshot while streaming, and force one whenever the
+  // user leaves the conversation, backgrounds the app, or closes the page.
+  useEffect(() => {
+    if (!active?.messages.length) return
+    const timer = window.setTimeout(() => {
+      cacheConversationMessages(active.id, active.messages)
+    }, 350)
+    return () => window.clearTimeout(timer)
+  }, [active?.id, active?.messages])
+
+  useEffect(() => {
+    const persist = () => {
+      const conversation = conversationsRef.current.find(item => item.id === activeId)
+      if (conversation?.messages.length) cacheConversationMessages(conversation.id, conversation.messages)
+    }
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") persist()
+    }
+    window.addEventListener("pagehide", persist)
+    document.addEventListener("visibilitychange", onVisibilityChange)
+    return () => {
+      window.removeEventListener("pagehide", persist)
+      document.removeEventListener("visibilitychange", onVisibilityChange)
+      persist()
+    }
+  }, [activeId])
+
   async function activateConversation(id: string) {
     const activationToken = ++activationTokenRef.current
     setActiveId(id)
@@ -139,15 +176,17 @@ export function LiteraryChat() {
     const locallyRunning = generation.generationByConversation[id]?.status === "running"
     const reconciled = await synchronizeConversationState({
       hydrate: locallyRunning ? async () => undefined : async () => {
-        const messages = await fetchMessages(id, { fresh: true })
+        const messages = await fetchReliableMessages(id)
         loadedRef.current.add(id)
-        setConversations(previous => previous.map(conversation => conversation.id === id
-          ? {
+        setConversations(previous => previous.map(conversation => {
+          if (conversation.id !== id) return conversation
+          const merged = reconcileRemoteMessages(conversation.messages, messages)
+          return {
             ...conversation,
-            messages: mergeCachedMessages(conversation.messages, messages),
-            excerpt: lastExcerpt(messages),
+            messages: merged,
+            excerpt: lastExcerpt(merged),
           }
-          : conversation))
+        }))
       },
       reconcile: () => generation.resumeGenerationIfNeeded(id),
       isCancelled: () => activationTokenRef.current !== activationToken,
@@ -217,10 +256,17 @@ export function LiteraryChat() {
   function handleNew() {
     if (!user) return
     layout.setDrawerOpen(false)
-    if (draftIdRef.current) {
-      rootConversationIdRef.current = draftIdRef.current
+    layout.setOpenArtifactId(null)
+    const existingDraftId = draftIdRef.current
+    const existingDraft = existingDraftId
+      ? conversationsRef.current.find(conversation => conversation.id === existingDraftId)
+      : undefined
+    // Reuse only a genuinely empty draft. A failed or delayed first send must
+    // never trap the New Chat action on the same conversation.
+    if (existingDraft && existingDraft.messages.length === 0) {
+      rootConversationIdRef.current = existingDraft.id
       route.openConversation(null)
-      setActiveId(draftIdRef.current)
+      setActiveId(existingDraft.id)
       activationTokenRef.current += 1
       setHydratingConversationId(null)
       return
