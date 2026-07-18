@@ -1,0 +1,42 @@
+name: Verify Production Revision
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/verify-production-revision.yml
+
+permissions:
+  contents: read
+
+jobs:
+  verify-production:
+    name: Verify exact production revision
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout target revision
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+
+      - name: Wait for exact production revision
+        env:
+          EXPECTED_REVISION: fefa9dbf4b994aa695d88050702c0e46648d39d8
+          EXPECTED_WORKER_DRAINING: "false"
+          HEALTH_CHECK_ATTEMPTS: "10"
+          HEALTH_CHECK_RETRY_MS: "30000"
+          HEALTH_CHECK_TIMEOUT_MS: "60000"
+          MYCHAT_HEALTH_URL: https://mychat-nm6x.onrender.com/api/ready
+        run: |
+          for batch in 1 2 3; do
+            if node scripts/check-production-health.mjs "$MYCHAT_HEALTH_URL"; then
+              exit 0
+            fi
+            if [ "$batch" -lt 3 ]; then
+              sleep 30
+            fi
+          done
+          exit 1
