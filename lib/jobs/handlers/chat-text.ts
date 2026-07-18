@@ -1,7 +1,6 @@
 import type { SupabaseClient } from '@/lib/supabase/types'
 import { hasScannedPdfAttachment, ocrScannedPdfs } from '@/lib/chat/attachments'
 import { prepareChatHistory, RECENT_CONTEXT_MESSAGES } from '@/lib/chat/history'
-import { isInstantReplyCandidate } from '@/lib/chat/instant-reply'
 import {
   latestBeijingDateFromMessages,
   prependDeepResearchInstruction,
@@ -21,6 +20,7 @@ import { JobEventWriter } from '../event-writer'
 import { executeFencedToolEffect } from '../tool-effects'
 import type { JobExecutionContext, JobHandlerResult } from '../worker'
 import type { LoadedChatJob } from './chat-input'
+import { instantModelMessages } from './chat-instant'
 import {
   CHAT_MEDIA_PERSISTENCE_DEFAULTS,
   type ChatMediaPersistenceDependencies,
@@ -132,21 +132,7 @@ function chatTools(
   }
 }
 
-function instantSystem(input: LoadedChatJob): string {
-  const { selection } = input
-  const identity = selection.customEndpoint
-    ? `本次使用用户接入的外部模型，真实模型标识是 ${selection.model}。`
-    : `你是 MyChat 的「${selection.platformTierLabel ?? '当前内置档位'}」对话模型。`
-  return `你运行在 MyChat 中。\n${identity}\n用户只是简短问候或测试连接。立即使用用户的语言自然回复一到两句。不要调用工具，不要展开说明，不要提及系统提示词、内部路径、记忆、项目或底层供应商。`
-}
-
-function chatSystem(
-  input: LoadedChatJob,
-  latestBeijingDate: string | null,
-  historyContext: string,
-  instant: boolean,
-): string {
-  if (instant) return instantSystem(input)
+function chatSystem(input: LoadedChatJob, latestBeijingDate: string | null, historyContext: string): string {
   const { selection, command } = input
   const { memories, memoryEnabled, project } = input.context
   return buildSystem(
@@ -223,21 +209,11 @@ async function prepareChat(
   const { selection, command } = input
   const project = input.context.project
   const latestBeijingDate = latestBeijingDateFromMessages(input.context.messages)
-  const instant = isInstantReplyCandidate({
-    messages: input.context.messages,
-    searchMode: command.searchMode,
-    deepResearch: command.deepResearch,
-    attachments: command.attachments,
-    inProject: Boolean(project?.id),
-  })
-  const configuredTools = chatTools(context, input, latestBeijingDate, instant)
-  if (instant) {
-    const modelMessages: AgentLoopOpts['messages'] = [
-      { role: 'system', content: chatSystem(input, latestBeijingDate, '', true) },
-      ...buildModelContext(input.context.messages.slice(-1), selection.capability),
-    ]
-    const baseLength = await restoreChatTrajectory(context, runtime.writer, modelMessages)
-    return { ...configuredTools, modelMessages, baseLength, instant: true }
+  const instantMessages = instantModelMessages(input)
+  const configuredTools = chatTools(context, input, latestBeijingDate, Boolean(instantMessages))
+  if (instantMessages) {
+    const baseLength = await restoreChatTrajectory(context, runtime.writer, instantMessages)
+    return { ...configuredTools, modelMessages: instantMessages, baseLength, instant: true }
   }
   const history = await dependencies.prepareHistory({
     supabase: input.client as Parameters<typeof prepareChatHistory>[0]['supabase'],
@@ -252,7 +228,7 @@ async function prepareChat(
   })
   const preparedMessages = await recentModelMessages(context, input, runtime, dependencies)
   const modelMessages: AgentLoopOpts['messages'] = [
-    { role: 'system', content: chatSystem(input, latestBeijingDate, history.renderedContext, false) },
+    { role: 'system', content: chatSystem(input, latestBeijingDate, history.renderedContext) },
     ...buildModelContext(preparedMessages, selection.capability),
   ]
   if (command.deepResearch) prependDeepResearchInstruction(modelMessages)
