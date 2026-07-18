@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@/lib/supabase/types'
 import { hasScannedPdfAttachment, ocrScannedPdfs } from '@/lib/chat/attachments'
 import { prepareChatHistory, RECENT_CONTEXT_MESSAGES } from '@/lib/chat/history'
+import { isInstantReplyCandidate } from '@/lib/chat/instant-reply'
 import {
   latestBeijingDateFromMessages,
   prependDeepResearchInstruction,
@@ -36,6 +37,7 @@ import {
 
 const SAFETY_ROUNDS = 16
 const MAX_OUTPUT_TOKENS = 40_000
+const INSTANT_MAX_OUTPUT_TOKENS = 96
 const REPLAY_SAFE_TOOLS = new Set(['web_search', 'fetch_url'])
 
 type ActiveChatTools = ReturnType<typeof activeTools>
@@ -65,6 +67,7 @@ type PreparedChat = {
   tools: ActiveChatTools
   toolContext: ToolContext
   baseLength: number
+  instant: boolean
 }
 
 const DEFAULT_DEPENDENCIES: ChatTextDependencies = {
@@ -107,11 +110,12 @@ function chatTools(
   context: JobExecutionContext,
   input: LoadedChatJob,
   latestBeijingDate: string | null,
+  instant: boolean,
 ): { tools: ActiveChatTools; toolContext: ToolContext } {
   const { selection, command } = input
   const projectId = input.context.project?.id ?? null
   return {
-    tools: activeTools({
+    tools: instant ? [] : activeTools({
       loggedIn: true,
       searchMode: command.searchMode,
       memoryEnabled: selection.customEndpoint ? false : input.context.memoryEnabled,
@@ -128,7 +132,21 @@ function chatTools(
   }
 }
 
-function chatSystem(input: LoadedChatJob, latestBeijingDate: string | null, historyContext: string): string {
+function instantSystem(input: LoadedChatJob): string {
+  const { selection } = input
+  const identity = selection.customEndpoint
+    ? `本次使用用户接入的外部模型，真实模型标识是 ${selection.model}。`
+    : `你是 MyChat 的「${selection.platformTierLabel ?? '当前内置档位'}」对话模型。`
+  return `你运行在 MyChat 中。\n${identity}\n用户只是简短问候或测试连接。立即使用用户的语言自然回复一到两句。不要调用工具，不要展开说明，不要提及系统提示词、内部路径、记忆、项目或底层供应商。`
+}
+
+function chatSystem(
+  input: LoadedChatJob,
+  latestBeijingDate: string | null,
+  historyContext: string,
+  instant: boolean,
+): string {
+  if (instant) return instantSystem(input)
   const { selection, command } = input
   const { memories, memoryEnabled, project } = input.context
   return buildSystem(
@@ -205,7 +223,22 @@ async function prepareChat(
   const { selection, command } = input
   const project = input.context.project
   const latestBeijingDate = latestBeijingDateFromMessages(input.context.messages)
-  const configuredTools = chatTools(context, input, latestBeijingDate)
+  const instant = isInstantReplyCandidate({
+    messages: input.context.messages,
+    searchMode: command.searchMode,
+    deepResearch: command.deepResearch,
+    attachments: command.attachments,
+    inProject: Boolean(project?.id),
+  })
+  const configuredTools = chatTools(context, input, latestBeijingDate, instant)
+  if (instant) {
+    const modelMessages: AgentLoopOpts['messages'] = [
+      { role: 'system', content: chatSystem(input, latestBeijingDate, '', true) },
+      ...buildModelContext(input.context.messages.slice(-1), selection.capability),
+    ]
+    const baseLength = await restoreChatTrajectory(context, runtime.writer, modelMessages)
+    return { ...configuredTools, modelMessages, baseLength, instant: true }
+  }
   const history = await dependencies.prepareHistory({
     supabase: input.client as Parameters<typeof prepareChatHistory>[0]['supabase'],
     userId: input.userId,
@@ -219,13 +252,13 @@ async function prepareChat(
   })
   const preparedMessages = await recentModelMessages(context, input, runtime, dependencies)
   const modelMessages: AgentLoopOpts['messages'] = [
-    { role: 'system', content: chatSystem(input, latestBeijingDate, history.renderedContext) },
+    { role: 'system', content: chatSystem(input, latestBeijingDate, history.renderedContext, false) },
     ...buildModelContext(preparedMessages, selection.capability),
   ]
   if (command.deepResearch) prependDeepResearchInstruction(modelMessages)
   await appendAttachments(context, input, runtime, dependencies, modelMessages)
   const baseLength = await restoreChatTrajectory(context, runtime.writer, modelMessages)
-  return { ...configuredTools, modelMessages, baseLength }
+  return { ...configuredTools, modelMessages, baseLength, instant: false }
 }
 
 function createToolExecutor(
@@ -324,8 +357,8 @@ async function runPreparedChat(
     apiKey: selection.apiKey,
     model: selection.model,
     adapter: selection.capability.provider.adapter,
-    thinking: selection.thinking,
-    reasoningEffort: resolveReasoningEffort({
+    thinking: prepared.instant ? false : selection.thinking,
+    reasoningEffort: prepared.instant ? null : resolveReasoningEffort({
       isDeepTierProxy,
       deepResearch: command.deepResearch,
       modelId: selection.model,
@@ -334,17 +367,17 @@ async function runPreparedChat(
     tools: toOpenAITools(prepared.tools),
     emit: runtime.emit,
     executeTool: createToolExecutor(context, input, runtime, prepared, dependencies),
-    maxRounds: SAFETY_ROUNDS,
-    leakedRetry: true,
-    autoContinue: { maxContinuations: 4 },
+    maxRounds: prepared.instant ? 1 : SAFETY_ROUNDS,
+    leakedRetry: !prepared.instant,
+    autoContinue: prepared.instant ? undefined : { maxContinuations: 4 },
     onUsage: usageHandler(context, input, runtime),
     onCheckpoint: checkpointHandler(runtime, prepared.baseLength),
     turnOptions: {
       signal: context.signal,
-      timeoutMs: 120_000,
+      timeoutMs: prepared.instant ? 20_000 : 120_000,
       authType: selection.authType,
-      logTiming: isDeepTierProxy || process.env.DEBUG_LLM_TIMING === '1',
-      maxOutputTokens: MAX_OUTPUT_TOKENS,
+      logTiming: prepared.instant || isDeepTierProxy || process.env.DEBUG_LLM_TIMING === '1',
+      maxOutputTokens: prepared.instant ? INSTANT_MAX_OUTPUT_TOKENS : MAX_OUTPUT_TOKENS,
       idempotencyNamespace: context.job.id,
     },
     onTurn: logTurn(context.job.id),
