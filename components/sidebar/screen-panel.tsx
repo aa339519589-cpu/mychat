@@ -19,6 +19,9 @@ export function ScreenPanel({ open, style, title, onBack, action, children }: {
   const reducedMotion = useReducedMotion()
   const mobile = useMediaQuery("(max-width: 767px)")
   const canSwipeBack = useMediaQuery("(max-width: 767px) and (pointer: coarse)")
+  const panelStyle = mobile
+    ? { ...style, zIndex: 70 + Number(style.zIndex ?? 0) }
+    : style
 
   const panel = (
     <motion.div
@@ -44,9 +47,9 @@ export function ScreenPanel({ open, style, title, onBack, action, children }: {
       aria-hidden={!open}
       inert={!open}
       className={mobile
-        ? "fluid-drag-surface fixed inset-0 z-[70] flex h-[100dvh] w-screen flex-col overflow-hidden bg-sidebar"
+        ? "fluid-drag-surface fixed inset-0 flex h-[100dvh] w-screen flex-col overflow-hidden bg-sidebar"
         : "fluid-drag-surface absolute inset-0 flex flex-col bg-sidebar"}
-      style={style}
+      style={panelStyle}
     >
       <div className="flex shrink-0 items-center gap-2 px-4 pb-4 pt-[max(1rem,env(safe-area-inset-top))]">
         <button onClick={onBack} className="fluid-press fluid-icon-press fluid-touch-target -ml-1 flex size-11 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-sidebar-accent hover:text-foreground" aria-label="返回">
