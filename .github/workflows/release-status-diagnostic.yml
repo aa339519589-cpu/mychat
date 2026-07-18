@@ -13,14 +13,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      TARGET_SHA: e609c6bd2576ea632fbfd5245c9ffe27864c3db3e
+      TARGET_SHA: ed7fea50e2a46315a4d7297ed47b76e358e389e3
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Inspect workflows, deployments, and production readiness
         shell: bash
         run: |
           set -euo pipefail
-          # Refresh after the current-main workflows were indexed.
           gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$TARGET_SHA&per_page=100" \
             --jq '{runs: [.workflow_runs[] | {id, name, event, status, conclusion, head_sha, head_branch, html_url, created_at, updated_at}]}' \
             > workflow-runs.json
