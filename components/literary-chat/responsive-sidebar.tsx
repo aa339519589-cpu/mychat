@@ -77,9 +77,14 @@ function useDrawerMotion(layout: LiteraryChatLayoutState, mobile: boolean) {
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     const gesture = gestureRef.current
     if (!gesture || gesture.pointerId !== event.pointerId) return
-    drawerX.set(clippedOffset(gesture.originX + event.clientX - gesture.startX, drawerWidth))
-    gesture.history = [...gesture.history, { x: event.clientX, time: event.timeStamp }]
-      .filter(point => event.timeStamp - point.time <= 100).slice(-8)
+
+    const nextX = clippedOffset(gesture.originX + event.clientX - gesture.startX, drawerWidth)
+    if (Math.abs(nextX - drawerX.get()) >= 0.1) drawerX.set(nextX)
+
+    const history = gesture.history
+    history.push({ x: event.clientX, time: event.timeStamp })
+    const cutoff = event.timeStamp - 100
+    while (history.length > 1 && (history[0].time < cutoff || history.length > 8)) history.shift()
   }
 
   const onPointerEnd = (event: ReactPointerEvent<HTMLDivElement>, cancelled = false) => {
@@ -104,7 +109,13 @@ export function ResponsiveSidebar({ layout, sidebar, mobile }: ResponsiveSidebar
       aria-hidden={mobile && !layout.drawerOpen}
       className={layout.drawerOpen ? "fixed inset-0 z-40 w-full shrink-0 md:relative md:inset-auto md:z-auto md:h-full md:w-[var(--sidebar-width)] md:overflow-hidden" : "pointer-events-none fixed inset-0 z-40 w-full shrink-0 md:pointer-events-auto md:relative md:inset-auto md:z-auto md:h-full md:w-[var(--sidebar-width)] md:overflow-hidden"}
     >
-      <motion.button type="button" aria-label="收起侧栏" onClick={() => layout.setDrawerOpen(false)} style={{ opacity: drawer.scrimOpacity }} className="absolute inset-0 bg-black/42 backdrop-blur-[2px] md:hidden" />
+      <motion.button
+        type="button"
+        aria-label="收起侧栏"
+        onClick={() => layout.setDrawerOpen(false)}
+        style={{ opacity: drawer.scrimOpacity, willChange: "opacity" }}
+        className="absolute inset-0 bg-black/42 md:hidden"
+      />
       <motion.div
         data-testid="responsive-sidebar-drawer"
         ref={drawer.drawerRef}
@@ -112,7 +123,7 @@ export function ResponsiveSidebar({ layout, sidebar, mobile }: ResponsiveSidebar
         aria-modal={mobile || undefined}
         aria-label={mobile ? "对话与工作区导航" : undefined}
         inert={mobile && !layout.drawerOpen}
-        style={{ x: drawer.drawerX }}
+        style={{ x: drawer.drawerX, willChange: "transform", backfaceVisibility: "hidden" }}
         className="fluid-drag-surface relative h-full w-[min(20rem,82vw)] overflow-hidden bg-sidebar shadow-2xl md:w-[20rem] md:!transform-none md:border-r md:border-border/50 md:shadow-none"
       >
         <AppSidebar {...sidebar} visible={mobile ? layout.drawerOpen : true} onClose={() => layout.setDrawerOpen(false)} onDragStart={drawer.onPointerDown} onDragMove={drawer.onPointerMove} onDragEnd={event => drawer.onPointerEnd(event)} onDragCancel={event => drawer.onPointerEnd(event, true)} />
