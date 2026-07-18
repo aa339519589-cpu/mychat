@@ -46,38 +46,26 @@ jobs:
       - name: Install browser runtime
         run: npx playwright install --with-deps chromium
       - name: Architecture
-        continue-on-error: true
         run: npm run architecture
       - name: Complexity
-        continue-on-error: true
         run: npm run complexity
       - name: Migration contract
-        continue-on-error: true
         run: npm run migration:contract
       - name: Typecheck
-        continue-on-error: true
         run: npm run check
       - name: Backend lint
-        continue-on-error: true
         run: npm run lint:backend
       - name: Full lint
-        continue-on-error: true
         run: npm run lint
       - name: Tests with coverage
-        continue-on-error: true
         run: npm run test:coverage
       - name: Production audit
-        continue-on-error: true
         run: npm run audit:prod
       - name: Database type contract
-        continue-on-error: true
         run: npm run database:types:check
       - name: Migration tests
-        continue-on-error: true
         run: npm run test:migrations
       - name: Build
-        continue-on-error: true
         run: npm run build
       - name: End-to-end tests
-        continue-on-error: true
         run: npm run test:e2e
