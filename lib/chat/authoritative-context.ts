@@ -10,7 +10,7 @@ const MAX_MESSAGE_HISTORY_BYTES = 512 * 1024
 const MAX_AUTHORITATIVE_CONTEXT_BYTES = 1024 * 1024
 const MAX_MEMORIES = 200
 const MAX_PROJECT_FILES = 30
-const CONTEXT_PAGE_SIZE = 64
+const CONTEXT_PAGE_SIZE = 8
 
 export type MessageRow = {
   id: string
@@ -320,6 +320,12 @@ async function fullContext(
   }
 }
 
+function userMessageColumns(allowInstant: boolean | undefined): string {
+  return allowInstant
+    ? 'id, role, content, content_parts, media_refs, images, created_at, conversation_id, user_id, seq'
+    : 'id, role, conversation_id, user_id, seq'
+}
+
 /**
  * Rebuild model context from the database authority. Client-supplied history,
  * memories, and project documents are never promoted into the model request.
@@ -330,8 +336,7 @@ export async function loadAuthoritativeChatContext(
   const [conversationResult, userMessageResult] = await Promise.all([
     input.client.from('conversations').select('id, project_id').eq('id', input.conversationId)
       .eq('user_id', input.userId).maybeSingle(),
-    input.client.from('messages')
-      .select('id, role, content, content_parts, media_refs, images, created_at, conversation_id, user_id, seq')
+    input.client.from('messages').select(userMessageColumns(input.allowInstant))
       .eq('id', input.userMessageId).eq('conversation_id', input.conversationId)
       .eq('user_id', input.userId).eq('role', 'user').maybeSingle(),
   ])
@@ -348,6 +353,6 @@ export async function loadAuthoritativeChatContext(
     ? conversationResult.data.project_id
     : null
   const userMessageRow = userMessageResult.data as MessageRow
-  const quick = instantContext(input, projectId, rawMessage(userMessageRow))
+  const quick = input.allowInstant ? instantContext(input, projectId, rawMessage(userMessageRow)) : null
   return quick ?? fullContext(input, projectId, userMessageRow)
 }
