@@ -29,7 +29,10 @@ function productionEnvironment(overrides: Partial<RuntimeEnvironment> = {}): Run
 }
 
 test('runtime configuration is role-aware, immutable, and applies bounded worker defaults', () => {
-  const all = resolveRuntimeConfiguration(productionEnvironment())
+  const all = resolveRuntimeConfiguration(productionEnvironment({
+    GITHUB_CLIENT_ID: undefined,
+    GITHUB_CLIENT_SECRET: undefined,
+  }))
   assert.equal(all.role, 'all')
   assert.deepEqual(all.services, ['web', 'worker'])
   assert.equal(all.revision, 'abcdef012345')
@@ -41,6 +44,8 @@ test('runtime configuration is role-aware, immutable, and applies bounded worker
     MYCHAT_RUNTIME_ROLE: 'web',
     E2B_API_KEY: undefined,
     DEEPSEEK_API_KEY: undefined,
+    GITHUB_CLIENT_ID: undefined,
+    GITHUB_CLIENT_SECRET: undefined,
   }))
   assert.deepEqual(web.services, ['web'])
 
