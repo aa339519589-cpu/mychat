@@ -74,6 +74,7 @@ export function LiteraryChatView({ controller }: { controller: LiteraryChatViewC
         <ResponsiveSidebar layout={layout} sidebar={sidebar} mobile={mobile} />
         <ChatPane
           mobile={mobile}
+          sidebarCollapsed={layout.sidebarCollapsed}
           active={active}
           activeProject={activeProject}
           scrollRef={chat.scrollRef}
