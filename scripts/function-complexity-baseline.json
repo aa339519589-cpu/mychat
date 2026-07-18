@@ -28,7 +28,7 @@
     "components/literary-chat/job-stream-client.ts": { "complexity": [29] },
     "components/literary-chat/message-regeneration.ts": { "maxLines": [84] },
     "components/literary-chat/use-chat-bootstrap.ts": { "maxLines": [91] },
-    "components/literary-chat/use-chat-generation.ts": { "complexity": [19], "maxLines": [233] },
+    "components/literary-chat/use-chat-generation.ts": { "complexity": [16], "maxLines": [219] },
     "components/literary-chat/use-model-selection.ts": { "maxLines": [85] },
     "components/literary-chat/use-projects.ts": { "maxLines": [118] },
     "components/login-screen.tsx": { "maxLines": [160] },
