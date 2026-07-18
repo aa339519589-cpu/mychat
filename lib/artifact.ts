@@ -1,7 +1,17 @@
 import { sanitizeArtifactSvg } from './artifact-security'
 
+export type ArtifactKind = 'vega' | 'mermaid' | 'function-plot' | 'inline-artifact' | 'artifact'
+
+export type ArtifactBlock = {
+  kind: ArtifactKind
+  raw: string
+  done: boolean
+}
+
 export type ArtifactParsed = {
   display: string
+  /** All renderable blocks in model-output order. */
+  blocks: ArtifactBlock[]
   // 面板 artifact（需要自己的视觉环境，如红色立方体、复杂报告）
   raw: string | null
   done: boolean
@@ -19,21 +29,27 @@ export type ArtifactParsed = {
   fnPlotDone: boolean
 }
 
-const ARTIFACT_OPEN_TAGS = [
-  '<vega>',
-  '<mermaid>',
-  '<function-plot>',
-  '<inline-artifact>',
-  '<artifact>',
+type ArtifactTag = {
+  kind: ArtifactKind
+  open: string
+  close: string
+}
+
+type LegacyArtifactValue = {
+  raw: string | null
+  done: boolean
+}
+
+const ARTIFACT_TAGS: ArtifactTag[] = [
+  { kind: 'vega', open: '<vega>', close: '</vega>' },
+  { kind: 'mermaid', open: '<mermaid>', close: '</mermaid>' },
+  { kind: 'function-plot', open: '<function-plot>', close: '</function-plot>' },
+  { kind: 'inline-artifact', open: '<inline-artifact>', close: '</inline-artifact>' },
+  { kind: 'artifact', open: '<artifact>', close: '</artifact>' },
 ]
 
-const EMPTY: ArtifactParsed = {
-  display: '', raw: null, done: false,
-  inlineRaw: null, inlineDone: false,
-  vegaRaw: null, vegaDone: false,
-  mermaidRaw: null, mermaidDone: false,
-  fnPlotRaw: null, fnPlotDone: false,
-}
+const ARTIFACT_OPEN_TAGS = ARTIFACT_TAGS.map(tag => tag.open)
+const EMPTY_LEGACY_ARTIFACT: LegacyArtifactValue = { raw: null, done: false }
 
 function trimTrailingArtifactPrelude(text: string): string {
   const start = text.lastIndexOf('<')
@@ -45,56 +61,88 @@ function trimTrailingArtifactPrelude(text: string): string {
   return text
 }
 
-function parseTag(text: string, open: string, close: string): { before: string; body: string; after: string; closed: boolean } | null {
-  const start = text.indexOf(open)
-  if (start === -1) return null
-  const bodyStart = start + open.length
-  const end = text.indexOf(close, bodyStart)
-  if (end === -1) {
-    return { before: text.slice(0, start).trim(), body: text.slice(bodyStart), after: '', closed: false }
+function nextArtifactTag(text: string, from: number): { tag: ArtifactTag; start: number } | null {
+  let next: { tag: ArtifactTag; start: number } | null = null
+  for (const tag of ARTIFACT_TAGS) {
+    const start = text.indexOf(tag.open, from)
+    if (start !== -1 && (!next || start < next.start)) next = { tag, start }
   }
+  return next
+}
+
+function firstBlock(blocks: ArtifactBlock[], kind: ArtifactKind): ArtifactBlock | undefined {
+  return blocks.find(block => block.kind === kind)
+}
+
+function legacyArtifactValue(blocks: ArtifactBlock[], kind: ArtifactKind): LegacyArtifactValue {
+  const block = firstBlock(blocks, kind)
+  if (!block) return EMPTY_LEGACY_ARTIFACT
+  return { raw: block.raw, done: block.done }
+}
+
+function parsedResult(display: string, blocks: ArtifactBlock[]): ArtifactParsed {
+  const panel = legacyArtifactValue(blocks, 'artifact')
+  const inline = legacyArtifactValue(blocks, 'inline-artifact')
+  const vega = legacyArtifactValue(blocks, 'vega')
+  const mermaid = legacyArtifactValue(blocks, 'mermaid')
+  const fnPlot = legacyArtifactValue(blocks, 'function-plot')
+
   return {
-    before: text.slice(0, start).trim(),
-    body: text.slice(bodyStart, end).trim(),
-    after: text.slice(end + close.length).trim(),
-    closed: true,
+    display,
+    blocks,
+    raw: panel.raw,
+    done: panel.done,
+    inlineRaw: inline.raw,
+    inlineDone: inline.done,
+    vegaRaw: vega.raw,
+    vegaDone: vega.done,
+    mermaidRaw: mermaid.raw,
+    mermaidDone: mermaid.done,
+    fnPlotRaw: fnPlot.raw,
+    fnPlotDone: fnPlot.done,
   }
 }
 
 export function parseArtifact(text: string): ArtifactParsed {
-  // 优先级：vega → mermaid → function-plot → inline-artifact → artifact
+  const first = nextArtifactTag(text, 0)
+  if (!first) return parsedResult(trimTrailingArtifactPrelude(text), [])
 
-  const vega = parseTag(text, '<vega>', '</vega>')
-  if (vega) {
-    const display = [vega.before, vega.closed ? vega.after : ''].filter(Boolean).join('\n\n')
-    return { ...EMPTY, display, vegaRaw: vega.body, vegaDone: vega.closed }
+  const displayParts: string[] = []
+  const blocks: ArtifactBlock[] = []
+  let cursor = 0
+  let next: { tag: ArtifactTag; start: number } | null = first
+
+  while (next) {
+    const before = text.slice(cursor, next.start).trim()
+    if (before) displayParts.push(before)
+
+    const bodyStart = next.start + next.tag.open.length
+    const end = text.indexOf(next.tag.close, bodyStart)
+    if (end === -1) {
+      blocks.push({
+        kind: next.tag.kind,
+        raw: text.slice(bodyStart),
+        done: false,
+      })
+      cursor = text.length
+      break
+    }
+
+    blocks.push({
+      kind: next.tag.kind,
+      raw: text.slice(bodyStart, end).trim(),
+      done: true,
+    })
+    cursor = end + next.tag.close.length
+    next = nextArtifactTag(text, cursor)
   }
 
-  const mermaid = parseTag(text, '<mermaid>', '</mermaid>')
-  if (mermaid) {
-    const display = [mermaid.before, mermaid.closed ? mermaid.after : ''].filter(Boolean).join('\n\n')
-    return { ...EMPTY, display, mermaidRaw: mermaid.body, mermaidDone: mermaid.closed }
+  if (cursor < text.length) {
+    const trailing = trimTrailingArtifactPrelude(text.slice(cursor)).trim()
+    if (trailing) displayParts.push(trailing)
   }
 
-  const fnPlot = parseTag(text, '<function-plot>', '</function-plot>')
-  if (fnPlot) {
-    const display = [fnPlot.before, fnPlot.closed ? fnPlot.after : ''].filter(Boolean).join('\n\n')
-    return { ...EMPTY, display, fnPlotRaw: fnPlot.body, fnPlotDone: fnPlot.closed }
-  }
-
-  const inline = parseTag(text, '<inline-artifact>', '</inline-artifact>')
-  if (inline) {
-    const display = [inline.before, inline.closed ? inline.after : ''].filter(Boolean).join('\n\n')
-    return { ...EMPTY, display, inlineRaw: inline.body, inlineDone: inline.closed }
-  }
-
-  const panel = parseTag(text, '<artifact>', '</artifact>')
-  if (panel) {
-    const display = [panel.before, panel.closed ? panel.after : ''].filter(Boolean).join('\n\n')
-    return { ...EMPTY, display, raw: panel.body, done: panel.closed }
-  }
-
-  return { ...EMPTY, display: trimTrailingArtifactPrelude(text) }
+  return parsedResult(displayParts.join('\n\n'), blocks)
 }
 
 function readNumericAttr(tag: string, name: string): number | null {

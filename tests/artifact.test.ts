@@ -24,6 +24,39 @@ test('parseArtifact returns closed vega specs as renderable artifacts', () => {
   assert.equal(parsed.vegaRaw, '{"mark":"bar"}')
 })
 
+test('parseArtifact extracts every vega block instead of leaking later specs into markdown', () => {
+  const parsed = parseArtifact([
+    '下面是两张图。',
+    '<vega>{"title":"季度销售额","mark":"bar"}</vega>',
+    '第二张如下。',
+    '<vega>{"title":"部门人数","mark":"bar"}</vega>',
+    '数据可以继续调整。',
+  ].join('\n'))
+
+  assert.equal(parsed.display, '下面是两张图。\n\n第二张如下。\n\n数据可以继续调整。')
+  assert.equal(parsed.blocks.length, 2)
+  assert.deepEqual(parsed.blocks.map(block => block.kind), ['vega', 'vega'])
+  assert.deepEqual(parsed.blocks.map(block => block.done), [true, true])
+  assert.match(parsed.blocks[0]?.raw ?? '', /季度销售额/)
+  assert.match(parsed.blocks[1]?.raw ?? '', /部门人数/)
+  assert.doesNotMatch(parsed.display, /<\/?vega>|\$schema|"mark"/)
+  assert.equal(parsed.vegaRaw, '{"title":"季度销售额","mark":"bar"}')
+})
+
+test('parseArtifact preserves mixed artifact order and hides an unfinished final block', () => {
+  const parsed = parseArtifact([
+    '先看流程。',
+    '<mermaid>graph TD; A-->B;</mermaid>',
+    '再看图表。',
+    '<vega>{"mark":"line"',
+  ].join('\n'))
+
+  assert.equal(parsed.display, '先看流程。\n\n再看图表。')
+  assert.deepEqual(parsed.blocks.map(block => block.kind), ['mermaid', 'vega'])
+  assert.deepEqual(parsed.blocks.map(block => block.done), [true, false])
+  assert.doesNotMatch(parsed.display, /mermaid|vega|"mark"/i)
+})
+
 test('sanitizeSvg closes unfinished svg fragments defensively', () => {
   const clean = sanitizeSvg('<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"')
   assert.ok(clean?.endsWith('</svg>'))
