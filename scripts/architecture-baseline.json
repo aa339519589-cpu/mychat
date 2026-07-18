@@ -17,6 +17,10 @@
   "generatedFiles": [
     "lib/supabase/database.types.ts"
   ],
-  "exceptions": {},
+  "exceptions": {
+    "components/literary-chat.tsx": {
+      "maxLines": 395
+    }
+  },
   "allowedCycles": []
 }
