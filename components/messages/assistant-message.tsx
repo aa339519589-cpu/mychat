@@ -9,7 +9,7 @@ import { GeneratedMedia } from "@/components/generated-media"
 import { InlineArtifact } from "@/components/inline-artifact"
 import { MermaidChart } from "@/components/mermaid-chart"
 import { VegaChart } from "@/components/vega-chart"
-import { artifactTitle, parseArtifact } from "@/lib/artifact"
+import { artifactTitle, parseArtifact, type ArtifactBlock } from "@/lib/artifact"
 import type { Message } from "@/lib/chat-data"
 import { stripToolMarkup } from "@/lib/llm/sanitize"
 import { normalizeSearchNotes } from "@/lib/search-notes"
@@ -89,6 +89,57 @@ function AssistantActions({
   )
 }
 
+function ArtifactOutput({
+  block,
+  active,
+  onOpen,
+}: {
+  block: ArtifactBlock
+  active: boolean
+  onOpen: () => void
+}) {
+  switch (block.kind) {
+    case "vega":
+      return <VegaChart spec={block.raw} done={block.done} />
+    case "mermaid":
+      return <MermaidChart code={block.raw} done={block.done} />
+    case "function-plot":
+      return <FunctionPlotChart spec={block.raw} done={block.done} />
+    case "inline-artifact":
+      return <InlineArtifact svg={block.raw} done={block.done} />
+    case "artifact":
+      return (
+        <div>
+          <ArtifactCard
+            title={artifactTitle(block.raw)}
+            done={block.done}
+            active={active}
+            onClick={onOpen}
+          />
+        </div>
+      )
+  }
+}
+
+function ArtifactOutputs({
+  blocks,
+  active,
+  onOpen,
+}: {
+  blocks: ArtifactBlock[]
+  active: boolean
+  onOpen: () => void
+}) {
+  return blocks.map((block, index) => (
+    <ArtifactOutput
+      key={`${block.kind}:${index}`}
+      block={block}
+      active={active}
+      onOpen={onOpen}
+    />
+  ))
+}
+
 export function AssistantMessage({
   message,
   isLast,
@@ -104,20 +155,8 @@ export function AssistantMessage({
   onOpenArtifact?: (messageId: string) => void
   onRegenerate?: () => void
 }) {
-  const parsed = parseArtifact(stripToolMarkup(message.content ?? ""))
-  const {
-    display,
-    raw,
-    done,
-    inlineRaw,
-    inlineDone,
-    vegaRaw,
-    vegaDone,
-    mermaidRaw,
-    mermaidDone,
-    fnPlotRaw,
-    fnPlotDone,
-  } = parsed
+  const { display, blocks } = parseArtifact(stripToolMarkup(message.content ?? ""))
+  const hasArtifactOutput = blocks.length > 0
 
   return (
     <div className="group min-w-0 pl-[6px] md:pl-0">
@@ -163,25 +202,16 @@ export function AssistantMessage({
                   ))}
                 </div>
               )}
-              {vegaRaw !== null && <VegaChart spec={vegaRaw} done={vegaDone} />}
-              {mermaidRaw !== null && <MermaidChart code={mermaidRaw} done={mermaidDone} />}
-              {fnPlotRaw !== null && <FunctionPlotChart spec={fnPlotRaw} done={fnPlotDone} />}
-              {inlineRaw !== null && <InlineArtifact svg={inlineRaw} done={inlineDone} />}
-              {raw !== null && (
-                <div>
-                  <ArtifactCard
-                    title={artifactTitle(raw)}
-                    done={done}
-                    active={openArtifactId === message.id}
-                    onClick={() => onOpenArtifact?.(message.id)}
-                  />
-                </div>
-              )}
-              {(!!display || !!message.media?.length || raw !== null || isLast) && (
+              <ArtifactOutputs
+                blocks={blocks}
+                active={openArtifactId === message.id}
+                onOpen={() => onOpenArtifact?.(message.id)}
+              />
+              {(!!display || !!message.media?.length || hasArtifactOutput || isLast) && (
                 <div className="space-y-2.5">
                   <AssistantActions
                     text={display}
-                    hasOutput={!!message.media?.length}
+                    hasOutput={!!message.media?.length || hasArtifactOutput}
                     isLast={isLast}
                     isLoading={isLoading}
                     onRegenerate={onRegenerate}
