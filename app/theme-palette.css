@@ -56,6 +56,10 @@
   --sidebar-ring: #011A38;
 }
 
+.dark ::selection {
+  background: rgb(1 26 56 / 28%);
+}
+
 @media (prefers-color-scheme: dark) {
   :root:not(.light) {
     --code-accent: #011A38;
@@ -71,37 +75,8 @@
     --sidebar-accent-foreground: #FCF7F1;
     --sidebar-ring: #011A38;
   }
-}
 
-/* Keep phone interactions on compositor-only properties. Large live backdrop
-   filters force Safari and Chromium to repaint the full viewport and can cut
-   high-refresh devices down to roughly 30 fps during taps and drawer motion. */
-@media (max-width: 767px), (hover: none) and (pointer: coarse) {
-  .fluid-press {
-    scale: 1;
-    transform: translate3d(0, 0, 0) scale(1);
-    transform-origin: center;
-    backface-visibility: hidden;
-    transition:
-      transform 90ms cubic-bezier(0.2, 0.8, 0.2, 1),
-      opacity 120ms linear;
-  }
-
-  .fluid-press:not(:disabled):active {
-    scale: 1;
-    transform: translate3d(0, 0, 0) scale(0.965);
-    transition-duration: 55ms;
-  }
-
-  .fluid-icon-press:not(:disabled):active {
-    scale: 1;
-    transform: translate3d(0, 0, 0) scale(0.9);
-  }
-
-  .fluid-material,
-  .fluid-material-strong {
-    background: var(--background);
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
+  :root:not(.light) ::selection {
+    background: rgb(1 26 56 / 28%);
   }
 }

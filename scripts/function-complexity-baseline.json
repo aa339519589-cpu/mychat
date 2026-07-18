@@ -32,7 +32,6 @@
     "components/literary-chat/use-model-selection.ts": { "maxLines": [85] },
     "components/literary-chat/use-projects.ts": { "maxLines": [118] },
     "components/login-screen.tsx": { "maxLines": [160] },
-    "components/message-list.tsx": { "maxLines": [94] },
     "components/messages/assistant-message.tsx": { "complexity": [28], "maxLines": [110] },
     "components/model-endpoint-settings.tsx": { "complexity": [21], "maxLines": [218] },
     "components/model-endpoints/model-selection-fields.tsx": { "maxLines": [99] },

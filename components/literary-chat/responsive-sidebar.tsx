@@ -32,6 +32,16 @@ function gestureVelocity(gesture: Gesture, cancelled: boolean) {
   return (last.x - first.x) / Math.max(1, last.time - first.time) * 1000
 }
 
+function appendGesturePoint(gesture: Gesture, x: number, time: number) {
+  gesture.history.push({ x, time })
+  while (gesture.history.length > 1 && time - gesture.history[0].time > 100) {
+    gesture.history.shift()
+  }
+  if (gesture.history.length > 8) {
+    gesture.history.splice(0, gesture.history.length - 8)
+  }
+}
+
 function useDrawerMotion(layout: LiteraryChatLayoutState, mobile: boolean) {
   const drawerRef = useRef<HTMLDivElement>(null)
   const animationRef = useRef<ReturnType<typeof animate> | null>(null)
@@ -71,20 +81,19 @@ function useDrawerMotion(layout: LiteraryChatLayoutState, mobile: boolean) {
     if (!mobile || !layout.drawerOpen) return
     animationRef.current?.stop()
     event.currentTarget.setPointerCapture(event.pointerId)
-    gestureRef.current = { pointerId: event.pointerId, startX: event.clientX, originX: drawerX.get(), history: [{ x: event.clientX, time: event.timeStamp }] }
+    gestureRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      originX: drawerX.get(),
+      history: [{ x: event.clientX, time: event.timeStamp }],
+    }
   }
 
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     const gesture = gestureRef.current
     if (!gesture || gesture.pointerId !== event.pointerId) return
-
-    const nextX = clippedOffset(gesture.originX + event.clientX - gesture.startX, drawerWidth)
-    if (Math.abs(nextX - drawerX.get()) >= 0.1) drawerX.set(nextX)
-
-    const history = gesture.history
-    history.push({ x: event.clientX, time: event.timeStamp })
-    const cutoff = event.timeStamp - 100
-    while (history.length > 1 && (history[0].time < cutoff || history.length > 8)) history.shift()
+    drawerX.set(clippedOffset(gesture.originX + event.clientX - gesture.startX, drawerWidth))
+    appendGesturePoint(gesture, event.clientX, event.timeStamp)
   }
 
   const onPointerEnd = (event: ReactPointerEvent<HTMLDivElement>, cancelled = false) => {
@@ -104,7 +113,7 @@ export function ResponsiveSidebar({ layout, sidebar, mobile }: ResponsiveSidebar
     <motion.div
       data-testid="responsive-sidebar-layer"
       initial={false}
-      animate={{ "--sidebar-width": layout.sidebarCollapsed ? "0px" : "320px" }}
+      animate={mobile ? undefined : { "--sidebar-width": layout.sidebarCollapsed ? "0px" : "320px" }}
       transition={transitionFor(drawer.reducedMotion, PANEL_SPRING)}
       aria-hidden={mobile && !layout.drawerOpen}
       className={layout.drawerOpen ? "fixed inset-0 z-40 w-full shrink-0 md:relative md:inset-auto md:z-auto md:h-full md:w-[var(--sidebar-width)] md:overflow-hidden" : "pointer-events-none fixed inset-0 z-40 w-full shrink-0 md:pointer-events-auto md:relative md:inset-auto md:z-auto md:h-full md:w-[var(--sidebar-width)] md:overflow-hidden"}
@@ -113,7 +122,7 @@ export function ResponsiveSidebar({ layout, sidebar, mobile }: ResponsiveSidebar
         type="button"
         aria-label="收起侧栏"
         onClick={() => layout.setDrawerOpen(false)}
-        style={{ opacity: drawer.scrimOpacity, willChange: "opacity" }}
+        style={{ opacity: drawer.scrimOpacity }}
         className="absolute inset-0 bg-black/42 md:hidden"
       />
       <motion.div
@@ -123,7 +132,7 @@ export function ResponsiveSidebar({ layout, sidebar, mobile }: ResponsiveSidebar
         aria-modal={mobile || undefined}
         aria-label={mobile ? "对话与工作区导航" : undefined}
         inert={mobile && !layout.drawerOpen}
-        style={{ x: drawer.drawerX, willChange: "transform", backfaceVisibility: "hidden" }}
+        style={{ x: drawer.drawerX }}
         className="fluid-drag-surface relative h-full w-[min(20rem,82vw)] overflow-hidden bg-sidebar shadow-2xl md:w-[20rem] md:!transform-none md:border-r md:border-border/50 md:shadow-none"
       >
         <AppSidebar {...sidebar} visible={mobile ? layout.drawerOpen : true} onClose={() => layout.setDrawerOpen(false)} onDragStart={drawer.onPointerDown} onDragMove={drawer.onPointerMove} onDragEnd={event => drawer.onPointerEnd(event)} onDragCancel={event => drawer.onPointerEnd(event, true)} />

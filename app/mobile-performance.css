@@ -1,0 +1,73 @@
+/* Mobile high-refresh fast path.
+ * Keep interaction feedback, but avoid effects that force iOS Safari to repaint
+ * large regions on every frame.
+ */
+@media (max-width: 767px), (hover: none) and (pointer: coarse) {
+  .fluid-material,
+  .fluid-material-strong {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+
+  .fluid-material {
+    background: var(--background);
+  }
+
+  .fluid-material-strong {
+    background: var(--card);
+    box-shadow: 0 12px 32px rgb(0 0 0 / 18%);
+  }
+
+  /* Tailwind's small backdrop blur still composites the entire viewport. */
+  .backdrop-blur-\[2px\] {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+
+  /* Grain is decorative and expensive while large surfaces move or scroll. */
+  .paper-grain {
+    background-image: none !important;
+  }
+
+  .paper-grain::before,
+  .paper-grain::after {
+    display: none !important;
+  }
+
+  /* Use the compositor-friendly transform property instead of individual
+   * transform longhands, which are less consistently promoted by WebKit.
+   */
+  .fluid-press {
+    scale: none;
+    transform: none;
+    transition:
+      transform 90ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      background-color 120ms ease,
+      border-color 120ms ease,
+      color 120ms ease,
+      opacity 120ms ease;
+  }
+
+  .fluid-press:not(:disabled):active {
+    scale: none;
+    transform: translateZ(0) scale(0.975);
+  }
+
+  .fluid-icon-press:not(:disabled):active {
+    scale: none;
+    transform: translateZ(0) scale(0.92);
+  }
+
+  .fluid-scroll {
+    scrollbar-gutter: auto;
+  }
+
+  /* Skip layout and paint work for off-screen history while preserving its
+   * estimated block size to avoid visible scroll jumps.
+   */
+  .message-entry {
+    content-visibility: auto;
+    contain: layout paint style;
+    contain-intrinsic-size: auto 128px;
+  }
+}
