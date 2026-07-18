@@ -98,7 +98,7 @@ function UserMessageContent({
   if (!message.content) return null
   if (editing) {
     return (
-      <div className="max-w-[84%] min-w-0 rounded-[0.78rem] border border-border/50 bg-secondary/75 px-3.5 py-1.5 text-left text-secondary-foreground shadow-sm md:max-w-[80%] dark:border-white/10 dark:bg-[#151515] dark:text-white">
+      <div className="max-w-[84%] min-w-0 rounded-[0.78rem] border border-primary bg-primary px-3.5 py-1.5 text-left text-primary-foreground shadow-[0_6px_18px_rgb(4_21_47/0.16)] md:max-w-[80%]">
         <textarea
           value={editDraft}
           onChange={event => onEditDraft(event.target.value)}
@@ -108,14 +108,14 @@ function UserMessageContent({
           }}
           autoFocus
           rows={Math.min(6, Math.max(2, editDraft.split("\n").length))}
-          className="w-full min-w-0 resize-none bg-transparent font-sans text-[16px] font-[500] leading-[1.38] tracking-[0.001em] text-secondary-foreground outline-none [overflow-wrap:anywhere] md:text-[17px] dark:text-white"
+          className="w-full min-w-0 resize-none bg-transparent font-sans text-[16px] font-[500] leading-[1.38] tracking-[0.001em] text-primary-foreground outline-none [overflow-wrap:anywhere] md:text-[17px]"
         />
       </div>
     )
   }
   return (
-    <div role="button" tabIndex={0} onClick={onToggleActive} onKeyDown={event => { if (event.key === "Enter") onToggleActive() }} className="fluid-press max-w-[84%] min-w-0 cursor-pointer rounded-[0.78rem] border border-border/50 bg-secondary/75 px-3.5 py-1.5 text-left text-secondary-foreground shadow-sm md:max-w-[80%] dark:border-white/10 dark:bg-[#151515] dark:text-white">
-      <p className="break-words text-left font-sans text-[16px] font-[500] not-italic leading-[1.38] tracking-[0.001em] text-secondary-foreground [overflow-wrap:anywhere] md:text-[17px] dark:text-white">{message.content}</p>
+    <div role="button" tabIndex={0} onClick={onToggleActive} onKeyDown={event => { if (event.key === "Enter") onToggleActive() }} className="fluid-press max-w-[84%] min-w-0 cursor-pointer rounded-[0.78rem] border border-primary bg-primary px-3.5 py-1.5 text-left text-primary-foreground shadow-[0_6px_18px_rgb(4_21_47/0.16)] md:max-w-[80%]">
+      <p className="break-words text-left font-sans text-[16px] font-[500] not-italic leading-[1.38] tracking-[0.001em] text-primary-foreground [overflow-wrap:anywhere] md:text-[17px]">{message.content}</p>
     </div>
   )
 }
