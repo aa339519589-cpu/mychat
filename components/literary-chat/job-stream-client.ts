@@ -26,11 +26,15 @@ export async function enqueueJob(
   body: unknown,
   signal: AbortSignal,
 ): Promise<AcceptedJob> {
+  const serializedBody = JSON.stringify(body)
   const response = await fetch(path, {
     method: 'POST',
     signal,
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: serializedBody,
+    // Browsers may suspend the page immediately after Send. Small text turns
+    // should still reach the durable enqueue transaction during that transition.
+    keepalive: serializedBody.length <= 60_000,
   })
   const payload: unknown = await response.json().catch(() => null)
   if (!response.ok) throw new Error(responseError(payload, response.status))
