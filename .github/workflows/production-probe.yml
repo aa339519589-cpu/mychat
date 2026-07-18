@@ -27,6 +27,8 @@ jobs:
             --connect-timeout 10 --max-time 60 \
             --header 'Accept: application/json' \
             "$PRODUCTION_READY_URL")"
+          echo "Production readiness payload:"
+          jq . <<<"$payload"
           jq --exit-status '
             .status == "ok" and .ready == true and
             .checks.worker.ready == true and
@@ -34,6 +36,8 @@ jobs:
           ' <<<"$payload" >/dev/null
           revision="$(jq -er '.revision | select(test("^[0-9a-f]{7,12}$"))' <<<"$payload")"
           live_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$revision" --jq '.sha')"
-          comparison="$(gh api "repos/$GITHUB_REPOSITORY/compare/$FIX_SHA...$live_sha")"
-          jq --exit-status '.status == "ahead" or .status == "identical"' <<<"$comparison" >/dev/null
+          comparison_status="$(gh api "repos/$GITHUB_REPOSITORY/compare/$FIX_SHA...$live_sha" --jq '.status')"
+          echo "Resolved live SHA: $live_sha"
+          echo "Fix-to-live comparison: $comparison_status"
+          test "$comparison_status" = "ahead" -o "$comparison_status" = "identical"
           echo "Production is healthy at $live_sha and contains fix $FIX_SHA"
