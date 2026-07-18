@@ -18,12 +18,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TARGET_SHA: fefa9dbf4b994aa695d88050702c0e46648d39d8
+          RELEASE_RUN_ID: 29649271455
           READY_URL: https://mychat-nm6x.onrender.com/api/ready
         run: |
           echo 'Recent workflow runs:'
           gh run list --repo "$GITHUB_REPOSITORY" --commit "$TARGET_SHA" --limit 20 \
             --json databaseId,name,event,status,conclusion,headSha,url \
             --jq '.' || true
+          echo 'Failed release logs:'
+          gh run view "$RELEASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --log-failed || true
           echo 'Current production readiness:'
           curl --silent --show-error --max-time 30 "$READY_URL" || true
           echo
