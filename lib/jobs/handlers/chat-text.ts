@@ -20,6 +20,7 @@ import { JobEventWriter } from '../event-writer'
 import { executeFencedToolEffect } from '../tool-effects'
 import type { JobExecutionContext, JobHandlerResult } from '../worker'
 import type { LoadedChatJob } from './chat-input'
+import { instantModelMessages } from './chat-instant'
 import {
   CHAT_MEDIA_PERSISTENCE_DEFAULTS,
   type ChatMediaPersistenceDependencies,
@@ -36,6 +37,7 @@ import {
 
 const SAFETY_ROUNDS = 16
 const MAX_OUTPUT_TOKENS = 40_000
+const INSTANT_MAX_OUTPUT_TOKENS = 96
 const REPLAY_SAFE_TOOLS = new Set(['web_search', 'fetch_url'])
 
 type ActiveChatTools = ReturnType<typeof activeTools>
@@ -65,6 +67,7 @@ type PreparedChat = {
   tools: ActiveChatTools
   toolContext: ToolContext
   baseLength: number
+  instant: boolean
 }
 
 const DEFAULT_DEPENDENCIES: ChatTextDependencies = {
@@ -107,11 +110,12 @@ function chatTools(
   context: JobExecutionContext,
   input: LoadedChatJob,
   latestBeijingDate: string | null,
+  instant: boolean,
 ): { tools: ActiveChatTools; toolContext: ToolContext } {
   const { selection, command } = input
   const projectId = input.context.project?.id ?? null
   return {
-    tools: activeTools({
+    tools: instant ? [] : activeTools({
       loggedIn: true,
       searchMode: command.searchMode,
       memoryEnabled: selection.customEndpoint ? false : input.context.memoryEnabled,
@@ -205,7 +209,12 @@ async function prepareChat(
   const { selection, command } = input
   const project = input.context.project
   const latestBeijingDate = latestBeijingDateFromMessages(input.context.messages)
-  const configuredTools = chatTools(context, input, latestBeijingDate)
+  const instantMessages = instantModelMessages(input)
+  const configuredTools = chatTools(context, input, latestBeijingDate, Boolean(instantMessages))
+  if (instantMessages) {
+    const baseLength = await restoreChatTrajectory(context, runtime.writer, instantMessages)
+    return { ...configuredTools, modelMessages: instantMessages, baseLength, instant: true }
+  }
   const history = await dependencies.prepareHistory({
     supabase: input.client as Parameters<typeof prepareChatHistory>[0]['supabase'],
     userId: input.userId,
@@ -225,7 +234,7 @@ async function prepareChat(
   if (command.deepResearch) prependDeepResearchInstruction(modelMessages)
   await appendAttachments(context, input, runtime, dependencies, modelMessages)
   const baseLength = await restoreChatTrajectory(context, runtime.writer, modelMessages)
-  return { ...configuredTools, modelMessages, baseLength }
+  return { ...configuredTools, modelMessages, baseLength, instant: false }
 }
 
 function createToolExecutor(
@@ -324,8 +333,8 @@ async function runPreparedChat(
     apiKey: selection.apiKey,
     model: selection.model,
     adapter: selection.capability.provider.adapter,
-    thinking: selection.thinking,
-    reasoningEffort: resolveReasoningEffort({
+    thinking: prepared.instant ? false : selection.thinking,
+    reasoningEffort: prepared.instant ? null : resolveReasoningEffort({
       isDeepTierProxy,
       deepResearch: command.deepResearch,
       modelId: selection.model,
@@ -334,17 +343,17 @@ async function runPreparedChat(
     tools: toOpenAITools(prepared.tools),
     emit: runtime.emit,
     executeTool: createToolExecutor(context, input, runtime, prepared, dependencies),
-    maxRounds: SAFETY_ROUNDS,
-    leakedRetry: true,
-    autoContinue: { maxContinuations: 4 },
+    maxRounds: prepared.instant ? 1 : SAFETY_ROUNDS,
+    leakedRetry: !prepared.instant,
+    autoContinue: prepared.instant ? undefined : { maxContinuations: 4 },
     onUsage: usageHandler(context, input, runtime),
     onCheckpoint: checkpointHandler(runtime, prepared.baseLength),
     turnOptions: {
       signal: context.signal,
-      timeoutMs: 120_000,
+      timeoutMs: prepared.instant ? 20_000 : 120_000,
       authType: selection.authType,
-      logTiming: isDeepTierProxy || process.env.DEBUG_LLM_TIMING === '1',
-      maxOutputTokens: MAX_OUTPUT_TOKENS,
+      logTiming: prepared.instant || isDeepTierProxy || process.env.DEBUG_LLM_TIMING === '1',
+      maxOutputTokens: prepared.instant ? INSTANT_MAX_OUTPUT_TOKENS : MAX_OUTPUT_TOKENS,
       idempotencyNamespace: context.job.id,
     },
     onTurn: logTurn(context.job.id),

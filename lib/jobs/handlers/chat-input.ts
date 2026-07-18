@@ -109,6 +109,13 @@ function command(value: JsonObject): LoadedChatJob['command'] {
   }
 }
 
+function allowInstantContext(value: LoadedChatJob['command']): boolean {
+  return value.outputKind === 'text'
+    && value.searchMode === 'off'
+    && !value.deepResearch
+    && !value.attachments?.length
+}
+
 export async function loadChatJob(job: JobRecord): Promise<LoadedChatJob> {
   let client: SupabaseClient | null
   try { client = createAdminClient() } catch (error) {
@@ -126,7 +133,13 @@ export async function loadChatJob(job: JobRecord): Promise<LoadedChatJob> {
   const billingClass = jobInput?.billingClass
   try {
     const [authoritativeContext, selection] = await Promise.all([
-      loadAuthoritativeChatContext({ client, userId, conversationId, userMessageId }),
+      loadAuthoritativeChatContext({
+        client,
+        userId,
+        conversationId,
+        userMessageId,
+        allowInstant: allowInstantContext(parsedCommand),
+      }),
       resolveChatModelSelection({
         tier: parsedCommand.tier,
         deepResearch: parsedCommand.deepResearch,

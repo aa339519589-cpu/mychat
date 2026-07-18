@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@/lib/supabase/types'
+import { isInstantReplyCandidate } from '@/lib/chat/instant-reply'
 import type { Memory } from '@/lib/memory-data'
 import type { ProjectContext } from '@/lib/project-data'
 import type { RawMsg } from '@/lib/llm/types'
@@ -20,6 +21,21 @@ export type MessageRow = {
   images: unknown
   created_at: string | null
   seq?: number | null
+}
+
+type LoadContextInput = {
+  client: SupabaseClient
+  userId: string
+  conversationId: string
+  userMessageId: string
+  allowInstant?: boolean
+}
+
+type AuthoritativeChatContext = {
+  messages: RawMsg[]
+  memories: Memory[]
+  memoryEnabled: boolean
+  project?: ProjectContext
 }
 
 export class AuthoritativeContextError extends Error {
@@ -259,28 +275,70 @@ async function loadMessageHistory(input: {
   return compiled.reverse()
 }
 
+function instantContext(
+  input: LoadContextInput,
+  projectId: string | null,
+  currentUserMessage: RawMsg,
+): AuthoritativeChatContext | null {
+  if (!input.allowInstant || projectId || !isInstantReplyCandidate({
+    messages: [currentUserMessage],
+    searchMode: 'off',
+    deepResearch: false,
+    inProject: false,
+  })) return null
+  return {
+    messages: [currentUserMessage],
+    memories: [],
+    memoryEnabled: false,
+  }
+}
+
+async function fullContext(
+  input: LoadContextInput,
+  projectId: string | null,
+  userMessageRow: MessageRow,
+): Promise<AuthoritativeChatContext> {
+  const userSequence = Number(userMessageRow.seq)
+  const messages = await loadMessageHistory({
+    client: input.client,
+    conversationId: input.conversationId,
+    userId: input.userId,
+    userMessageId: input.userMessageId,
+    userSequence: Number.isSafeInteger(userSequence) && userSequence > 0 ? userSequence : null,
+  })
+  if (projectId) {
+    const project = await loadProjectContext(input.client, input.userId, projectId)
+    assertContextBudget({ messages, project })
+    return { messages, memories: [], memoryEnabled: false, project }
+  }
+  const globalMemory = await loadGlobalMemories(input.client, input.userId)
+  assertContextBudget({ messages, memories: globalMemory.memories })
+  return {
+    messages,
+    memories: globalMemory.memories,
+    memoryEnabled: globalMemory.enabled,
+  }
+}
+
+function userMessageColumns(allowInstant: boolean | undefined): string {
+  return allowInstant
+    ? 'id, role, content, content_parts, media_refs, images, created_at, conversation_id, user_id, seq'
+    : 'id, role, conversation_id, user_id, seq'
+}
+
 /**
  * Rebuild model context from the database authority. Client-supplied history,
  * memories, and project documents are never promoted into the model request.
  */
-export async function loadAuthoritativeChatContext(input: {
-  client: SupabaseClient
-  userId: string
-  conversationId: string
-  userMessageId: string
-}): Promise<{
-  messages: RawMsg[]
-  memories: Memory[]
-  memoryEnabled: boolean
-  project?: ProjectContext
-}> {
-  const { client, userId, conversationId, userMessageId } = input
+export async function loadAuthoritativeChatContext(
+  input: LoadContextInput,
+): Promise<AuthoritativeChatContext> {
   const [conversationResult, userMessageResult] = await Promise.all([
-    client.from('conversations').select('id, project_id').eq('id', conversationId)
-      .eq('user_id', userId).maybeSingle(),
-    client.from('messages').select('id, role, conversation_id, user_id, seq')
-      .eq('id', userMessageId).eq('conversation_id', conversationId)
-      .eq('user_id', userId).eq('role', 'user').maybeSingle(),
+    input.client.from('conversations').select('id, project_id').eq('id', input.conversationId)
+      .eq('user_id', input.userId).maybeSingle(),
+    input.client.from('messages').select(userMessageColumns(input.allowInstant))
+      .eq('id', input.userMessageId).eq('conversation_id', input.conversationId)
+      .eq('user_id', input.userId).eq('role', 'user').maybeSingle(),
   ])
   if (conversationResult.error || userMessageResult.error) {
     throw new AuthoritativeContextError('CONTEXT_UNAVAILABLE', '对话上下文暂时不可用')
@@ -291,34 +349,10 @@ export async function loadAuthoritativeChatContext(input: {
   if (!userMessageResult.data) {
     throw new AuthoritativeContextError('USER_MESSAGE_NOT_FOUND', '用户消息不存在')
   }
-
-  const userSequence = Number(userMessageResult.data.seq)
-  const messages = await loadMessageHistory({
-    client,
-    conversationId,
-    userId,
-    userMessageId,
-    userSequence: Number.isSafeInteger(userSequence) && userSequence > 0 ? userSequence : null,
-  })
-
   const projectId = typeof conversationResult.data.project_id === 'string'
     ? conversationResult.data.project_id
     : null
-  if (projectId) {
-    const project = await loadProjectContext(client, userId, projectId)
-    assertContextBudget({ messages, project })
-    return {
-      messages,
-      memories: [],
-      memoryEnabled: false,
-      project,
-    }
-  }
-  const globalMemory = await loadGlobalMemories(client, userId)
-  assertContextBudget({ messages, memories: globalMemory.memories })
-  return {
-    messages,
-    memories: globalMemory.memories,
-    memoryEnabled: globalMemory.enabled,
-  }
+  const userMessageRow = userMessageResult.data as unknown as MessageRow
+  const quick = input.allowInstant ? instantContext(input, projectId, rawMessage(userMessageRow)) : null
+  return quick ?? fullContext(input, projectId, userMessageRow)
 }
