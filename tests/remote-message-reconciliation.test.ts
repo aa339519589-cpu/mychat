@@ -5,8 +5,8 @@ import type { Message } from "../lib/chat-data"
 import { reconcileRemoteMessages } from "../lib/data/remote-message-reconciliation"
 
 const message = (value: Partial<Message> & Pick<Message, "id" | "role" | "content">): Message => ({
-  time: "",
   ...value,
+  time: value.time ?? "",
 })
 
 test("fresh history keeps a newer optimistic turn after the last shared row", () => {
