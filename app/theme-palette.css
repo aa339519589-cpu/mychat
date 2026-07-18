@@ -31,8 +31,8 @@
   --sidebar-foreground: #011A38;
   --sidebar-primary: #011A38;
   --sidebar-primary-foreground: #FCF7F1;
-  --sidebar-accent: #011A38;
-  --sidebar-accent-foreground: #FCF7F1;
+  --sidebar-accent: rgb(1 26 56 / 7%);
+  --sidebar-accent-foreground: #011A38;
   --sidebar-border: rgb(1 26 56 / 14%);
   --sidebar-ring: #011A38;
 }
@@ -42,41 +42,43 @@
 }
 
 .dark {
-  --code-accent: #011A38;
-  --primary: #011A38;
-  --primary-foreground: #FCF7F1;
-  --accent: #011A38;
-  --accent-foreground: #FCF7F1;
-  --ring: #011A38;
-  --chart-1: #011A38;
-  --sidebar-primary: #011A38;
-  --sidebar-primary-foreground: #FCF7F1;
-  --sidebar-accent: #011A38;
-  --sidebar-accent-foreground: #FCF7F1;
-  --sidebar-ring: #011A38;
+  /* Light mode keeps the sampled deep navy. Dark surfaces use a separate,
+     higher-luminance ocean blue so active controls remain visibly distinct. */
+  --code-accent: #2F6FB3;
+  --primary: #2F6FB3;
+  --primary-foreground: #F7FBFF;
+  --accent: #2F6FB3;
+  --accent-foreground: #F7FBFF;
+  --ring: #79B8F3;
+  --chart-1: #4A90D9;
+  --sidebar-primary: #2F6FB3;
+  --sidebar-primary-foreground: #F7FBFF;
+  --sidebar-accent: rgb(47 111 179 / 18%);
+  --sidebar-accent-foreground: #B9DCFF;
+  --sidebar-ring: #79B8F3;
 }
 
 .dark ::selection {
-  background: rgb(1 26 56 / 28%);
+  background: rgb(79 150 219 / 38%);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not(.light) {
-    --code-accent: #011A38;
-    --primary: #011A38;
-    --primary-foreground: #FCF7F1;
-    --accent: #011A38;
-    --accent-foreground: #FCF7F1;
-    --ring: #011A38;
-    --chart-1: #011A38;
-    --sidebar-primary: #011A38;
-    --sidebar-primary-foreground: #FCF7F1;
-    --sidebar-accent: #011A38;
-    --sidebar-accent-foreground: #FCF7F1;
-    --sidebar-ring: #011A38;
+    --code-accent: #2F6FB3;
+    --primary: #2F6FB3;
+    --primary-foreground: #F7FBFF;
+    --accent: #2F6FB3;
+    --accent-foreground: #F7FBFF;
+    --ring: #79B8F3;
+    --chart-1: #4A90D9;
+    --sidebar-primary: #2F6FB3;
+    --sidebar-primary-foreground: #F7FBFF;
+    --sidebar-accent: rgb(47 111 179 / 18%);
+    --sidebar-accent-foreground: #B9DCFF;
+    --sidebar-ring: #79B8F3;
   }
 
   :root:not(.light) ::selection {
-    background: rgb(1 26 56 / 28%);
+    background: rgb(79 150 219 / 38%);
   }
 }
