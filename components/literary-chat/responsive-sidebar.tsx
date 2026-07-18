@@ -32,6 +32,16 @@ function gestureVelocity(gesture: Gesture, cancelled: boolean) {
   return (last.x - first.x) / Math.max(1, last.time - first.time) * 1000
 }
 
+function appendGesturePoint(gesture: Gesture, x: number, time: number) {
+  gesture.history.push({ x, time })
+  while (gesture.history.length > 1 && time - gesture.history[0].time > 100) {
+    gesture.history.shift()
+  }
+  if (gesture.history.length > 8) {
+    gesture.history.splice(0, gesture.history.length - 8)
+  }
+}
+
 function useDrawerMotion(layout: LiteraryChatLayoutState, mobile: boolean) {
   const drawerRef = useRef<HTMLDivElement>(null)
   const animationRef = useRef<ReturnType<typeof animate> | null>(null)
@@ -71,15 +81,19 @@ function useDrawerMotion(layout: LiteraryChatLayoutState, mobile: boolean) {
     if (!mobile || !layout.drawerOpen) return
     animationRef.current?.stop()
     event.currentTarget.setPointerCapture(event.pointerId)
-    gestureRef.current = { pointerId: event.pointerId, startX: event.clientX, originX: drawerX.get(), history: [{ x: event.clientX, time: event.timeStamp }] }
+    gestureRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      originX: drawerX.get(),
+      history: [{ x: event.clientX, time: event.timeStamp }],
+    }
   }
 
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     const gesture = gestureRef.current
     if (!gesture || gesture.pointerId !== event.pointerId) return
     drawerX.set(clippedOffset(gesture.originX + event.clientX - gesture.startX, drawerWidth))
-    gesture.history = [...gesture.history, { x: event.clientX, time: event.timeStamp }]
-      .filter(point => event.timeStamp - point.time <= 100).slice(-8)
+    appendGesturePoint(gesture, event.clientX, event.timeStamp)
   }
 
   const onPointerEnd = (event: ReactPointerEvent<HTMLDivElement>, cancelled = false) => {
@@ -99,12 +113,18 @@ export function ResponsiveSidebar({ layout, sidebar, mobile }: ResponsiveSidebar
     <motion.div
       data-testid="responsive-sidebar-layer"
       initial={false}
-      animate={{ "--sidebar-width": layout.sidebarCollapsed ? "0px" : "320px" }}
+      animate={mobile ? undefined : { "--sidebar-width": layout.sidebarCollapsed ? "0px" : "320px" }}
       transition={transitionFor(drawer.reducedMotion, PANEL_SPRING)}
       aria-hidden={mobile && !layout.drawerOpen}
       className={layout.drawerOpen ? "fixed inset-0 z-40 w-full shrink-0 md:relative md:inset-auto md:z-auto md:h-full md:w-[var(--sidebar-width)] md:overflow-hidden" : "pointer-events-none fixed inset-0 z-40 w-full shrink-0 md:pointer-events-auto md:relative md:inset-auto md:z-auto md:h-full md:w-[var(--sidebar-width)] md:overflow-hidden"}
     >
-      <motion.button type="button" aria-label="收起侧栏" onClick={() => layout.setDrawerOpen(false)} style={{ opacity: drawer.scrimOpacity }} className="absolute inset-0 bg-black/42 backdrop-blur-[2px] md:hidden" />
+      <motion.button
+        type="button"
+        aria-label="收起侧栏"
+        onClick={() => layout.setDrawerOpen(false)}
+        style={{ opacity: drawer.scrimOpacity }}
+        className="absolute inset-0 bg-black/42 md:hidden"
+      />
       <motion.div
         data-testid="responsive-sidebar-drawer"
         ref={drawer.drawerRef}
