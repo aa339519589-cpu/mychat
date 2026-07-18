@@ -11,7 +11,7 @@ async function fetchFreshRemoteMessages(conversationId: string): Promise<Message
     .select("id, role, content, images, thinking, created_at")
     .eq("conversation_id", conversationId)
     // User timestamps may originate on the device. Clock skew can therefore put
-    // an assistant row before its user row after reload. `seq` is database-owned.
+    // an assistant row before its user row after reload. `seq` is database-owned and monotonic.
     .order("seq", { ascending: false })
     .limit(REMOTE_MESSAGE_LIMIT)
 
