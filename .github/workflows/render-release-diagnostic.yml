@@ -1,0 +1,51 @@
+name: Render Release Diagnostic
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/render-release-diagnostic.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    name: Inspect Render release state
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Inspect production service without changing it
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+          READY_URL: https://mychat-nm6x.onrender.com/api/ready
+        run: |
+          set -euo pipefail
+          if [[ -z "$RENDER_API_KEY" ]] || [[ ! "$RENDER_SERVICE_ID" =~ ^srv-[a-z0-9]+$ ]]; then
+            echo "Render release secrets are not configured." >&2
+            exit 1
+          fi
+
+          render_get() {
+            curl --fail-with-body --silent --show-error \
+              --connect-timeout 10 --max-time 60 \
+              --header "Authorization: Bearer $RENDER_API_KEY" \
+              "$1"
+          }
+
+          echo 'Service:'
+          render_get "https://api.render.com/v1/services/$RENDER_SERVICE_ID" \
+            | jq '{id, name, suspended, autoDeploy, branch, repo, updatedAt}'
+
+          echo 'Maintenance mode:'
+          render_get "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/MYCHAT_MAINTENANCE_MODE" \
+            | jq '{key, value}'
+
+          echo 'Recent deploys:'
+          render_get "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys?limit=10" \
+            | jq '[.[] | (.deploy // .) | {id, status, commit: (.commit.id // null), createdAt, updatedAt, finishedAt, trigger}]'
+
+          echo 'Readiness:'
+          curl --fail-with-body --silent --show-error \
+            --connect-timeout 10 --max-time 60 \
+            --header 'Accept: application/json' "$READY_URL" | jq .
