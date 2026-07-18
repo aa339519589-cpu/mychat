@@ -20,7 +20,7 @@ export function ScreenPanel({ open, style, title, onBack, action, children }: {
   const mobile = useMediaQuery("(max-width: 767px)")
   const canSwipeBack = useMediaQuery("(max-width: 767px) and (pointer: coarse)")
   const panelStyle = mobile
-    ? { ...style, zIndex: 70 + Number(style.zIndex ?? 0) }
+    ? { ...style, zIndex: 40 + Number(style.zIndex ?? 0) }
     : style
 
   const panel = (
