@@ -49,6 +49,32 @@ type UseChatGenerationOptions = {
   onConversationCreated?: (id: string) => void
 }
 
+function createOptimisticTurn(
+  active: Conversation,
+  text: string,
+  images?: string[],
+  files?: AttachedFile[],
+) {
+  const sentAt = Date.now()
+  const userMessage: Message = {
+    id: crypto.randomUUID(), role: "user", content: text, time: "此刻",
+    ts: new Date(sentAt).toISOString(),
+    images: images?.length ? images : undefined,
+    files: files?.map(file => file.name),
+  }
+  const assistantMessageId = crypto.randomUUID()
+  const assistantMessage: Message = {
+    id: assistantMessageId, role: "assistant", content: "", thinking: "", time: "此刻",
+    ts: new Date(sentAt + 1).toISOString(),
+  }
+  return {
+    userMessage,
+    assistantMessageId,
+    baseHistory: active.messages,
+    optimisticMessages: [...active.messages, userMessage, assistantMessage],
+  }
+}
+
 export function useChatGeneration(options: UseChatGenerationOptions) {
   const {
     user,
@@ -186,31 +212,13 @@ export function useChatGeneration(options: UseChatGenerationOptions) {
   async function handleSend(text: string, images?: string[], files?: AttachedFile[]) {
     if (!authorityReady || !user || !active) return
 
-    const sentAt = Date.now()
-    const userMessage: Message = {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: text,
-      time: "此刻",
-      ts: new Date(sentAt).toISOString(),
-      images: images?.length ? images : undefined,
-      files: files?.map(file => file.name),
-    }
-    const assistantMessageId = crypto.randomUUID()
-    const assistantMessage: Message = {
-      id: assistantMessageId,
-      role: "assistant",
-      content: "",
-      thinking: "",
-      time: "此刻",
-      ts: new Date(sentAt + 1).toISOString(),
-    }
+    const { userMessage, assistantMessageId, baseHistory, optimisticMessages } = createOptimisticTurn(
+      active, text, images, files,
+    )
     const isFirstExchange = active.messages.length === 0
     const wasDraft = !!active.draft
     const draftId = active.id
-    const baseHistory = active.messages
     const generationId = crypto.randomUUID()
-    const optimisticMessages = [...baseHistory, userMessage, assistantMessage]
 
     // Persist the complete optimistic turn before any network await. A user can
     // switch chats or background iOS immediately after tapping Send without the
