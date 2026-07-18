@@ -152,8 +152,7 @@ function validateProductionWeb(environment: RuntimeEnvironment): void {
     throw new Error('METRICS_BEARER_TOKEN must be an encoded secret containing at least 32 bytes')
   }
   productionHttpsUrl(requireValue(environment, 'AGENT_PUBLIC_URL', 'web'), 'AGENT_PUBLIC_URL')
-  requireValue(environment, 'GITHUB_CLIENT_ID', 'web')
-  requireSecret(environment, 'GITHUB_CLIENT_SECRET', 'web')
+  // GitHub OAuth is optional as a complete integration; its routes fail closed.
   requireSecret(environment, 'AGENT_CREDENTIAL_KEY', 'web')
 }
 
