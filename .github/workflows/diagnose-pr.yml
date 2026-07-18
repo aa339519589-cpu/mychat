@@ -1,0 +1,38 @@
+name: Diagnose PR
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --legacy-peer-deps
+      - name: Architecture
+        run: npm run architecture
+      - name: Complexity
+        run: npm run complexity
+      - name: Migration contract
+        run: npm run migration:contract
+      - name: Typecheck
+        run: npm run check
+      - name: Backend lint
+        run: npm run lint:backend
+      - name: Full lint
+        run: npm run lint
+      - name: Unit tests and coverage
+        run: npm run test:coverage
+      - name: Production audit
+        run: npm run audit:prod
