@@ -6,6 +6,7 @@ import './globals.css'
 import './theme-palette.css'
 import './dark-background.css'
 import './thinking-flow.css'
+import './mobile-performance.css'
 import 'katex/dist/katex.min.css'
 
 const notoSerifSc = Noto_Serif_SC({
