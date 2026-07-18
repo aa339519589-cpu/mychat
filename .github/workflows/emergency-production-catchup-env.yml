@@ -1,0 +1,182 @@
+name: Emergency Production Catch-up Env
+
+on:
+  push:
+    branches:
+      - ops/emergency-production-catchup
+    paths:
+      - .github/workflows/emergency-production-catchup-env.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: emergency-production-catchup-env
+  cancel-in-progress: false
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mark recovery pending
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state=pending \
+            -f context='Production Recovery' \
+            -f description='Waiting for protected Render recovery environment' >/dev/null
+
+  recover:
+    needs: announce
+    name: Restore active Render production
+    runs-on: ubuntu-latest
+    environment:
+      name: Production-Drain
+      url: https://mychat-nm6x.onrender.com
+    timeout-minutes: 90
+    env:
+      PRODUCTION_READY_URL: https://mychat-nm6x.onrender.com/api/ready
+    steps:
+      - name: Checkout recovery tooling
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Use the production Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Deploy latest main and restore active mode
+        id: recovery
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+          stage='initializing protected recovery'
+
+          report() {
+            gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+              -f state="$1" -f context='Production Recovery' \
+              -f description="${2:0:140}" >/dev/null || true
+          }
+          failed() {
+            local code=$?
+            report failure "Recovery failed at $stage"
+            exit "$code"
+          }
+          trap failed ERR
+
+          [[ -n "$RENDER_API_KEY" ]]
+          [[ "$RENDER_SERVICE_ID" =~ ^srv-[a-z0-9]+$ ]]
+
+          render_api() {
+            curl --fail-with-body --silent --show-error \
+              --retry 4 --retry-all-errors --connect-timeout 10 --max-time 60 \
+              --header "Authorization: Bearer $RENDER_API_KEY" \
+              --header 'Content-Type: application/json' "$@"
+          }
+          current_main() {
+            gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha'
+          }
+          create_deploy() {
+            local revision="$1" body status deploy_id
+            body="$(mktemp)"
+            for attempt in {1..60}; do
+              status="$(curl --silent --show-error --output "$body" --write-out '%{http_code}' \
+                --connect-timeout 10 --max-time 60 \
+                --header "Authorization: Bearer $RENDER_API_KEY" \
+                --header 'Content-Type: application/json' --request POST \
+                --data "$(jq -nc --arg commitId "$revision" '{commitId: $commitId}')" \
+                "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys")"
+              if [[ "$status" == 200 || "$status" == 201 ]]; then
+                deploy_id="$(jq -er '.id' < "$body")"
+                [[ "$deploy_id" =~ ^dep-[a-z0-9]+$ ]]
+                rm -f "$body"
+                printf '%s' "$deploy_id"
+                return 0
+              fi
+              if [[ "$status" == 409 || "$status" == 429 ]] \
+                || { [[ "$status" == 400 ]] && grep -Eqi 'deploy|progress|active|busy' "$body"; }; then
+                sleep 10
+                continue
+              fi
+              cat "$body" >&2
+              rm -f "$body"
+              return 1
+            done
+            rm -f "$body"
+            return 1
+          }
+          wait_deploy() {
+            local revision="$1" deploy_id="$2" response status commit
+            for attempt in {1..180}; do
+              response="$(render_api "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys/$deploy_id")"
+              status="$(jq -er '.status' <<<"$response")"
+              commit="$(jq -r '.commit.id // empty' <<<"$response")"
+              [[ -z "$commit" || "$commit" == "$revision" ]]
+              case "$status" in
+                live) [[ "$commit" == "$revision" ]]; return 0 ;;
+                build_failed|update_failed|pre_deploy_failed|canceled|deactivated) return 1 ;;
+              esac
+              sleep 10
+            done
+            return 1
+          }
+
+          stage='forcing active configuration'
+          report pending 'Forcing maintenance mode off in Render'
+          render_api --request PATCH --data '{"autoDeploy":"no"}' \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID" >/dev/null
+          render_api --request PUT --data '{"value":"off"}' \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/MYCHAT_MAINTENANCE_MODE" >/dev/null
+          render_api "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/MYCHAT_MAINTENANCE_MODE" \
+            | jq -e '.value == "off"' >/dev/null
+
+          for cycle in {1..15}; do
+            target="$(current_main)"
+            [[ "$target" =~ ^[0-9a-f]{40}$ ]]
+            stage="creating exact deploy ${target:0:12}"
+            report pending "Deploying current main ${target:0:12}"
+            render_api --request PUT --data '{"value":"off"}' \
+              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/MYCHAT_MAINTENANCE_MODE" >/dev/null
+            deploy_id="$(create_deploy "$target")"
+
+            stage="waiting for exact deploy ${target:0:12}"
+            report pending "Waiting for Render ${target:0:12}"
+            wait_deploy "$target" "$deploy_id"
+
+            stage="verifying active readiness ${target:0:12}"
+            report pending "Verifying active production ${target:0:12}"
+            EXPECTED_REVISION="$target" EXPECTED_WORKER_DRAINING=false \
+              HEALTH_CHECK_ATTEMPTS=10 HEALTH_CHECK_RETRY_MS=10000 \
+              HEALTH_CHECK_TIMEOUT_MS=20000 \
+              node scripts/check-production-health.mjs "$PRODUCTION_READY_URL"
+
+            latest="$(current_main)"
+            if [[ "$latest" == "$target" ]]; then
+              trap - ERR
+              echo "target_sha=$target" >> "$GITHUB_OUTPUT"
+              echo "render_deploy_id=$deploy_id" >> "$GITHUB_OUTPUT"
+              report success "Render active on current main ${target:0:12}"
+              exit 0
+            fi
+          done
+
+          stage='main did not settle'
+          exit 1
+
+      - name: Confirm successful recovery status
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_SHA: ${{ steps.recovery.outputs.target_sha }}
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state=success -f context='Production Recovery' \
+            -f description="Render active on current main ${TARGET_SHA:0:12}" >/dev/null
