@@ -2,7 +2,7 @@
 
 import { AnimatePresence, motion, useReducedMotion } from "motion/react"
 import type { PointerEvent as ReactPointerEvent } from "react"
-import { ChevronRight, Code2, Feather, Folder, LogOut, PanelLeft, Plus, Settings, Shapes } from "lucide-react"
+import { ChevronRight, Code2, Folder, LogOut, PanelLeft, Plus, Settings, Shapes } from "lucide-react"
 import type { Conversation } from "@/lib/chat-data"
 import { ConversationRow, NavRow } from "@/components/sidebar/primitives"
 import type { SidebarAnchor } from "./shared"
@@ -64,9 +64,9 @@ function rootAnimation(depth: number, reducedMotion: boolean | null) {
 
 function SidebarHeader({ onClose, onDragStart, onDragMove, onDragEnd, onDragCancel }: DragProps) {
   return (
-    <div data-testid="sidebar-drag-handle" onPointerDown={onDragStart} onPointerMove={onDragMove} onPointerUp={onDragEnd} onPointerCancel={onDragCancel} className="flex touch-none items-center gap-3 px-5 pb-5 pt-[max(1rem,env(safe-area-inset-top))] md:touch-auto">
-      <Feather className="size-5 shrink-0 text-sidebar-primary" />
-      <span className="font-heading text-[22px] font-semibold leading-none tracking-[0.02em]">My Chat</span>
+    <div data-testid="sidebar-drag-handle" onPointerDown={onDragStart} onPointerMove={onDragMove} onPointerUp={onDragEnd} onPointerCancel={onDragCancel} className="flex touch-none items-center px-5 pb-2 pt-[max(1rem,env(safe-area-inset-top))] md:touch-auto">
+      <span className="font-heading text-[22px] font-semibold leading-none tracking-[0.02em]">MyChat</span>
+      <span aria-hidden="true" className="sr-only">My Chat</span>
       {onClose && <button onPointerDown={event => event.stopPropagation()} onClick={onClose} aria-label="收起侧栏" className="fluid-press fluid-icon-press fluid-touch-target ml-auto flex size-11 items-center justify-center rounded-full text-muted-foreground hover:bg-sidebar-accent hover:text-foreground md:hidden"><PanelLeft className="size-5" /></button>}
     </div>
   )
@@ -74,25 +74,20 @@ function SidebarHeader({ onClose, onDragStart, onDragMove, onDragEnd, onDragCanc
 
 function SidebarNavigation({ onNew, onOpenProjects, onOpenArtifacts, onOpenCode }: { onNew: () => void; onOpenProjects: () => void; onOpenArtifacts: () => void; onOpenCode: () => void }) {
   return (
-    <>
-      <button onClick={onNew} className="fluid-press mx-4 mb-2 grid min-h-12 grid-cols-[1.5rem_minmax(0,1fr)] items-center gap-3 rounded-2xl px-3 py-3 text-left text-[15px] font-medium text-sidebar-foreground hover:bg-sidebar-accent">
-        <span className="flex size-6 items-center justify-center text-sidebar-primary"><Plus className="size-5" /></span>
-        <span>新对话</span>
-      </button>
-      <nav className="mx-4 space-y-0.5">
-        <NavRow icon={<Folder className="size-5" />} label="项目" onClick={onOpenProjects} />
-        <NavRow icon={<Shapes className="size-5" />} label="作品" onClick={onOpenArtifacts} />
-        <NavRow icon={<Code2 className="size-5" />} label="代码" onClick={onOpenCode} />
-      </nav>
-    </>
+    <nav className="mx-4 grid gap-0.5 pb-1">
+      <NavRow icon={<Plus className="size-5" />} label="新对话" onClick={onNew} />
+      <NavRow icon={<Folder className="size-5" />} label="项目" onClick={onOpenProjects} />
+      <NavRow icon={<Shapes className="size-5" />} label="作品" onClick={onOpenArtifacts} />
+      <NavRow icon={<Code2 className="size-5" />} label="代码" onClick={onOpenCode} />
+    </nav>
   )
 }
 
 function SidebarConversationList({ activeId, rootConversations, renamingId, onSelect, onOpenMenu, onCommitRename, onCancelRename }: Pick<SidebarRootContentProps, "activeId" | "rootConversations" | "renamingId" | "onSelect" | "onOpenMenu" | "onCommitRename" | "onCancelRename">) {
   return (
     <>
-      <div className="mx-7 my-3 border-t border-sidebar-border/60" />
-      <p className="px-7 pb-2 text-[10px] tracking-[0.2em] text-muted-foreground/70">近期</p>
+      <div className="mx-7 my-2 border-t border-sidebar-border/60" />
+      <p className="px-7 pb-1 text-[10px] tracking-[0.2em] text-muted-foreground/70">近期</p>
       <div className="flex-1 space-y-1 overflow-y-auto px-3 pb-3">
         {rootConversations.length === 0 ? <p className="px-4 py-6 text-center text-[12px] italic text-muted-foreground/60">还没有对谈</p> : rootConversations.map(c => <ConversationRow key={c.id} c={c} isActive={c.id === activeId} renaming={renamingId === c.id} onSelect={onSelect} onOpenMenu={onOpenMenu} onCommitRename={onCommitRename} onCancelRename={onCancelRename} />)}
       </div>
