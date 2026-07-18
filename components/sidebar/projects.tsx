@@ -21,7 +21,6 @@ export function ProjectsScreen({ projects, conversations, onCreate, onOpen, onDe
   const [name, setName] = useState("")
   const [busy, setBusy] = useState(false)
   const [search, setSearch] = useState("")
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
 
   async function create() {
     const n = name.trim()
@@ -30,15 +29,6 @@ export function ProjectsScreen({ projects, conversations, onCreate, onOpen, onDe
     const p = await onCreate(n)
     setBusy(false)
     if (p) { setName(""); setAdding(false); onOpen(p.id) }
-  }
-
-  function requestDelete(projectId: string) {
-    if (confirmDeleteId !== projectId) {
-      setConfirmDeleteId(projectId)
-      return
-    }
-    setConfirmDeleteId(null)
-    onDelete(projectId)
   }
 
   const countFor = (pid: string) => conversations.filter(c => c.projectId === pid).length
@@ -85,39 +75,49 @@ export function ProjectsScreen({ projects, conversations, onCreate, onOpen, onDe
       <div className="flex-1 overflow-y-auto space-y-2">
         {filtered.length === 0 ? (
           <p className="rounded-2xl bg-sidebar-accent/20 px-4 py-8 text-center text-[12px] italic text-muted-foreground/70">没有项目</p>
-        ) : (
-          filtered.map(p => {
-            const n = countFor(p.id)
-            const confirmingDelete = confirmDeleteId === p.id
-            return (
-              <div
-                key={p.id}
-                className="group relative rounded-2xl border border-sidebar-accent/60 bg-sidebar-accent/35 transition-colors hover:border-sidebar-accent/80 hover:bg-sidebar-accent/50"
-              >
-                <button
-                  onClick={() => { setConfirmDeleteId(null); onOpen(p.id) }}
-                  className="fluid-press block w-full rounded-2xl px-4 py-3 pr-16 text-left active:scale-[0.99]"
-                >
-                  <div className="font-heading text-[13px] tracking-wide text-foreground">{p.name}</div>
-                  {p.instructions && (
-                    <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">{p.instructions}</p>
-                  )}
-                  <div className="mt-2 text-[10px] text-muted-foreground">{n > 0 ? `${n} 段对谈 · ` : ""}{p.date}</div>
-                </button>
-                <button
-                  onClick={() => requestDelete(p.id)}
-                  onBlur={() => { if (confirmingDelete) setConfirmDeleteId(null) }}
-                  aria-label={confirmingDelete ? `确认删除项目 ${p.name}` : `删除项目 ${p.name}`}
-                  title={confirmingDelete ? "再次点击确认删除" : "删除项目"}
-                  className={`fluid-press fluid-icon-press fluid-touch-target absolute right-1 top-1/2 flex min-w-11 -translate-y-1/2 items-center justify-center rounded-full px-2 text-[11px] transition-colors md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 ${confirmingDelete ? "bg-destructive/10 text-destructive" : "text-muted-foreground/60 hover:bg-sidebar-accent hover:text-destructive"}`}
-                >
-                  {confirmingDelete ? "确认" : <Trash2 className="size-4" />}
-                </button>
-              </div>
-            )
-          })
-        )}
+        ) : filtered.map(project => (
+          <ProjectCard key={project.id} project={project} conversationCount={countFor(project.id)} onOpen={onOpen} onDelete={onDelete} />
+        ))}
       </div>
+    </div>
+  )
+}
+
+function ProjectCard({ project, conversationCount, onOpen, onDelete }: {
+  project: Project
+  conversationCount: number
+  onOpen: (id: string) => void
+  onDelete: (id: string) => void
+}) {
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const deleteProject = () => {
+    if (!confirmingDelete) {
+      setConfirmingDelete(true)
+      return
+    }
+    setConfirmingDelete(false)
+    onDelete(project.id)
+  }
+
+  return (
+    <div className="group relative rounded-2xl border border-sidebar-accent/60 bg-sidebar-accent/35 transition-colors hover:border-sidebar-accent/80 hover:bg-sidebar-accent/50">
+      <button
+        onClick={() => { setConfirmingDelete(false); onOpen(project.id) }}
+        className="fluid-press block w-full rounded-2xl px-4 py-3 pr-16 text-left active:scale-[0.99]"
+      >
+        <div className="font-heading text-[13px] tracking-wide text-foreground">{project.name}</div>
+        {project.instructions && <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">{project.instructions}</p>}
+        <div className="mt-2 text-[10px] text-muted-foreground">{conversationCount > 0 ? `${conversationCount} 段对谈 · ` : ""}{project.date}</div>
+      </button>
+      <button
+        onClick={deleteProject}
+        onBlur={() => setConfirmingDelete(false)}
+        aria-label={confirmingDelete ? `确认删除项目 ${project.name}` : `删除项目 ${project.name}`}
+        title={confirmingDelete ? "再次点击确认删除" : "删除项目"}
+        className={`fluid-press fluid-icon-press fluid-touch-target absolute right-1 top-1/2 flex min-w-11 -translate-y-1/2 items-center justify-center rounded-full px-2 text-[11px] transition-colors md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 ${confirmingDelete ? "bg-destructive/10 text-destructive" : "text-muted-foreground/60 hover:bg-sidebar-accent hover:text-destructive"}`}
+      >
+        {confirmingDelete ? "确认" : <Trash2 className="size-4" />}
+      </button>
     </div>
   )
 }
