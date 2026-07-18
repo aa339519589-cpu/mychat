@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@/lib/supabase/types'
+import { isInstantReplyCandidate } from '@/lib/chat/instant-reply'
 import type { Memory } from '@/lib/memory-data'
 import type { ProjectContext } from '@/lib/project-data'
 import type { RawMsg } from '@/lib/llm/types'
@@ -9,7 +10,7 @@ const MAX_MESSAGE_HISTORY_BYTES = 512 * 1024
 const MAX_AUTHORITATIVE_CONTEXT_BYTES = 1024 * 1024
 const MAX_MEMORIES = 200
 const MAX_PROJECT_FILES = 30
-const CONTEXT_PAGE_SIZE = 8
+const CONTEXT_PAGE_SIZE = 64
 
 export type MessageRow = {
   id: string
@@ -268,6 +269,7 @@ export async function loadAuthoritativeChatContext(input: {
   userId: string
   conversationId: string
   userMessageId: string
+  allowInstant?: boolean
 }): Promise<{
   messages: RawMsg[]
   memories: Memory[]
@@ -278,7 +280,8 @@ export async function loadAuthoritativeChatContext(input: {
   const [conversationResult, userMessageResult] = await Promise.all([
     client.from('conversations').select('id, project_id').eq('id', conversationId)
       .eq('user_id', userId).maybeSingle(),
-    client.from('messages').select('id, role, conversation_id, user_id, seq')
+    client.from('messages')
+      .select('id, role, content, content_parts, media_refs, images, created_at, conversation_id, user_id, seq')
       .eq('id', userMessageId).eq('conversation_id', conversationId)
       .eq('user_id', userId).eq('role', 'user').maybeSingle(),
   ])
@@ -292,6 +295,23 @@ export async function loadAuthoritativeChatContext(input: {
     throw new AuthoritativeContextError('USER_MESSAGE_NOT_FOUND', '用户消息不存在')
   }
 
+  const projectId = typeof conversationResult.data.project_id === 'string'
+    ? conversationResult.data.project_id
+    : null
+  const currentUserMessage = rawMessage(userMessageResult.data as MessageRow)
+  if (input.allowInstant && !projectId && isInstantReplyCandidate({
+    messages: [currentUserMessage],
+    searchMode: 'off',
+    deepResearch: false,
+    inProject: false,
+  })) {
+    return {
+      messages: [currentUserMessage],
+      memories: [],
+      memoryEnabled: false,
+    }
+  }
+
   const userSequence = Number(userMessageResult.data.seq)
   const messages = await loadMessageHistory({
     client,
@@ -301,9 +321,6 @@ export async function loadAuthoritativeChatContext(input: {
     userSequence: Number.isSafeInteger(userSequence) && userSequence > 0 ? userSequence : null,
   })
 
-  const projectId = typeof conversationResult.data.project_id === 'string'
-    ? conversationResult.data.project_id
-    : null
   if (projectId) {
     const project = await loadProjectContext(client, userId, projectId)
     assertContextBudget({ messages, project })
