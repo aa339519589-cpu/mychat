@@ -1,7 +1,8 @@
 "use client"
 
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react"
+import { useState, type CSSProperties, type ReactNode } from "react"
 import { createPortal } from "react-dom"
+import { motion, useReducedMotion } from "motion/react"
 import { ChevronLeft, Folder, MoreHorizontal, Pencil, Pin, Star, Trash2 } from "lucide-react"
 
 import { ConversationRename } from "@/components/conversation-menu"
@@ -9,18 +10,48 @@ import type { Conversation } from "@/lib/chat-data"
 import { conversationExcerpt } from "@/lib/data"
 import { cn } from "@/lib/utils"
 import type { SidebarAnchor } from "./shared"
+import { MOMENTUM_SPRING, PANEL_SPRING, POPOVER_SPRING, shouldDismissGesture, transitionFor } from "@/components/motion/fluid"
+import { useMediaQuery } from "@/components/literary-chat/use-media-query"
 
-export function ScreenPanel({ style, title, onBack, action, children }: {
+export function ScreenPanel({ open, style, title, onBack, action, children }: {
+  open: boolean
   style: CSSProperties
   title: ReactNode
   onBack: () => void
   action?: ReactNode
   children: ReactNode
 }) {
+  const reducedMotion = useReducedMotion()
+  const canSwipeBack = useMediaQuery("(max-width: 767px) and (pointer: coarse)")
+
   return (
-    <div className="absolute inset-0 flex flex-col bg-sidebar transition-transform duration-[360ms] ease-[cubic-bezier(0.32,0.72,0,1)]" style={style}>
+    <motion.div
+      initial={false}
+      animate={reducedMotion
+        ? { x: 0, opacity: open ? 1 : 0 }
+        : { x: open ? 0 : "100%", opacity: 1 }}
+      transition={transitionFor(reducedMotion, PANEL_SPRING)}
+      drag={open && canSwipeBack && !reducedMotion ? "x" : false}
+      dragConstraints={{ left: 0, right: 0 }}
+      dragElastic={{ left: 0, right: 0.34 }}
+      dragDirectionLock
+      dragMomentum={false}
+      dragSnapToOrigin
+      onDragEnd={(_, info) => {
+        if (shouldDismissGesture({
+          offset: info.offset.x,
+          velocity: info.velocity.x,
+          size: window.innerWidth,
+          direction: "positive",
+        })) onBack()
+      }}
+      aria-hidden={!open}
+      inert={!open}
+      className="fluid-drag-surface absolute inset-0 flex flex-col bg-sidebar"
+      style={style}
+    >
       <div className="flex shrink-0 items-center gap-2 px-4 pb-4 pt-[max(1rem,env(safe-area-inset-top))]">
-        <button onClick={onBack} className="-ml-1 shrink-0 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground" aria-label="返回">
+        <button onClick={onBack} className="fluid-press fluid-icon-press fluid-touch-target -ml-1 flex size-11 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-sidebar-accent hover:text-foreground" aria-label="返回">
           <ChevronLeft className="size-5" />
         </button>
         <div className="min-w-0 flex-1">
@@ -30,14 +61,14 @@ export function ScreenPanel({ style, title, onBack, action, children }: {
         </div>
         {action}
       </div>
-      <div className="flex-1 overflow-y-auto pb-[max(1.5rem,env(safe-area-inset-bottom))]">{children}</div>
-    </div>
+      <div className="fluid-scroll flex-1 overflow-y-auto pb-[max(1.5rem,env(safe-area-inset-bottom))]">{children}</div>
+    </motion.div>
   )
 }
 
 export function NavRow({ icon, label, onClick }: { icon: ReactNode; label: string; onClick: () => void }) {
   return (
-    <button onClick={onClick} className="flex w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-sm font-medium text-sidebar-foreground transition-colors hover:bg-sidebar-accent">
+    <button onClick={onClick} className="fluid-press flex min-h-11 w-full items-center gap-2.5 rounded-2xl px-3 py-2.5 text-sm font-medium text-sidebar-foreground hover:bg-sidebar-accent">
       <span className="text-muted-foreground">{icon}</span>{label}
     </button>
   )
@@ -54,14 +85,21 @@ export function ComingSoon({ icon, title, desc }: { icon: ReactNode; title: stri
 }
 
 export function Switch({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  const reducedMotion = useReducedMotion()
   return (
     <button
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(!checked)}
-      className={cn("relative h-6 w-11 shrink-0 rounded-full transition-colors", checked ? "bg-sidebar-primary" : "bg-muted-foreground/30")}
+      className="fluid-press relative h-11 w-11 shrink-0 rounded-full"
     >
-      <span className={cn("absolute left-0.5 top-0.5 size-5 rounded-full bg-card shadow transition-transform", checked && "translate-x-5")} />
+      <span className={cn("absolute inset-x-0 top-2.5 h-6 rounded-full", checked ? "bg-sidebar-primary" : "bg-muted-foreground/30")} />
+      <motion.span
+        initial={false}
+        animate={{ x: checked ? 20 : 0 }}
+        transition={transitionFor(reducedMotion, MOMENTUM_SPRING)}
+        className="absolute left-0.5 top-3 size-5 rounded-full bg-card shadow"
+      />
     </button>
   )
 }
@@ -95,7 +133,7 @@ export function ConversationRow({ c, isActive, renaming, onSelect, onOpenMenu, o
     <div className="group relative">
       <button
         onClick={() => onSelect(c.id)}
-        className={cn("block w-full rounded-2xl px-4 py-3 pr-9 text-left transition-all duration-150 active:scale-[0.985]", isActive ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60")}
+        className={cn("fluid-press block min-h-11 w-full rounded-2xl px-4 py-3 pr-12 text-left", isActive ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60")}
       >
         <div className="flex items-baseline justify-between gap-3">
           <span className="flex min-w-0 items-center gap-1.5">
@@ -110,7 +148,7 @@ export function ConversationRow({ c, isActive, renaming, onSelect, onOpenMenu, o
       </button>
       <button
         onClick={e => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); onOpenMenu(c.id, { top: r.top, bottom: r.bottom, right: r.right }) }}
-        className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-muted-foreground/50 transition-all hover:bg-sidebar-accent hover:text-foreground active:scale-90"
+        className="fluid-press fluid-icon-press absolute right-0 top-1/2 flex size-11 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground/50 hover:bg-sidebar-accent hover:text-foreground"
         aria-label="更多"
       >
         <MoreHorizontal className="size-4" />
@@ -121,7 +159,7 @@ export function ConversationRow({ c, isActive, renaming, onSelect, onOpenMenu, o
 
 function ActionRow({ icon, label, onClick, danger }: { icon: ReactNode; label: string; onClick: () => void; danger?: boolean }) {
   return (
-    <button onClick={onClick} className={cn("flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px] transition-colors active:scale-[0.98]", danger ? "text-destructive hover:bg-destructive/10" : "text-foreground hover:bg-sidebar-accent/60")}>
+    <button onClick={onClick} className={cn("fluid-press fluid-touch-target flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12px]", danger ? "text-destructive hover:bg-destructive/10" : "text-foreground hover:bg-sidebar-accent/60")}>
       <span className={cn("shrink-0", danger ? "text-destructive" : "text-muted-foreground")}>{icon}</span>
       <span className="truncate">{label}</span>
     </button>
@@ -136,8 +174,7 @@ function PopoverShell({ anchor, estH, onClose, children }: {
   onClose: () => void
   children: ReactNode
 }) {
-  const [shown, setShown] = useState(false)
-  useEffect(() => { const r = requestAnimationFrame(() => setShown(true)); return () => cancelAnimationFrame(r) }, [])
+  const reducedMotion = useReducedMotion()
   if (typeof document === "undefined") return null
 
   const vw = window.innerWidth, vh = window.innerHeight
@@ -150,18 +187,26 @@ function PopoverShell({ anchor, estH, onClose, children }: {
   }
 
   return createPortal(
-    <div className="fixed inset-0 z-[80]" onClick={onClose}>
-      <div
+    <motion.div
+      className="fixed inset-0 z-[80]"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={transitionFor(reducedMotion)}
+      onClick={onClose}
+    >
+      <motion.div
         onClick={e => e.stopPropagation()}
         style={pos}
-        className={cn(
-          "w-max min-w-[148px] max-w-[192px] overflow-hidden rounded-2xl border border-sidebar-border bg-card p-0.5 shadow-xl transition-all duration-150 ease-out",
-          shown ? "scale-100 opacity-100" : "scale-95 opacity-0",
-        )}
+        initial={reducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.94, y: openUp ? 6 : -6 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={reducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.96, y: openUp ? 4 : -4 }}
+        transition={transitionFor(reducedMotion, POPOVER_SPRING)}
+        className="fluid-material-strong w-max min-w-[164px] max-w-[224px] overflow-hidden rounded-xl border border-sidebar-border p-1"
       >
         {children}
-      </div>
-    </div>,
+      </motion.div>
+    </motion.div>,
     document.body,
   )
 }

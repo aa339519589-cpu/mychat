@@ -1,22 +1,21 @@
 "use client"
 
-import type { ComponentProps, RefObject } from "react"
-import dynamic from "next/dynamic"
+import { useEffect, useState, type ComponentProps, type RefObject } from "react"
 import type { User } from "@supabase/supabase-js"
+import dynamic from "next/dynamic"
 import type { Conversation } from "@/lib/chat-data"
 import type { Project } from "@/lib/project-data"
 import { AppSidebar } from "@/components/app-sidebar"
-import { ArtifactPanel } from "@/components/artifact-panel"
 import type { ArtifactLibraryOverlayProps } from "@/components/artifact-library-overlay"
 import type { CodeConsoleProps } from "@/components/code-console"
 import { ChatInput } from "@/components/chat-input"
-import { ConversationMenu } from "@/components/conversation-menu"
 import { MessageList } from "@/components/message-list"
-import { artifactTitle, parseArtifact } from "@/lib/artifact"
-import { cn } from "@/lib/utils"
+import { parseArtifact } from "@/lib/artifact"
 import { ChatPane } from "./chat-pane"
 import type { LiteraryChatLayoutState } from "./layout-state"
+import { ResponsiveSidebar } from "./responsive-sidebar"
 import { useMediaQuery } from "./use-media-query"
+import { ViewOverlays } from "./view-overlays"
 
 const LazyCodeConsole = dynamic<CodeConsoleProps>(
   () => import("@/components/code-console").then(module => module.CodeConsole),
@@ -52,55 +51,27 @@ export type LiteraryChatViewController = {
   }
 }
 
-function ResponsiveSidebar({
-  layout,
-  sidebar,
-}: Pick<LiteraryChatViewController, "layout" | "sidebar">) {
-  return (
-    <div className={cn(
-      "fixed inset-0 z-40 shrink-0 md:relative md:inset-auto md:z-auto md:h-full md:overflow-hidden md:transition-[width] md:duration-300 md:ease-in-out",
-      layout.drawerOpen ? "pointer-events-auto" : "pointer-events-none md:pointer-events-auto",
-      layout.sidebarCollapsed ? "md:w-0" : "md:w-[20rem]",
-    )}>
-      <button
-        type="button"
-        aria-label="收起侧栏"
-        onClick={() => layout.setDrawerOpen(false)}
-        className={cn(
-          "absolute inset-0 bg-black/50 transition-opacity duration-300 md:hidden",
-          layout.drawerOpen ? "opacity-100" : "opacity-0",
-        )}
-      />
-      <div className="relative h-full w-full md:w-[20rem] md:overflow-hidden md:border-r md:border-border/50 md:bg-sidebar/40">
-        <AppSidebar
-          {...sidebar}
-          visible={layout.drawerOpen}
-          onClose={() => layout.setDrawerOpen(false)}
-        />
-      </div>
-    </div>
-  )
-}
-
 export function LiteraryChatView({ controller }: { controller: LiteraryChatViewController }) {
   const { session, conversation, sidebar, layout, chat } = controller
   const { active, activeProject, projects, actions } = conversation
   const mobile = useMediaQuery("(max-width: 767px)")
+  const [artifactPanelWidth, setArtifactPanelWidth] = useState(520)
+
+  useEffect(() => {
+    const updateWidth = () => setArtifactPanelWidth(Math.min(720, Math.max(360, window.innerWidth * 0.44)))
+    updateWidth()
+    window.addEventListener("resize", updateWidth, { passive: true })
+    return () => window.removeEventListener("resize", updateWidth)
+  }, [])
   const openMessage = layout.openArtifactId
     ? active?.messages.find(message => message.id === layout.openArtifactId)
     : null
   const artifact = openMessage ? parseArtifact(openMessage.content) : null
-  const showArtifact = Boolean(artifact && artifact.raw !== null)
 
   return (
     <>
-      {layout.codeOpen && <LazyCodeConsole userId={session.user.id} onExit={() => layout.setCodeOpen(false)} />}
-      {layout.artifactLibraryOpen && (
-        <LazyArtifactLibrary open onClose={() => layout.setArtifactLibraryOpen(false)} />
-      )}
-
       <div className="flex h-dvh min-h-0 w-full overflow-hidden bg-background paper-grain md:py-4 md:pr-4">
-        <ResponsiveSidebar layout={layout} sidebar={sidebar} />
+        <ResponsiveSidebar layout={layout} sidebar={sidebar} mobile={mobile} />
         <ChatPane
           mobile={mobile}
           active={active}
@@ -116,32 +87,8 @@ export function LiteraryChatView({ controller }: { controller: LiteraryChatViewC
           messageProps={chat.messages}
           inputProps={chat.input}
         />
-        {showArtifact && (
-          <aside className="fixed inset-0 z-50 overflow-hidden bg-background md:relative md:inset-auto md:z-auto md:ml-2 md:w-[44%] md:min-w-[360px] md:max-w-[720px] md:shrink-0 md:rounded-2xl md:border md:border-border/50">
-            <ArtifactPanel
-              key={layout.openArtifactId}
-              raw={artifact!.raw!}
-              done={artifact!.done}
-              title={artifactTitle(artifact!.raw!)}
-              onClose={() => layout.setOpenArtifactId(null)}
-            />
-          </aside>
-        )}
+        <ViewOverlays sessionUserId={session.user.id} layout={layout} active={active} projects={projects} actions={actions} mobile={mobile} artifact={artifact} artifactPanelWidth={artifactPanelWidth} codeConsole={LazyCodeConsole} artifactLibrary={LazyArtifactLibrary} />
       </div>
-
-      {active && !active.draft && layout.headerMenuAnchor && (
-        <ConversationMenu
-          conversation={active}
-          anchor={layout.headerMenuAnchor}
-          projects={projects}
-          onClose={() => layout.setHeaderMenuAnchor(null)}
-          onToggleStar={() => { actions.toggleStar(active.id); layout.setHeaderMenuAnchor(null) }}
-          onTogglePin={() => { actions.togglePin(active.id); layout.setHeaderMenuAnchor(null) }}
-          onRename={() => { layout.setHeaderMenuAnchor(null); layout.setHeaderRenaming(true) }}
-          onMove={projectId => { actions.move(active.id, projectId); layout.setHeaderMenuAnchor(null) }}
-          onDelete={() => { actions.delete(active.id); layout.setHeaderMenuAnchor(null) }}
-        />
-      )}
     </>
   )
 }

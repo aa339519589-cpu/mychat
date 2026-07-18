@@ -2,6 +2,7 @@
 
 import type { RefObject } from "react"
 import { CircleAlert, Check, CornerDownLeft, GitBranch, Loader2, Square, X } from "lucide-react"
+import { AnimatePresence } from "motion/react"
 
 import { WorkingDots } from "@/components/working-dots"
 import { type Tier } from "@/lib/chat-data"
@@ -88,7 +89,7 @@ function DisconnectedConsole({ onExit }: Pick<CodeConsoleViewProps, "onExit">) {
         <GitBranch className="size-8" style={{ color: ACCENT }} aria-hidden="true" />
         <h1 className="text-sm font-medium text-foreground" style={{ fontFamily: MONO }}>尚未连接 GitHub</h1>
         <button type="button" onClick={() => { window.location.href = "/api/auth/github" }}
-          className="min-h-11 rounded-lg px-5 text-sm font-medium text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--code-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          className="fluid-press min-h-11 rounded-lg px-5 text-sm font-medium text-white hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--code-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           style={{ background: ACCENT, fontFamily: MONO }}>连接 GitHub</button>
       </main>
     </Shell>
@@ -113,7 +114,7 @@ function ApplyErrorNotice({ message, onDismiss }: { message: string; onDismiss: 
 function ConversationPane(props: Pick<CodeConsoleViewProps,
   "scrollRef" | "messages" | "login" | "streaming" | "applying">) {
   return (
-    <div ref={props.scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-5 md:px-8" style={{ fontFamily: MONO }}>
+    <div ref={props.scrollRef} className="fluid-scroll flex-1 overflow-y-auto overflow-x-hidden px-4 py-5 md:px-8" style={{ fontFamily: MONO }}>
       <div className="mx-auto max-w-3xl min-w-0 space-y-4">
         {props.messages.length === 0 && <p className="text-[11px] text-muted-foreground">当前会话尚无消息</p>}
         {props.messages.map(message => <MessageView key={message.id} message={message} login={props.login} />)}
@@ -136,7 +137,7 @@ function WorkspacePublishBar(props: Pick<CodeConsoleViewProps,
       <div className="mx-auto flex max-w-3xl flex-col gap-2 sm:flex-row sm:items-center">
         <span className="min-w-0 flex-1 text-[11px] text-foreground" style={{ fontFamily: MONO }}>改动完成，等待确认发布</span>
         <button type="button" onClick={props.onPublishWorkspacePR} disabled={props.applying}
-          className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg px-4 text-[11px] font-medium text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--code-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
+          className="fluid-press inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg px-4 text-[11px] font-medium text-white hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--code-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
           style={{ background: ACCENT }}>
           <GitBranch className="size-3.5" aria-hidden="true" />{props.applying ? "发布中…" : "确认发布"}
         </button>
@@ -154,11 +155,11 @@ function PendingPlanBar(props: Pick<CodeConsoleViewProps,
         <span className="min-w-0 flex-1 text-[11px] text-foreground" style={{ fontFamily: MONO }}>{planSummary(props.pendingPlan)}</span>
         <div className="flex gap-2">
           <button type="button" onClick={props.onAbandonPlan} disabled={props.applying}
-            className="inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-lg border border-border px-3 text-[11px] text-muted-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--code-accent)] disabled:opacity-50 sm:flex-none">
+            className="fluid-press inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-lg border border-border px-3 text-[11px] text-muted-foreground hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--code-accent)] disabled:opacity-50 sm:flex-none">
             <X className="size-3.5" aria-hidden="true" />放弃
           </button>
           <button type="button" onClick={props.onApplyPlan} disabled={props.applying}
-            className="inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-lg px-4 text-[11px] font-medium text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--code-accent)] disabled:opacity-50 sm:flex-none"
+            className="fluid-press inline-flex min-h-11 flex-1 items-center justify-center gap-1.5 rounded-lg px-4 text-[11px] font-medium text-white hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--code-accent)] disabled:opacity-50 sm:flex-none"
             style={{ background: ACCENT }}>
             <Check className="size-3.5" aria-hidden="true" />{props.applying ? "执行中…" : "确认并执行"}
           </button>
@@ -177,7 +178,7 @@ function CommandHints({ input, onCommand }: Pick<CodeConsoleViewProps, "input" |
       <div className="mx-auto max-w-3xl py-1.5" role="menu" aria-label="Code 命令">
         {matched.map(command => (
           <button type="button" role="menuitem" key={command.cmd} onClick={() => onCommand(command.cmd)}
-            className="flex min-h-11 w-full items-center gap-3 rounded-md px-2 text-left transition-colors hover:bg-secondary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--code-accent)]">
+            className="fluid-press flex min-h-11 w-full items-center gap-3 rounded-md px-2 text-left hover:bg-secondary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--code-accent)]">
             <span className="text-[11px] font-medium" style={{ color: ACCENT, fontFamily: MONO }}>{command.cmd}</span>
             <span className="min-w-0 truncate text-[10px] text-muted-foreground">{command.desc}</span>
           </button>
@@ -203,12 +204,12 @@ function CodeComposer(props: Pick<CodeConsoleViewProps,
           style={{ fontFamily: MONO }} />
         {props.streaming ? (
           <button type="button" onClick={props.onStopAgent} aria-label="停止 Agent" title="停止"
-            className="mb-1 inline-flex size-11 shrink-0 items-center justify-center rounded-lg border border-border bg-secondary text-foreground transition-colors hover:bg-secondary/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--code-accent)]">
+            className="fluid-press fluid-icon-press mb-1 inline-flex size-11 shrink-0 items-center justify-center rounded-lg border border-border bg-secondary text-foreground hover:bg-secondary/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--code-accent)]">
             <Square className="size-3.5 fill-current" aria-hidden="true" />
           </button>
         ) : (
           <button type="button" onClick={props.onSubmit} disabled={!canSend} aria-label="发送" title="发送"
-            className={cn("mb-1 inline-flex size-11 shrink-0 items-center justify-center rounded-lg border text-[11px] font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--code-accent)]", canSend ? "border-transparent text-white" : "border-border text-muted-foreground/40")}
+            className={cn("fluid-press fluid-icon-press mb-1 inline-flex size-11 shrink-0 items-center justify-center rounded-lg border text-[11px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--code-accent)]", canSend ? "border-transparent text-white" : "border-border text-muted-foreground/40")}
             style={canSend ? { background: ACCENT } : undefined}>
             <CornerDownLeft className="size-3.5" aria-hidden="true" />
           </button>
@@ -220,15 +221,15 @@ function CodeComposer(props: Pick<CodeConsoleViewProps,
 
 function ConsoleOverlays(props: Pick<CodeConsoleViewProps,
   "overlay" | "tier" | "repo" | "userId" | "messages" | "onChangeTier" | "onCloseOverlay" | "onLoadSession">) {
-  return <>
-    {props.overlay === "model" && <ModelOverlay tier={props.tier} onPick={props.onChangeTier} onClose={props.onCloseOverlay} />}
-    {props.overlay === "memory" && props.repo && <MemoryOverlay repo={props.repo} userId={props.userId} onClose={props.onCloseOverlay} />}
-    {props.overlay === "memory" && !props.repo && <SimpleOverlay title="记忆" text="新项目尚未建立仓库。" onClose={props.onCloseOverlay} />}
-    {props.overlay === "context" && <ContextOverlay messages={props.messages} onClose={props.onCloseOverlay} />}
-    {props.overlay === "resume" && props.repo && <ResumeOverlay repo={props.repo} onPick={props.onLoadSession} onClose={props.onCloseOverlay} />}
-    {props.overlay === "resume" && !props.repo && <SimpleOverlay title="历史排查" text="新项目尚无历史会话。" onClose={props.onCloseOverlay} />}
-    {props.overlay === "tasks" && <TasksOverlay onClose={props.onCloseOverlay} />}
-  </>
+  return <AnimatePresence initial={false}>
+    {props.overlay === "model" && <ModelOverlay key="model" tier={props.tier} onPick={props.onChangeTier} onClose={props.onCloseOverlay} />}
+    {props.overlay === "memory" && props.repo && <MemoryOverlay key="memory" repo={props.repo} userId={props.userId} onClose={props.onCloseOverlay} />}
+    {props.overlay === "memory" && !props.repo && <SimpleOverlay key="memory-empty" title="记忆" text="新项目尚未建立仓库。" onClose={props.onCloseOverlay} />}
+    {props.overlay === "context" && <ContextOverlay key="context" messages={props.messages} onClose={props.onCloseOverlay} />}
+    {props.overlay === "resume" && props.repo && <ResumeOverlay key="resume" repo={props.repo} onPick={props.onLoadSession} onClose={props.onCloseOverlay} />}
+    {props.overlay === "resume" && !props.repo && <SimpleOverlay key="resume-empty" title="历史排查" text="新项目尚无历史会话。" onClose={props.onCloseOverlay} />}
+    {props.overlay === "tasks" && <TasksOverlay key="tasks" onClose={props.onCloseOverlay} />}
+  </AnimatePresence>
 }
 
 function ConnectedPicker(props: CodeConsoleViewProps) {

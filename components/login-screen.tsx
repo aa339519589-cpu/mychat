@@ -135,7 +135,7 @@ export function LoginScreen() {
             type="submit"
             disabled={loading || guestLoading}
             aria-busy={loading}
-            className="flex min-h-12 w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 text-base font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60"
+            className="fluid-press flex min-h-12 w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 text-base font-semibold text-primary-foreground shadow-sm hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loading && <Loader2 className="size-4 animate-spin" aria-hidden="true" />}
             {mode === "signin" ? "登录" : "注册"}
@@ -153,7 +153,7 @@ export function LoginScreen() {
           onClick={() => { void handleGuest() }}
           disabled={loading || guestLoading}
           aria-busy={guestLoading}
-          className="flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border border-border bg-secondary px-4 text-base font-semibold text-secondary-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60"
+          className="fluid-press flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border border-border bg-secondary px-4 text-base font-semibold text-secondary-foreground hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60"
         >
           {guestLoading && <Loader2 className="size-4 animate-spin" aria-hidden="true" />}
           以游客身份继续
@@ -164,7 +164,7 @@ export function LoginScreen() {
           <button
             type="button"
             onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setError("") }}
-            className="min-h-11 rounded-md px-2 font-semibold text-primary underline underline-offset-4 transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="fluid-press min-h-11 rounded-md px-2 font-semibold text-primary underline underline-offset-4 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {mode === "signin" ? "去注册" : "去登录"}
           </button>

@@ -1,10 +1,12 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import { AnimatePresence, motion, useReducedMotion } from "motion/react"
 
 import { AssistantMessage } from "@/components/messages/assistant-message"
 import { UserMessage } from "@/components/messages/user-message"
 import type { Conversation, Message } from "@/lib/chat-data"
+import { UI_SPRING, transitionFor } from "@/components/motion/fluid"
 
 const INITIAL_RENDER_COUNT = 70
 const RENDER_STEP = 50
@@ -37,6 +39,7 @@ export function MessageList({
   const [editingUserId, setEditingUserId] = useState<string | null>(null)
   const [editDraft, setEditDraft] = useState("")
   const [visibleCount, setVisibleCount] = useState(INITIAL_RENDER_COUNT)
+  const reducedMotion = useReducedMotion()
 
   useEffect(() => {
     setVisibleCount(INITIAL_RENDER_COUNT)
@@ -82,17 +85,21 @@ export function MessageList({
           <div className="flex justify-center">
             <button
               onClick={() => setVisibleCount(value => Math.min(messages.length, value + RENDER_STEP))}
-              className="rounded-full border border-border/40 bg-muted/20 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/35 hover:text-foreground"
+              className="fluid-press min-h-11 rounded-full border border-border/40 bg-muted/20 px-4 py-2 text-xs text-muted-foreground hover:bg-muted/35 hover:text-foreground"
             >
               显示更早的 {Math.min(hiddenCount, RENDER_STEP)} 条
             </button>
           </div>
         )}
 
-        {visibleEntries.map(({ message, index }) => message.role === "user" ? (
-          <UserMessage
+        <AnimatePresence initial={false}>
+        {visibleEntries.map(({ message, index }) => (
+          <MessageEntry
             key={message.id}
             message={message}
+            index={index}
+            lastAssistantIndex={lastAssistantIndex}
+            reducedMotion={reducedMotion}
             active={activeUserId === message.id}
             editing={editingUserId === message.id}
             editDraft={editDraft}
@@ -104,20 +111,88 @@ export function MessageList({
             onEditDraft={setEditDraft}
             onCancelEdit={cancelEdit}
             onCommitEdit={commitEdit}
-            onRegenerate={() => onRegenerateFromUser?.(message.id)}
-          />
-        ) : (
-          <AssistantMessage
-            key={message.id}
-            message={message}
-            isLast={index === lastAssistantIndex}
-            isLoading={!!isLoading}
-            openArtifactId={openArtifactId}
+            onRegenerateUser={() => onRegenerateFromUser?.(message.id)}
             onOpenArtifact={onOpenArtifact}
-            onRegenerate={onRegenerate}
+            openArtifactId={openArtifactId}
+            onRegenerateAssistant={onRegenerate}
           />
         ))}
+        </AnimatePresence>
       </div>
     </article>
+  )
+}
+
+type MessageEntryProps = {
+  message: Message
+  index: number
+  lastAssistantIndex: number
+  reducedMotion: boolean | null
+  active: boolean
+  editing: boolean
+  editDraft: string
+  isLoading: boolean
+  onToggleActive: () => void
+  onStartEdit: () => void
+  onEditDraft: (value: string) => void
+  onCancelEdit: () => void
+  onCommitEdit: () => void
+  onRegenerateUser: () => void
+  openArtifactId?: string | null
+  onOpenArtifact?: (messageId: string) => void
+  onRegenerateAssistant?: () => void
+}
+
+function MessageEntry({
+  message,
+  index,
+  lastAssistantIndex,
+  reducedMotion,
+  active,
+  editing,
+  editDraft,
+  isLoading,
+  onToggleActive,
+  onStartEdit,
+  onEditDraft,
+  onCancelEdit,
+  onCommitEdit,
+  onRegenerateUser,
+  openArtifactId,
+  onOpenArtifact,
+  onRegenerateAssistant,
+}: MessageEntryProps) {
+  return (
+    <motion.div
+      initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 10, scale: 0.99 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.99 }}
+      transition={transitionFor(reducedMotion, UI_SPRING)}
+    >
+      {message.role === "user" ? (
+        <UserMessage
+          message={message}
+          active={active}
+          editing={editing}
+          editDraft={editDraft}
+          isLoading={isLoading}
+          onToggleActive={onToggleActive}
+          onStartEdit={onStartEdit}
+          onEditDraft={onEditDraft}
+          onCancelEdit={onCancelEdit}
+          onCommitEdit={onCommitEdit}
+          onRegenerate={onRegenerateUser}
+        />
+      ) : (
+        <AssistantMessage
+          message={message}
+          isLast={index === lastAssistantIndex}
+          isLoading={isLoading}
+          openArtifactId={openArtifactId}
+          onOpenArtifact={onOpenArtifact}
+          onRegenerate={onRegenerateAssistant}
+        />
+      )}
+    </motion.div>
   )
 }

@@ -76,12 +76,12 @@ function AssistantActions({
   return (
     <div className="mt-1.5 flex items-center gap-1">
       {text && (
-        <button onClick={copy} title="复制" className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-foreground">
+        <button onClick={copy} title="复制" className="fluid-press fluid-icon-press flex size-11 items-center justify-center rounded-full text-muted-foreground hover:bg-primary/10 hover:text-foreground">
           {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
         </button>
       )}
       {isLast && !isLoading && onRegenerate && (text || hasOutput) && (
-        <button onClick={onRegenerate} title="重新生成" className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-foreground">
+        <button onClick={onRegenerate} title="重新生成" className="fluid-press fluid-icon-press flex size-11 items-center justify-center rounded-full text-muted-foreground hover:bg-primary/10 hover:text-foreground">
           <RefreshCw className="size-4" />
         </button>
       )}
