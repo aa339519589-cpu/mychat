@@ -61,8 +61,8 @@ test('chat request boundary rejects malformed and oversized nested input', () =>
   rejects({ ...base, attachments: [{ ...attachment, name: 1 }] }, /附件名称无效/)
   rejects({ ...base, attachments: [{ name: 'x' }] }, /附件格式无效/)
   rejects({ ...base, attachments: [{ ...attachment, text: 1 }] }, /附件文本格式无效/)
-  rejects({ ...base, attachments: [{ ...attachment, text: 'x'.repeat(200_001) }] }, /单个附件文本过大/)
-  rejects({ ...base, attachments: Array.from({ length: 4 }, (_, index) => ({ ...attachment, name: `${index}.txt`, text: 'x'.repeat(160_000) })) }, /附件文本总量过大/)
+  rejects({ ...base, attachments: [{ ...attachment, text: 'x'.repeat(80_001) }] }, /单个附件文本过大/)
+  rejects({ ...base, attachments: Array.from({ length: 3 }, (_, index) => ({ ...attachment, name: `${index}.txt`, text: 'x'.repeat(60_000) })) }, /附件文本总量过大/)
   rejects({ ...base, attachments: [{ ...attachment, name: 'scan.pdf', isPdf: true, pageImages: ['bad'] }] }, /扫描件图片格式无效/)
   rejects({ ...base, attachments: [{ ...attachment, name: 'scan.pdf', isPdf: true, pageImages: Array(19).fill('https://example.com/page.png') }] }, /扫描件最多支持 18 页/)
 

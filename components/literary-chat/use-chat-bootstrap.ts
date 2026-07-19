@@ -19,6 +19,7 @@ import {
 } from "@/lib/data"
 import { fetchReliableMessages } from "@/lib/data/reliable-messages"
 import { reconcileRemoteMessages } from "@/lib/data/remote-message-reconciliation"
+import { restoreModelEndpointsWhenAvailable } from "./model-endpoint-restoration"
 
 type ChatBootstrapOptions = {
   user: User | null
@@ -36,6 +37,17 @@ type ChatBootstrapOptions = {
   project: { set: Dispatch<SetStateAction<Project[]>>; reset: () => void }
   model: { restore: (items: ModelEndpointSummary[]) => void; reset: () => void }
   onConversationHydrated?: (id: string) => Promise<boolean>
+}
+
+function restoreModelEndpoints(
+  model: ChatBootstrapOptions['model'],
+  isCancelled: () => boolean,
+) {
+  restoreModelEndpointsWhenAvailable({
+    fetchEndpoints: fetchModelEndpoints,
+    restore: model.restore,
+    isCancelled,
+  })
 }
 
 export function useChatBootstrap({
@@ -70,17 +82,16 @@ export function useChatBootstrap({
 
     void (async () => {
       ensureProfile(currentUser.id)
-      const [rows, memories, profile, projects, endpoints] = await Promise.all([
+      restoreModelEndpoints(model, cancelled)
+      const [rows, memories, profile, projects] = await Promise.all([
         fetchConversations(),
         fetchMemories(),
         fetchProfile(),
         fetchProjects(),
-        fetchModelEndpoints().catch(() => []),
       ])
       if (cancelled()) return
       memory.restore(memories, profile.memoryEnabled)
       project.set(projects)
-      model.restore(endpoints)
       for (const row of rows) if (row.msgCount === 0) {
         void deleteConversationRow(row.id).catch(() => undefined)
       }

@@ -82,7 +82,7 @@ function ChatHeader({ mobile, sidebarCollapsed, active, activeProject, menuAncho
   const reducedMotion = useReducedMotion()
   return (
     <header className={cn("fluid-material z-10 flex shrink-0 items-center gap-2", mobile ? "px-4 pb-2 pt-[max(0.75rem,env(safe-area-inset-top))]" : "px-8 py-4")}>
-      <button onClick={mobile ? onOpenSidebar : onToggleSidebar} className="fluid-press fluid-icon-press flex size-11 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-secondary hover:text-foreground" aria-label={mobile ? "打开对话列表" : sidebarCollapsed ? "展开侧栏" : "收起侧栏"}><PanelLeft className="size-5" /></button>
+      <button onClick={mobile ? onOpenSidebar : onToggleSidebar} className="fluid-press fluid-icon-press flex size-11 shrink-0 items-center justify-center rounded-full text-muted-foreground/75 hover:bg-primary/12 hover:text-primary" aria-label={mobile ? "打开对话列表" : sidebarCollapsed ? "展开侧栏" : "收起侧栏"}><PanelLeft className="size-5" /></button>
       {renaming && active ? <ConversationRename value={active.title} onCommit={title => { if (title.trim()) onRename(active.id, title.trim()); onRenamingChange(false) }} onCancel={() => onRenamingChange(false)} className="min-w-0 flex-1 rounded-lg bg-secondary/60 px-3 py-1.5 text-sm outline-none focus:bg-secondary/80" />
         : active ? <ConversationTitle active={active} activeProject={activeProject} menuAnchor={menuAnchor} reducedMotion={reducedMotion} onMenuAnchorChange={onMenuAnchorChange} />
         : <span className="flex-1" />}
