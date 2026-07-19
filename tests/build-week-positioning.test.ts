@@ -14,8 +14,9 @@ test("public identity stays phone-first while Code opens as an operational works
 
   assert.match(layout, /MyChat — Build and ship from your phone/)
   assert.doesNotMatch(layout, /generator:\s*['"]v0\.app/)
-  assert.match(login, />MyChat</)
-  assert.match(login, /Build &amp; ship from your phone/)
+  assert.match(login, />\s*My Chat\s*</)
+  assert.doesNotMatch(login, /Build &amp; ship from your phone/)
+  assert.doesNotMatch(login, /CompanionAvatar|Code2/)
   assert.doesNotMatch(login, />简</)
   assert.match(code, /选择工作区/)
   assert.match(code, /max-w-\[34vw\]/)
