@@ -1,0 +1,57 @@
+name: Observe Render Deployment
+
+on:
+  pull_request:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Wait for the Render production revision
+        id: observe
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_SHA: 9e249ff66e10c9060645a370cdbe4b311b89df73
+          READY_URL: https://mychat-nm6x.onrender.com/api/ready
+        run: |
+          set -u
+          for attempt in {1..240}; do
+            verify="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow verify.yml --commit "$TARGET_SHA" --event push --limit 1 --json databaseId,status,conclusion,headSha,url 2>/dev/null | jq -c '.[0] // {}')"
+            release="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow release-image.yml --limit 40 --json databaseId,status,conclusion,headSha,url 2>/dev/null | jq -c --arg sha "$TARGET_SHA" '[.[] | select(.headSha == $sha)][0] // {}')"
+            ready="$(curl --fail --silent --show-error --max-time 30 "$READY_URL" 2>/dev/null || true)"
+            jq --null-input --compact-output \
+              --arg target "$TARGET_SHA" \
+              --argjson verify "$verify" \
+              --argjson release "$release" \
+              --arg ready "$ready" \
+              --argjson attempt "$attempt" \
+              '{target:$target,attempt:$attempt,verify:$verify,release:$release,ready:$ready}' > deployment-status.json
+            if [[ "$(jq -r '.status // empty' <<<"$release")" == "completed" ]] \
+              && [[ "$(jq -r '.conclusion // empty' <<<"$release")" == "success" ]] \
+              && grep --fixed-strings --quiet "$TARGET_SHA" <<<"$ready"; then
+              exit 0
+            fi
+            if [[ "$(jq -r '.status // empty' <<<"$release")" == "completed" ]] \
+              && [[ "$(jq -r '.conclusion // empty' <<<"$release")" != "success" ]]; then
+              exit 1
+            fi
+            sleep 10
+          done
+          exit 1
+      - name: Upload deployment observation
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: render-deployment-status
+          path: deployment-status.json
+          if-no-files-found: error
+          retention-days: 1
+      - name: Preserve observation result
+        if: steps.observe.outcome == 'failure'
+        run: exit 1
