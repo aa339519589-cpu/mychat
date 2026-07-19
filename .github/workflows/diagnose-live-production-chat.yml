@@ -14,8 +14,6 @@ jobs:
     timeout-minutes: 18
     env:
       LIVE_URL: https://mychat-nm6x.onrender.com
-      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-      RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
@@ -24,38 +22,6 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts --legacy-peer-deps
       - run: npx playwright install --with-deps webkit
-      - name: Create isolated production test user
-        run: |
-          set -euo pipefail
-          render_value() {
-            curl --fail-with-body --silent --show-error \
-              --header "Authorization: Bearer $RENDER_API_KEY" \
-              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/$1" \
-              | jq -er '.value'
-          }
-          supabase_url="$(render_value SUPABASE_URL 2>/dev/null || render_value NEXT_PUBLIC_SUPABASE_URL)"
-          service_key="$(render_value SUPABASE_SERVICE_ROLE_KEY)"
-          email="mychat-live-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}@example.com"
-          password="Aa9!$(openssl rand -hex 12)"
-          echo "::add-mask::$supabase_url"
-          echo "::add-mask::$service_key"
-          echo "::add-mask::$email"
-          echo "::add-mask::$password"
-          payload="$(jq -nc --arg email "$email" --arg password "$password" '{email:$email,password:$password,email_confirm:true}')"
-          created="$(curl --fail-with-body --silent --show-error \
-            --request POST \
-            --header "apikey: $service_key" \
-            --header "Authorization: Bearer $service_key" \
-            --header 'Content-Type: application/json' \
-            --data "$payload" \
-            "$supabase_url/auth/v1/admin/users")"
-          user_id="$(jq -er '.id' <<<"$created")"
-          {
-            echo "TEST_EMAIL=$email"
-            echo "TEST_PASSWORD=$password"
-            echo "TEST_USER_ID=$user_id"
-            echo "SUPABASE_ADMIN_URL=$supabase_url"
-          } >> "$GITHUB_ENV"
       - name: Exercise authenticated iPhone WebKit chat turn
         run: |
           cat > "$GITHUB_WORKSPACE/.live-chat-diagnostic.mjs" <<'EOF'
@@ -84,7 +50,7 @@ jobs:
             const elapsed = Date.now() - (started.get(response.request()) ?? Date.now())
             let text = ''
             try { text = await response.text() } catch {}
-            console.log(`RESPONSE ${response.status()} ${elapsed}ms ${response.url()} ${text.slice(0, 1600)}`)
+            console.log(`RESPONSE ${response.status()} ${elapsed}ms ${response.url()} ${text.slice(0, 1800)}`)
           })
           page.on('requestfailed', request => {
             if (request.url().includes('/api/')) console.log(`FAILED ${request.method()} ${request.url()} ${request.failure()?.errorText}`)
@@ -95,18 +61,26 @@ jobs:
             const ready = await context.request.get(`${baseUrl}/api/ready`, { timeout: 30_000 })
             console.log(`READY ${ready.status()} ${(await ready.text()).slice(0, 2000)}`)
             await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 120_000 })
-            await page.getByLabel('邮箱地址').fill(process.env.TEST_EMAIL)
-            await page.getByLabel('密码').fill(process.env.TEST_PASSWORD)
-            const loginResponsePromise = page.waitForResponse(response => response.url().endsWith('/api/auth/email'), { timeout: 60_000 })
-            await page.getByRole('button', { name: '登录', exact: true }).click()
-            const loginResponse = await loginResponsePromise
-            console.log(`LOGIN_RESULT ${loginResponse.status()} ${(await loginResponse.text()).slice(0, 1200)}`)
 
-            const input = page.getByPlaceholder('说点什么……')
-            await input.waitFor({ state: 'visible', timeout: 60_000 }).catch(async error => {
-              console.log(`BODY_AFTER_LOGIN ${JSON.stringify((await page.locator('body').innerText()).slice(0, 4000))}`)
+            const guest = page.getByRole('button', { name: '以游客身份继续' })
+            await guest.waitFor({ state: 'visible', timeout: 60_000 }).catch(async error => {
+              console.log(`PRE_AUTH_URL ${page.url()}`)
+              console.log(`PRE_AUTH_BODY ${JSON.stringify((await page.locator('body').innerText()).slice(0, 4000))}`)
               throw error
             })
+            const authResponsePromise = page.waitForResponse(response => response.url().endsWith('/api/auth/anonymous'), { timeout: 60_000 })
+            await guest.click()
+            const authResponse = await authResponsePromise
+            console.log(`AUTH_RESULT ${authResponse.status()} ${(await authResponse.text()).slice(0, 1600)}`)
+            if (!authResponse.ok()) throw new Error(`anonymous_auth_${authResponse.status()}`)
+
+            const input = page.locator('textarea').first()
+            await input.waitFor({ state: 'visible', timeout: 60_000 }).catch(async error => {
+              console.log(`POST_AUTH_URL ${page.url()}`)
+              console.log(`POST_AUTH_BODY ${JSON.stringify((await page.locator('body').innerText()).slice(0, 4000))}`)
+              throw error
+            })
+            console.log(`INPUT placeholder=${await input.getAttribute('placeholder')} disabled=${await input.isDisabled()}`)
             await input.fill('你好')
             const sentAt = Date.now()
             await input.press('Enter')
@@ -119,12 +93,12 @@ jobs:
                 if (text.includes('模型生成失败')) return 'model_failed'
                 if (document.querySelector('button[title="复制"]')) return 'assistant_reply'
                 return null
-              }, { timeout: 90_000 }).then(handle => handle.jsonValue()),
-              page.waitForTimeout(90_000).then(() => 'deadline'),
+              }, { timeout: 100_000 }).then(handle => handle.jsonValue()),
+              page.waitForTimeout(100_000).then(() => 'deadline'),
             ])
             console.log(`OUTCOME ${outcome} elapsed=${Date.now() - sentAt}ms`)
             console.log(`CHAT_REQUEST ${JSON.stringify(chatRequest)}`)
-            console.log(`BODY ${JSON.stringify((await page.locator('body').innerText()).slice(0, 4000))}`)
+            console.log(`BODY ${JSON.stringify((await page.locator('body').innerText()).slice(0, 5000))}`)
 
             if (chatRequest && typeof chatRequest.conversationId === 'string') {
               const generation = await page.evaluate(async conversationId => {
@@ -140,19 +114,6 @@ jobs:
           EOF
           set -o pipefail
           node "$GITHUB_WORKSPACE/.live-chat-diagnostic.mjs" 2>&1 | tee "$RUNNER_TEMP/live-chat-diagnostic.txt"
-      - name: Delete isolated production test user
-        if: always() && env.TEST_USER_ID != ''
-        run: |
-          set -euo pipefail
-          service_key="$(curl --fail-with-body --silent --show-error \
-            --header "Authorization: Bearer $RENDER_API_KEY" \
-            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/SUPABASE_SERVICE_ROLE_KEY" \
-            | jq -er '.value')"
-          curl --fail-with-body --silent --show-error \
-            --request DELETE \
-            --header "apikey: $service_key" \
-            --header "Authorization: Bearer $service_key" \
-            "$SUPABASE_ADMIN_URL/auth/v1/admin/users/$TEST_USER_ID" >/dev/null
       - name: Upload diagnostic evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
