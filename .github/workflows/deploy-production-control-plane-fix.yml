@@ -23,14 +23,18 @@ jobs:
         run: |
           test -n "$RENDER_API_KEY"
           [[ "$RENDER_SERVICE_ID" =~ ^srv-[a-z0-9]+$ ]]
-          response="$(curl --fail-with-body --silent --show-error \
+          response_file="$(mktemp)"
+          http_code="$(curl --silent --show-error \
             --connect-timeout 10 --max-time 60 \
+            --output "$response_file" --write-out '%{http_code}' \
             --header "Authorization: Bearer $RENDER_API_KEY" \
             --header 'Content-Type: application/json' \
             --request POST \
             --data "$(jq -nc --arg commitId "$TARGET_SHA" '{commitId: $commitId}')" \
             "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys")"
-          deploy_id="$(jq -er '.id' <<<"$response")"
+          jq . "$response_file" || cat "$response_file"
+          test "$http_code" -ge 200 -a "$http_code" -lt 300
+          deploy_id="$(jq -er '.id' "$response_file")"
           [[ "$deploy_id" =~ ^dep-[a-z0-9]+$ ]]
           echo "deploy_id=$deploy_id" >> "$GITHUB_OUTPUT"
 
