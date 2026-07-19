@@ -18,13 +18,14 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - name: Architecture
-        run: npm run architecture
-      - name: Complexity
-        run: npm run complexity
-      - name: Typecheck
-        run: npm run check
       - name: Lint
-        run: npm run lint
-      - name: Tests
-        run: npm test
+        id: lint
+        continue-on-error: true
+        run: npm run lint > lint.txt 2>&1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ask-selection-lint
+          path: lint.txt
+      - name: Fail on lint error
+        if: steps.lint.outcome == 'failure'
+        run: exit 1
