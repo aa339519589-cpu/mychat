@@ -63,16 +63,29 @@ jobs:
 
             await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 120_000 })
             const guest = page.getByRole('button', { name: '以游客身份继续' })
+            const input = page.getByPlaceholder('说点什么……')
+            await Promise.race([
+              guest.waitFor({ state: 'visible', timeout: 60_000 }).then(() => 'guest'),
+              input.waitFor({ state: 'visible', timeout: 60_000 }).then(() => 'chat'),
+            ]).catch(async error => {
+              console.log(`BODY_AFTER_GOTO ${JSON.stringify((await page.locator('body').innerText()).slice(0, 4000))}`)
+              throw error
+            })
+
             if (await guest.isVisible().catch(() => false)) {
-              await Promise.all([
-                page.waitForResponse(response => response.url().endsWith('/api/auth/anonymous'), { timeout: 60_000 }),
-                guest.click(),
-              ])
-              await page.waitForLoadState('domcontentloaded', { timeout: 60_000 }).catch(() => undefined)
+              const authResponsePromise = page.waitForResponse(
+                response => response.url().endsWith('/api/auth/anonymous'),
+                { timeout: 60_000 },
+              )
+              await guest.click()
+              const authResponse = await authResponsePromise
+              console.log(`AUTH_RESULT ${authResponse.status()} ${(await authResponse.text()).slice(0, 1200)}`)
+              await input.waitFor({ state: 'visible', timeout: 60_000 }).catch(async error => {
+                console.log(`BODY_AFTER_AUTH ${JSON.stringify((await page.locator('body').innerText()).slice(0, 4000))}`)
+                throw error
+              })
             }
 
-            const input = page.getByPlaceholder('说点什么……')
-            await input.waitFor({ state: 'visible', timeout: 60_000 })
             await input.fill('你好')
             const sentAt = Date.now()
             await input.press('Enter')
