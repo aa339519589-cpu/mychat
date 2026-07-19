@@ -17,6 +17,7 @@ import {
 } from "./message-cache"
 
 export { cacheConversationMessages, mergeCachedMessages } from "./message-cache"
+export { removeCachedMessages } from "./message-cache"
 
 const warming = new Set<string>()
 

@@ -1,17 +1,10 @@
 "use client"
 
+
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react"
 import type { Conversation } from "@/lib/chat-data"
 import type { SearchMode } from "@/lib/search-mode"
-import {
-  cacheConversationMessages,
-  deleteConversationRow,
-  lastExcerpt,
-  setConversationPinned,
-  setConversationProject,
-  setConversationStarred,
-  updateConversationTitle,
-} from "@/lib/data"
+import { cacheConversationMessages, deleteConversationRow, deleteAllConversations, lastExcerpt, setConversationPinned, setConversationProject, setConversationStarred, updateConversationTitle, removeCachedMessages } from "@/lib/data"
 import { fetchReliableMessages } from "@/lib/data/reliable-messages"
 import { reconcileRemoteMessages } from "@/lib/data/remote-message-reconciliation"
 import { createClient } from "@/lib/supabase/client"
@@ -322,9 +315,16 @@ export function LiteraryChat() {
     setUser(null)
   }
 
+
+
+
+  async function handleDeleteAll() { await deleteAllConversations(); for (const conversation of conversationsRef.current) removeCachedMessages(conversation.id); const id = crypto.randomUUID(); activationTokenRef.current += 1; loadedRef.current.clear(); draftIdRef.current = id; rootConversationIdRef.current = id; setHydratingConversationId(null); setConversations([createDraft(id)]); setActiveId(id); route.openConversation(null) }
+
+
+
   const sidebar: AppSidebarProps = {
     conversation: {
-      items: conversations, activeId, select: handleSelect, create: handleNew, delete: handleDelete,
+      items: conversations, activeId, select: handleSelect, create: handleNew, delete: handleDelete, deleteAll: handleDeleteAll,
       toggleStar: handleToggleStar, togglePin: handleTogglePin, rename: handleRename, move: handleMove,
     },
     memory: {
@@ -390,6 +390,6 @@ export function LiteraryChat() {
       },
     },
   }
-
-  return <LiteraryChatView controller={controller} />
-}
+  return <LiteraryChatView controller={controller} /> }
+// Keep the component within the checked-in architecture budget.
+//

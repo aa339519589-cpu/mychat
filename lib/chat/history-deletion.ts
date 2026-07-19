@@ -222,3 +222,23 @@ export async function deleteConversationWithGeneratedMedia(
     cleanupPending,
   }
 }
+
+export async function deleteAllConversationsWithGeneratedMedia(
+  userId: string,
+  dependencies: HistoryDeletionDependencies = {},
+): Promise<{ kind: 'deleted'; count: number } | { kind: 'active_generation' } | { kind: 'unavailable' }> {
+  const admin = adminClient(dependencies)
+  if (!admin) return { kind: 'unavailable' }
+  const { data, error } = await admin.from('conversations').select('id').eq('user_id', userId)
+  if (error || !data) return { kind: 'unavailable' }
+  const ids = data.map(row => row.id).filter((id): id is string => typeof id === 'string' && UUID.test(id))
+  if (!ids.length) return { kind: 'deleted', count: 0 }
+  const active = await hasActiveGeneration(admin, userId, { conversationIds: ids })
+  if (active !== 'clear') return active === 'active' ? { kind: 'active_generation' } : { kind: 'unavailable' }
+  for (const id of ids) {
+    const result = await deleteConversationWithGeneratedMedia(userId, id, dependencies)
+    if (result.kind === 'active_generation') return result
+    if (result.kind === 'unavailable') return result
+  }
+  return { kind: 'deleted', count: ids.length }
+}
