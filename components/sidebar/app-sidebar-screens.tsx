@@ -37,10 +37,10 @@ export function SidebarScreens(props: SidebarScreensProps) {
   )
 }
 
-function SettingsPanel({ stack, memory, model, onBack }: SidebarScreensProps) {
+function SettingsPanel({ stack, memory, model, conversation, onBack }: SidebarScreensProps) {
   return (
     <ScreenPanel open={stack.includes("settings")} style={sidebarScreenStyle(stack, "settings")} title="设置" onBack={onBack}>
-      <SettingsScreen memories={memory.items} memoryEnabled={memory.enabled} onMemoryEnabledChange={memory.setEnabled} onMemoryAdd={memory.add} onMemoryEdit={memory.edit} onMemoryDelete={memory.delete} modelEndpoints={model.endpoints} activeEndpointId={model.activeId} onEndpointSelect={model.select} onEndpointCreated={model.created} onEndpointUpdated={model.updated} onEndpointDeleted={model.deleted} />
+      <SettingsScreen memories={memory.items} memoryEnabled={memory.enabled} onMemoryEnabledChange={memory.setEnabled} onMemoryAdd={memory.add} onMemoryEdit={memory.edit} onMemoryDelete={memory.delete} onDeleteAllConversations={conversation.deleteAll} modelEndpoints={model.endpoints} activeEndpointId={model.activeId} onEndpointSelect={model.select} onEndpointCreated={model.created} onEndpointUpdated={model.updated} onEndpointDeleted={model.deleted} />
     </ScreenPanel>
   )
 }

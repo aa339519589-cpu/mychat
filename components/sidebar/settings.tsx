@@ -125,6 +125,7 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
 
 export function SettingsScreen({
   memories, memoryEnabled, onMemoryEnabledChange, onMemoryAdd, onMemoryEdit, onMemoryDelete,
+  onDeleteAllConversations,
   modelEndpoints, activeEndpointId, onEndpointSelect, onEndpointCreated, onEndpointUpdated, onEndpointDeleted,
 }: {
   memories: Memory[]
@@ -133,6 +134,7 @@ export function SettingsScreen({
   onMemoryAdd: (content: string) => void
   onMemoryEdit: (id: string, content: string) => void
   onMemoryDelete: (id: string) => void
+  onDeleteAllConversations: () => Promise<void>
   modelEndpoints: ModelEndpointSummary[]
   activeEndpointId: string | null
   onEndpointSelect: (id: string) => void
@@ -141,6 +143,16 @@ export function SettingsScreen({
   onEndpointDeleted: (id: string) => void
 }) {
   const [tab, setTab] = useState<'general' | 'models' | 'prompt' | 'quota'>('general')
+  const [deletingAll, setDeletingAll] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  async function deleteAll() {
+    if (deletingAll || !window.confirm('确定删除全部对话吗？此操作不可撤销。')) return
+    setDeletingAll(true); setDeleteError(null)
+    try { await onDeleteAllConversations() } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : '全部对话删除失败，请稍后重试。')
+    } finally { setDeletingAll(false) }
+  }
 
   const pill = (active: boolean) =>
     cn("rounded-full px-3.5 py-1.5 text-[12px] transition-colors", active ? "bg-sidebar-accent text-sidebar-accent-foreground ring-1 ring-sidebar-border shadow-sm" : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground")
@@ -164,6 +176,10 @@ export function SettingsScreen({
             onEdit={onMemoryEdit}
             onDelete={onMemoryDelete}
           />
+          <div className="mx-4 mt-5 border-t border-sidebar-border pt-4">
+            <button type="button" onClick={() => void deleteAll()} disabled={deletingAll} className="fluid-press flex min-h-11 w-full items-center justify-center rounded-xl border border-destructive/35 px-3 text-sm text-destructive hover:bg-destructive/10 disabled:opacity-50">{deletingAll ? '删除中…' : '删除全部对话'}</button>
+            {deleteError && <p role="alert" className="mt-2 text-[11px] leading-relaxed text-destructive">{deleteError}</p>}
+          </div>
         </div>
       ) : tab === 'models' ? (
         <div className="pt-2">

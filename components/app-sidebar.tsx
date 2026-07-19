@@ -14,7 +14,7 @@ export type AppSidebarProps = {
   conversation: {
     items: Conversation[]; activeId: string
     select: (id: string) => void; create: () => void; delete: (id: string) => void
-    toggleStar: (id: string) => void; togglePin: (id: string) => void
+    toggleStar: (id: string) => void; togglePin: (id: string) => void; deleteAll: () => Promise<void>
     rename: (id: string, title: string) => void; move: (id: string, projectId: string | null) => void
   }
   memory: {
