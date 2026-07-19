@@ -1,0 +1,36 @@
+name: Snapshot Render Deployment
+
+on:
+  pull_request:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Capture deployment state
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_SHA: 9e249ff66e10c9060645a370cdbe4b311b89df73
+          READY_URL: https://mychat-nm6x.onrender.com/api/ready
+        run: |
+          verify="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow verify.yml --commit "$TARGET_SHA" --event push --limit 1 --json databaseId,status,conclusion,headSha,url,createdAt,updatedAt | jq -c '.[0] // {}')"
+          release="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow release-image.yml --limit 40 --json databaseId,status,conclusion,headSha,url,createdAt,updatedAt | jq -c --arg sha "$TARGET_SHA" '[.[] | select(.headSha == $sha)][0] // {}')"
+          ready="$(curl --fail --silent --show-error --max-time 30 "$READY_URL" 2>/dev/null || true)"
+          jq --null-input --compact-output \
+            --arg target "$TARGET_SHA" \
+            --argjson verify "$verify" \
+            --argjson release "$release" \
+            --arg ready "$ready" \
+            '{target:$target,verify:$verify,release:$release,ready:$ready}' > deployment-snapshot.json
+          cat deployment-snapshot.json
+      - name: Upload deployment snapshot
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: render-deployment-snapshot
+          path: deployment-snapshot.json
+          if-no-files-found: error
+          retention-days: 1
