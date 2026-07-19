@@ -6,6 +6,7 @@ import {
   prependDeepResearchInstruction,
   resolveReasoningEffort,
 } from '@/lib/chat/request-context'
+import { appendUserSystemPrompt } from '@/lib/chat/user-system-prompt'
 import { log } from '@/lib/logger'
 import { runAgentLoop, type AgentLoopOpts, type ExecuteTool } from '@/lib/llm/agent-loop'
 import { buildModelContext } from '@/lib/llm/context'
@@ -135,7 +136,7 @@ function chatTools(
 function chatSystem(input: LoadedChatJob, latestBeijingDate: string | null, historyContext: string): string {
   const { selection, command } = input
   const { memories, memoryEnabled, project } = input.context
-  return buildSystem(
+  const backendSystem = buildSystem(
     !selection.customEndpoint && memoryEnabled && !project?.id ? memories : undefined,
     {
       searchMode: command.searchMode,
@@ -148,6 +149,7 @@ function chatSystem(input: LoadedChatJob, latestBeijingDate: string | null, hist
       endpointName: selection.customEndpoint ? selection.endpointDisplayName : null,
     },
   ) + historyContext
+  return appendUserSystemPrompt(backendSystem, input.context.customSystemPrompt)
 }
 
 async function recentModelMessages(
