@@ -1,0 +1,21 @@
+name: Report production Load failed fix
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/report-production-load-failed-fix.yml
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report current production readiness
+        run: |
+          payload="$(curl --silent --show-error --connect-timeout 10 --max-time 60 \
+            --header 'Accept: application/json' \
+            https://mychat-nm6x.onrender.com/api/ready || true)"
+          jq '{ready,revision,checks}' <<<"$payload" 2>/dev/null || printf '%s\n' "$payload"
