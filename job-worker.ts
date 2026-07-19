@@ -115,6 +115,7 @@ const heartbeat = new JobWorkerHeartbeat({
   startedAt: workerStartedAt,
 })
 const workers = workerSpecs.flatMap(spec => {
+  if (maintenanceMode === 'drain' && spec.queue === 'agent') return []
   if (spec.queue !== 'chat') return [createWorker(spec, spec.name, spec.concurrency)]
   const hotWorker = createWorker(spec, 'chat-hot', 1, true)
   const remainingConcurrency = spec.concurrency - 1
@@ -133,21 +134,21 @@ const billingReconciliation = new BillingReconciliationMonitor()
 async function main(): Promise<void> {
   assertProductionAgentSandbox()
   if (maintenanceMode === 'drain') {
-    log.warn('jobs', 'Maintenance drain is active; Job and outbox claims are disabled', {
+    log.warn('jobs', 'Maintenance drain is active; Agent and outbox claims are disabled while chat continues', {
       workerId: baseWorkerId,
     })
-    await Promise.all([
-      heartbeat.run(shutdown.signal),
-      billingReconciliation.run(shutdown.signal),
-    ])
-    return
   }
-  log.info('jobs', 'Worker pool started', { workerId: baseWorkerId, workers: workerSpecs })
+  log.info('jobs', 'Worker pool started', {
+    workerId: baseWorkerId,
+    workers: workerSpecs.filter(spec => maintenanceMode !== 'drain' || spec.queue !== 'agent'),
+  })
   await Promise.all([
     heartbeat.run(shutdown.signal),
     ...workers.map(worker => worker.run(shutdown.signal)),
-    outbox.run(shutdown.signal),
-    lifecycleSweeper.run(shutdown.signal),
+    ...(maintenanceMode === 'drain' ? [] : [
+      outbox.run(shutdown.signal),
+      lifecycleSweeper.run(shutdown.signal),
+    ]),
     billingReconciliation.run(shutdown.signal),
   ])
   log.info('jobs', 'Worker pool stopped', { workerId: baseWorkerId })
