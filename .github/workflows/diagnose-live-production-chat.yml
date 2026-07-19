@@ -83,8 +83,7 @@ jobs:
                 if (text.includes('连接超时，请重试')) return 'client_timeout'
                 if (text.includes('发送失败，请重试')) return 'send_failed'
                 if (text.includes('模型生成失败')) return 'model_failed'
-                const assistantBlocks = [...document.querySelectorAll('[data-message-role="assistant"]')]
-                if (assistantBlocks.some(node => (node.textContent ?? '').trim().length > 0)) return 'assistant_reply'
+                if (document.querySelector('button[title="复制"]')) return 'assistant_reply'
                 return null
               }, { timeout: 70_000 }).then(handle => handle.jsonValue()),
               page.waitForTimeout(70_000).then(() => 'deadline'),
@@ -106,4 +105,13 @@ jobs:
             await browser.close()
           }
           EOF
-          node "$RUNNER_TEMP/live-chat.mjs"
+          set -o pipefail
+          node "$RUNNER_TEMP/live-chat.mjs" 2>&1 | tee "$RUNNER_TEMP/live-chat-diagnostic.txt"
+      - name: Upload diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: live-chat-diagnostic
+          path: ${{ runner.temp }}/live-chat-diagnostic.txt
+          if-no-files-found: error
+          retention-days: 1
