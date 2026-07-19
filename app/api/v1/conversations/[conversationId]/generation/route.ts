@@ -6,6 +6,23 @@ import { log } from '@/lib/logger'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { isUuid } from '@/lib/validation'
 
+function degradedGenerationStatus(reason: string) {
+  log.warn('jobs', 'Conversation generation status degraded before read', { reason })
+  return Response.json({
+    job: null,
+    streamUrl: null,
+    degraded: true,
+  }, {
+    headers: {
+      'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+      Pragma: 'no-cache',
+      Expires: '0',
+      Vary: 'Cookie, Authorization',
+      'X-MyChat-Generation-Status': 'degraded',
+    },
+  })
+}
+
 async function readConversationGeneration(
   client: SupabaseServer,
   userId: string,
@@ -29,16 +46,14 @@ export async function GET(
   context: { params: Promise<{ conversationId: string }> },
 ) {
   const auth = await resolveAuth()
-  if (auth.authUnavailable) return apiErrorResponseV1(request, {
-    status: 503,
-    code: 'AUTH_DEPENDENCY_UNAVAILABLE',
-    message: '认证服务暂时不可用',
-    retryable: true,
-    headers: { 'Retry-After': '5' },
-  })
-  if (!auth.supabase || !auth.userId) return apiErrorResponseV1(request, {
-    status: 401, code: 'AUTH_REQUIRED', message: '请先登录', retryable: false,
-  })
+
+  // This endpoint only restores an already-running generation. A stale or
+  // device-specific browser session must never lock the composer. Returning an
+  // empty degraded snapshot is safe because enqueue remains authenticated and
+  // database-fenced by the write endpoint.
+  if (auth.authUnavailable) return degradedGenerationStatus('auth_unavailable')
+  if (!auth.supabase || !auth.userId) return degradedGenerationStatus('auth_missing')
+
   const { conversationId } = await context.params
   if (!isUuid(conversationId)) return apiErrorResponseV1(request, {
     status: 400, code: 'INVALID_REQUEST', message: 'conversationId 无效', retryable: false,
@@ -50,27 +65,23 @@ export async function GET(
     request.signal,
   )
   if (!result.ok) {
-    // This endpoint is a recovery/read hint, not the authority that admits a
-    // new turn. The enqueue RPC still fences duplicate active generations, so
-    // a status-read outage should fail open instead of blocking every message.
     log.warn('jobs', 'Conversation generation status read degraded', {
       conversationId,
       kind: result.kind,
     })
-    return Response.json({
-      job: null,
-      streamUrl: null,
-      degraded: true,
-    }, {
-      headers: {
-        'Cache-Control': 'no-store',
-        'X-MyChat-Generation-Status': 'degraded',
-      },
-    })
+    return degradedGenerationStatus(result.kind)
   }
   return Response.json({
     job: result.value,
     streamUrl: result.value ? `/api/v1/jobs/${result.value.id}/events?from_seq=0` : null,
     degraded: false,
-  }, { headers: { 'Cache-Control': 'no-store' } })
+  }, {
+    headers: {
+      'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+      Pragma: 'no-cache',
+      Expires: '0',
+      Vary: 'Cookie, Authorization',
+      'X-MyChat-Generation-Status': 'ok',
+    },
+  })
 }
