@@ -33,7 +33,7 @@ type EnqueueAttempt = {
 
 const ENQUEUE_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000, 8_000, 8_000] as const
 const RETRYABLE_ENQUEUE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504])
-const ENQUEUE_REQUEST_TIMEOUT_MS = 8_000
+const ENQUEUE_REQUEST_TIMEOUT_MS = 15_000
 const RECONCILE_REQUEST_TIMEOUT_MS = 3_000
 const ENQUEUE_TOTAL_TIMEOUT_MS = 30_000
 
@@ -110,11 +110,13 @@ async function enqueueAttempt(
   try {
     const { response, payload } = await fetchJsonWithTimeout(fetcher, path, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
       body: serializedBody,
-      // Browsers may suspend the page immediately after Send. Small text turns
-      // should still reach the durable enqueue transaction during that transition.
-      keepalive: serializedBody.length <= 60_000,
     }, signal, timeoutMs)
     if (!response.ok) return {
       accepted: null,
@@ -157,7 +159,7 @@ async function reconcileAcceptedJob(
     const { response, payload } = await fetchJsonWithTimeout(
       fetcher,
       `/api/v1/conversations/${encodeURIComponent(identity.conversationId)}/generation`,
-      { headers: { Accept: 'application/json' } },
+      { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' } },
       signal,
       timeoutMs,
     )
@@ -251,6 +253,8 @@ export async function* streamJobEvents(
     try {
       const response = await fetch(streamUrl(accepted.streamUrl, sequence), {
         signal,
+        credentials: 'same-origin',
+        cache: 'no-store',
         headers: sequence > 0 ? { 'Last-Event-ID': String(sequence) } : undefined,
       })
       if (!response.ok) {
