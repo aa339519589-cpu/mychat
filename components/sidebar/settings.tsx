@@ -9,6 +9,7 @@ import type { ModelEndpointSummary } from "@/lib/model-endpoints"
 import { cn } from "@/lib/utils"
 import { Switch } from "./primitives"
 import { QuotaScreen } from "./quota-screen"
+import { SystemPromptSettings } from "./system-prompt-settings"
 
 function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDelete }: {
   memories: Memory[]
@@ -139,16 +140,17 @@ export function SettingsScreen({
   onEndpointUpdated: (endpoint: ModelEndpointSummary) => void
   onEndpointDeleted: (id: string) => void
 }) {
-  const [tab, setTab] = useState<'general' | 'models' | 'quota'>('general')
+  const [tab, setTab] = useState<'general' | 'models' | 'prompt' | 'quota'>('general')
 
   const pill = (active: boolean) =>
-    cn("rounded-full px-3.5 py-1.5 text-[12px] transition-colors", active ? "bg-sidebar-accent text-foreground" : "text-muted-foreground hover:text-foreground")
+    cn("rounded-full px-3.5 py-1.5 text-[12px] transition-colors", active ? "bg-sidebar-accent text-sidebar-accent-foreground ring-1 ring-sidebar-border shadow-sm" : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground")
 
   return (
     <div>
-      <div className="mb-1 flex gap-1.5 px-4">
+      <div className="mb-1 flex gap-1.5 overflow-x-auto px-4 pb-1">
         <button onClick={() => setTab('general')} className={pill(tab === 'general')}>记忆</button>
         <button onClick={() => setTab('models')} className={pill(tab === 'models')}>模型</button>
+        <button onClick={() => setTab('prompt')} className={pill(tab === 'prompt')}>系统提示词</button>
         <button onClick={() => setTab('quota')} className={pill(tab === 'quota')}>使用额度</button>
       </div>
 
@@ -173,6 +175,10 @@ export function SettingsScreen({
             onUpdated={onEndpointUpdated}
             onDeleted={onEndpointDeleted}
           />
+        </div>
+      ) : tab === 'prompt' ? (
+        <div className="pt-2">
+          <SystemPromptSettings />
         </div>
       ) : (
         <div className="pt-2">

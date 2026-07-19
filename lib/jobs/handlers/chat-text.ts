@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@/lib/supabase/types'
 import { hasScannedPdfAttachment, ocrScannedPdfs } from '@/lib/chat/attachments'
 import { prepareChatHistory, RECENT_CONTEXT_MESSAGES } from '@/lib/chat/history'
 import {
+  appendUserSystemPrompt,
   latestBeijingDateFromMessages,
   prependDeepResearchInstruction,
   resolveReasoningEffort,
@@ -135,7 +136,7 @@ function chatTools(
 function chatSystem(input: LoadedChatJob, latestBeijingDate: string | null, historyContext: string): string {
   const { selection, command } = input
   const { memories, memoryEnabled, project } = input.context
-  return buildSystem(
+  const backendSystem = buildSystem(
     !selection.customEndpoint && memoryEnabled && !project?.id ? memories : undefined,
     {
       searchMode: command.searchMode,
@@ -148,6 +149,7 @@ function chatSystem(input: LoadedChatJob, latestBeijingDate: string | null, hist
       endpointName: selection.customEndpoint ? selection.endpointDisplayName : null,
     },
   ) + historyContext
+  return appendUserSystemPrompt(backendSystem, input.context.customSystemPrompt)
 }
 
 async function recentModelMessages(

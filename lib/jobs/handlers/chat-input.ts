@@ -6,6 +6,7 @@ import {
 } from '@/lib/chat/authoritative-context'
 import { resolveChatModelSelection, type ChatModelSelection } from '@/lib/chat/model-selection'
 import type { SearchMode } from '@/lib/chat/request-context'
+import { loadCustomSystemPrompt } from '@/lib/chat/user-system-prompt'
 import type { Attachment } from '@/lib/llm/types'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { loadJobPayload, type JobPayloadReference } from '../payload-storage'
@@ -28,7 +29,9 @@ export type LoadedChatJob = {
     outputKind: 'text' | 'image' | 'video'
     attachments?: Attachment[]
   }
-  context: Awaited<ReturnType<typeof loadAuthoritativeChatContext>>
+  context: Awaited<ReturnType<typeof loadAuthoritativeChatContext>> & {
+    customSystemPrompt: string
+  }
   selection: ChatModelSelection
 }
 
@@ -132,7 +135,7 @@ export async function loadChatJob(job: JobRecord): Promise<LoadedChatJob> {
   const admission = record(jobInput?.admission)
   const billingClass = jobInput?.billingClass
   try {
-    const [authoritativeContext, selection] = await Promise.all([
+    const [authoritativeContext, selection, customSystemPrompt] = await Promise.all([
       loadAuthoritativeChatContext({
         client,
         userId,
@@ -147,6 +150,7 @@ export async function loadChatJob(job: JobRecord): Promise<LoadedChatJob> {
         supabase: client as unknown as SupabaseServer,
         userId,
       }),
+      loadCustomSystemPrompt(client, userId),
     ])
     const selectedKind = selection.outputKind === 'chat' ? 'text' : selection.outputKind
     if (selectedKind !== parsedCommand.outputKind) {
@@ -166,7 +170,7 @@ export async function loadChatJob(job: JobRecord): Promise<LoadedChatJob> {
         ...parsedCommand,
         usingBalance: admission?.funding === 'balance',
       },
-      context: authoritativeContext,
+      context: { ...authoritativeContext, customSystemPrompt },
       selection,
     }
   } catch (error) {
