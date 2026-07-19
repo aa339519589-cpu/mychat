@@ -3,6 +3,7 @@ import { isRecord } from '@/lib/unknown-value'
 import type { HistoryRetrievalMode } from '@/lib/llm/active-retrieval'
 export { latestBeijingDateFromMessages } from '@/lib/search-mode'
 export type { SearchMode } from '@/lib/search-mode'
+export { appendUserSystemPrompt } from '@/lib/user-system-prompt'
 
 export const DEEP_RESEARCH_PREFIX = `请以最高努力完成当前问题：先理解真实目标，拆解约束，检查边界和反例，最后给出清晰结论。\n---\n`
 
