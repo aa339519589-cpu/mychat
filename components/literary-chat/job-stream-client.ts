@@ -118,7 +118,10 @@ async function fetchJsonWithTimeout(
       controller.abort(signal.reason)
       reject(signal.reason ?? new Error('请求已取消'))
     }
-    detachAbort = () => signal.removeEventListener('abort', abort)
+    detachAbort = () => {
+      signal.removeEventListener('abort', abort)
+      return undefined
+    }
     signal.addEventListener('abort', abort, { once: true })
     timeout = setTimeout(() => {
       const error = new RequestTimeoutError()
