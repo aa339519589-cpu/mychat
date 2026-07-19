@@ -14,6 +14,21 @@ export type JobStreamEnvelope = {
   payload: Record<string, unknown>
 }
 
+type EnqueueJobDependencies = {
+  fetcher: typeof fetch
+  sleep: (milliseconds: number, signal: AbortSignal) => Promise<void>
+}
+
+type EnqueueAttempt = {
+  accepted: AcceptedJob | null
+  error: Error | null
+  retryable: boolean
+  retryAfterMs: number
+}
+
+const ENQUEUE_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000, 8_000, 8_000] as const
+const RETRYABLE_ENQUEUE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504])
+
 function responseError(value: unknown, status: number): string {
   if (!isRecord(value)) return `请求失败（${status}）`
   if (typeof value.error === 'string') return value.error
@@ -21,28 +36,36 @@ function responseError(value: unknown, status: number): string {
   return `请求失败（${status}）`
 }
 
-export async function enqueueJob(
-  path: string,
-  body: unknown,
-  signal: AbortSignal,
-): Promise<AcceptedJob> {
-  const serializedBody = JSON.stringify(body)
-  const response = await fetch(path, {
-    method: 'POST',
-    signal,
-    headers: { 'Content-Type': 'application/json' },
-    body: serializedBody,
-    // Browsers may suspend the page immediately after Send. Small text turns
-    // should still reach the durable enqueue transaction during that transition.
-    keepalive: serializedBody.length <= 60_000,
-  })
-  const payload: unknown = await response.json().catch(() => null)
-  if (!response.ok) throw new Error(responseError(payload, response.status))
-  if (!isRecord(payload) || typeof payload.jobId !== 'string'
-    || typeof payload.streamUrl !== 'string' || typeof payload.status !== 'string') {
-    throw new Error('作业入队响应无效')
-  }
-  return { jobId: payload.jobId, streamUrl: payload.streamUrl, status: payload.status }
+function acceptedJob(value: unknown): AcceptedJob | null {
+  if (!isRecord(value) || typeof value.jobId !== 'string'
+    || typeof value.streamUrl !== 'string' || typeof value.status !== 'string') return null
+  return { jobId: value.jobId, streamUrl: value.streamUrl, status: value.status }
+}
+
+function reconciledJob(value: unknown, expectedJobId: string): AcceptedJob | null {
+  if (!isRecord(value) || !isRecord(value.job) || typeof value.streamUrl !== 'string') return null
+  const job = value.job
+  if (job.id !== expectedJobId || typeof job.status !== 'string') return null
+  return { jobId: expectedJobId, streamUrl: value.streamUrl, status: job.status }
+}
+
+function retryablePayload(value: unknown): boolean {
+  return isRecord(value) && isRecord(value.error) && value.error.retryable === true
+}
+
+function retryAfterMilliseconds(response: Response): number {
+  const seconds = Number(response.headers.get('Retry-After'))
+  return Number.isFinite(seconds) && seconds > 0 ? Math.min(15_000, seconds * 1_000) : 0
+}
+
+function durableIdentity(body: unknown): { conversationId: string; generationId: string } | null {
+  if (!isRecord(body) || typeof body.conversationId !== 'string'
+    || typeof body.generationId !== 'string') return null
+  return { conversationId: body.conversationId, generationId: body.generationId }
+}
+
+function networkError(): Error {
+  return new Error('网络连接暂时中断，请稍后重试')
 }
 
 function abortableWait(milliseconds: number, signal: AbortSignal): Promise<void> {
@@ -54,6 +77,107 @@ function abortableWait(milliseconds: number, signal: AbortSignal): Promise<void>
       reject(signal.reason)
     }, { once: true })
   })
+}
+
+const DEFAULT_ENQUEUE_DEPENDENCIES: EnqueueJobDependencies = {
+  fetcher: fetch,
+  sleep: abortableWait,
+}
+
+async function enqueueAttempt(
+  path: string,
+  serializedBody: string,
+  signal: AbortSignal,
+  fetcher: typeof fetch,
+): Promise<EnqueueAttempt> {
+  try {
+    const response = await fetcher(path, {
+      method: 'POST',
+      signal,
+      headers: { 'Content-Type': 'application/json' },
+      body: serializedBody,
+      // Browsers may suspend the page immediately after Send. Small text turns
+      // should still reach the durable enqueue transaction during that transition.
+      keepalive: serializedBody.length <= 60_000,
+    })
+    const payload: unknown = await response.json().catch(() => null)
+    if (!response.ok) return {
+      accepted: null,
+      error: new Error(responseError(payload, response.status)),
+      retryable: retryablePayload(payload) || RETRYABLE_ENQUEUE_STATUSES.has(response.status),
+      retryAfterMs: retryAfterMilliseconds(response),
+    }
+    const accepted = acceptedJob(payload)
+    return accepted ? {
+      accepted,
+      error: null,
+      retryable: false,
+      retryAfterMs: 0,
+    } : {
+      accepted: null,
+      error: new Error('作业入队响应无效'),
+      retryable: true,
+      retryAfterMs: 0,
+    }
+  } catch (error) {
+    if (signal.aborted) throw signal.reason ?? error
+    return {
+      accepted: null,
+      error: networkError(),
+      retryable: true,
+      retryAfterMs: 0,
+    }
+  }
+}
+
+async function reconcileAcceptedJob(
+  body: unknown,
+  signal: AbortSignal,
+  fetcher: typeof fetch,
+): Promise<AcceptedJob | null> {
+  const identity = durableIdentity(body)
+  if (!identity) return null
+  try {
+    const response = await fetcher(
+      `/api/v1/conversations/${encodeURIComponent(identity.conversationId)}/generation`,
+      { signal, headers: { Accept: 'application/json' } },
+    )
+    if (!response.ok) return null
+    const payload: unknown = await response.json().catch(() => null)
+    return reconciledJob(payload, identity.generationId)
+  } catch (error) {
+    if (signal.aborted) throw signal.reason ?? error
+    return null
+  }
+}
+
+export async function enqueueJob(
+  path: string,
+  body: unknown,
+  signal: AbortSignal,
+  dependencyOverrides: Partial<EnqueueJobDependencies> = {},
+): Promise<AcceptedJob> {
+  const dependencies = { ...DEFAULT_ENQUEUE_DEPENDENCIES, ...dependencyOverrides }
+  const serializedBody = JSON.stringify(body)
+  let lastError = networkError()
+
+  for (let attempt = 0; attempt <= ENQUEUE_RETRY_DELAYS_MS.length; attempt += 1) {
+    const result = await enqueueAttempt(path, serializedBody, signal, dependencies.fetcher)
+    if (result.accepted) return result.accepted
+    if (result.error) lastError = result.error
+    if (!result.retryable) throw lastError
+
+    const reconciled = await reconcileAcceptedJob(body, signal, dependencies.fetcher)
+    if (reconciled) return reconciled
+
+    const scheduledDelay = ENQUEUE_RETRY_DELAYS_MS[attempt]
+    if (scheduledDelay === undefined) break
+    await dependencies.sleep(Math.max(scheduledDelay, result.retryAfterMs), signal)
+  }
+
+  const reconciled = await reconcileAcceptedJob(body, signal, dependencies.fetcher)
+  if (reconciled) return reconciled
+  throw lastError
 }
 
 function streamUrl(path: string, sequence: number): string {
