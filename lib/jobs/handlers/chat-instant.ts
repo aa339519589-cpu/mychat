@@ -1,5 +1,5 @@
 import { isInstantReplyCandidate } from '@/lib/chat/instant-reply'
-import { appendUserSystemPrompt } from '@/lib/chat/user-system-prompt'
+import { appendUserSystemPrompt } from '@/lib/chat/request-context'
 import { buildModelContext } from '@/lib/llm/context'
 import type { AgentLoopOpts } from '@/lib/llm/agent-loop'
 import type { LoadedChatJob } from './chat-input'
