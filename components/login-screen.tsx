@@ -1,8 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Code2, Loader2 } from "lucide-react"
-import { CompanionAvatar } from "@/components/companion-avatar"
+import { Loader2 } from "lucide-react"
 
 export function LoginScreen() {
   const [mode, setMode] = useState<"signin" | "signup">("signin")
@@ -71,25 +70,16 @@ export function LoginScreen() {
   }
 
   return (
-    <main className="flex h-dvh w-full items-center justify-center overflow-y-auto bg-background px-5 py-8 sm:px-6">
-      <div className="w-full max-w-sm">
-        <header className="mb-8 flex flex-col items-center text-center">
-          <CompanionAvatar size={72} eager className="size-16" />
-          <h1 className="mt-4 font-heading text-3xl text-foreground">MyChat</h1>
-          <p className="mt-2 flex items-center gap-1.5 text-sm font-semibold uppercase text-primary">
-            <Code2 className="size-3" aria-hidden="true" />
-            Build &amp; ship from your phone
-          </p>
-          <p className="mt-3 max-w-xs text-sm leading-6 text-muted-foreground">
-            不用电脑。连接 GitHub，让 Code 在云端读仓库、改代码、跑测试并发布上线。
-          </p>
-          <p className="mt-2 text-sm italic text-muted-foreground">
-            {mode === "signin" ? "回来了，先登录吧" : "新朋友，先注册一个"}
-          </p>
+    <main className="flex min-h-dvh w-full items-center justify-center overflow-y-auto bg-background px-[clamp(1.25rem,5vw,2rem)] py-[clamp(1.5rem,6dvh,4rem)]">
+      <div className="w-full max-w-[clamp(20rem,88vw,24rem)]">
+        <header className="mb-[clamp(1.75rem,5dvh,3rem)] text-center">
+          <h1 className="font-heading text-[clamp(2.25rem,9vw,3.5rem)] leading-none tracking-[-0.03em] text-foreground">
+            My Chat
+          </h1>
         </header>
 
         <form
-          className="space-y-4"
+          className="space-y-[clamp(0.875rem,2dvh,1rem)]"
           onSubmit={event => { event.preventDefault(); void handleEmailAuth() }}
         >
           <div className="space-y-2">
@@ -142,7 +132,7 @@ export function LoginScreen() {
           </button>
         </form>
 
-        <div className="my-5 flex items-center gap-3">
+        <div className="my-[clamp(1rem,3dvh,1.25rem)] flex items-center gap-3">
           <div className="h-px flex-1 bg-border" />
           <span className="text-sm text-muted-foreground">或</span>
           <div className="h-px flex-1 bg-border" />
@@ -159,7 +149,7 @@ export function LoginScreen() {
           以游客身份继续
         </button>
 
-        <div className="mt-5 flex min-h-11 items-center justify-center gap-1 text-sm text-muted-foreground">
+        <div className="mt-[clamp(1rem,3dvh,1.25rem)] flex min-h-11 items-center justify-center gap-1 text-sm text-muted-foreground">
           {mode === "signin" ? "还没有账号？" : "已经有账号了？"}
           <button
             type="button"
