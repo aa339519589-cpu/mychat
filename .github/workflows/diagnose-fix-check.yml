@@ -1,0 +1,30 @@
+name: Diagnose fix check
+
+on:
+  pull_request:
+    paths:
+      - lib/chat/job-command.ts
+      - tests/chat-job-command.test.ts
+      - .github/workflows/diagnose-fix-check.yml
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts --legacy-peer-deps
+      - name: Typecheck with compact failure output
+        run: |
+          set +e
+          npm run check > /tmp/check.log 2>&1
+          status=$?
+          tail -120 /tmp/check.log
+          exit $status
