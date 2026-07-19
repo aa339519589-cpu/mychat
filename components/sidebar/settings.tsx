@@ -52,7 +52,9 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
           <span className="text-[11px] tracking-[0.15em] text-muted-foreground">已记住 {memories.length} 条</span>
         </div>
 
+        {/* 统一记忆卡片：空态/列表/添加表单都在一个有边界的容器内 */}
         <div className="rounded-2xl border border-sidebar-border bg-sidebar-accent/30 overflow-hidden">
+          {/* 滚动区域 */}
           <div className="max-h-[340px] overflow-y-auto">
             {memories.length === 0 && !adding && (
               <p className="px-4 py-8 text-center text-[12px] italic text-muted-foreground/60">还没有记忆</p>
@@ -107,6 +109,7 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
               </div>
             )}
           </div>
+          {/* 添加按钮固定在卡片底部 */}
           {!adding && (
             <button onClick={() => setAdding(true)} className="flex w-full items-center justify-center gap-1.5 border-t border-sidebar-border/40 py-2.5 text-[12px] text-muted-foreground transition-colors hover:bg-sidebar-accent/40 hover:text-foreground">
               <Plus className="size-4" />添加记忆
@@ -117,6 +120,8 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
     </div>
   )
 }
+
+// ── 项目列表（一级页面内容）：新建 + 项目卡片 ──
 
 export function SettingsScreen({
   memories, memoryEnabled, onMemoryEnabledChange, onMemoryAdd, onMemoryEdit, onMemoryDelete,
