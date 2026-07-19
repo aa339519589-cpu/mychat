@@ -81,3 +81,8 @@
     background: rgb(1 26 56 / 28%);
   }
 }
+
+/* Full-screen mobile sidebar panels reach z-index 100; action menus must stay interactive above them. */
+.fixed.inset-0[class~="z-[80]"] {
+  z-index: 120 !important;
+}
