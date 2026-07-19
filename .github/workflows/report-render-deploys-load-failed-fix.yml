@@ -1,0 +1,27 @@
+name: Report Render Load failed deployment
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/report-render-deploys-load-failed-fix.yml
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+    steps:
+      - name: Report recent Render deploys
+        run: |
+          test -n "$RENDER_API_KEY"
+          [[ "$RENDER_SERVICE_ID" =~ ^srv-[a-z0-9]+$ ]]
+          response="$(curl --fail-with-body --silent --show-error \
+            --connect-timeout 10 --max-time 60 \
+            --header "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys?limit=10")"
+          jq '[.[] | (.deploy // .) | {id,status,commit:(.commit.id // .commit // null),createdAt,updatedAt,finishedAt}]' <<<"$response"
