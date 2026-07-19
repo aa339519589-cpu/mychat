@@ -1,0 +1,36 @@
+name: Verify production revision 111
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify-production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Wait for exact healthy Render revision
+        env:
+          EXPECTED_REVISION: 546d7625793a
+          READY_URL: https://mychat-nm6x.onrender.com/api/ready
+        run: |
+          set -u
+          for attempt in {1..100}; do
+            code="$(curl --silent --show-error --max-time 15 --output ready.json --write-out '%{http_code}' "$READY_URL" || true)"
+            body="$(cat ready.json 2>/dev/null || true)"
+            echo "attempt=$attempt code=$code body=$body"
+            revision="$(jq -r '.revision // empty' ready.json 2>/dev/null || true)"
+            ready="$(jq -r '.ready // false' ready.json 2>/dev/null || true)"
+            status="$(jq -r '.status // empty' ready.json 2>/dev/null || true)"
+            if [ "$code" = "200" ] && [ "$ready" = "true" ] && [ "$status" = "ok" ] && [ "$revision" = "$EXPECTED_REVISION" ]; then
+              echo "Production is healthy on exact revision $revision"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Production did not reach exact healthy revision $EXPECTED_REVISION" >&2
+          exit 1
