@@ -1,0 +1,46 @@
+name: Inspect theme and prompt release
+
+on:
+  pull_request:
+
+permissions:
+  actions: read
+  contents: read
+  deployments: read
+  statuses: read
+
+jobs:
+  inspect-release:
+    name: Inspect exact production pipeline
+    if: github.head_ref == 'ops/verify-theme-prompt-production'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TARGET_SHA: 546d7625793a822e4c88c4ada4843cf771d11756
+    steps:
+      - name: Report exact workflow runs
+        shell: bash
+        run: |
+          for workflow in verify.yml security.yml release-image.yml activate-production.yml mirror-production-status.yml; do
+            echo "=== $workflow ==="
+            gh run list --repo "$GITHUB_REPOSITORY" --workflow "$workflow" \
+              --commit "$TARGET_SHA" --limit 5 \
+              --json databaseId,name,event,status,conclusion,headSha,createdAt,updatedAt,url \
+              | jq --compact-output .
+          done
+      - name: Report exact deployments and statuses
+        shell: bash
+        run: |
+          deployments="$(gh api "repos/$GITHUB_REPOSITORY/deployments?sha=$TARGET_SHA&per_page=100")"
+          jq --compact-output '[.[] | {id,sha,environment,task,created_at,updated_at,payload}]' <<<"$deployments"
+          for id in $(jq -r '.[].id' <<<"$deployments"); do
+            echo "=== deployment $id ==="
+            gh api "repos/$GITHUB_REPOSITORY/deployments/$id/statuses?per_page=100" \
+              | jq --compact-output '[.[] | {state,environment,description,created_at,updated_at,environment_url,log_url}]'
+          done
+      - name: Report commit statuses
+        shell: bash
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/commits/$TARGET_SHA/status" \
+            | jq --compact-output '{state,statuses:[.statuses[] | {context,state,description,target_url,created_at,updated_at}]}'
