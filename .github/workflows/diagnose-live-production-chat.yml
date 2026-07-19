@@ -23,6 +23,9 @@ jobs:
       - run: npm ci --ignore-scripts --legacy-peer-deps
       - run: npx playwright install --with-deps webkit
       - name: Exercise authenticated iPhone WebKit chat turn
+        env:
+          TEST_EMAIL: mychat-live-${{ github.run_id }}-${{ github.run_attempt }}@example.com
+          TEST_PASSWORD: Aa9-live-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           cat > "$GITHUB_WORKSPACE/.live-chat-diagnostic.mjs" <<'EOF'
           import { webkit } from '@playwright/test'
@@ -62,17 +65,18 @@ jobs:
             console.log(`READY ${ready.status()} ${(await ready.text()).slice(0, 2000)}`)
             await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 120_000 })
 
-            const guest = page.getByRole('button', { name: '以游客身份继续' })
-            await guest.waitFor({ state: 'visible', timeout: 60_000 }).catch(async error => {
-              console.log(`PRE_AUTH_URL ${page.url()}`)
-              console.log(`PRE_AUTH_BODY ${JSON.stringify((await page.locator('body').innerText()).slice(0, 4000))}`)
-              throw error
-            })
-            const authResponsePromise = page.waitForResponse(response => response.url().endsWith('/api/auth/anonymous'), { timeout: 60_000 })
-            await guest.click()
+            await page.getByRole('button', { name: '去注册' }).waitFor({ state: 'visible', timeout: 60_000 })
+            await page.getByRole('button', { name: '去注册' }).click()
+            await page.getByLabel('邮箱地址').fill(process.env.TEST_EMAIL)
+            await page.getByLabel('密码').fill(process.env.TEST_PASSWORD)
+            const authResponsePromise = page.waitForResponse(response => response.url().endsWith('/api/auth/email'), { timeout: 60_000 })
+            await page.getByRole('button', { name: '注册', exact: true }).click()
             const authResponse = await authResponsePromise
-            console.log(`AUTH_RESULT ${authResponse.status()} ${(await authResponse.text()).slice(0, 1600)}`)
-            if (!authResponse.ok()) throw new Error(`anonymous_auth_${authResponse.status()}`)
+            const authText = await authResponse.text()
+            console.log(`AUTH_RESULT ${authResponse.status()} ${authText.slice(0, 1600)}`)
+            if (!authResponse.ok()) throw new Error(`email_signup_${authResponse.status()}`)
+            const authPayload = JSON.parse(authText)
+            if (authPayload.requiresConfirmation === true) throw new Error('email_confirmation_required')
 
             const input = page.locator('textarea').first()
             await input.waitFor({ state: 'visible', timeout: 60_000 }).catch(async error => {
