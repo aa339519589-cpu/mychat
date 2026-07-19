@@ -7,6 +7,7 @@ import type { Project } from "@/lib/project-data"
 import { ArtifactPanel } from "@/components/artifact-panel"
 import type { ArtifactLibraryOverlayProps } from "@/components/artifact-library-overlay"
 import type { CodeConsoleProps } from "@/components/code-console"
+import type { HealthWorkspaceProps } from "@/components/health/health-workspace"
 import { ConversationMenu } from "@/components/conversation-menu"
 import { artifactTitle, type ArtifactParsed } from "@/lib/artifact"
 import { PANEL_SPRING, shouldDismissGesture, transitionFor } from "@/components/motion/fluid"
@@ -24,14 +25,16 @@ type ViewOverlaysProps = {
   artifactPanelWidth: number
   codeConsole: ComponentType<CodeConsoleProps>
   artifactLibrary: ComponentType<ArtifactLibraryOverlayProps>
+  healthWorkspace: ComponentType<HealthWorkspaceProps>
 }
 
 export function ViewOverlays(props: ViewOverlaysProps) {
-  const { layout, active, projects, actions, artifact, mobile, artifactPanelWidth, codeConsole, artifactLibrary } = props
+  const { layout, active, projects, actions, artifact, mobile, artifactPanelWidth, codeConsole, artifactLibrary, healthWorkspace: HealthWorkspace } = props
   return (
     <>
       <CodeConsoleOverlay open={layout.codeOpen} userId={props.sessionUserId} component={codeConsole} onExit={() => layout.setCodeOpen(false)} />
       <ArtifactLibraryOverlay open={layout.artifactLibraryOpen} component={artifactLibrary} onClose={() => layout.setArtifactLibraryOpen(false)} />
+      <HealthWorkspace open={layout.healthOpen} onClose={() => layout.setHealthOpen(false)} />
       <ArtifactOverlay
         artifact={artifact}
         mobile={mobile}

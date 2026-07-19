@@ -9,6 +9,7 @@ import { fetchReliableMessages } from "@/lib/data/reliable-messages"
 import { reconcileRemoteMessages } from "@/lib/data/remote-message-reconciliation"
 import { createClient } from "@/lib/supabase/client"
 import { LoginScreen } from "@/components/login-screen"
+import { LocalConfigurationScreen } from "@/components/local-configuration-screen"
 import type { AppSidebarProps } from "@/components/app-sidebar"
 import { useAuthUser } from "@/components/literary-chat/use-auth-user"
 import { useChatBootstrap } from "@/components/literary-chat/use-chat-bootstrap"
@@ -31,7 +32,7 @@ function createDraft(id: string, projectId?: string): Conversation {
 }
 
 export function LiteraryChat() {
-  const { user, setUser, authChecked } = useAuthUser()
+  const { user, setUser, authChecked, authError } = useAuthUser()
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeId, setActiveId] = useState("")
   const [hydratingConversationId, setHydratingConversationId] = useState<string | null>(null)
@@ -346,11 +347,12 @@ export function LiteraryChat() {
     session: {
       email: user?.email ?? "", logout: handleLogout,
       openCode: () => { layout.setDrawerOpen(false); layout.setCodeOpen(true) },
-      openArtifacts: () => { layout.setDrawerOpen(false); layout.setArtifactLibraryOpen(true) },
+      openArtifacts: () => { layout.setDrawerOpen(false); layout.setArtifactLibraryOpen(true) }, openHealth: () => { layout.setDrawerOpen(false); layout.setHealthOpen(true) },
     },
   }
 
   if (!authChecked) return <div className="h-dvh w-full bg-background paper-grain" />
+  if (authError) return <LocalConfigurationScreen message={authError} />
   if (!user) return <LoginScreen />
 
   const controller: LiteraryChatViewController = {

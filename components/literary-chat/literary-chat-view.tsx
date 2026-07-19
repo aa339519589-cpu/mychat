@@ -8,6 +8,7 @@ import type { Project } from "@/lib/project-data"
 import { AppSidebar } from "@/components/app-sidebar"
 import type { ArtifactLibraryOverlayProps } from "@/components/artifact-library-overlay"
 import type { CodeConsoleProps } from "@/components/code-console"
+import type { HealthWorkspaceProps } from "@/components/health/health-workspace"
 import { ChatInput } from "@/components/chat-input"
 import { MessageList } from "@/components/message-list"
 import { parseArtifact } from "@/lib/artifact"
@@ -24,6 +25,10 @@ const LazyCodeConsole = dynamic<CodeConsoleProps>(
 const LazyArtifactLibrary = dynamic<ArtifactLibraryOverlayProps>(
   () => import("@/components/artifact-library-overlay").then(module => module.ArtifactLibraryOverlay),
   { ssr: false },
+)
+const LazyHealthWorkspace = dynamic<HealthWorkspaceProps>(
+  () => import("@/components/health/health-workspace").then(module => module.HealthWorkspace),
+  { ssr: false, loading: () => <div className="fixed inset-0 z-[70] bg-background paper-grain" /> },
 )
 
 export type ConversationActions = {
@@ -88,7 +93,7 @@ export function LiteraryChatView({ controller }: { controller: LiteraryChatViewC
           messageProps={chat.messages}
           inputProps={chat.input}
         />
-        <ViewOverlays sessionUserId={session.user.id} layout={layout} active={active} projects={projects} actions={actions} mobile={mobile} artifact={artifact} artifactPanelWidth={artifactPanelWidth} codeConsole={LazyCodeConsole} artifactLibrary={LazyArtifactLibrary} />
+        <ViewOverlays sessionUserId={session.user.id} layout={layout} active={active} projects={projects} actions={actions} mobile={mobile} artifact={artifact} artifactPanelWidth={artifactPanelWidth} codeConsole={LazyCodeConsole} artifactLibrary={LazyArtifactLibrary} healthWorkspace={LazyHealthWorkspace} />
       </div>
     </>
   )

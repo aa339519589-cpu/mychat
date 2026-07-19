@@ -2,7 +2,7 @@
 
 import { AnimatePresence, motion, useReducedMotion } from "motion/react"
 import type { PointerEvent as ReactPointerEvent } from "react"
-import { ChevronRight, Code2, Folder, LogOut, PanelLeft, Plus, Settings, Shapes } from "lucide-react"
+import { ChevronRight, Code2, Folder, HeartPulse, LogOut, PanelLeft, Plus, Settings, Shapes } from "lucide-react"
 import type { Conversation } from "@/lib/chat-data"
 import { ConversationRow, NavRow } from "@/components/sidebar/primitives"
 import type { SidebarAnchor } from "./shared"
@@ -28,6 +28,7 @@ export type SidebarRootContentProps = DragProps & {
   onOpenProjects: () => void
   onOpenArtifacts: () => void
   onOpenCode: () => void
+  onOpenHealth: () => void
   onSelect: (id: string) => void
   onOpenMenu: (id: string, anchor: SidebarAnchor) => void
   onCommitRename: (id: string, title: string) => void
@@ -49,7 +50,7 @@ export function SidebarRootContent(props: SidebarRootContentProps) {
       className="relative flex h-full flex-col origin-left"
     >
       <SidebarHeader {...props} />
-      <SidebarNavigation onNew={props.onNew} onOpenProjects={props.onOpenProjects} onOpenArtifacts={props.onOpenArtifacts} onOpenCode={props.onOpenCode} />
+      <SidebarNavigation onNew={props.onNew} onOpenProjects={props.onOpenProjects} onOpenArtifacts={props.onOpenArtifacts} onOpenCode={props.onOpenCode} onOpenHealth={props.onOpenHealth} />
       <SidebarConversationList {...props} />
       <SidebarFooter email={props.email} userMenuOpen={props.userMenuOpen} onToggle={props.onToggleUserMenu} />
       <SidebarUserMenu open={props.userMenuOpen} reducedMotion={reducedMotion} onClose={props.onCloseUserMenu} onOpenSettings={props.onOpenSettings} onLogout={props.onLogout} />
@@ -72,13 +73,14 @@ function SidebarHeader({ onClose, onDragStart, onDragMove, onDragEnd, onDragCanc
   )
 }
 
-function SidebarNavigation({ onNew, onOpenProjects, onOpenArtifacts, onOpenCode }: { onNew: () => void; onOpenProjects: () => void; onOpenArtifacts: () => void; onOpenCode: () => void }) {
+function SidebarNavigation({ onNew, onOpenProjects, onOpenArtifacts, onOpenCode, onOpenHealth }: { onNew: () => void; onOpenProjects: () => void; onOpenArtifacts: () => void; onOpenCode: () => void; onOpenHealth: () => void }) {
   return (
     <nav className="mx-4 grid gap-0.5 pb-1">
       <NavRow icon={<Plus className="size-5" />} label="新对话" onClick={onNew} />
       <NavRow icon={<Folder className="size-5" />} label="项目" onClick={onOpenProjects} />
       <NavRow icon={<Shapes className="size-5" />} label="作品" onClick={onOpenArtifacts} />
       <NavRow icon={<Code2 className="size-5" />} label="代码" onClick={onOpenCode} />
+      <NavRow icon={<HeartPulse className="size-5" />} label="健康" onClick={onOpenHealth} />
     </nav>
   )
 }

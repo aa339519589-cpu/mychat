@@ -35,7 +35,7 @@ export type AppSidebarProps = {
     created: (endpoint: ModelEndpointSummary) => void; updated: (endpoint: ModelEndpointSummary) => void
     deleted: (id: string) => void
   }
-  session: { email: string; logout: () => void; openCode: () => void; openArtifacts: () => void }
+  session: { email: string; logout: () => void; openCode: () => void; openArtifacts: () => void; openHealth: () => void }
 }
 
 // 单一响应式实例：移动端根面板占 82vw，桌面端常驻于 20rem 容器。
@@ -104,7 +104,7 @@ export function AppSidebar({
           onNew={handleNew}
           onOpenProjects={() => push("projects")}
           onOpenArtifacts={() => { setStack([]); setUserMenuOpen(false); props.session.openArtifacts() }}
-          onOpenCode={() => { setStack([]); setUserMenuOpen(false); props.session.openCode() }}
+          onOpenCode={() => { setStack([]); setUserMenuOpen(false); props.session.openCode() }} onOpenHealth={() => { setStack([]); setUserMenuOpen(false); props.session.openHealth() }}
           onSelect={handleSelect}
           onOpenMenu={openConvMenu}
           onCommitRename={(id, title) => { props.conversation.rename(id, title); setRenamingId(null) }}

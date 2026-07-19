@@ -208,3 +208,40 @@ test('mobile drawer follows the pointer and model picker respects reduced motion
   })).toBeLessThan(-200)
   expect(pageErrors).toEqual([])
 })
+
+test('health workspace opens from the sidebar and keeps its core loop usable', async ({ page }) => {
+  const pageErrors: string[] = []
+  page.on('pageerror', error => pageErrors.push(error.message))
+  await mockAuthenticatedWorkspace(page)
+  await page.goto(`/c/${CONVERSATION_A}`, { waitUntil: 'domcontentloaded' })
+
+  if ((page.viewportSize()?.width ?? 0) < 768) {
+    await page.getByRole('button', { name: '打开对话列表' }).click()
+  }
+  await page.getByRole('button', { name: '健康', exact: true }).click()
+
+  const workspace = page.getByTestId('health-workspace')
+  await expect(workspace).toBeVisible()
+  await expect(workspace.getByRole('heading', { name: '今天恢复偏低，适合把强度降一级。' })).toBeVisible()
+  const healthGeometry = await workspace.evaluate(element => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+    touchTargets: [...element.querySelectorAll('button')].map(button => ({ width: button.getBoundingClientRect().width, height: button.getBoundingClientRect().height })),
+  }))
+  expect(healthGeometry.scrollWidth).toBe(healthGeometry.clientWidth)
+  expect(healthGeometry.touchTargets.filter(target => target.width > 0).every(target => target.width >= 40 && target.height >= 40)).toBe(true)
+  await workspace.getByLabel('询问健康管家').fill('今天适合训练吗？')
+  await workspace.getByRole('button', { name: '发送健康问题' }).click()
+  await expect(workspace.getByText('今天建议先做轻到中等强度', { exact: false })).toBeVisible()
+  await workspace.getByRole('button', { name: '趋势', exact: true }).click()
+  await expect(workspace.getByRole('heading', { name: '睡眠与恢复正在同向变化' })).toBeVisible()
+  await workspace.getByRole('button', { name: '计划', exact: true }).click()
+  await workspace.getByRole('button', { name: '完成走动 12 分钟' }).click()
+  await expect(workspace.getByRole('button', { name: '标记走动 12 分钟未完成' })).toBeVisible()
+  await workspace.getByRole('button', { name: '档案', exact: true }).click()
+  await workspace.getByRole('button', { name: '连接', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: '连接 Apple 健康' })).toBeVisible()
+  await page.getByRole('button', { name: '稍后连接' }).click()
+  await expect(page.getByRole('dialog', { name: '连接 Apple 健康' })).toBeHidden()
+  await expect(pageErrors).toEqual([])
+})
