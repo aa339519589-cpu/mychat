@@ -79,37 +79,10 @@ function readDeepTierAuthType(): EndpointAuthType {
 }
 
 /**
- * 「深度」档位：若配置了反代地址 + Key，则走 OpenAI 兼容反代（例如 Grok 4.5）；
- * 否则回退官方 DeepSeek V4 Pro。
- *
- * Env:
- *   DEEP_TIER_BASE_URL  反代根地址，如 https://your-proxy.example/v1
- *   DEEP_TIER_API_KEY   反代 Key
- *   DEEP_TIER_MODEL     反代要求的 model id（默认 grok-4）
- *   DEEP_TIER_AUTH_TYPE bearer | x-api-key | api-key | none（默认 bearer）
+ * 「深度」档位固定使用 DeepSeek V4 Pro，并启用思考模式。
+ * DEEP_TIER_* 环境变量只保留给图片与视频生成，不再影响聊天模型。
  */
 export function resolveDeepTierCapability(): ModelCapability {
-  const baseUrl = process.env.DEEP_TIER_BASE_URL?.trim()
-  const apiKey = process.env.DEEP_TIER_API_KEY?.trim()
-  const modelId = process.env.DEEP_TIER_MODEL?.trim() || 'grok-4'
-
-  if (baseUrl && apiKey) {
-    return {
-      id: modelId,
-      supportsVision: true,
-      supportsImageInput: true,
-      maxContext: 256_000,
-      supportsThinking: false,
-      provider: {
-        id: 'deep-tier',
-        adapter: 'generic-openai',
-        baseUrl,
-        apiKeyEnv: 'DEEP_TIER_API_KEY',
-        authType: readDeepTierAuthType(),
-      },
-    }
-  }
-
   return { ...MODEL_REGISTRY['deepseek-v4-pro'] }
 }
 
