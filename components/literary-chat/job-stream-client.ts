@@ -17,6 +17,10 @@ export type JobStreamEnvelope = {
 type EnqueueJobDependencies = {
   fetcher: typeof fetch
   sleep: (milliseconds: number, signal: AbortSignal) => Promise<void>
+  now: () => number
+  requestTimeoutMs: number
+  reconcileTimeoutMs: number
+  totalTimeoutMs: number
 }
 
 type EnqueueAttempt = {
@@ -26,8 +30,23 @@ type EnqueueAttempt = {
   retryAfterMs: number
 }
 
+type JsonFetchResult = {
+  response: Response
+  payload: unknown
+}
+
 const ENQUEUE_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000, 8_000, 8_000] as const
 const RETRYABLE_ENQUEUE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504])
+const ENQUEUE_REQUEST_TIMEOUT_MS = 8_000
+const RECONCILE_REQUEST_TIMEOUT_MS = 3_000
+const ENQUEUE_TOTAL_TIMEOUT_MS = 30_000
+
+class RequestTimeoutError extends Error {
+  constructor() {
+    super('request_timeout')
+    this.name = 'RequestTimeoutError'
+  }
+}
 
 function responseError(value: unknown, status: number): string {
   if (!isRecord(value)) return `请求失败（${status}）`
@@ -68,6 +87,10 @@ function networkError(): Error {
   return new Error('网络连接暂时中断，请稍后重试')
 }
 
+function timeoutError(): Error {
+  return new Error('连接超时，请重试')
+}
+
 function abortableWait(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) return reject(signal.reason)
@@ -79,9 +102,50 @@ function abortableWait(milliseconds: number, signal: AbortSignal): Promise<void>
   })
 }
 
+async function fetchJsonWithTimeout(
+  fetcher: typeof fetch,
+  input: RequestInfo | URL,
+  init: RequestInit,
+  signal: AbortSignal,
+  timeoutMs: number,
+): Promise<JsonFetchResult> {
+  if (signal.aborted) throw signal.reason ?? new Error('请求已取消')
+  const controller = new AbortController()
+  let timeout: ReturnType<typeof setTimeout> | null = null
+  let detachAbort = () => undefined
+  const cancellation = new Promise<never>((_resolve, reject) => {
+    const abort = () => {
+      controller.abort(signal.reason)
+      reject(signal.reason ?? new Error('请求已取消'))
+    }
+    detachAbort = () => signal.removeEventListener('abort', abort)
+    signal.addEventListener('abort', abort, { once: true })
+    timeout = setTimeout(() => {
+      const error = new RequestTimeoutError()
+      controller.abort(error)
+      reject(error)
+    }, Math.max(1, timeoutMs))
+  })
+  try {
+    const request = (async () => {
+      const response = await fetcher(input, { ...init, signal: controller.signal })
+      const payload: unknown = await response.json().catch(() => null)
+      return { response, payload }
+    })()
+    return await Promise.race([request, cancellation])
+  } finally {
+    if (timeout) clearTimeout(timeout)
+    detachAbort()
+  }
+}
+
 const DEFAULT_ENQUEUE_DEPENDENCIES: EnqueueJobDependencies = {
   fetcher: fetch,
   sleep: abortableWait,
+  now: Date.now,
+  requestTimeoutMs: ENQUEUE_REQUEST_TIMEOUT_MS,
+  reconcileTimeoutMs: RECONCILE_REQUEST_TIMEOUT_MS,
+  totalTimeoutMs: ENQUEUE_TOTAL_TIMEOUT_MS,
 }
 
 async function enqueueAttempt(
@@ -89,18 +153,17 @@ async function enqueueAttempt(
   serializedBody: string,
   signal: AbortSignal,
   fetcher: typeof fetch,
+  timeoutMs: number,
 ): Promise<EnqueueAttempt> {
   try {
-    const response = await fetcher(path, {
+    const { response, payload } = await fetchJsonWithTimeout(fetcher, path, {
       method: 'POST',
-      signal,
       headers: { 'Content-Type': 'application/json' },
       body: serializedBody,
       // Browsers may suspend the page immediately after Send. Small text turns
       // should still reach the durable enqueue transaction during that transition.
       keepalive: serializedBody.length <= 60_000,
-    })
-    const payload: unknown = await response.json().catch(() => null)
+    }, signal, timeoutMs)
     if (!response.ok) return {
       accepted: null,
       error: new Error(responseError(payload, response.status)),
@@ -123,7 +186,7 @@ async function enqueueAttempt(
     if (signal.aborted) throw signal.reason ?? error
     return {
       accepted: null,
-      error: networkError(),
+      error: error instanceof RequestTimeoutError ? timeoutError() : networkError(),
       retryable: true,
       retryAfterMs: 0,
     }
@@ -134,21 +197,28 @@ async function reconcileAcceptedJob(
   body: unknown,
   signal: AbortSignal,
   fetcher: typeof fetch,
+  timeoutMs: number,
 ): Promise<AcceptedJob | null> {
   const identity = durableIdentity(body)
   if (!identity) return null
   try {
-    const response = await fetcher(
+    const { response, payload } = await fetchJsonWithTimeout(
+      fetcher,
       `/api/v1/conversations/${encodeURIComponent(identity.conversationId)}/generation`,
-      { signal, headers: { Accept: 'application/json' } },
+      { headers: { Accept: 'application/json' } },
+      signal,
+      timeoutMs,
     )
     if (!response.ok) return null
-    const payload: unknown = await response.json().catch(() => null)
     return reconciledJob(payload, identity.generationId)
   } catch (error) {
     if (signal.aborted) throw signal.reason ?? error
     return null
   }
+}
+
+function remainingMilliseconds(deadline: number, now: () => number): number {
+  return Math.max(0, deadline - now())
 }
 
 export async function enqueueJob(
@@ -159,24 +229,53 @@ export async function enqueueJob(
 ): Promise<AcceptedJob> {
   const dependencies = { ...DEFAULT_ENQUEUE_DEPENDENCIES, ...dependencyOverrides }
   const serializedBody = JSON.stringify(body)
+  const deadline = dependencies.now() + Math.max(1, dependencies.totalTimeoutMs)
   let lastError = networkError()
 
   for (let attempt = 0; attempt <= ENQUEUE_RETRY_DELAYS_MS.length; attempt += 1) {
-    const result = await enqueueAttempt(path, serializedBody, signal, dependencies.fetcher)
+    const attemptBudget = remainingMilliseconds(deadline, dependencies.now)
+    if (attemptBudget <= 0) break
+    const result = await enqueueAttempt(
+      path,
+      serializedBody,
+      signal,
+      dependencies.fetcher,
+      Math.min(dependencies.requestTimeoutMs, attemptBudget),
+    )
     if (result.accepted) return result.accepted
     if (result.error) lastError = result.error
     if (!result.retryable) throw lastError
 
-    const reconciled = await reconcileAcceptedJob(body, signal, dependencies.fetcher)
-    if (reconciled) return reconciled
+    const reconcileBudget = remainingMilliseconds(deadline, dependencies.now)
+    if (reconcileBudget > 0) {
+      const reconciled = await reconcileAcceptedJob(
+        body,
+        signal,
+        dependencies.fetcher,
+        Math.min(dependencies.reconcileTimeoutMs, reconcileBudget),
+      )
+      if (reconciled) return reconciled
+    }
 
     const scheduledDelay = ENQUEUE_RETRY_DELAYS_MS[attempt]
-    if (scheduledDelay === undefined) break
-    await dependencies.sleep(Math.max(scheduledDelay, result.retryAfterMs), signal)
+    const waitBudget = remainingMilliseconds(deadline, dependencies.now)
+    if (scheduledDelay === undefined || waitBudget <= 0) break
+    await dependencies.sleep(
+      Math.min(Math.max(scheduledDelay, result.retryAfterMs), waitBudget),
+      signal,
+    )
   }
 
-  const reconciled = await reconcileAcceptedJob(body, signal, dependencies.fetcher)
-  if (reconciled) return reconciled
+  const finalBudget = remainingMilliseconds(deadline, dependencies.now)
+  if (finalBudget > 0) {
+    const reconciled = await reconcileAcceptedJob(
+      body,
+      signal,
+      dependencies.fetcher,
+      Math.min(dependencies.reconcileTimeoutMs, finalBudget),
+    )
+    if (reconciled) return reconciled
+  }
   throw lastError
 }
 
