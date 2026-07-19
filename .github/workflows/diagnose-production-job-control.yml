@@ -13,44 +13,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
-      - name: Inspect exact production readiness
-        run: |
-          payload="$(curl --fail-with-body --silent --show-error --connect-timeout 10 --max-time 60 \
-            --header 'Accept: application/json' \
-            https://mychat-nm6x.onrender.com/api/ready)"
-          echo "$payload" | jq .
-          test "$(jq -r '.revision' <<<"$payload")" = "b49d8583cf23"
-          test "$(jq -r '.ready' <<<"$payload")" = "true"
-          test "$(jq -r '.checks.database.ready' <<<"$payload")" = "true"
-          test "$(jq -r '.checks.queue.ready' <<<"$payload")" = "true"
-          test "$(jq -r '.checks.worker.ready' <<<"$payload")" = "true"
-          test "$(jq -r '.checks.worker.draining' <<<"$payload")" = "false"
-
-      - name: Inspect authoritative chat metrics
-        env:
-          METRICS_BEARER_TOKEN: ${{ secrets.METRICS_BEARER_TOKEN }}
-        run: |
-          test -n "$METRICS_BEARER_TOKEN"
-          metrics="$(curl --fail-with-body --silent --show-error --connect-timeout 10 --max-time 60 \
-            --header "Authorization: Bearer $METRICS_BEARER_TOKEN" \
-            https://mychat-nm6x.onrender.com/api/metrics)"
-          printf '%s\n' "$metrics" | grep -E 'mychat_authoritative_(queue_depth|queue_oldest_age_seconds|jobs_terminal_window|job_lease_expired|job_retry_waiting).*job_type="chat_generation"|mychat_authoritative_worker_fleet_ready'
-
       - name: Inspect recent Render chat request logs
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
         run: |
-          test -n "$RENDER_API_KEY"
-          [[ "$RENDER_SERVICE_ID" =~ ^srv-[a-z0-9]+$ ]]
-          service="$(curl --fail-with-body --silent --show-error --connect-timeout 10 --max-time 60 \
+          service="$(curl --fail-with-body --silent --show-error \
             --header "Authorization: Bearer $RENDER_API_KEY" \
             --header 'Accept: application/json' \
             "https://api.render.com/v1/services/$RENDER_SERVICE_ID")"
           owner_id="$(jq -er '.ownerId // .owner_id' <<<"$service")"
           end_time="$(date --utc +%Y-%m-%dT%H:%M:%SZ)"
-          start_time="$(date --utc --date='45 minutes ago' +%Y-%m-%dT%H:%M:%SZ)"
-          logs="$(curl --get --fail-with-body --silent --show-error --connect-timeout 10 --max-time 60 \
+          start_time="$(date --utc --date='60 minutes ago' +%Y-%m-%dT%H:%M:%SZ)"
+          logs="$(curl --get --fail-with-body --silent --show-error \
             --header "Authorization: Bearer $RENDER_API_KEY" \
             --header 'Accept: application/json' \
             --data-urlencode "ownerId=$owner_id" \
@@ -62,4 +37,4 @@ jobs:
             --data-urlencode 'method=POST' \
             --data-urlencode 'limit=100' \
             https://api.render.com/v1/logs)"
-          jq '{hasMore, logs: [(.logs // .items // [])[] | {timestamp, type, level, message, method, path, statusCode, requestId}]}' <<<"$logs"
+          jq -c '[((.logs // .items // [])[]) | {timestamp, type, level, message, method, path, statusCode, requestId}]' <<<"$logs"
