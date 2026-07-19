@@ -1,0 +1,27 @@
+name: Diagnose production job control
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/diagnose-production-job-control.yml
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Inspect exact production readiness
+        run: |
+          payload="$(curl --fail-with-body --silent --show-error --connect-timeout 10 --max-time 60 \
+            --header 'Accept: application/json' \
+            https://mychat-nm6x.onrender.com/api/ready)"
+          echo "$payload" | jq .
+          test "$(jq -r '.revision' <<<"$payload")" = "b49d8583cf23"
+          test "$(jq -r '.ready' <<<"$payload")" = "true"
+          test "$(jq -r '.checks.database.ready' <<<"$payload")" = "true"
+          test "$(jq -r '.checks.queue.ready' <<<"$payload")" = "true"
+          test "$(jq -r '.checks.worker.ready' <<<"$payload")" = "true"
+          test "$(jq -r '.checks.worker.draining' <<<"$payload")" = "false"
