@@ -39,10 +39,18 @@ jobs:
         run: npm ci --ignore-scripts --legacy-peer-deps >/dev/null
       - name: Install browser runtime
         run: npx playwright install --with-deps chromium >/dev/null
-      - name: Verify with compact failure output
-        run: |
-          set +e
-          npm run verify > verify.log 2>&1
-          code=$?
-          tail -n 180 verify.log
-          exit "$code"
+      - name: Capture verification output
+        id: verify
+        continue-on-error: true
+        run: npm run verify > verify.log 2>&1
+      - name: Upload verification output
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: verify-output
+          path: verify.log
+          if-no-files-found: error
+          retention-days: 1
+      - name: Preserve verification result
+        if: steps.verify.outcome == 'failure'
+        run: exit 1
