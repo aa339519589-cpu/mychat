@@ -1,5 +1,6 @@
-// 用户档案、记忆总开关与额度快照
+// 用户档案、记忆总开关、系统提示词与额度快照
 import { createClient } from "@/lib/supabase/client"
+import { MAX_CUSTOM_SYSTEM_PROMPT_CHARS, normalizeCustomSystemPrompt } from "@/lib/chat/user-system-prompt"
 
 export type Profile = { memoryEnabled: boolean }
 
@@ -18,6 +19,33 @@ export async function fetchProfile(): Promise<Profile> {
   return {
     memoryEnabled: data?.memory_enabled ?? true,
   }
+}
+
+export async function fetchCustomSystemPrompt(): Promise<string> {
+  const supabase = createClient()
+  const { data: auth } = await supabase.auth.getUser()
+  if (!auth.user) return ""
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("custom_system_prompt")
+    .eq("user_id", auth.user.id)
+    .maybeSingle()
+  if (error) throw error
+  return normalizeCustomSystemPrompt(data?.custom_system_prompt)
+}
+
+export async function saveCustomSystemPrompt(value: string): Promise<void> {
+  const supabase = createClient()
+  const { data: auth } = await supabase.auth.getUser()
+  if (!auth.user) throw new Error("请先登录后再保存")
+  if (value.trim().length > MAX_CUSTOM_SYSTEM_PROMPT_CHARS) {
+    throw new Error(`系统提示词最多 ${MAX_CUSTOM_SYSTEM_PROMPT_CHARS.toLocaleString()} 字`)
+  }
+  const { error } = await supabase.from("profiles").upsert({
+    user_id: auth.user.id,
+    custom_system_prompt: normalizeCustomSystemPrompt(value),
+  }, { onConflict: "user_id" })
+  if (error) throw error
 }
 
 // 读取当前用户的 Token 使用额度快照
