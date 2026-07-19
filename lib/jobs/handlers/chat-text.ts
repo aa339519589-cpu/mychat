@@ -2,11 +2,11 @@ import type { SupabaseClient } from '@/lib/supabase/types'
 import { hasScannedPdfAttachment, ocrScannedPdfs } from '@/lib/chat/attachments'
 import { prepareChatHistory, RECENT_CONTEXT_MESSAGES } from '@/lib/chat/history'
 import {
+  appendUserSystemPrompt,
   latestBeijingDateFromMessages,
   prependDeepResearchInstruction,
   resolveReasoningEffort,
 } from '@/lib/chat/request-context'
-import { appendUserSystemPrompt } from '@/lib/chat/user-system-prompt'
 import { log } from '@/lib/logger'
 import { runAgentLoop, type AgentLoopOpts, type ExecuteTool } from '@/lib/llm/agent-loop'
 import { buildModelContext } from '@/lib/llm/context'
