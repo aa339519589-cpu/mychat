@@ -23,11 +23,13 @@ jobs:
           payload="$(curl --silent --show-error --connect-timeout 10 --max-time 60 \
             --header 'Accept: application/json' \
             https://mychat-nm6x.onrender.com/api/ready || true)"
-          jq '{ready,revision,checks}' <<<"$payload" 2>/dev/null || printf '%s\n' "$payload"
+          compact="$(jq '{ready,revision,checks}' <<<"$payload" 2>/dev/null || printf '%s\n' "$payload")"
+          printf '%s\n' "$compact"
           {
-            echo '<!-- production-control-plane-report -->'
+            echo 'Current production readiness:'
+            echo
             echo '```json'
-            jq '{ready,revision,checks}' <<<"$payload" 2>/dev/null || printf '%s\n' "$payload"
+            printf '%s\n' "$compact"
             echo '```'
-          } > /tmp/comment.md
-          gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/comment.md
+          } > /tmp/body.md
+          gh pr edit "${{ github.event.pull_request.number }}" --body-file /tmp/body.md
