@@ -1,11 +1,13 @@
 "use client"
 
-import { useState } from "react"
-import { Brain, Check, Pencil, Plus, Trash2, X } from "lucide-react"
+import { useEffect, useState } from "react"
+import { Brain, Check, Pencil, Plus, Save, ShieldCheck, Trash2, X } from "lucide-react"
 
 import { ModelEndpointSettings } from "@/components/model-endpoint-settings"
+import { fetchCustomSystemPrompt, saveCustomSystemPrompt } from "@/lib/data"
 import type { Memory } from "@/lib/memory-data"
 import type { ModelEndpointSummary } from "@/lib/model-endpoints"
+import { MAX_CUSTOM_SYSTEM_PROMPT_CHARS } from "@/lib/user-system-prompt"
 import { cn } from "@/lib/utils"
 import { Switch } from "./primitives"
 import { QuotaScreen } from "./quota-screen"
@@ -51,9 +53,7 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
           <span className="text-[11px] tracking-[0.15em] text-muted-foreground">已记住 {memories.length} 条</span>
         </div>
 
-        {/* 统一记忆卡片：空态/列表/添加表单都在一个有边界的容器内 */}
         <div className="rounded-2xl border border-sidebar-border bg-sidebar-accent/30 overflow-hidden">
-          {/* 滚动区域 */}
           <div className="max-h-[340px] overflow-y-auto">
             {memories.length === 0 && !adding && (
               <p className="px-4 py-8 text-center text-[12px] italic text-muted-foreground/60">还没有记忆</p>
@@ -108,7 +108,6 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
               </div>
             )}
           </div>
-          {/* 添加按钮固定在卡片底部 */}
           {!adding && (
             <button onClick={() => setAdding(true)} className="flex w-full items-center justify-center gap-1.5 border-t border-sidebar-border/40 py-2.5 text-[12px] text-muted-foreground transition-colors hover:bg-sidebar-accent/40 hover:text-foreground">
               <Plus className="size-4" />添加记忆
@@ -120,7 +119,86 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
   )
 }
 
-// ── 项目列表（一级页面内容）：新建 + 项目卡片 ──
+function SystemPromptScreen() {
+  const [value, setValue] = useState("")
+  const [savedValue, setSavedValue] = useState("")
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState("")
+  const dirty = value !== savedValue
+
+  useEffect(() => {
+    let cancelled = false
+    void fetchCustomSystemPrompt()
+      .then(prompt => {
+        if (cancelled) return
+        setValue(prompt)
+        setSavedValue(prompt)
+      })
+      .catch(() => {
+        if (!cancelled) setMessage("系统提示词加载失败，请稍后重试")
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [])
+
+  async function save() {
+    if (!dirty || saving) return
+    setSaving(true)
+    setMessage("")
+    try {
+      await saveCustomSystemPrompt(value)
+      const normalized = value.trim()
+      setValue(normalized)
+      setSavedValue(normalized)
+      setMessage("已保存，新对话与后续回复会立即使用")
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "保存失败，请稍后重试")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="space-y-3 px-4">
+      <div className="flex items-start gap-3 rounded-2xl border border-sidebar-border bg-sidebar-accent/45 p-4">
+        <ShieldCheck className="mt-0.5 size-5 shrink-0 text-sidebar-primary" />
+        <div>
+          <p className="text-sm text-foreground">高优先级附加指令</p>
+          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+            内容会在 MyChat 后台系统提示词之后注入。除与后台规则、安全边界或工具约束冲突外，模型会严格执行。
+          </p>
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-sidebar-border bg-card">
+        <textarea
+          value={value}
+          onChange={event => { setValue(event.target.value); setMessage("") }}
+          disabled={loading}
+          maxLength={MAX_CUSTOM_SYSTEM_PROMPT_CHARS}
+          placeholder="例如：回答时先给结论，再解释依据；默认使用简体中文；写代码时给出可直接运行的完整版本。"
+          className="h-[48dvh] min-h-[360px] max-h-[560px] w-full resize-y bg-transparent px-4 py-4 text-[13px] leading-7 text-foreground outline-none placeholder:text-muted-foreground/45 disabled:opacity-60"
+        />
+        <div className="flex items-center justify-between border-t border-sidebar-border px-4 py-2 text-[11px] text-muted-foreground">
+          <span>{message || (dirty ? "有未保存的修改" : "已同步")}</span>
+          <span>{value.length.toLocaleString()} / {MAX_CUSTOM_SYSTEM_PROMPT_CHARS.toLocaleString()}</span>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        onClick={() => void save()}
+        disabled={loading || saving || !dirty}
+        className="fluid-press flex w-full items-center justify-center gap-1.5 rounded-2xl bg-sidebar-primary py-3 text-[13px] text-sidebar-primary-foreground transition-opacity disabled:opacity-45"
+      >
+        <Save className="size-4" />{saving ? "保存中…" : "保存系统提示词"}
+      </button>
+    </div>
+  )
+}
 
 export function SettingsScreen({
   memories, memoryEnabled, onMemoryEnabledChange, onMemoryAdd, onMemoryEdit, onMemoryDelete,
@@ -139,16 +217,17 @@ export function SettingsScreen({
   onEndpointUpdated: (endpoint: ModelEndpointSummary) => void
   onEndpointDeleted: (id: string) => void
 }) {
-  const [tab, setTab] = useState<'general' | 'models' | 'quota'>('general')
+  const [tab, setTab] = useState<'general' | 'models' | 'prompt' | 'quota'>('general')
 
   const pill = (active: boolean) =>
-    cn("rounded-full px-3.5 py-1.5 text-[12px] transition-colors", active ? "bg-sidebar-accent text-foreground" : "text-muted-foreground hover:text-foreground")
+    cn("rounded-full px-3.5 py-1.5 text-[12px] transition-colors", active ? "bg-sidebar-accent text-sidebar-accent-foreground ring-1 ring-sidebar-border shadow-sm" : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground")
 
   return (
     <div>
-      <div className="mb-1 flex gap-1.5 px-4">
+      <div className="mb-1 flex gap-1.5 overflow-x-auto px-4 pb-1">
         <button onClick={() => setTab('general')} className={pill(tab === 'general')}>记忆</button>
         <button onClick={() => setTab('models')} className={pill(tab === 'models')}>模型</button>
+        <button onClick={() => setTab('prompt')} className={pill(tab === 'prompt')}>系统提示词</button>
         <button onClick={() => setTab('quota')} className={pill(tab === 'quota')}>使用额度</button>
       </div>
 
@@ -173,6 +252,10 @@ export function SettingsScreen({
             onUpdated={onEndpointUpdated}
             onDeleted={onEndpointDeleted}
           />
+        </div>
+      ) : tab === 'prompt' ? (
+        <div className="pt-2">
+          <SystemPromptScreen />
         </div>
       ) : (
         <div className="pt-2">
