@@ -1,0 +1,39 @@
+name: Verify production Load failed fix
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/verify-production-load-failed-fix.yml
+
+permissions:
+  contents: read
+
+jobs:
+  verify-production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Wait for exact healthy production revision
+        env:
+          EXPECTED_REVISION: 59b687f1e591
+          READY_URL: https://mychat-nm6x.onrender.com/api/ready
+        run: |
+          for attempt in {1..180}; do
+            payload="$(curl --silent --show-error --connect-timeout 10 --max-time 60 \
+              --header 'Accept: application/json' "$READY_URL" || true)"
+            revision="$(jq -r '.revision // empty' <<<"$payload" 2>/dev/null || true)"
+            ready="$(jq -r '.ready // false' <<<"$payload" 2>/dev/null || true)"
+            database="$(jq -r '.checks.database.ready // false' <<<"$payload" 2>/dev/null || true)"
+            queue="$(jq -r '.checks.queue.ready // false' <<<"$payload" 2>/dev/null || true)"
+            worker="$(jq -r '.checks.worker.ready // false' <<<"$payload" 2>/dev/null || true)"
+            draining="$(jq -r '.checks.worker.draining // true' <<<"$payload" 2>/dev/null || true)"
+            if [[ "$ready" == "true" && "$revision" == "$EXPECTED_REVISION" \
+              && "$database" == "true" && "$queue" == "true" \
+              && "$worker" == "true" && "$draining" == "false" ]]; then
+              jq '{ready,revision,checks}' <<<"$payload"
+              exit 0
+            fi
+            echo "Attempt $attempt: ready=$ready revision=${revision:-missing} database=$database queue=$queue worker=$worker draining=$draining"
+            sleep 10
+          done
+          exit 1
