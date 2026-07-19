@@ -5,17 +5,31 @@ import type { SearchMode } from './request-context'
 import { SupabaseJobRepository } from '@/lib/jobs/supabase-repository'
 import { persistJobPayload, removeJobPayload } from '@/lib/jobs/payload-storage'
 import { createAdminClient } from '@/lib/supabase/admin'
-import type { JsonObject } from '@/lib/jobs/contracts'
+import {
+  isJobIdentifier,
+  isJobStatus,
+  type JobStatus,
+  type JsonObject,
+} from '@/lib/jobs/contracts'
 import { jobMetrics } from '@/lib/observability/job-metrics'
 import { log } from '@/lib/logger'
 import { isRecord } from '@/lib/unknown-value'
 import type { JobRepository } from '@/lib/jobs/repository'
-import type { JobRecord } from '@/lib/jobs/contracts'
-import { parseJobRecord } from '@/lib/jobs/supabase-repository'
 import { JobRuntimeError } from '@/lib/jobs/errors'
 import { loadRegenerationCleanupKeys } from './regeneration-cleanup'
 
 const CHAT_POLICY_VERSION = '2026-07-13'
+const AUTHORITATIVE_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000, 8_000] as const
+
+type ChatJobAdmission = {
+  id: string
+  status: JobStatus
+}
+
+type AuthoritativeRpcResponse = {
+  data: unknown
+  error: unknown
+}
 
 function sanitizedAttachments(attachments: Attachment[] | undefined): JsonObject[] | undefined {
   if (!attachments?.length) return undefined
@@ -45,6 +59,7 @@ type EnqueueChatJobDependencies = {
   createRepository: () => Pick<JobRepository, 'enqueue'>
   createAdminClient: typeof createAdminClient
   loadRegenerationCleanupKeys: typeof loadRegenerationCleanupKeys
+  sleep: (milliseconds: number) => Promise<void>
 }
 
 const DEFAULT_DEPENDENCIES: EnqueueChatJobDependencies = {
@@ -53,6 +68,7 @@ const DEFAULT_DEPENDENCIES: EnqueueChatJobDependencies = {
   createRepository: () => new SupabaseJobRepository(),
   createAdminClient,
   loadRegenerationCleanupKeys,
+  sleep: milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
 }
 
 function referencesPayload(value: unknown, objectKey: string): boolean | null {
@@ -71,12 +87,89 @@ function rpcObject(value: unknown): Record<string, unknown> | null {
 
 function authoritativeRpcError(error: unknown, fallback: string): JobRuntimeError {
   const code = isRecord(error) && typeof error.code === 'string' ? error.code : ''
+  const details: JsonObject = {}
+  if (code) details.databaseCode = code
+  if (isRecord(error) && (typeof error.status === 'number' || typeof error.status === 'string')) {
+    details.status = error.status
+  }
   return new JobRuntimeError(
     ['22023', '23503', '23505', '40001', '54000', '55000'].includes(code)
       ? 'JOB_CONFLICT'
       : 'JOB_DEPENDENCY_UNAVAILABLE',
     fallback,
+    { details },
   )
+}
+
+function thrownAuthoritativeRpcError(error: unknown, fallback: string): JobRuntimeError {
+  if (error instanceof JobRuntimeError) return error
+  return new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', fallback, {
+    cause: error,
+    details: {
+      name: error instanceof Error ? error.name : 'unknown',
+    },
+  })
+}
+
+function parseJobAdmission(value: unknown, rpcName: string, expectedJobId: string): ChatJobAdmission {
+  const source = rpcObject(value)
+  if (!source || source.id !== expectedJobId || !isJobIdentifier(source.id)
+    || !isJobStatus(source.status)) {
+    throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'Job admission response was malformed', {
+      details: { rpc: rpcName, expectedJobId },
+    })
+  }
+  return { id: source.id, status: source.status }
+}
+
+async function callAuthoritativeRpc(input: {
+  rpcName: string
+  fallback: string
+  jobId: string
+  invoke: () => PromiseLike<AuthoritativeRpcResponse>
+  sleep: EnqueueChatJobDependencies['sleep']
+}): Promise<{ created: boolean; job: ChatJobAdmission }> {
+  let lastError: JobRuntimeError | null = null
+  for (let attempt = 0; attempt <= AUTHORITATIVE_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      const response = await input.invoke()
+      const result = rpcObject(response.data)
+      if (response.error || (result?.enqueued !== true && result?.replayed !== true)) {
+        throw authoritativeRpcError(response.error, input.fallback)
+      }
+      return {
+        created: result.enqueued === true && result.replayed !== true,
+        job: parseJobAdmission(result.job, input.rpcName, input.jobId),
+      }
+    } catch (error) {
+      const normalized = thrownAuthoritativeRpcError(error, input.fallback)
+      if (!normalized.retryable) throw normalized
+      lastError = normalized
+    }
+
+    const delayMs = AUTHORITATIVE_RETRY_DELAYS_MS[attempt]
+    if (delayMs === undefined) break
+    log.warn('jobs', 'Chat control-plane admission is warming; retrying', {
+      rpc: input.rpcName,
+      jobId: input.jobId,
+      attempt: attempt + 1,
+      delayMs,
+      databaseCode: typeof lastError?.details.databaseCode === 'string'
+        ? lastError.details.databaseCode
+        : undefined,
+    })
+    await input.sleep(delayMs)
+  }
+
+  log.error('jobs', 'Chat control-plane admission remained unavailable after retries', {
+    rpc: input.rpcName,
+    jobId: input.jobId,
+    code: lastError?.code ?? 'JOB_DEPENDENCY_UNAVAILABLE',
+    databaseCode: typeof lastError?.details.databaseCode === 'string'
+      ? lastError.details.databaseCode
+      : undefined,
+  })
+  throw lastError ?? new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', input.fallback)
 }
 
 async function enqueueAuthoritativeTurn(input: {
@@ -86,7 +179,8 @@ async function enqueueAuthoritativeTurn(input: {
   budget: JsonObject
   queue: string
   maxAttempts: number
-}): Promise<{ created: boolean; job: JobRecord }> {
+  sleep: EnqueueChatJobDependencies['sleep']
+}): Promise<{ created: boolean; job: ChatJobAdmission }> {
   const { body } = input.command
   const userMessage = body.messages.find(message => message.id === body.userMessageId && message.role === 'user')
   if (!userMessage || typeof userMessage.content !== 'string' || body.turn?.schemaVersion !== 1) {
@@ -99,34 +193,32 @@ async function enqueueAuthoritativeTurn(input: {
         generated_media: [],
       }
     : null
-  const { data, error } = await input.client.rpc('enqueue_chat_turn_v1', {
-    input_user_id: input.command.userId,
-    input_conversation_id: body.conversationId,
-    input_create_conversation: body.turn.createConversation,
-    input_project_id: body.turn.projectId,
-    input_conversation_title: body.turn.title,
-    input_user_message_id: body.userMessageId,
-    input_user_content: userMessage.content,
-    input_user_images: images,
-    input_user_created_at: userMessage.ts ?? input.command.requestedAt ?? new Date().toISOString(),
-    input_assistant_message_id: body.assistantMessageId,
-    input_job_id: body.generationId,
-    input_auth_class: input.command.isAnonymous ? 'anonymous' : 'registered',
-    input_idempotency_key: `chat:${body.generationId}`,
-    input_input_hash: String(input.payload.payloadHash),
-    input_payload: input.payload,
-    input_budget: input.budget,
-    input_queue: input.queue,
-    input_max_attempts: input.maxAttempts,
+  return callAuthoritativeRpc({
+    rpcName: 'enqueue_chat_turn_v1',
+    fallback: 'Authoritative chat turn enqueue failed',
+    jobId: body.generationId,
+    sleep: input.sleep,
+    invoke: () => input.client.rpc('enqueue_chat_turn_v1', {
+      input_user_id: input.command.userId,
+      input_conversation_id: body.conversationId,
+      input_create_conversation: body.turn.createConversation,
+      input_project_id: body.turn.projectId,
+      input_conversation_title: body.turn.title,
+      input_user_message_id: body.userMessageId,
+      input_user_content: userMessage.content,
+      input_user_images: images,
+      input_user_created_at: userMessage.ts ?? input.command.requestedAt ?? new Date().toISOString(),
+      input_assistant_message_id: body.assistantMessageId,
+      input_job_id: body.generationId,
+      input_auth_class: input.command.isAnonymous ? 'anonymous' : 'registered',
+      input_idempotency_key: `chat:${body.generationId}`,
+      input_input_hash: String(input.payload.payloadHash),
+      input_payload: input.payload,
+      input_budget: input.budget,
+      input_queue: input.queue,
+      input_max_attempts: input.maxAttempts,
+    }) as unknown as PromiseLike<AuthoritativeRpcResponse>,
   })
-  const result = rpcObject(data)
-  if (error || (result?.enqueued !== true && result?.replayed !== true)) {
-    throw authoritativeRpcError(error, 'Authoritative chat turn enqueue failed')
-  }
-  return {
-    created: result.enqueued === true && result.replayed !== true,
-    job: parseJobRecord(result.job, 'enqueue_chat_turn_v1'),
-  }
 }
 
 async function enqueueAuthoritativeRegeneration(input: {
@@ -138,7 +230,8 @@ async function enqueueAuthoritativeRegeneration(input: {
   queue: string
   maxAttempts: number
   loadCleanupKeys: typeof loadRegenerationCleanupKeys
-}): Promise<{ created: boolean; job: JobRecord }> {
+  sleep: EnqueueChatJobDependencies['sleep']
+}): Promise<{ created: boolean; job: ChatJobAdmission }> {
   const { body } = input.command
   const userMessage = body.messages.find(message => message.id === body.userMessageId && message.role === 'user')
   if (!userMessage || typeof userMessage.content !== 'string') {
@@ -151,39 +244,37 @@ async function enqueueAuthoritativeRegeneration(input: {
     sourceUserMessageId: body.userMessageId,
     authority: input.authority,
   })
-  const { data, error } = await input.client.rpc('enqueue_chat_regeneration_v1', {
-    input_user_id: input.command.userId,
-    input_conversation_id: body.conversationId,
-    input_operation: input.authority.operation,
-    input_source_user_message_id: body.userMessageId,
-    input_target_assistant_message_id: input.authority.targetAssistantMessageId ?? null,
-    input_expected_tail_message_id: input.authority.expectedTailMessageId,
-    input_user_content: userMessage.content,
-    input_assistant_message_id: body.assistantMessageId,
-    input_job_id: body.generationId,
-    input_auth_class: input.command.isAnonymous ? 'anonymous' : 'registered',
-    input_idempotency_key: `chat:${body.generationId}`,
-    input_input_hash: String(input.payload.payloadHash),
-    input_payload: input.payload,
-    input_budget: input.budget,
-    input_queue: input.queue,
-    input_max_attempts: input.maxAttempts,
-    input_cleanup_object_keys: cleanupObjectKeys,
+  return callAuthoritativeRpc({
+    rpcName: 'enqueue_chat_regeneration_v1',
+    fallback: 'Authoritative regeneration enqueue failed',
+    jobId: body.generationId,
+    sleep: input.sleep,
+    invoke: () => input.client.rpc('enqueue_chat_regeneration_v1', {
+      input_user_id: input.command.userId,
+      input_conversation_id: body.conversationId,
+      input_operation: input.authority.operation,
+      input_source_user_message_id: body.userMessageId,
+      input_target_assistant_message_id: input.authority.targetAssistantMessageId ?? null,
+      input_expected_tail_message_id: input.authority.expectedTailMessageId,
+      input_user_content: userMessage.content,
+      input_assistant_message_id: body.assistantMessageId,
+      input_job_id: body.generationId,
+      input_auth_class: input.command.isAnonymous ? 'anonymous' : 'registered',
+      input_idempotency_key: `chat:${body.generationId}`,
+      input_input_hash: String(input.payload.payloadHash),
+      input_payload: input.payload,
+      input_budget: input.budget,
+      input_queue: input.queue,
+      input_max_attempts: input.maxAttempts,
+      input_cleanup_object_keys: cleanupObjectKeys,
+    }) as unknown as PromiseLike<AuthoritativeRpcResponse>,
   })
-  const result = rpcObject(data)
-  if (error || (result?.enqueued !== true && result?.replayed !== true)) {
-    throw authoritativeRpcError(error, 'Authoritative regeneration enqueue failed')
-  }
-  return {
-    created: result.enqueued === true && result.replayed !== true,
-    job: parseJobRecord(result.job, 'enqueue_chat_regeneration_v1'),
-  }
 }
 
 export async function enqueueChatJob(
   input: EnqueueChatJobInput,
   dependencyOverrides: Partial<EnqueueChatJobDependencies> = {},
-) {
+): Promise<{ created: boolean; job: ChatJobAdmission }> {
   const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides }
   const { body } = input
   const outputKind = input.outputKind === 'chat' ? 'text' : input.outputKind
@@ -227,7 +318,7 @@ export async function enqueueChatJob(
     requestId: input.requestId,
   }
   const repository = dependencies.createRepository()
-  let result: { created: boolean; job: JobRecord }
+  let result: { created: boolean; job: ChatJobAdmission }
   try {
     const admin = body.turn ? dependencies.createAdminClient() : null
     result = body.turn?.schemaVersion === 1
@@ -238,6 +329,7 @@ export async function enqueueChatJob(
           budget,
           queue,
           maxAttempts,
+          sleep: dependencies.sleep,
         })
       : body.turn?.schemaVersion === 2
         ? await enqueueAuthoritativeRegeneration({
@@ -249,27 +341,28 @@ export async function enqueueChatJob(
             queue,
             maxAttempts,
             loadCleanupKeys: dependencies.loadRegenerationCleanupKeys,
+            sleep: dependencies.sleep,
           })
-      : await repository.enqueue({
-    jobId: body.generationId,
-    type: 'chat.generation',
-    queue,
-    principal: {
-      id: input.userId,
-      authClass: input.isAnonymous ? 'anonymous' : 'registered',
-    },
-    subject: {
-      conversationId: body.conversationId,
-      userMessageId: body.userMessageId,
-      assistantMessageId: body.assistantMessageId,
-    },
-    idempotencyKey: `chat:${body.generationId}`,
-    inputHash: reference.sha256,
-    input: storedPayload,
-    budget,
-    priority: 0,
-    maxAttempts,
-    })
+        : await repository.enqueue({
+            jobId: body.generationId,
+            type: 'chat.generation',
+            queue,
+            principal: {
+              id: input.userId,
+              authClass: input.isAnonymous ? 'anonymous' : 'registered',
+            },
+            subject: {
+              conversationId: body.conversationId,
+              userMessageId: body.userMessageId,
+              assistantMessageId: body.assistantMessageId,
+            },
+            idempotencyKey: `chat:${body.generationId}`,
+            inputHash: reference.sha256,
+            input: storedPayload,
+            budget,
+            priority: 0,
+            maxAttempts,
+          })
   } catch (error) {
     // Preserve a payload if the database accepted the job but the response was
     // lost. Only compensate a proven non-enqueue; otherwise cleanup owns it.
