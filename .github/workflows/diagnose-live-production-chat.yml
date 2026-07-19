@@ -24,8 +24,8 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - name: Exercise guest login and a real chat turn
         run: |
-          cat > "$RUNNER_TEMP/live-chat.mjs" <<'EOF'
-          import { chromium } from 'playwright'
+          cat > "$GITHUB_WORKSPACE/.live-chat-diagnostic.mjs" <<'EOF'
+          import { chromium } from '@playwright/test'
 
           const baseUrl = process.env.LIVE_URL
           const browser = await chromium.launch({ headless: true })
@@ -106,7 +106,7 @@ jobs:
           }
           EOF
           set -o pipefail
-          node "$RUNNER_TEMP/live-chat.mjs" 2>&1 | tee "$RUNNER_TEMP/live-chat-diagnostic.txt"
+          node "$GITHUB_WORKSPACE/.live-chat-diagnostic.mjs" 2>&1 | tee "$RUNNER_TEMP/live-chat-diagnostic.txt"
       - name: Upload diagnostic evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
