@@ -1,0 +1,30 @@
+name: Diagnose selected text feature
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: github.head_ref == 'feat/ask-selected-text'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Architecture
+        run: npm run architecture
+      - name: Complexity
+        run: npm run complexity
+      - name: Typecheck
+        run: npm run check
+      - name: Lint
+        run: npm run lint
+      - name: Tests
+        run: npm test
