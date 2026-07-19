@@ -1,8 +1,6 @@
 import type { SupabaseClient } from '@/lib/supabase/types'
 import { normalizeCustomSystemPrompt } from '@/lib/user-system-prompt'
 
-export { appendUserSystemPrompt } from '@/lib/user-system-prompt'
-
 export async function loadCustomSystemPrompt(
   client: SupabaseClient,
   userId: string,
