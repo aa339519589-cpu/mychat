@@ -1,0 +1,77 @@
+name: Diagnose All
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --legacy-peer-deps
+      - name: Install browser runtime
+        run: npx playwright install --with-deps chromium
+      - name: Architecture
+        continue-on-error: true
+        run: npm run architecture
+      - name: Complexity
+        continue-on-error: true
+        run: npm run complexity
+      - name: Migration contract
+        continue-on-error: true
+        run: npm run migration:contract
+      - name: Typecheck
+        continue-on-error: true
+        run: npm run check
+      - name: Backend lint
+        continue-on-error: true
+        run: npm run lint:backend
+      - name: Full lint
+        continue-on-error: true
+        run: npm run lint
+      - name: Unit tests and coverage
+        continue-on-error: true
+        run: npm run test:coverage
+      - name: Production audit
+        continue-on-error: true
+        run: npm run audit:prod
+      - name: Database types
+        continue-on-error: true
+        run: npm run database:types:check
+      - name: Migration tests
+        continue-on-error: true
+        run: npm run test:migrations
+      - name: Build
+        continue-on-error: true
+        run: npm run build
+      - name: E2E
+        continue-on-error: true
+        run: npm run test:e2e
