@@ -20,7 +20,7 @@ import {
   type HistoryMessage,
   type RunChatStreamResult,
 } from "./chat-stream-service"
-import { resumeConversationGeneration } from "./generation-api"
+import { hasActiveConversationGeneration, resumeConversationGeneration } from "./generation-api"
 import { generateConversationTitle } from "./generation-job-actions"
 import { cancelActiveGeneration } from "./generation-cancellation"
 import { toHistoryMessage } from "./message-history"
@@ -73,6 +73,15 @@ function createOptimisticTurn(
     baseHistory: active.messages,
     optimisticMessages: [...active.messages, userMessage, assistantMessage],
   }
+}
+
+async function resumeKnownGeneration(
+  conversationId: string,
+  resume: (conversationId: string) => Promise<boolean>,
+): Promise<boolean> {
+  if (!await hasActiveConversationGeneration(conversationId)) return false
+  void resume(conversationId)
+  return true
 }
 
 export function useChatGeneration(options: UseChatGenerationOptions) {
@@ -288,9 +297,8 @@ export function useChatGeneration(options: UseChatGenerationOptions) {
       setConversations,
       markGeneration,
       getProjectContext,
-      registerAbort: (conversationId: string, controller: AbortController) => {
-        abortByConversationRef.current.set(conversationId, controller)
-      },
+      registerAbort: (conversationId: string, controller: AbortController) => abortByConversationRef.current.set(conversationId, controller),
+      resumeExistingGeneration: (conversationId: string) => resumeKnownGeneration(conversationId, resumeGenerationIfNeeded),
       startStream,
     }
   }

@@ -31,7 +31,17 @@ type RegenerationContext = {
   markGeneration: (conversationId: string, patch: ClientGenerationPatch) => void
   getProjectContext: (projectId?: string | null) => Promise<ProjectContext | undefined>
   registerAbort: (conversationId: string, controller: AbortController) => void
+  /** Reattach an already accepted job before trying to replace its branch. */
+  resumeExistingGeneration?: (conversationId: string) => Promise<boolean>
   startStream: StartStream
+}
+
+function canRegenerate(
+  user: User | null,
+  active: Conversation | undefined,
+  isActiveGenerating: boolean,
+): active is Conversation {
+  return user !== null && active !== undefined && !isActiveGenerating
 }
 
 export async function regenerateLastAssistant(context: RegenerationContext) {
@@ -47,7 +57,8 @@ export async function regenerateLastAssistant(context: RegenerationContext) {
     registerAbort,
     startStream,
   } = context
-  if (!user || !active || isActiveGenerating) return
+  if (!canRegenerate(user, active, isActiveGenerating)) return
+  if (await context.resumeExistingGeneration?.(activeId)) return
   setOpenArtifactId(null)
   const messages = active.messages
   const lastAssistantIndex = [...messages]
@@ -123,9 +134,9 @@ export async function regenerateFromUser(context: RegenerationContext & {
     userMessageId,
     editedContent,
   } = context
-  if (!user || !active || isActiveGenerating) return
-  setOpenArtifactId(null)
-  const conversationId = active.id
+  if (!canRegenerate(user, active, isActiveGenerating)) return
+  setOpenArtifactId(null); const conversationId = active.id
+  if (await context.resumeExistingGeneration?.(conversationId)) return
   const messages = active.messages
   const userIndex = messages.findIndex(message => message.id === userMessageId && message.role === "user")
   if (userIndex === -1) return

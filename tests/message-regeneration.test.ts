@@ -88,6 +88,36 @@ test('rejected assistant regeneration leaves the durable reply visible with a wa
   assert.match(conversations.get()[0]?.messages.at(-1)?.outputWarning ?? '', /原回复已保留/)
 })
 
+test('regeneration reattaches an already accepted generation instead of submitting a conflicting replacement', async () => {
+  const active = conversation()
+  const conversations = state([active])
+  let resumeCalls = 0
+  let starts = 0
+  await regenerateLastAssistant({
+    user,
+    active,
+    activeId: active.id,
+    isActiveGenerating: false,
+    setOpenArtifactId: openArtifactSetter(),
+    setConversations: conversations.set,
+    markGeneration: () => undefined,
+    getProjectContext: async () => undefined,
+    registerAbort: () => undefined,
+    resumeExistingGeneration: async conversationId => {
+      resumeCalls += 1
+      assert.equal(conversationId, active.id)
+      return true
+    },
+    startStream: async () => {
+      starts += 1
+      return { content: '', status: 'error', accepted: false }
+    },
+  })
+  assert.equal(resumeCalls, 1)
+  assert.equal(starts, 0)
+  assert.equal(conversations.get()[0]?.messages.at(-1)?.content, 'second reply')
+})
+
 test('edited regeneration replaces the local branch only after database acceptance', async () => {
   const active = conversation()
   const conversations = state([active])

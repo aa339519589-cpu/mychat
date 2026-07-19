@@ -3,8 +3,6 @@ import { spawn } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import test from 'node:test'
-import { POST as chat } from '../app/api/chat/route'
-import { POST as title } from '../app/api/chat/title/route'
 import { POST as codeChat } from '../app/api/code/chat/route'
 import { POST as codeApply } from '../app/api/code/apply/route'
 import { expensiveWriteMaintenanceResponse } from '../lib/api/maintenance'
@@ -38,7 +36,7 @@ test('maintenance admission helper is a no-op when the bridge is off', { concurr
   assert.equal(expensiveWriteMaintenanceResponse(new Request('http://localhost/api/chat')), null)
 })
 
-test('maintenance rejects every Job admission before parsing an invalid body', { concurrency: false }, async t => {
+test('maintenance permits chat admission but rejects Agent and publication commands before parsing an invalid body', { concurrency: false }, async t => {
   const previous = process.env.MYCHAT_MAINTENANCE_MODE
   process.env.MYCHAT_MAINTENANCE_MODE = 'drain'
   t.after(() => {
@@ -47,8 +45,6 @@ test('maintenance rejects every Job admission before parsing an invalid body', {
   })
 
   for (const [path, route] of [
-    ['/api/chat', chat],
-    ['/api/chat/title', title],
     ['/api/code/chat', codeChat],
     ['/api/code/apply', codeApply],
   ] as const) {
@@ -62,16 +58,20 @@ test('maintenance rejects every Job admission before parsing an invalid body', {
     assert.equal(response.headers.get('Retry-After'), '30', path)
     assert.equal(body.error?.code, 'MAINTENANCE_MODE', path)
   }
+
+  assert.equal(expensiveWriteMaintenanceResponse(new Request('http://localhost/api/chat')), null)
+  assert.equal(expensiveWriteMaintenanceResponse(new Request('http://localhost/api/chat/title')), null)
 })
 
-test('maintenance drain branches before any Worker or outbox run loop', () => {
+test('maintenance drain keeps chat workers running but excludes Agent and outbox loops', () => {
   const source = readFileSync(new URL('../job-worker.ts', import.meta.url), 'utf8')
-  const drain = source.indexOf("if (maintenanceMode === 'drain')")
+  const drain = source.indexOf("maintenanceMode === 'drain' && spec.queue === 'agent'")
   const workers = source.indexOf('workers.map(worker => worker.run')
   const outbox = source.indexOf('outbox.run(shutdown.signal)')
   assert.ok(drain > 0)
   assert.ok(drain < workers)
-  assert.ok(drain < outbox)
+  assert.match(source, /maintenanceMode === 'drain' \? \[\] : \[/)
+  assert.ok(workers < outbox)
 })
 
 test('maintenance drain Worker stays alive and exits cleanly on SIGTERM', { timeout: 10_000 }, async t => {

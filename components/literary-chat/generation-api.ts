@@ -46,6 +46,29 @@ function terminal(status: string): status is 'completed' | 'failed' | 'cancelled
   return status === 'completed' || status === 'failed' || status === 'cancelled'
 }
 
+/**
+ * A browser can lose an enqueue acknowledgement after the database accepted
+ * it. Before replacing a branch, check for that still-running authoritative
+ * job so a second regeneration does not conflict with the first one.
+ */
+export async function hasActiveConversationGeneration(
+  conversationId: string,
+  fetcher: typeof fetch = fetch,
+): Promise<boolean> {
+  try {
+    const response = await fetcher(`/api/v1/conversations/${encodeURIComponent(conversationId)}/generation`)
+    if (!response.ok) return false
+    const body: unknown = await response.json()
+    if (!isRecord(body)) return false
+    const job = parseJob(body.job)
+    return job !== null && !terminal(job.status)
+  } catch {
+    // This is only a duplicate-submission guard. Do not turn a read outage
+    // into an admission outage; the fenced enqueue RPC remains authoritative.
+    return false
+  }
+}
+
 function snapshotFromJob(job: ResumeJob, conversationId: string): ConversationGenerationSnapshot | null {
   const result = isRecord(job.result) ? job.result : {}
   const source = { ...job.progress, ...result }
