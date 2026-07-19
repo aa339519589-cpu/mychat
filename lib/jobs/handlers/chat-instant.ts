@@ -1,4 +1,5 @@
 import { isInstantReplyCandidate } from '@/lib/chat/instant-reply'
+import { appendUserSystemPrompt } from '@/lib/chat/user-system-prompt'
 import { buildModelContext } from '@/lib/llm/context'
 import type { AgentLoopOpts } from '@/lib/llm/agent-loop'
 import type { LoadedChatJob } from './chat-input'
@@ -21,7 +22,10 @@ export function instantModelMessages(input: LoadedChatJob): AgentLoopOpts['messa
     inProject: Boolean(context.project?.id),
   })) return null
   return [
-    { role: 'system', content: instantSystem(input) },
+    {
+      role: 'system',
+      content: appendUserSystemPrompt(instantSystem(input), context.customSystemPrompt),
+    },
     ...buildModelContext(context.messages.slice(-1), selection.capability),
   ]
 }
