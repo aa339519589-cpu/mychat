@@ -1,0 +1,57 @@
+name: Cleanup live chat test user
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/cleanup-live-chat-test-user.yml
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+      TARGET_EMAIL: mychat-live-29695281440-1@example.com
+    steps:
+      - name: Delete isolated test user
+        run: |
+          set -euo pipefail
+          render_value() {
+            local key="$1"
+            local body code
+            body="$(mktemp)"
+            code="$(curl --silent --show-error --connect-timeout 10 --max-time 30 \
+              --output "$body" --write-out '%{http_code}' \
+              --header "Authorization: Bearer $RENDER_API_KEY" \
+              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/$key")"
+            if [[ "$code" -lt 200 || "$code" -ge 300 ]]; then rm -f "$body"; return 1; fi
+            jq -er '.value // .envVar.value // .envVarValue.value' "$body"
+            rm -f "$body"
+          }
+          supabase_url="$(render_value SUPABASE_URL || render_value NEXT_PUBLIC_SUPABASE_URL)"
+          service_key="$(render_value SUPABASE_SERVICE_ROLE_KEY)"
+          echo "::add-mask::$supabase_url"
+          echo "::add-mask::$service_key"
+          echo "::add-mask::$TARGET_EMAIL"
+          users_file="$(mktemp)"
+          curl --fail-with-body --silent --show-error \
+            --header "apikey: $service_key" \
+            --header "Authorization: Bearer $service_key" \
+            "$supabase_url/auth/v1/admin/users?per_page=1000" > "$users_file"
+          user_id="$(jq -r --arg email "$TARGET_EMAIL" '.users[] | select(.email == $email) | .id' "$users_file" | head -n 1)"
+          rm -f "$users_file"
+          if [[ -z "$user_id" ]]; then
+            echo 'Test user already absent.'
+            exit 0
+          fi
+          echo "::add-mask::$user_id"
+          curl --fail-with-body --silent --show-error \
+            --request DELETE \
+            --header "apikey: $service_key" \
+            --header "Authorization: Bearer $service_key" \
+            "$supabase_url/auth/v1/admin/users/$user_id" >/dev/null
+          echo 'Test user deleted.'
