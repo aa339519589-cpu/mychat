@@ -41,22 +41,23 @@ function quotedSelection(text: string): string {
 }
 
 function useSelectedTextQuote(state: ComposerState) {
+  const { setValue, textAreaRef, resize } = state
   useEffect(() => {
     function handle(event: Event) {
       const detail = (event as CustomEvent<{ text?: unknown }>).detail
       if (typeof detail?.text !== "string" || !detail.text.trim()) return
       const quote = quotedSelection(detail.text.trim())
-      state.setValue(current => current.trim()
+      setValue(current => current.trim()
         ? `${current.trimEnd()}\n\n${quote}\n\n`
         : `${quote}\n\n`)
       window.requestAnimationFrame(() => {
-        state.textAreaRef.current?.focus({ preventScroll: false })
-        state.resize()
+        textAreaRef.current?.focus({ preventScroll: false })
+        resize()
       })
     }
     window.addEventListener(ASK_SELECTED_TEXT_EVENT, handle)
     return () => window.removeEventListener(ASK_SELECTED_TEXT_EVENT, handle)
-  }, [state.resize, state.setValue, state.textAreaRef])
+  }, [resize, setValue, textAreaRef])
 }
 
 export function ChatInput({
