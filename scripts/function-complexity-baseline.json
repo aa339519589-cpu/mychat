@@ -55,7 +55,7 @@
     "lib/agent/workspace-inspection.ts": { "complexity": [17, 16] },
     "lib/api/generated-media.ts": { "complexity": [24] },
     "lib/chat/history-deletion.ts": { "complexity": [18] },
-    "lib/chat/job-command.ts": { "complexity": [30, 19], "maxLines": [118] },
+    "lib/chat/job-command.ts": { "complexity": [30, 18], "maxLines": [120] },
     "lib/chat/model-selection.ts": { "complexity": [30], "maxLines": [92] },
     "lib/chat/request-context.ts": { "complexity": [17] },
     "lib/code-agent/apply-request.ts": { "complexity": [25, 25] },
