@@ -15,6 +15,8 @@ import { useComposerState } from "@/components/chat-input-state"
 
 const ASK_SELECTED_TEXT_EVENT = "mychat:ask-selected-text"
 
+type ComposerState = ReturnType<typeof useComposerState>
+
 export type ChatInputProps = {
   onSend: (text: string, images?: string[], files?: AttachedFile[]) => void
   activeTier: string
@@ -35,10 +37,26 @@ export type ChatInputProps = {
 }
 
 function quotedSelection(text: string): string {
-  return text
-    .split(/\r?\n/)
-    .map(line => `> ${line}`)
-    .join("\n")
+  return text.split(/\r?\n/).map(line => `> ${line}`).join("\n")
+}
+
+function useSelectedTextQuote(state: ComposerState) {
+  useEffect(() => {
+    function handle(event: Event) {
+      const detail = (event as CustomEvent<{ text?: unknown }>).detail
+      if (typeof detail?.text !== "string" || !detail.text.trim()) return
+      const quote = quotedSelection(detail.text.trim())
+      state.setValue(current => current.trim()
+        ? `${current.trimEnd()}\n\n${quote}\n\n`
+        : `${quote}\n\n`)
+      window.requestAnimationFrame(() => {
+        state.textAreaRef.current?.focus({ preventScroll: false })
+        state.resize()
+      })
+    }
+    window.addEventListener(ASK_SELECTED_TEXT_EVENT, handle)
+    return () => window.removeEventListener(ASK_SELECTED_TEXT_EVENT, handle)
+  }, [state.resize, state.setValue, state.textAreaRef])
 }
 
 export function ChatInput({
@@ -50,6 +68,7 @@ export function ChatInput({
   const [tierMenuOpen, setTierMenuOpen] = useState(false)
   const reducedMotion = useReducedMotion()
   const state = useComposerState({ activeTier, onTierChange, onSend, disabled, isLoading, setPlusOpen })
+  useSelectedTextQuote(state)
 
   useEffect(() => {
     if (!plusOpen) return
@@ -57,26 +76,6 @@ export function ChatInput({
     document.addEventListener("mousedown", handleClickOutside)
     return () => document.removeEventListener("mousedown", handleClickOutside)
   }, [plusOpen, state.plusMenuRef])
-
-  useEffect(() => {
-    function handleAskSelectedText(event: Event) {
-      const detail = (event as CustomEvent<{ text?: unknown }>).detail
-      if (typeof detail?.text !== "string") return
-      const text = detail.text.trim()
-      if (!text) return
-      const quote = quotedSelection(text)
-      state.setValue(current => current.trim()
-        ? `${current.trimEnd()}\n\n${quote}\n\n`
-        : `${quote}\n\n`)
-      window.requestAnimationFrame(() => {
-        state.textAreaRef.current?.focus({ preventScroll: false })
-        state.resize()
-      })
-    }
-
-    window.addEventListener(ASK_SELECTED_TEXT_EVENT, handleAskSelectedText)
-    return () => window.removeEventListener(ASK_SELECTED_TEXT_EVENT, handleAskSelectedText)
-  }, [state.resize, state.setValue, state.textAreaRef])
 
   const activeTierName = (TIER_MAP as Record<string, { label: string } | undefined>)[activeTier]?.label ?? "模型"
   const availableEndpoints = customEndpoints.filter(endpoint => !endpoint.needsReconnect)
