@@ -1,0 +1,43 @@
+name: Diagnose quality
+
+on:
+  pull_request:
+    paths:
+      - lib/chat/job-command.ts
+      - tests/chat-job-command.test.ts
+      - .github/workflows/diagnose-quality.yml
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts --legacy-peer-deps
+      - name: Run quality and report failure
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          npm run quality > /tmp/quality.log 2>&1
+          status=$?
+          tail -160 /tmp/quality.log
+          if (( status != 0 )); then
+            {
+              echo '<!-- diagnose-quality -->'
+              echo '```text'
+              tail -120 /tmp/quality.log
+              echo '```'
+            } > /tmp/comment.md
+            gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/comment.md
+          fi
+          exit $status
