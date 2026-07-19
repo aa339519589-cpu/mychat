@@ -1,6 +1,6 @@
 // 用户档案、记忆总开关、系统提示词与额度快照
 import { createClient } from "@/lib/supabase/client"
-import { MAX_CUSTOM_SYSTEM_PROMPT_CHARS, normalizeCustomSystemPrompt } from "@/lib/user-system-prompt"
+import { MAX_CUSTOM_SYSTEM_PROMPT_CHARS } from "@/lib/user-system-prompt"
 
 export type Profile = { memoryEnabled: boolean }
 
@@ -10,6 +10,22 @@ export type QuotaSnapshot = {
   tokens7d: number
   window7dStart: string
   balance: number
+}
+
+type SystemPromptResponse = { prompt?: unknown; error?: unknown }
+
+async function systemPromptResponse(response: Response, fallback: string): Promise<string> {
+  let body: SystemPromptResponse = {}
+  try {
+    body = await response.json() as SystemPromptResponse
+  } catch {
+    // Keep the user-facing fallback when an intermediary returns non-JSON.
+  }
+  if (!response.ok) {
+    throw new Error(typeof body.error === "string" && body.error ? body.error : fallback)
+  }
+  if (typeof body.prompt !== "string") throw new Error(fallback)
+  return body.prompt
 }
 
 // 读取当前登录用户的档案；没有行就返回默认值
@@ -22,30 +38,25 @@ export async function fetchProfile(): Promise<Profile> {
 }
 
 export async function fetchCustomSystemPrompt(): Promise<string> {
-  const supabase = createClient()
-  const { data: auth } = await supabase.auth.getUser()
-  if (!auth.user) return ""
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("custom_system_prompt")
-    .eq("user_id", auth.user.id)
-    .maybeSingle()
-  if (error) throw error
-  return normalizeCustomSystemPrompt(data?.custom_system_prompt)
+  const response = await fetch("/api/profile/system-prompt", {
+    method: "GET",
+    cache: "no-store",
+    credentials: "same-origin",
+  })
+  return systemPromptResponse(response, "系统提示词加载失败，请稍后重试")
 }
 
-export async function saveCustomSystemPrompt(value: string): Promise<void> {
-  const supabase = createClient()
-  const { data: auth } = await supabase.auth.getUser()
-  if (!auth.user) throw new Error("请先登录后再保存")
+export async function saveCustomSystemPrompt(value: string): Promise<string> {
   if (value.trim().length > MAX_CUSTOM_SYSTEM_PROMPT_CHARS) {
     throw new Error(`系统提示词最多 ${MAX_CUSTOM_SYSTEM_PROMPT_CHARS.toLocaleString()} 字`)
   }
-  const { error } = await supabase.from("profiles").upsert({
-    user_id: auth.user.id,
-    custom_system_prompt: normalizeCustomSystemPrompt(value),
-  }, { onConflict: "user_id" })
-  if (error) throw error
+  const response = await fetch("/api/profile/system-prompt", {
+    method: "PUT",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt: value }),
+  })
+  return systemPromptResponse(response, "系统提示词保存失败，请稍后重试")
 }
 
 // 读取当前用户的 Token 使用额度快照
