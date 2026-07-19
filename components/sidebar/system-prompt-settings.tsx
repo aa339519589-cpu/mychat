@@ -36,10 +36,9 @@ function usePromptEditor() {
     setSaving(true)
     setMessage("")
     try {
-      await saveCustomSystemPrompt(value)
-      const normalized = value.trim()
-      setValue(normalized)
-      setSavedValue(normalized)
+      const persisted = await saveCustomSystemPrompt(value)
+      setValue(persisted)
+      setSavedValue(persisted)
       setMessage("已保存，新对话与后续回复会立即使用")
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "保存失败，请稍后重试")
