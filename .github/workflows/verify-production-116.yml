@@ -1,0 +1,31 @@
+name: Verify production revision 116
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify-production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Wait for exact healthy Render revision
+        run: |
+          expected="9c5c0d1e4487"
+          url="https://mychat-nm6x.onrender.com/api/ready"
+          for attempt in {1..90}; do
+            body="$(curl --silent --show-error --max-time 20 "$url" || true)"
+            echo "attempt=$attempt body=$body"
+            ready="$(jq -r '.ready // false' <<<"$body" 2>/dev/null || true)"
+            revision="$(jq -r '.revision // empty' <<<"$body" 2>/dev/null || true)"
+            status="$(jq -r '.status // empty' <<<"$body" 2>/dev/null || true)"
+            if [[ "$ready" == "true" && "$status" == "ok" && "$revision" == "$expected" ]]; then
+              exit 0
+            fi
+            sleep 8
+          done
+          echo "Production did not activate exact revision $expected in time" >&2
+          exit 1
