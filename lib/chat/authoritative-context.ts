@@ -5,12 +5,16 @@ import type { ProjectContext } from '@/lib/project-data'
 import type { RawMsg } from '@/lib/llm/types'
 import { isRecord } from '@/lib/unknown-value'
 
-const MAX_CONTEXT_MESSAGES = 120
-const MAX_MESSAGE_HISTORY_BYTES = 512 * 1024
-const MAX_AUTHORITATIVE_CONTEXT_BYTES = 1024 * 1024
-const MAX_MEMORIES = 200
-const MAX_PROJECT_FILES = 30
-const CONTEXT_PAGE_SIZE = 8
+export const MAX_CONTEXT_MESSAGES = 48
+export const MAX_MESSAGE_HISTORY_BYTES = 128 * 1024
+const MAX_AUTHORITATIVE_CONTEXT_BYTES = 256 * 1024
+export const MAX_MEMORIES = 200
+export const MAX_PROJECT_FILES = 8
+const MAX_PROJECT_INSTRUCTION_CHARS = 12_000
+const MAX_PROJECT_FILE_CHARS = 16_000
+// Keep bounded pagination, but avoid serializing a typical turn behind many
+// tiny database round trips. Byte and row limits below remain authoritative.
+const CONTEXT_PAGE_SIZE = 32
 
 export type MessageRow = {
   id: string
@@ -56,6 +60,13 @@ const encoder = new TextEncoder()
 
 function jsonBytes(value: unknown): number {
   return encoder.encode(JSON.stringify(value)).byteLength
+}
+
+function compactContextText(value: string, maxChars: number): string {
+  const trimmed = value.trim()
+  return trimmed.length <= maxChars
+    ? trimmed
+    : `${trimmed.slice(0, maxChars)}\n[内容已截断以控制本轮上下文长度]`
 }
 
 /** Rows arrive newest-first; retain one contiguous suffix without truncating a message. */
@@ -156,7 +167,7 @@ async function loadProjectContext(
   const base = {
     id: projectId,
     instructions: typeof projectResult.data.instructions === 'string'
-      ? projectResult.data.instructions
+      ? compactContextText(projectResult.data.instructions, MAX_PROJECT_INSTRUCTION_CHARS)
       : '',
   }
   assertContextBudget(base)
@@ -169,7 +180,9 @@ async function loadProjectContext(
         const file = isRecord(value) ? value : {}
         return {
           name: typeof file.name === 'string' ? file.name : '',
-          content: typeof file.content === 'string' ? file.content : '',
+          content: typeof file.content === 'string'
+            ? compactContextText(file.content, MAX_PROJECT_FILE_CHARS)
+            : '',
         }
       },
       unavailableMessage: '项目文件上下文暂时不可用',

@@ -5,10 +5,10 @@ import { runTurn } from "./turn"
 import type { RawMsg } from "./types"
 import { log } from "@/lib/logger"
 
-const RECENT_CONTEXT_MESSAGES = 30
-const SUMMARY_TRIGGER_MESSAGES = 28
+const RECENT_CONTEXT_MESSAGES = 16
+const SUMMARY_TRIGGER_MESSAGES = 16
 const SUMMARY_MODEL = "deepseek-v4-flash"
-const SUMMARY_TARGET_CHARS = 9000
+const SUMMARY_TARGET_CHARS = 4000
 
 type MessageRow = { id: string; role: "user" | "assistant"; content: string | null; images?: unknown }
 type SummaryState = { summary: string; marker: string | null; staleWithoutMarker: boolean }

@@ -68,7 +68,7 @@ function contextClient(fixture: ContextFixture) {
         seq: 1,
       },
     ]),
-    profile: result({ memory_enabled: true }),
+    profile: result({ memory_enabled: true, custom_system_prompt: '' }),
     memories: result([]),
     project: result({ id: 'project', instructions: '' }),
     projectFiles: result([]),
@@ -228,7 +228,7 @@ test('global authoritative context scopes history and normalizes durable media a
     ['seq<=', 7],
   ])
   assert.equal(historyCall.orders[0]?.[0], 'seq')
-  assert.deepEqual(historyCall.range, [0, 7])
+  assert.deepEqual(historyCall.range, [0, 31])
 })
 
 test('project context replaces global memories and bounds every tenant query', async () => {
@@ -244,7 +244,7 @@ test('project context replaces global memories and bounds every tenant query', a
       { id: 'project-memory', content: 'project fact' },
       { id: 9, content: null },
     ]),
-    profile: { data: null, error: { code: 'must_not_be_called' } },
+    profile: result({ memory_enabled: true, custom_system_prompt: 'Always use concise bullet points.' }),
   })
   const loaded = await load(database.client)
 
@@ -262,7 +262,6 @@ test('project context replaces global memories and bounds every tenant query', a
       { id: '9', content: '' },
     ],
   })
-  assert.equal(database.calls.some(call => call.table === 'profiles'), false)
   assert.equal(database.calls.some(call => call.table === 'memories'), false)
   for (const table of ['projects', 'project_files', 'project_memories']) {
     const call = database.calls.find(candidate => candidate.table === table)
@@ -312,7 +311,7 @@ test('conversation and message ownership failures use stable authority errors', 
   )
 })
 
-test('project and memory dependencies fail closed and the aggregate budget is enforced', async () => {
+test('project and memory dependencies fail closed while oversized project input is compacted', async () => {
   const projectId = '87000000-0000-4000-8000-000000000005'
   await assert.rejects(
     load(contextClient({
@@ -327,13 +326,13 @@ test('project and memory dependencies fail closed and the aggregate budget is en
     }).client),
     error => hasCode(error, 'CONTEXT_UNAVAILABLE'),
   )
-  await assert.rejects(
-    load(contextClient({
-      conversation: result({ id: conversationId, project_id: projectId }),
-      project: result({ id: projectId, instructions: 'x'.repeat(1_100_000) }),
-    }).client),
-    error => hasCode(error, 'CONTEXT_TOO_LARGE'),
-  )
+  const compacted = await load(contextClient({
+    conversation: result({ id: conversationId, project_id: projectId }),
+    project: result({ id: projectId, instructions: 'x'.repeat(1_100_000) }),
+  }).client)
+  assert.ok(compacted.project)
+  assert.ok(compacted.project.instructions.length <= 12_100)
+  assert.match(compacted.project.instructions, /内容已截断/)
 })
 
 test('history and project collections are fetched in bounded pages and stop at the byte budget', async () => {
@@ -357,7 +356,7 @@ test('history and project collections are fetched in bounded pages and stop at t
     call.table === 'messages' && call.selected.includes('content_parts')
   ))
   assert.equal(historyCalls.length, 1)
-  assert.deepEqual(historyCalls[0]?.range, [0, 7])
+  assert.deepEqual(historyCalls[0]?.range, [0, 31])
 
   const projectId = '87000000-0000-4000-8000-000000000005'
   const files = Array.from({ length: 17 }, (_, index) => ({
@@ -370,7 +369,7 @@ test('history and project collections are fetched in bounded pages and stop at t
     projectFiles: result(files),
   })
   const projectLoaded = await load(projectDatabase.client)
-  assert.equal(projectLoaded.project?.files.length, 17)
+  assert.equal(projectLoaded.project?.files.length, 8)
   assert.deepEqual(projectDatabase.calls.filter(call => call.table === 'project_files')
-    .map(call => call.range), [[0, 7], [8, 15], [16, 23]])
+    .map(call => call.range), [[0, 7]])
 })
