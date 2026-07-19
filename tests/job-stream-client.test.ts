@@ -81,6 +81,23 @@ test('retryable admission outage reuses the exact serialized request and job id'
   assert.deepEqual(delays, [250])
 })
 
+test('chat admission uses standard foreground fetch instead of Safari keepalive', async () => {
+  let requestInit: RequestInit | undefined
+  const fetcher = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    requestInit = init
+    return acceptedResponse()
+  }) as typeof fetch
+
+  const accepted = await enqueueJob('/api/chat', body, new AbortController().signal, { fetcher })
+
+  assert.equal(accepted.jobId, generationId)
+  assert.ok(requestInit)
+  assert.equal('keepalive' in requestInit, false)
+  assert.equal(requestInit.credentials, 'same-origin')
+  assert.equal(requestInit.cache, 'no-store')
+  assert.equal((requestInit.headers as Record<string, string>).Accept, 'application/json')
+})
+
 test('permanent admission errors are not retried', async () => {
   let calls = 0
   const fetcher = (async () => {
