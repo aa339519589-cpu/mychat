@@ -1,0 +1,19 @@
+name: Read current production readiness
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  read-production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read readiness response
+        run: |
+          set -o pipefail
+          curl --silent --show-error --max-time 20 --include https://mychat-nm6x.onrender.com/api/ready | tee readiness.txt
