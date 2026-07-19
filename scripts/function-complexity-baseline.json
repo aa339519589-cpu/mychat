@@ -36,7 +36,6 @@
     "components/model-endpoint-settings.tsx": { "complexity": [21], "maxLines": [218] },
     "components/model-endpoints/model-selection-fields.tsx": { "maxLines": [99] },
     "components/sidebar/project-resources.tsx": { "maxLines": [110] },
-    "components/sidebar/projects.tsx": { "maxLines": [93] },
     "components/sidebar/quota-screen.tsx": { "complexity": [16], "maxLines": [168] },
     "components/sidebar/settings.tsx": { "maxLines": [105] },
     "components/vega-chart.tsx": { "maxLines": [104] },
