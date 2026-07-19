@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
-      - name: Inspect recent Render chat request logs
+      - name: Inspect recent Render application errors
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
@@ -24,7 +24,7 @@ jobs:
             "https://api.render.com/v1/services/$RENDER_SERVICE_ID")"
           owner_id="$(jq -er '.ownerId // .owner_id' <<<"$service")"
           end_time="$(date --utc +%Y-%m-%dT%H:%M:%SZ)"
-          start_time="$(date --utc --date='60 minutes ago' +%Y-%m-%dT%H:%M:%SZ)"
+          start_time="$(date --utc --date='90 minutes ago' +%Y-%m-%dT%H:%M:%SZ)"
           logs="$(curl --get --fail-with-body --silent --show-error \
             --header "Authorization: Bearer $RENDER_API_KEY" \
             --header 'Accept: application/json' \
@@ -33,8 +33,7 @@ jobs:
             --data-urlencode "startTime=$start_time" \
             --data-urlencode "endTime=$end_time" \
             --data-urlencode 'direction=backward' \
-            --data-urlencode 'path=/api/chat' \
-            --data-urlencode 'method=POST' \
+            --data-urlencode 'type=app' \
             --data-urlencode 'limit=100' \
             https://api.render.com/v1/logs)"
-          jq -c '[((.logs // .items // [])[]) | {timestamp, type, level, message, method, path, statusCode, requestId}]' <<<"$logs"
+          jq -c '[((.logs // .items // [])[]) | select(((.message // "") | test("chat|job|supabase|error|failed|作业"; "i"))) | {timestamp, level, message, instance}]' <<<"$logs"
