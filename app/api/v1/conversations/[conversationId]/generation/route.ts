@@ -1,13 +1,13 @@
 import { NextRequest } from 'next/server'
 import { apiErrorResponseV1 } from '@/lib/api/errors'
-import { resolveAuth } from '@/lib/api/guard'
+import { resolveAuth, type SupabaseServer } from '@/lib/api/guard'
 import { readLatestOwnedConversationJob } from '@/lib/jobs/read-model'
 import { log } from '@/lib/logger'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { isUuid } from '@/lib/validation'
 
 async function readConversationGeneration(
-  client: NonNullable<Awaited<ReturnType<typeof resolveAuth>>['supabase']>,
+  client: SupabaseServer,
   userId: string,
   conversationId: string,
   signal: AbortSignal,
