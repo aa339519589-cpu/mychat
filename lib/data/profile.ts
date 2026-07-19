@@ -1,6 +1,6 @@
 // 用户档案、记忆总开关、系统提示词与额度快照
 import { createClient } from "@/lib/supabase/client"
-import { MAX_CUSTOM_SYSTEM_PROMPT_CHARS, normalizeCustomSystemPrompt } from "@/lib/chat/user-system-prompt"
+import { MAX_CUSTOM_SYSTEM_PROMPT_CHARS, normalizeCustomSystemPrompt } from "@/lib/user-system-prompt"
 
 export type Profile = { memoryEnabled: boolean }
 
