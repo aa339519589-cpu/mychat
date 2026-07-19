@@ -207,7 +207,7 @@ export function ProjectFilesSection({ project, onLoadFiles, onAddFile, onDeleteF
   return (
     <div className="p-4">
       <input ref={inputRef} type="file" multiple
-        accept=".pdf,.txt,.md,.markdown,.csv,.json,.log,.xml,.yaml,.yml,.html,.htm,text/*"
+        accept="application/pdf,.pdf,.txt,.md,.markdown,.csv,.json,.log,.xml,.yaml,.yml,.html,.htm,text/*"
         className="hidden" onChange={handlePick} />
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-medium text-foreground">资料{files.length > 0 ? ` · ${files.length}` : ""}</span>
@@ -242,4 +242,3 @@ export function ProjectFilesSection({ project, onLoadFiles, onAddFile, onDeleteF
 }
 
 // ── 会话行：标题 + 置顶/收藏角标 + "更多"按钮；改名时就地变输入框 ──
-
