@@ -182,10 +182,15 @@ async function enqueueAuthoritativeTurn(input: {
   sleep: EnqueueChatJobDependencies['sleep']
 }): Promise<{ created: boolean; job: ChatJobAdmission }> {
   const { body } = input.command
+  const authority = body.turn
   const userMessage = body.messages.find(message => message.id === body.userMessageId && message.role === 'user')
-  if (!userMessage || typeof userMessage.content !== 'string' || body.turn?.schemaVersion !== 1) {
+  if (!userMessage || typeof userMessage.content !== 'string' || authority?.schemaVersion !== 1) {
     throw new JobRuntimeError('JOB_INVALID_INPUT', 'Authoritative chat turn is incomplete')
   }
+  const userContent = userMessage.content
+  const userCreatedAt = typeof userMessage.ts === 'string'
+    ? userMessage.ts
+    : input.command.requestedAt ?? new Date().toISOString()
   const images = userMessage.images?.length || userMessage.imageSummary
     ? {
         refs: userMessage.images ?? [],
@@ -201,13 +206,13 @@ async function enqueueAuthoritativeTurn(input: {
     invoke: () => input.client.rpc('enqueue_chat_turn_v1', {
       input_user_id: input.command.userId,
       input_conversation_id: body.conversationId,
-      input_create_conversation: body.turn.createConversation,
-      input_project_id: body.turn.projectId,
-      input_conversation_title: body.turn.title,
+      input_create_conversation: authority.createConversation,
+      input_project_id: authority.projectId,
+      input_conversation_title: authority.title,
       input_user_message_id: body.userMessageId,
-      input_user_content: userMessage.content,
+      input_user_content: userContent,
       input_user_images: images,
-      input_user_created_at: userMessage.ts ?? input.command.requestedAt ?? new Date().toISOString(),
+      input_user_created_at: userCreatedAt,
       input_assistant_message_id: body.assistantMessageId,
       input_job_id: body.generationId,
       input_auth_class: input.command.isAnonymous ? 'anonymous' : 'registered',
@@ -237,6 +242,7 @@ async function enqueueAuthoritativeRegeneration(input: {
   if (!userMessage || typeof userMessage.content !== 'string') {
     throw new JobRuntimeError('JOB_INVALID_INPUT', 'Authoritative regeneration source is incomplete')
   }
+  const userContent = userMessage.content
   const cleanupObjectKeys = await input.loadCleanupKeys({
     client: input.client,
     userId: input.command.userId,
@@ -256,7 +262,7 @@ async function enqueueAuthoritativeRegeneration(input: {
       input_source_user_message_id: body.userMessageId,
       input_target_assistant_message_id: input.authority.targetAssistantMessageId ?? null,
       input_expected_tail_message_id: input.authority.expectedTailMessageId,
-      input_user_content: userMessage.content,
+      input_user_content: userContent,
       input_assistant_message_id: body.assistantMessageId,
       input_job_id: body.generationId,
       input_auth_class: input.command.isAnonymous ? 'anonymous' : 'registered',
