@@ -9,24 +9,7 @@ permissions:
 jobs:
   diagnose:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    services:
-      postgres:
-        image: pgvector/pgvector:pg16@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
-        env:
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      PGHOST: 127.0.0.1
-      PGPORT: 5432
-      PGUSER: postgres
-      PGPASSWORD: postgres
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -37,25 +20,26 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci --ignore-scripts --legacy-peer-deps
-      - name: Architecture
-        run: npm run architecture
-      - name: Complexity
+      - name: Complexity settings
+        continue-on-error: true
+        run: npx eslint components/sidebar/settings.tsx --rule 'complexity:["error",15]' --rule 'max-lines-per-function:["error",{"max":80,"skipBlankLines":true,"skipComments":true,"IIFEs":true}]'
+      - name: Complexity profile
+        continue-on-error: true
+        run: npx eslint lib/data/profile.ts --rule 'complexity:["error",15]' --rule 'max-lines-per-function:["error",{"max":80,"skipBlankLines":true,"skipComments":true,"IIFEs":true}]'
+      - name: Complexity chat input
+        continue-on-error: true
+        run: npx eslint lib/jobs/handlers/chat-input.ts --rule 'complexity:["error",15]' --rule 'max-lines-per-function:["error",{"max":80,"skipBlankLines":true,"skipComments":true,"IIFEs":true}]'
+      - name: Complexity chat instant
+        continue-on-error: true
+        run: npx eslint lib/jobs/handlers/chat-instant.ts --rule 'complexity:["error",15]' --rule 'max-lines-per-function:["error",{"max":80,"skipBlankLines":true,"skipComments":true,"IIFEs":true}]'
+      - name: Complexity chat text
+        continue-on-error: true
+        run: npx eslint lib/jobs/handlers/chat-text.ts --rule 'complexity:["error",15]' --rule 'max-lines-per-function:["error",{"max":80,"skipBlankLines":true,"skipComments":true,"IIFEs":true}]'
+      - name: Complexity request context
+        continue-on-error: true
+        run: npx eslint lib/chat/request-context.ts --rule 'complexity:["error",15]' --rule 'max-lines-per-function:["error",{"max":80,"skipBlankLines":true,"skipComments":true,"IIFEs":true}]'
+      - name: Complexity prompt utilities
+        continue-on-error: true
+        run: npx eslint lib/user-system-prompt.ts lib/chat/user-system-prompt.ts --rule 'complexity:["error",15]' --rule 'max-lines-per-function:["error",{"max":80,"skipBlankLines":true,"skipComments":true,"IIFEs":true}]'
+      - name: Enforce repository complexity
         run: npm run complexity
-      - name: Migration contract
-        run: npm run migration:contract
-      - name: Typecheck
-        run: npm run check
-      - name: Backend lint
-        run: npm run lint:backend
-      - name: Full lint
-        run: npm run lint
-      - name: Unit tests and coverage
-        run: npm run test:coverage
-      - name: Production dependency audit
-        run: npm run audit:prod
-      - name: Database type contract
-        run: npm run database:types:check
-      - name: Migration tests
-        run: npm run test:migrations
-      - name: Build
-        run: npm run build
