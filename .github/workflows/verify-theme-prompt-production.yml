@@ -1,0 +1,44 @@
+name: Verify theme and prompt production
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-production:
+    name: Verify exact production revision
+    if: github.head_ref == 'ops/verify-theme-prompt-production'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Wait for exact strict production readiness
+        env:
+          PRODUCTION_READY_URL: https://mychat-nm6x.onrender.com/api/ready
+          TARGET_REVISION: 546d7625793a822e4c88c4ada4843cf771d11756
+        shell: bash
+        run: |
+          expected="${TARGET_REVISION:0:12}"
+          for attempt in {1..120}; do
+            body="$(mktemp)"
+            code="$(curl --silent --show-error --location \
+              --connect-timeout 10 --max-time 30 \
+              --output "$body" --write-out '%{http_code}' \
+              "$PRODUCTION_READY_URL" || true)"
+            revision="$(jq -r '.revision // empty' "$body" 2>/dev/null || true)"
+            ready="$(jq -r '.ready // false' "$body" 2>/dev/null || true)"
+            status="$(jq -r '.status // empty' "$body" 2>/dev/null || true)"
+            draining="$(jq -r '.checks.worker.draining // true' "$body" 2>/dev/null || true)"
+            rm -f "$body"
+            echo "attempt=$attempt code=$code revision=$revision ready=$ready status=$status draining=$draining"
+            if [[ "$code" == "200" && "$revision" == "$expected" \
+              && "$ready" == "true" && "$status" == "ok" \
+              && "$draining" == "false" ]]; then
+              echo "Exact merged revision is strictly ready in production."
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "Production did not activate the exact merged revision in time." >&2
+          exit 1
