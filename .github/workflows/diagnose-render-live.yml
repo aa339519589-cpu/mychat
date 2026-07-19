@@ -1,0 +1,44 @@
+name: Diagnose Render live
+
+on:
+  push:
+    branches:
+      - ops/deploy-thinking-timeout-fix
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      READY_URL: https://mychat-nm6x.onrender.com/api/ready
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+    steps:
+      - name: Inspect Render service and latest deploys
+        run: |
+          set -u
+          echo '=== service ==='
+          curl --silent --show-error --fail-with-body \
+            --header "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID" \
+            | jq '{id:.service.id,name:.service.name,suspended:.service.suspended,updatedAt:.service.updatedAt,serviceDetails:.service.serviceDetails}'
+          echo '=== deploys ==='
+          curl --silent --show-error --fail-with-body \
+            --header "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys?limit=5" \
+            | jq '[.[] | {id:.deploy.id,status:.deploy.status,commit:.deploy.commit.id,createdAt:.deploy.createdAt,updatedAt:.deploy.updatedAt,finishedAt:.deploy.finishedAt}]'
+      - name: Inspect live readiness response
+        run: |
+          set +e
+          response_file="$(mktemp)"
+          code="$(curl --silent --show-error --connect-timeout 10 --max-time 30 \
+            --output "$response_file" --write-out '%{http_code}' \
+            --header 'Accept: application/json' "$READY_URL")"
+          curl_status=$?
+          echo "curl_status=$curl_status http_code=$code"
+          cat "$response_file"
+          echo
+          exit 0
