@@ -142,7 +142,7 @@ export function SettingsScreen({
   const [tab, setTab] = useState<'general' | 'models' | 'quota'>('general')
 
   const pill = (active: boolean) =>
-    cn("rounded-full px-3.5 py-1.5 text-[12px] transition-colors", active ? "bg-sidebar-accent text-foreground" : "text-muted-foreground hover:text-foreground")
+    cn("rounded-full px-3.5 py-1.5 text-[12px] transition-colors", active ? "bg-sidebar-accent text-sidebar-accent-foreground ring-1 ring-sidebar-border shadow-sm" : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground")
 
   return (
     <div>
