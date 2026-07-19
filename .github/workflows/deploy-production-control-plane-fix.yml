@@ -1,0 +1,79 @@
+name: Deploy production control-plane fix
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/deploy-production-control-plane-fix.yml
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TARGET_SHA: f3d52a1b291f35d97ab56b5fac9b795671901b1b
+      READY_URL: https://mychat-nm6x.onrender.com/api/ready
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+    steps:
+      - name: Deploy exact current-main revision
+        id: render
+        run: |
+          test -n "$RENDER_API_KEY"
+          [[ "$RENDER_SERVICE_ID" =~ ^srv-[a-z0-9]+$ ]]
+          response="$(curl --fail-with-body --silent --show-error \
+            --connect-timeout 10 --max-time 60 \
+            --header "Authorization: Bearer $RENDER_API_KEY" \
+            --header 'Content-Type: application/json' \
+            --request POST \
+            --data "$(jq -nc --arg commitId "$TARGET_SHA" '{commitId: $commitId}')" \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys")"
+          deploy_id="$(jq -er '.id' <<<"$response")"
+          [[ "$deploy_id" =~ ^dep-[a-z0-9]+$ ]]
+          echo "deploy_id=$deploy_id" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for exact Render deploy to become live
+        env:
+          RENDER_DEPLOY_ID: ${{ steps.render.outputs.deploy_id }}
+        run: |
+          for attempt in {1..180}; do
+            response="$(curl --fail-with-body --silent --show-error \
+              --retry 4 --retry-all-errors --connect-timeout 10 --max-time 60 \
+              --header "Authorization: Bearer $RENDER_API_KEY" \
+              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys/$RENDER_DEPLOY_ID")"
+            status="$(jq -er '.status' <<<"$response")"
+            commit="$(jq -r '.commit.id // empty' <<<"$response")"
+            [[ -z "$commit" || "$commit" == "$TARGET_SHA" ]]
+            case "$status" in
+              live) test "$commit" = "$TARGET_SHA"; exit 0 ;;
+              build_failed|update_failed|pre_deploy_failed|canceled|deactivated)
+                echo "Render deployment failed with status $status" >&2; exit 1 ;;
+            esac
+            echo "Attempt $attempt: deploy=$RENDER_DEPLOY_ID status=$status commit=${commit:-pending}"
+            sleep 10
+          done
+          exit 1
+
+      - name: Verify exact healthy production control plane
+        run: |
+          for attempt in {1..60}; do
+            payload="$(curl --silent --show-error --connect-timeout 10 --max-time 60 \
+              --header 'Accept: application/json' "$READY_URL" || true)"
+            revision="$(jq -r '.revision // empty' <<<"$payload" 2>/dev/null || true)"
+            ready="$(jq -r '.ready // false' <<<"$payload" 2>/dev/null || true)"
+            database="$(jq -r '.checks.database.ready // false' <<<"$payload" 2>/dev/null || true)"
+            queue="$(jq -r '.checks.queue.ready // false' <<<"$payload" 2>/dev/null || true)"
+            worker="$(jq -r '.checks.worker.ready // false' <<<"$payload" 2>/dev/null || true)"
+            draining="$(jq -r '.checks.worker.draining // true' <<<"$payload" 2>/dev/null || true)"
+            if [[ "$ready" == "true" && "$revision" == "${TARGET_SHA:0:12}" \
+              && "$database" == "true" && "$queue" == "true" \
+              && "$worker" == "true" && "$draining" == "false" ]]; then
+              jq '{ready,revision,checks}' <<<"$payload"
+              exit 0
+            fi
+            echo "Attempt $attempt: ready=$ready revision=${revision:-missing} database=$database queue=$queue worker=$worker draining=$draining"
+            sleep 10
+          done
+          exit 1
