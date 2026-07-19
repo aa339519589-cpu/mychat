@@ -1,5 +1,6 @@
 import { isRecord } from '@/lib/unknown-value'
 import { parseSseEvent, splitSseEvents } from './stream-events'
+import { fetchJsonWithTimeout, RequestTimeoutError } from './timed-json-fetch'
 
 export type AcceptedJob = {
   jobId: string
@@ -30,23 +31,11 @@ type EnqueueAttempt = {
   retryAfterMs: number
 }
 
-type JsonFetchResult = {
-  response: Response
-  payload: unknown
-}
-
 const ENQUEUE_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000, 8_000, 8_000] as const
 const RETRYABLE_ENQUEUE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504])
 const ENQUEUE_REQUEST_TIMEOUT_MS = 8_000
 const RECONCILE_REQUEST_TIMEOUT_MS = 3_000
 const ENQUEUE_TOTAL_TIMEOUT_MS = 30_000
-
-class RequestTimeoutError extends Error {
-  constructor() {
-    super('request_timeout')
-    this.name = 'RequestTimeoutError'
-  }
-}
 
 function responseError(value: unknown, status: number): string {
   if (!isRecord(value)) return `请求失败（${status}）`
@@ -100,46 +89,6 @@ function abortableWait(milliseconds: number, signal: AbortSignal): Promise<void>
       reject(signal.reason)
     }, { once: true })
   })
-}
-
-async function fetchJsonWithTimeout(
-  fetcher: typeof fetch,
-  input: RequestInfo | URL,
-  init: RequestInit,
-  signal: AbortSignal,
-  timeoutMs: number,
-): Promise<JsonFetchResult> {
-  if (signal.aborted) throw signal.reason ?? new Error('请求已取消')
-  const controller = new AbortController()
-  let timeout: ReturnType<typeof setTimeout> | null = null
-  let detachAbort = () => undefined
-  const cancellation = new Promise<never>((_resolve, reject) => {
-    const abort = () => {
-      controller.abort(signal.reason)
-      reject(signal.reason ?? new Error('请求已取消'))
-    }
-    detachAbort = () => {
-      signal.removeEventListener('abort', abort)
-      return undefined
-    }
-    signal.addEventListener('abort', abort, { once: true })
-    timeout = setTimeout(() => {
-      const error = new RequestTimeoutError()
-      controller.abort(error)
-      reject(error)
-    }, Math.max(1, timeoutMs))
-  })
-  try {
-    const request = (async () => {
-      const response = await fetcher(input, { ...init, signal: controller.signal })
-      const payload: unknown = await response.json().catch(() => null)
-      return { response, payload }
-    })()
-    return await Promise.race([request, cancellation])
-  } finally {
-    if (timeout) clearTimeout(timeout)
-    detachAbort()
-  }
 }
 
 const DEFAULT_ENQUEUE_DEPENDENCIES: EnqueueJobDependencies = {
