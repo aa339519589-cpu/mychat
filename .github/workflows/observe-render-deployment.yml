@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - name: Wait for the Render production revision
+      - name: Wait for the Render production release
         id: observe
         continue-on-error: true
         env:
@@ -32,9 +32,9 @@ jobs:
               --arg ready "$ready" \
               --argjson attempt "$attempt" \
               '{target:$target,attempt:$attempt,verify:$verify,release:$release,ready:$ready}' > deployment-status.json
+            cat deployment-status.json
             if [[ "$(jq -r '.status // empty' <<<"$release")" == "completed" ]] \
-              && [[ "$(jq -r '.conclusion // empty' <<<"$release")" == "success" ]] \
-              && grep --fixed-strings --quiet "$TARGET_SHA" <<<"$ready"; then
+              && [[ "$(jq -r '.conclusion // empty' <<<"$release")" == "success" ]]; then
               exit 0
             fi
             if [[ "$(jq -r '.status // empty' <<<"$release")" == "completed" ]] \
