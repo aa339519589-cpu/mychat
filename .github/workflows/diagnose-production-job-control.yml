@@ -25,3 +25,13 @@ jobs:
           test "$(jq -r '.checks.queue.ready' <<<"$payload")" = "true"
           test "$(jq -r '.checks.worker.ready' <<<"$payload")" = "true"
           test "$(jq -r '.checks.worker.draining' <<<"$payload")" = "false"
+
+      - name: Inspect authoritative chat metrics
+        env:
+          METRICS_BEARER_TOKEN: ${{ secrets.METRICS_BEARER_TOKEN }}
+        run: |
+          test -n "$METRICS_BEARER_TOKEN"
+          metrics="$(curl --fail-with-body --silent --show-error --connect-timeout 10 --max-time 60 \
+            --header "Authorization: Bearer $METRICS_BEARER_TOKEN" \
+            https://mychat-nm6x.onrender.com/api/metrics)"
+          printf '%s\n' "$metrics" | grep -E 'mychat_authoritative_(queue_depth|queue_oldest_age_seconds|jobs_terminal_window|job_lease_expired|job_retry_waiting).*job_type="chat_generation"|mychat_authoritative_worker_fleet_ready'
