@@ -75,35 +75,50 @@ export function ProjectsScreen({ projects, conversations, onCreate, onOpen, onDe
       <div className="flex-1 overflow-y-auto space-y-2">
         {filtered.length === 0 ? (
           <p className="rounded-2xl bg-sidebar-accent/20 px-4 py-8 text-center text-[12px] italic text-muted-foreground/70">没有项目</p>
-        ) : (
-          filtered.map(p => {
-            const n = countFor(p.id)
-            return (
-              <button
-                key={p.id}
-                onClick={() => onOpen(p.id)}
-                className="group relative flex w-full flex-col gap-2 rounded-2xl bg-sidebar-accent/35 border border-sidebar-accent/60 px-4 py-3 text-left transition-colors hover:bg-sidebar-accent/50 hover:border-sidebar-accent/80 active:scale-[0.99]"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0 flex-1">
-                    <div className="font-heading text-[13px] tracking-wide text-foreground">{p.name}</div>
-                    {p.instructions && (
-                      <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">{p.instructions}</p>
-                    )}
-                  </div>
-                  <button
-                    onClick={e => { e.stopPropagation(); onDelete(p.id) }}
-                    className="shrink-0 rounded-lg p-1 text-muted-foreground/40 transition-colors hover:bg-sidebar-accent hover:text-destructive opacity-0 group-hover:opacity-100"
-                  >
-                    <Trash2 className="size-3.5" />
-                  </button>
-                </div>
-                <div className="text-[10px] text-muted-foreground">{n > 0 ? `${n} 段对谈 · ` : ""}{p.date}</div>
-              </button>
-            )
-          })
-        )}
+        ) : filtered.map(project => (
+          <ProjectCard key={project.id} project={project} conversationCount={countFor(project.id)} onOpen={onOpen} onDelete={onDelete} />
+        ))}
       </div>
+    </div>
+  )
+}
+
+function ProjectCard({ project, conversationCount, onOpen, onDelete }: {
+  project: Project
+  conversationCount: number
+  onOpen: (id: string) => void
+  onDelete: (id: string) => void
+}) {
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const deleteProject = () => {
+    if (!confirmingDelete) {
+      setConfirmingDelete(true)
+      return
+    }
+    setConfirmingDelete(false)
+    onDelete(project.id)
+  }
+
+  return (
+    <div className="group relative rounded-2xl border border-sidebar-accent/60 bg-sidebar-accent/35 transition-colors hover:border-sidebar-accent/80 hover:bg-sidebar-accent/50">
+      <button
+        onClick={() => { setConfirmingDelete(false); onOpen(project.id) }}
+        className="fluid-press block w-full rounded-2xl px-4 py-3 pr-16 text-left active:scale-[0.99]"
+      >
+        <div className="font-heading text-[13px] tracking-wide text-foreground">{project.name}</div>
+        {project.instructions && <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">{project.instructions}</p>}
+        <div className="mt-2 text-[10px] text-muted-foreground">{conversationCount > 0 ? `${conversationCount} 段对谈 · ` : ""}{project.date}</div>
+      </button>
+      <button
+        type="button"
+        onClick={deleteProject}
+        onBlur={() => setConfirmingDelete(false)}
+        aria-label={confirmingDelete ? `确认删除项目 ${project.name}` : `删除项目 ${project.name}`}
+        title={confirmingDelete ? "再次点击确认删除" : "删除项目"}
+        className={`fluid-press fluid-icon-press fluid-touch-target absolute right-1 top-1/2 flex min-w-11 -translate-y-1/2 items-center justify-center rounded-full px-2 text-[11px] transition-colors md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 ${confirmingDelete ? "bg-destructive/10 text-destructive" : "text-muted-foreground/60 hover:bg-sidebar-accent hover:text-destructive"}`}
+      >
+        {confirmingDelete ? "确认" : <Trash2 className="size-4" />}
+      </button>
     </div>
   )
 }
@@ -137,7 +152,6 @@ export function ProjectDetailScreen({
 
   return (
     <div className="space-y-5 px-4">
-      {/* 起新对谈：本项目的主要入口 */}
       <button
         onClick={() => onNewChat(project.id)}
         className="fluid-press flex w-full items-center gap-2.5 rounded-2xl bg-sidebar-primary px-4 py-3 text-sm font-semibold text-sidebar-primary-foreground shadow-[0_8px_22px_rgb(1_26_56/0.18)] transition-[transform,background-color,box-shadow] hover:bg-sidebar-primary/92 active:scale-[0.99]"
@@ -145,7 +159,6 @@ export function ProjectDetailScreen({
         <Plus className="size-4 text-sidebar-primary-foreground" />在此项目中起新对谈
       </button>
 
-      {/* 对谈列表 */}
       <section>
         <p className="mb-2 px-1 text-[10px] tracking-[0.18em] text-muted-foreground/70">本项目对谈{chats.length > 0 ? ` · ${chats.length}` : ""}</p>
         {chats.length === 0 ? (
@@ -168,7 +181,6 @@ export function ProjectDetailScreen({
         )}
       </section>
 
-      {/* 工作台分组卡：记忆 / 项目指令 / 资料 —— 一张卡内三段，靠分隔线区隔（学 Claude 项目页） */}
       <div className="divide-y divide-sidebar-border/60 overflow-hidden rounded-2xl border border-sidebar-border bg-sidebar-accent/25">
         <ProjectMemorySection
           projectId={project.id}
@@ -184,7 +196,6 @@ export function ProjectDetailScreen({
   )
 }
 
-// 顶部就地改名输入框（替换 ScreenPanel 标题）
 export function ProjectTitleEditor({ name, onSave, onCancel }: { name: string; onSave: (n: string) => void; onCancel: () => void }) {
   const [v, setV] = useState(name)
   return (
