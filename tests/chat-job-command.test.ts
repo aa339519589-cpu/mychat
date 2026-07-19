@@ -173,6 +173,59 @@ test('server-authoritative turns atomically persist messages and enqueue without
   })
 })
 
+test('server-authoritative turns survive transient control-plane startup failures', async () => {
+  const input = command()
+  input.body.messages = [{
+    id: input.body.userMessageId,
+    role: 'user',
+    content: 'hello after deploy',
+  }]
+  input.body.turn = {
+    schemaVersion: 1,
+    createConversation: true,
+    title: '未命名的篇章',
+    projectId: null,
+  }
+  let attempts = 0
+  let payloadWrites = 0
+  const delays: number[] = []
+  const client = {
+    rpc: async () => {
+      attempts += 1
+      if (attempts === 1) throw new TypeError('fetch failed while instance warms')
+      if (attempts === 2) return { data: null, error: { code: 'PGRST000' } }
+      return {
+        data: {
+          enqueued: true,
+          replayed: false,
+          job: { id: generationId, status: 'queued' },
+        },
+        error: null,
+      }
+    },
+  } as unknown as SupabaseClient
+
+  const result = await enqueueChatJob(input, {
+    persistPayload: async () => {
+      payloadWrites += 1
+      return reference
+    },
+    removePayload: async () => undefined,
+    createRepository: () => ({
+      enqueue: async () => { throw new Error('generic enqueue must not run') },
+    }),
+    createAdminClient: () => client,
+    sleep: async milliseconds => { delays.push(milliseconds) },
+  })
+
+  assert.equal(result.created, true)
+  assert.equal(result.job.id, generationId)
+  assert.equal(result.job.status, 'queued')
+  assert.equal(attempts, 3)
+  assert.equal(payloadWrites, 1)
+  assert.deepEqual(delays, [250, 500])
+})
+
 test('server-authoritative regeneration uses the fenced RPC and durable cleanup receipts', async () => {
   const input = command()
   input.body.messages = [{
