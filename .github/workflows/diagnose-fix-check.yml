@@ -9,6 +9,8 @@ on:
 
 permissions:
   contents: read
+  issues: write
+  pull-requests: write
 
 jobs:
   check:
@@ -21,10 +23,21 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci --ignore-scripts --legacy-peer-deps
-      - name: Typecheck with compact failure output
+      - name: Typecheck and report failure
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
           npm run check > /tmp/check.log 2>&1
           status=$?
           tail -120 /tmp/check.log
+          if (( status != 0 )); then
+            {
+              echo '<!-- diagnose-fix-check -->'
+              echo '```text'
+              tail -80 /tmp/check.log
+              echo '```'
+            } > /tmp/comment.md
+            gh pr comment "${{ github.event.pull_request.number }}" --body-file /tmp/comment.md
+          fi
           exit $status
