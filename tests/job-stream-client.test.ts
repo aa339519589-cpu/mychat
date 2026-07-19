@@ -130,3 +130,33 @@ test('exhausted Safari transport failures never expose the raw Load failed messa
   assert.equal(postCalls, 9)
   assert.equal(generationReads, 10)
 })
+
+test('hung browser admission request times out instead of leaving Thinking forever', async () => {
+  let postCalls = 0
+  const fetcher = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.method !== 'POST') return emptyGenerationResponse()
+    postCalls += 1
+    return new Promise<Response>((_resolve, reject) => {
+      const requestSignal = init.signal
+      if (!requestSignal) return
+      const abort = () => reject(requestSignal.reason ?? new Error('aborted'))
+      if (requestSignal.aborted) abort()
+      else requestSignal.addEventListener('abort', abort, { once: true })
+    })
+  }) as typeof fetch
+
+  const started = Date.now()
+  await assert.rejects(
+    enqueueJob('/api/chat', body, new AbortController().signal, {
+      fetcher,
+      sleep: async () => undefined,
+      requestTimeoutMs: 5,
+      reconcileTimeoutMs: 5,
+      totalTimeoutMs: 18,
+    }),
+    /连接超时，请重试/,
+  )
+
+  assert.ok(postCalls >= 1)
+  assert.ok(Date.now() - started < 1_000)
+})
