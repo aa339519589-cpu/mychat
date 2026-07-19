@@ -1,0 +1,32 @@
+name: Verify production revision 123
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify-production:
+    if: github.head_ref == 'ops/verify-production-status-123'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Wait for exact healthy Render revision
+        env:
+          EXPECTED_REVISION: 200537c6067e
+        run: |
+          for attempt in $(seq 1 90); do
+            body="$(curl --silent --show-error --max-time 20 https://mychat-nm6x.onrender.com/api/ready || true)"
+            echo "$body"
+            status="$(printf '%s' "$body" | jq -r '.status // empty' 2>/dev/null || true)"
+            ready="$(printf '%s' "$body" | jq -r '.ready // false' 2>/dev/null || true)"
+            revision="$(printf '%s' "$body" | jq -r '.revision // empty' 2>/dev/null || true)"
+            if [[ "$status" == "ok" && "$ready" == "true" && "$revision" == "$EXPECTED_REVISION" ]]; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Exact production revision did not become ready" >&2
+          exit 1
