@@ -1,0 +1,38 @@
+name: Report theme and prompt live readiness
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  deployments: read
+
+jobs:
+  report-live:
+    name: Report exact live readiness
+    if: github.head_ref == 'ops/verify-theme-prompt-production'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TARGET_SHA: 546d7625793a822e4c88c4ada4843cf771d11756
+      READY_URL: https://mychat-nm6x.onrender.com/api/ready
+    steps:
+      - name: Read live readiness
+        shell: bash
+        run: |
+          body="$(mktemp)"
+          code="$(curl --silent --show-error --location --connect-timeout 10 --max-time 60 \
+            --output "$body" --write-out '%{http_code}' "$READY_URL" || true)"
+          echo "HTTP $code"
+          jq --compact-output . "$body" || cat "$body"
+          rm -f "$body"
+      - name: Read exact production deployment status
+        shell: bash
+        run: |
+          deployment_id="$(gh api "repos/$GITHUB_REPOSITORY/deployments?sha=$TARGET_SHA&environment=Production&per_page=100" \
+            | jq -r '[.[] | select(.payload.promotion == "render-api-exact-commit-activation")][0].id // empty')"
+          echo "deployment_id=$deployment_id"
+          test -n "$deployment_id"
+          gh api "repos/$GITHUB_REPOSITORY/deployments/$deployment_id/statuses?per_page=100" \
+            | jq --compact-output '[.[] | {state,environment,description,created_at,updated_at,environment_url,log_url}]'
