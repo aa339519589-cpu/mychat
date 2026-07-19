@@ -1,0 +1,72 @@
+name: Deploy production Load failed fix
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/deploy-production-load-failed-fix.yml
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      TARGET_SHA: 59b687f1e59125b9ace68555c79f0ef471c52c6f
+      READY_URL: https://mychat-nm6x.onrender.com/api/ready
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+    steps:
+      - name: Disable production drain
+        run: |
+          test -n "$RENDER_API_KEY"
+          [[ "$RENDER_SERVICE_ID" =~ ^srv-[a-z0-9]+$ ]]
+          render_api() {
+            curl --fail-with-body --silent --show-error \
+              --retry 4 --retry-all-errors --connect-timeout 10 --max-time 60 \
+              --header "Authorization: Bearer $RENDER_API_KEY" \
+              --header 'Content-Type: application/json' \
+              "$@"
+          }
+          render_api --request PUT --data '{"value":"off"}' \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/MYCHAT_MAINTENANCE_MODE" >/dev/null
+          render_api \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/MYCHAT_MAINTENANCE_MODE" \
+            | jq --exit-status '.value == "off"' >/dev/null
+
+      - name: Deploy exact merged revision
+        run: |
+          response_file="$(mktemp)"
+          http_code="$(curl --silent --show-error \
+            --connect-timeout 10 --max-time 60 \
+            --output "$response_file" --write-out '%{http_code}' \
+            --header "Authorization: Bearer $RENDER_API_KEY" \
+            --header 'Content-Type: application/json' \
+            --request POST \
+            --data "$(jq -nc --arg commitId "$TARGET_SHA" '{commitId: $commitId}')" \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys")"
+          if [[ -s "$response_file" ]]; then jq . "$response_file" || cat "$response_file"; fi
+          test "$http_code" -ge 200 -a "$http_code" -lt 300
+
+      - name: Verify exact healthy production revision
+        run: |
+          for attempt in {1..180}; do
+            payload="$(curl --silent --show-error --connect-timeout 10 --max-time 60 \
+              --header 'Accept: application/json' "$READY_URL" || true)"
+            revision="$(jq -r '.revision // empty' <<<"$payload" 2>/dev/null || true)"
+            ready="$(jq -r '.ready // false' <<<"$payload" 2>/dev/null || true)"
+            database="$(jq -r '.checks.database.ready // false' <<<"$payload" 2>/dev/null || true)"
+            queue="$(jq -r '.checks.queue.ready // false' <<<"$payload" 2>/dev/null || true)"
+            worker="$(jq -r '.checks.worker.ready // false' <<<"$payload" 2>/dev/null || true)"
+            draining="$(jq -r '.checks.worker.draining // true' <<<"$payload" 2>/dev/null || true)"
+            if [[ "$ready" == "true" && "$revision" == "${TARGET_SHA:0:12}" \
+              && "$database" == "true" && "$queue" == "true" \
+              && "$worker" == "true" && "$draining" == "false" ]]; then
+              jq '{ready,revision,checks}' <<<"$payload"
+              exit 0
+            fi
+            echo "Attempt $attempt: ready=$ready revision=${revision:-missing} database=$database queue=$queue worker=$worker draining=$draining"
+            sleep 10
+          done
+          exit 1
