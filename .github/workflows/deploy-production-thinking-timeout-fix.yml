@@ -29,11 +29,12 @@ jobs:
               --header 'Content-Type: application/json' \
               "$@"
           }
-          render_api --request PUT --data '{"value":"off"}' \
-            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/MYCHAT_MAINTENANCE_MODE" >/dev/null
-          render_api \
-            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/MYCHAT_MAINTENANCE_MODE" \
-            | jq --exit-status '.value == "off"' >/dev/null
+          for key in MYCHAT_MAINTENANCE_MODE GENERATION_MAINTENANCE_MODE; do
+            render_api --request PUT --data '{"value":"off"}' \
+              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/$key" >/dev/null
+            render_api "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/$key" \
+              | jq --exit-status '.value == "off"' >/dev/null
+          done
 
       - name: Deploy exact merged revision
         run: |
