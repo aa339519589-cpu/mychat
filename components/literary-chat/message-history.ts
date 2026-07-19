@@ -8,6 +8,8 @@ export function toHistoryMessage(message: Message): HistoryMessage {
     content: message.content,
     ...(message.images?.length ? { images: message.images } : {}),
     ...(message.imageSummary ? { imageSummary: message.imageSummary } : {}),
-    ...(message.ts ? { ts: message.ts } : {}),
+    // Browser clocks are not persistence authority. Omitting ts makes the API
+    // assign one server-side turn time, preventing a user row from sorting
+    // behind its own assistant row after leaving and reopening the page.
   }
 }
