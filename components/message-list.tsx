@@ -1,6 +1,6 @@
 "use client"
 
-import { memo, useEffect, useMemo, useState } from "react"
+import { memo, useEffect, useMemo, useRef, useState } from "react"
 
 import { AssistantMessage } from "@/components/messages/assistant-message"
 import { UserMessage } from "@/components/messages/user-message"
@@ -9,6 +9,14 @@ import type { Conversation, Message } from "@/lib/chat-data"
 
 const INITIAL_RENDER_COUNT = 70
 const RENDER_STEP = 50
+const MAX_SELECTED_TEXT_CHARS = 8_000
+const ASK_SELECTED_TEXT_EVENT = "mychat:ask-selected-text"
+
+type SelectionAction = {
+  text: string
+  top: number
+  left: number
+}
 
 export type MessageListProps = {
   conversation: Conversation
@@ -24,6 +32,7 @@ export function MessageList(props: MessageListProps) {
   const { conversation, isLoading, openArtifactId } = props
   const messages = conversation.messages
   const [visibleCount, setVisibleCount] = useState(INITIAL_RENDER_COUNT)
+  const articleRef = useRef<HTMLElement>(null)
   const controller = useMessageListController({
     conversationId: conversation.id,
     isLoading: !!isLoading,
@@ -42,7 +51,7 @@ export function MessageList(props: MessageListProps) {
   )
 
   return (
-    <article className="mx-auto w-full min-w-0 max-w-[58rem] overflow-x-clip px-3 py-5 sm:px-4 md:px-8 md:py-6">
+    <article ref={articleRef} className="mx-auto w-full min-w-0 max-w-[58rem] overflow-x-clip px-3 py-5 sm:px-4 md:px-8 md:py-6">
       <div className="min-w-0 space-y-6 md:space-y-8">
         {visibleStart > 0 && (
           <div className="flex justify-center">
@@ -64,7 +73,74 @@ export function MessageList(props: MessageListProps) {
           controller={controller}
         />
       </div>
+      <SelectedTextAction containerRef={articleRef} />
     </article>
+  )
+}
+
+function SelectedTextAction({ containerRef }: { containerRef: React.RefObject<HTMLElement | null> }) {
+  const [action, setAction] = useState<SelectionAction | null>(null)
+
+  useEffect(() => {
+    function updateSelectionAction() {
+      const selection = window.getSelection()
+      const container = containerRef.current
+      if (!selection || selection.isCollapsed || !container || selection.rangeCount === 0) {
+        setAction(null)
+        return
+      }
+      const range = selection.getRangeAt(0)
+      const common = range.commonAncestorContainer
+      const commonElement = common.nodeType === Node.ELEMENT_NODE ? common : common.parentElement
+      if (!commonElement || !container.contains(commonElement)) {
+        setAction(null)
+        return
+      }
+      const text = selection.toString().trim().slice(0, MAX_SELECTED_TEXT_CHARS)
+      if (!text) {
+        setAction(null)
+        return
+      }
+      const rect = range.getBoundingClientRect()
+      if (!rect.width && !rect.height) {
+        setAction(null)
+        return
+      }
+      const left = Math.min(window.innerWidth - 62, Math.max(62, rect.left + rect.width / 2))
+      const top = Math.min(window.innerHeight - 56, Math.max(56, rect.bottom + 12))
+      setAction({ text, left, top })
+    }
+
+    function scheduleUpdate() {
+      window.setTimeout(updateSelectionAction, 0)
+    }
+
+    document.addEventListener("selectionchange", scheduleUpdate)
+    window.addEventListener("resize", updateSelectionAction)
+    window.addEventListener("scroll", updateSelectionAction, true)
+    return () => {
+      document.removeEventListener("selectionchange", scheduleUpdate)
+      window.removeEventListener("resize", updateSelectionAction)
+      window.removeEventListener("scroll", updateSelectionAction, true)
+    }
+  }, [containerRef])
+
+  if (!action) return null
+  return (
+    <button
+      type="button"
+      aria-label="引用选中文字询问模型"
+      onPointerDown={event => event.preventDefault()}
+      onClick={() => {
+        window.dispatchEvent(new CustomEvent(ASK_SELECTED_TEXT_EVENT, { detail: { text: action.text } }))
+        window.getSelection()?.removeAllRanges()
+        setAction(null)
+      }}
+      className="fluid-press fixed z-[80] -translate-x-1/2 rounded-full border border-border/70 bg-popover px-4 py-2 text-sm font-medium text-popover-foreground shadow-xl backdrop-blur-md"
+      style={{ left: action.left, top: action.top }}
+    >
+      询问模型
+    </button>
   )
 }
 
