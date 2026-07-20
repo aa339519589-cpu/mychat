@@ -11,9 +11,11 @@ permissions:
 jobs:
   diagnose:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 18
     env:
       LIVE_URL: https://mychat-nm6x.onrender.com
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
@@ -22,6 +24,49 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts --legacy-peer-deps
       - run: npx playwright install --with-deps webkit
+      - name: Create isolated production test account
+        run: |
+          set -euo pipefail
+          render_value() {
+            local key="$1" body code value
+            body="$(mktemp)"
+            code="$(curl --silent --show-error --connect-timeout 10 --max-time 30 \
+              --output "$body" --write-out '%{http_code}' \
+              --header "Authorization: Bearer $RENDER_API_KEY" \
+              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/$key")"
+            if [[ "$code" -lt 200 || "$code" -ge 300 ]]; then rm -f "$body"; return 1; fi
+            value="$(jq -er '.value // .envVar.value // .envVarValue.value' "$body")"
+            rm -f "$body"
+            printf '%s' "$value"
+          }
+          supabase_url="$(render_value SUPABASE_URL || render_value NEXT_PUBLIC_SUPABASE_URL)"
+          service_key="$(render_value SUPABASE_SERVICE_ROLE_KEY)"
+          email="mychat-regen-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}@example.com"
+          password="Aa9-$(openssl rand -hex 12)"
+          echo "::add-mask::$supabase_url"
+          echo "::add-mask::$service_key"
+          echo "::add-mask::$email"
+          echo "::add-mask::$password"
+          response_file="$(mktemp)"
+          code="$(curl --silent --show-error --connect-timeout 10 --max-time 30 \
+            --output "$response_file" --write-out '%{http_code}' \
+            --request POST \
+            --header "apikey: $service_key" \
+            --header "Authorization: Bearer $service_key" \
+            --header 'Content-Type: application/json' \
+            --data "$(jq -nc --arg email "$email" --arg password "$password" '{email:$email,password:$password,email_confirm:true}')" \
+            "$supabase_url/auth/v1/admin/users")"
+          test "$code" -ge 200 -a "$code" -lt 300
+          user_id="$(jq -er '.id' "$response_file")"
+          rm -f "$response_file"
+          echo "::add-mask::$user_id"
+          {
+            echo "TEST_EMAIL=$email"
+            echo "TEST_PASSWORD=$password"
+            echo "TEST_USER_ID=$user_id"
+            echo "SUPABASE_ADMIN_URL=$supabase_url"
+            echo "SUPABASE_SERVICE_KEY=$service_key"
+          } >> "$GITHUB_ENV"
       - name: Exercise a real regeneration request
         run: |
           cat > "$GITHUB_WORKSPACE/.diagnose-regeneration.mjs" <<'EOF'
@@ -58,14 +103,15 @@ jobs:
 
           try {
             await page.goto(process.env.LIVE_URL, { waitUntil: 'domcontentloaded', timeout: 120_000 })
-            const input = page.getByPlaceholder('说点什么……')
-            if (!await input.isVisible().catch(() => false)) {
-              const guest = page.getByRole('button', { name: '以游客身份继续' })
-              await guest.waitFor({ state: 'visible', timeout: 60_000 })
-              await guest.click()
-              await input.waitFor({ state: 'visible', timeout: 60_000 })
-            }
+            await page.getByLabel('邮箱地址').fill(process.env.TEST_EMAIL)
+            await page.getByLabel('密码').fill(process.env.TEST_PASSWORD)
+            const loginResponse = page.waitForResponse(response => response.url().endsWith('/api/auth/email'), { timeout: 60_000 })
+            await page.getByRole('button', { name: '登录', exact: true }).click()
+            const login = await loginResponse
+            console.log(`LOGIN ${login.status()} ${(await login.text()).slice(0, 800)}`)
 
+            const input = page.getByPlaceholder('说点什么……')
+            await input.waitFor({ state: 'visible', timeout: 60_000 })
             await input.fill('你好')
             await input.press('Enter')
             await page.waitForFunction(() => !!document.querySelector('button[title="复制"]'), { timeout: 90_000 })
@@ -111,6 +157,14 @@ jobs:
           EOF
           set -o pipefail
           node "$GITHUB_WORKSPACE/.diagnose-regeneration.mjs" 2>&1 | tee "$RUNNER_TEMP/production-regeneration.txt"
+      - name: Best-effort cleanup test account
+        if: always() && env.TEST_USER_ID != ''
+        continue-on-error: true
+        run: |
+          curl --silent --show-error --request DELETE \
+            --header "apikey: $SUPABASE_SERVICE_KEY" \
+            --header "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+            "$SUPABASE_ADMIN_URL/auth/v1/admin/users/$TEST_USER_ID" >/dev/null || true
       - name: Upload diagnostic evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
