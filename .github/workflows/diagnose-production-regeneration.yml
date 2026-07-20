@@ -110,8 +110,13 @@ jobs:
 
             const regenerate = page.getByTitle('重新生成')
             await regenerate.waitFor({ state: 'attached', timeout: 30_000 })
+            const secondResponsePromise = page.waitForResponse(response =>
+              response.url().endsWith('/api/chat') && response.request().method() === 'POST',
+            { timeout: 120_000 })
             const startedAt = Date.now()
             await regenerate.click({ force: true })
+            const secondResponse = await secondResponsePromise
+            const secondStatus = secondResponse.status()
             await page.waitForFunction(() => {
               const text = document.body.innerText
               if (text.includes('无法开始重新生成') || text.includes('连接超时，请重试')) return 'failed'
@@ -119,11 +124,11 @@ jobs:
             }, { timeout: 120_000 })
 
             const body = await page.locator('body').innerText()
-            console.log(`REGEN_UI elapsed=${Date.now() - startedAt}ms`)
+            console.log(`REGEN_UI status=${secondStatus} elapsed=${Date.now() - startedAt}ms`)
             console.log(`CHAT_RESPONSES ${JSON.stringify(chatResponses)}`)
             console.log(`BODY ${JSON.stringify(body.slice(0, 4000))}`)
+            if (secondStatus !== 202) process.exitCode = 1
             if (body.includes('无法开始重新生成') || body.includes('连接超时，请重试')) process.exitCode = 1
-            if (chatResponses.length < 2 || chatResponses.at(-1)?.status !== 202) process.exitCode = 1
           } finally {
             await browser.close()
           }
