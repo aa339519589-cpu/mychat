@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { enqueueJob, enqueueTimeoutPolicy } from '../components/literary-chat/job-stream-client'
+import {
+  EnqueueJobError,
+  enqueueJob,
+  enqueueTimeoutPolicy,
+} from '../components/literary-chat/job-stream-client'
+import { enqueueJobUntilAccepted } from '../components/literary-chat/durable-job-enqueue'
 
 const conversationId = '99000000-0000-4000-8000-000000000001'
 const generationId = '99000000-0000-4000-8000-000000000002'
@@ -196,4 +201,59 @@ test('hung browser admission request times out instead of leaving Thinking forev
 
   assert.ok(postCalls >= 1)
   assert.ok(Date.now() - started < 1_000)
+})
+
+test('durable chat admission keeps retrying the same command after a foreground window expires', async () => {
+  const receivedBodies: unknown[] = []
+  const warnings: string[] = []
+  const delays: number[] = []
+  let attempts = 0
+  const accepted = await enqueueJobUntilAccepted(
+    '/api/chat',
+    body,
+    new AbortController().signal,
+    error => warnings.push(error.message),
+    {
+      enqueue: async (_path, receivedBody) => {
+        receivedBodies.push(receivedBody)
+        attempts += 1
+        if (attempts < 3) throw new EnqueueJobError('作业控制面暂时不可用', true)
+        return {
+          jobId: generationId,
+          streamUrl: `/api/v1/jobs/${generationId}/events`,
+          status: 'queued',
+        }
+      },
+      sleep: async milliseconds => { delays.push(milliseconds) },
+    },
+  )
+
+  assert.equal(accepted.jobId, generationId)
+  assert.deepEqual(receivedBodies, [body, body, body])
+  assert.deepEqual(warnings, ['作业控制面暂时不可用', '作业控制面暂时不可用'])
+  assert.deepEqual(delays, [1_000, 2_000])
+})
+
+test('durable chat admission still stops on a permanent command error', async () => {
+  await assert.rejects(
+    enqueueJobUntilAccepted('/api/chat', body, new AbortController().signal, undefined, {
+      enqueue: async () => { throw new EnqueueJobError('请求与现有作业冲突', false) },
+      sleep: async () => { throw new Error('permanent errors must not sleep') },
+    }),
+    /请求与现有作业冲突/,
+  )
+})
+
+test('durable chat admission remains explicitly cancellable while offline', async () => {
+  const controller = new AbortController()
+  await assert.rejects(
+    enqueueJobUntilAccepted('/api/chat', body, controller.signal, undefined, {
+      enqueue: async () => { throw new EnqueueJobError('网络连接暂时中断，请稍后重试', true) },
+      sleep: async (_milliseconds, signal) => {
+        controller.abort(new DOMException('Stopped', 'AbortError'))
+        throw signal.reason
+      },
+    }),
+    error => error instanceof DOMException && error.name === 'AbortError',
+  )
 })

@@ -214,7 +214,7 @@ export function useChatGeneration(options: UseChatGenerationOptions) {
       conversationId: activeId,
       generation: generationRef.current[activeId],
       setConversations,
-      markGeneration,
+      markGeneration, controller: abortByConversationRef.current.get(activeId),
     })
   }
 

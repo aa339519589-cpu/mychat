@@ -36,6 +36,15 @@ type EnqueueAttempt = {
   retryAfterMs: number
 }
 
+export class EnqueueJobError extends Error {
+  readonly retryable: boolean
+  constructor(message: string, retryable: boolean) {
+    super(message)
+    this.name = 'EnqueueJobError'
+    this.retryable = retryable
+  }
+}
+
 const ENQUEUE_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000, 8_000, 8_000] as const
 const RETRYABLE_ENQUEUE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504])
 const ENQUEUE_REQUEST_TIMEOUT_MS = 15_000
@@ -97,11 +106,11 @@ function durableIdentity(body: unknown): { conversationId: string; generationId:
 }
 
 function networkError(): Error {
-  return new Error('网络连接暂时中断，请稍后重试')
+  return new EnqueueJobError('网络连接暂时中断，请稍后重试', true)
 }
 
 function timeoutError(): Error {
-  return new Error('连接超时，请重试')
+  return new EnqueueJobError('连接超时，请重试', true)
 }
 
 function abortableWait(milliseconds: number, signal: AbortSignal): Promise<void> {
@@ -144,7 +153,10 @@ async function enqueueAttempt(
     }, signal, timeoutMs)
     if (!response.ok) return {
       accepted: null,
-      error: new Error(responseError(payload, response.status)),
+      error: new EnqueueJobError(
+        responseError(payload, response.status),
+        retryablePayload(payload) || RETRYABLE_ENQUEUE_STATUSES.has(response.status),
+      ),
       retryable: retryablePayload(payload) || RETRYABLE_ENQUEUE_STATUSES.has(response.status),
       retryAfterMs: retryAfterMilliseconds(response),
     }
@@ -156,7 +168,7 @@ async function enqueueAttempt(
       retryAfterMs: 0,
     } : {
       accepted: null,
-      error: new Error('作业入队响应无效'),
+      error: new EnqueueJobError('作业入队响应无效', true),
       retryable: true,
       retryAfterMs: 0,
     }
@@ -261,6 +273,9 @@ export async function enqueueJob(
   throw lastError
 }
 
+export function isRetryableEnqueueError(error: unknown): error is EnqueueJobError {
+  return error instanceof EnqueueJobError && error.retryable
+}
 function streamUrl(path: string, sequence: number): string {
   const url = new URL(path, window.location.origin)
   url.searchParams.set('from_seq', String(sequence))
