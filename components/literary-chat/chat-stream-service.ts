@@ -10,7 +10,13 @@ import type { ClientGenerationPatch, ClientGenerationState } from '@/lib/generat
 import type { ChatTurnAuthority } from '@/lib/llm/chat-request'
 import { takeAcknowledgedGenerationTerminal } from './generation-terminal-registry'
 import { finalizeChatStream } from './chat-stream-finalizer'
-import { enqueueJob, streamJobEvents, type AcceptedJob } from './job-stream-client'
+import { enqueueJobUntilAccepted } from './durable-job-enqueue'
+import { streamJobEvents, type AcceptedJob } from './job-stream-client'
+import {
+  removePermanentlyRejectedSubmission,
+  removePendingChatSubmission,
+  savePendingChatSubmission,
+} from './pending-chat-submission'
 import { processChatStreamEvent } from './chat-stream-events'
 import {
   createChatStreamRenderer,
@@ -94,8 +100,40 @@ function requestBody(options: RunChatStreamOptions): Record<string, unknown> {
 async function enqueueChatStream(
   options: RunChatStreamOptions,
   state: ChatStreamState,
+  renderer: ChatStreamRenderer,
 ): Promise<AcceptedJob> {
-  const accepted = await enqueueJob('/api/chat', requestBody(options), options.controller.signal)
+  const body = requestBody(options)
+  const generationId = options.generationId
+  if (generationId) {
+    await savePendingChatSubmission({
+      schemaVersion: 1,
+      conversationId: options.conversationId,
+      generationId,
+      assistantMessageId: options.assistantMessageId,
+      path: '/api/chat',
+      serializedBody: JSON.stringify(body),
+      createdAt: Date.now(),
+    })
+  }
+  let accepted: AcceptedJob
+  try {
+    accepted = await enqueueJobUntilAccepted(
+      '/api/chat',
+      body,
+      options.controller.signal,
+      () => renderer.flush('消息已保存；连接恢复后会自动继续，无需重新发送。'),
+    )
+  } catch (error) {
+    await removePermanentlyRejectedSubmission(
+      options.conversationId,
+      generationId ? { id: generationId } : null,
+      error,
+    )
+    throw error
+  }
+  if (generationId) {
+    await removePendingChatSubmission(options.conversationId, generationId)
+  }
   state.acceptedByServer = true
   options.onAccepted?.()
   state.terminalProtocolExpected = true
@@ -104,6 +142,7 @@ async function enqueueChatStream(
     generationId: accepted.jobId,
     assistantMessageId: options.assistantMessageId,
   })
+  renderer.flush()
   return accepted
 }
 
@@ -199,7 +238,7 @@ export async function runChatStream(options: RunChatStreamOptions): Promise<RunC
     setConversations: options.setConversations,
   })
   try {
-    const accepted = await enqueueChatStream(options, state)
+    const accepted = await enqueueChatStream(options, state, renderer)
     await consumeChatStream(options, state, renderer, accepted)
   } catch (error) {
     captureStreamFailure(options, state, error)

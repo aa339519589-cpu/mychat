@@ -16,6 +16,7 @@ permissions:
 concurrency:
   group: production-release-main
   cancel-in-progress: false
+  queue: max
 
 jobs:
   resolve:
@@ -668,3 +669,18 @@ jobs:
           }' | gh api --method POST \
             "repos/$GITHUB_REPOSITORY/deployments/$GH_DEPLOYMENT_ID/statuses" \
             --input - >/dev/null
+
+  activate:
+    name: Activate staged production
+    needs: promote
+    if: needs.promote.result == 'success'
+    permissions:
+      actions: read
+      contents: read
+      deployments: write
+    uses: ./.github/workflows/activate-production.yml
+    with:
+      revision: ${{ github.event.workflow_run.head_sha }}
+      drain_release_run_id: ${{ format('{0}', github.run_id) }}
+      release_in_progress: true
+    secrets: inherit

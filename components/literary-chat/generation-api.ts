@@ -11,7 +11,17 @@ import {
 import { cacheGenerationTerminal } from '@/lib/data'
 import { normalizeGeneratedMedia, normalizeGeneratedMediaList, type GeneratedMedia } from '@/lib/generated-media'
 import { isRecord } from '@/lib/unknown-value'
-import { streamJobEvents } from './job-stream-client'
+import { enqueueJobUntilAccepted } from './durable-job-enqueue'
+import { streamJobEvents, type AcceptedJob } from './job-stream-client'
+import { fetchJsonWithTimeout } from './timed-json-fetch'
+import {
+  pendingGenerationId,
+  pendingSubmissionBody,
+  readPendingChatSubmission,
+  removePendingChatSubmission,
+  removePermanentlyRejectedSubmission,
+  type PendingChatSubmission,
+} from './pending-chat-submission'
 
 type ConversationSetter = Dispatch<SetStateAction<Conversation[]>>
 type MarkGeneration = (conversationId: string, patch: ClientGenerationPatch) => void
@@ -55,6 +65,7 @@ export async function hasActiveConversationGeneration(
   conversationId: string,
   fetcher: typeof fetch = fetch,
 ): Promise<boolean> {
+  if (await readPendingChatSubmission(conversationId)) return true
   try {
     const response = await fetcher(`/api/v1/conversations/${encodeURIComponent(conversationId)}/generation`)
     if (!response.ok) return false
@@ -66,6 +77,22 @@ export async function hasActiveConversationGeneration(
     // This is only a duplicate-submission guard. Do not turn a read outage
     // into an admission outage; the fenced enqueue RPC remains authoritative.
     return false
+  }
+}
+
+async function queryConversationGeneration(conversationId: string): Promise<Record<string, unknown> | null> {
+  const controller = new AbortController()
+  try {
+    const { response, payload } = await fetchJsonWithTimeout(
+      fetch,
+      `/api/v1/conversations/${encodeURIComponent(conversationId)}/generation`,
+      { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' } },
+      controller.signal,
+      10_000,
+    )
+    return response.ok && isRecord(payload) ? payload : null
+  } catch {
+    return null
   }
 }
 
@@ -119,6 +146,7 @@ function markWarning(
   setConversations: ConversationSetter,
   conversationId: string,
   assistantMessageId: string,
+  warning = '生成状态连接已中断；当前内容已保留，重新打开会话可再次同步。',
 ) {
   setConversations(previous => previous.map(conversation => conversation.id !== conversationId
     ? conversation
@@ -126,8 +154,86 @@ function markWarning(
       ...conversation,
       messages: conversation.messages.map(message => message.id !== assistantMessageId
         ? message
-        : { ...message, outputWarning: '生成状态连接已中断；当前内容已保留，重新打开会话可再次同步。' }),
+        : { ...message, outputWarning: warning }),
     }))
+}
+
+function initialPendingSnapshot(
+  submission: PendingChatSubmission,
+  accepted: AcceptedJob,
+): ConversationGenerationSnapshot {
+  return {
+    id: accepted.jobId,
+    conversationId: submission.conversationId,
+    assistantMessageId: submission.assistantMessageId,
+    status: accepted.status === 'queued' ? 'queued' : 'running',
+    content: '',
+    thinking: '',
+    media: [],
+    sequence: 0,
+    error: null,
+  }
+}
+
+async function consumeGenerationStream(options: {
+  accepted: AcceptedJob
+  initial: ConversationGenerationSnapshot
+  controller: AbortController
+  setConversations: ConversationSetter
+  markGeneration: MarkGeneration
+}) {
+  const { accepted, initial, controller, setConversations, markGeneration } = options
+  let content = ''
+  let thinking = ''
+  const media: GeneratedMedia[] = []
+  for await (const event of streamJobEvents(accepted, controller.signal)) {
+    if (event.kind === 'job.retry_scheduled'
+      || (event.kind === 'job.leased'
+        && typeof event.payload.attempt === 'number' && event.payload.attempt > 1)) {
+      content = ''
+      thinking = ''
+      media.splice(0, media.length)
+    }
+    if (event.kind === 'text.delta' && typeof event.payload.text === 'string') {
+      content += event.payload.text
+    } else if (event.kind === 'thinking.delta' && typeof event.payload.thinking === 'string') {
+      thinking += event.payload.thinking
+    } else if (event.kind === 'media.uploaded') {
+      const item = normalizeGeneratedMedia(event.payload.media)
+      if (item && !media.some(existing => existing.type === item.type && existing.url === item.url)) media.push(item)
+    }
+    if (event.kind === 'job.terminal') {
+      const result = isRecord(event.payload.result) ? event.payload.result : {}
+      const snapshot = normalizeConversationGenerationSnapshot({
+        id: accepted.jobId,
+        conversationId: initial.conversationId,
+        assistantMessageId: initial.assistantMessageId,
+        status: event.payload.status,
+        content: typeof result.content === 'string' ? result.content : content,
+        thinking: typeof result.thinking === 'string' ? result.thinking : thinking,
+        media: Array.isArray(result.media) ? normalizeGeneratedMediaList(result.media) : media,
+        sequence: event.seq,
+        error: typeof event.payload.errorCode === 'string' ? event.payload.errorCode : null,
+      })
+      if (!snapshot || !(await applyTerminal({
+        conversationId: initial.conversationId,
+        snapshot,
+        setConversations,
+        markGeneration,
+      }))) throw new Error('generation_terminal_invalid')
+      return
+    }
+    applySnapshot(setConversations, initial.conversationId, {
+      ...initial,
+      status: 'running',
+      content,
+      thinking,
+      media: [...media],
+      sequence: event.seq,
+      error: null,
+    })
+  }
+  throw new Error('generation_terminal_missing')
 }
 
 export async function resumeConversationGeneration(options: {
@@ -139,8 +245,7 @@ export async function resumeConversationGeneration(options: {
   onReconciled?: (available: boolean) => void
 }) {
   const { conversationId, setConversations, markGeneration, registerAbort, clearAbort } = options
-  let controller: AbortController | null = null
-  let activeIdentity: { id: string; assistantMessageId: string } | null = null
+  let controller: AbortController | null = null; let activeIdentity: { id: string; assistantMessageId: string } | null = null
   let reconciled = false
   const report = (available: boolean) => {
     if (reconciled) return
@@ -148,12 +253,45 @@ export async function resumeConversationGeneration(options: {
     options.onReconciled?.(available)
   }
   try {
-    const response = await fetch(`/api/v1/conversations/${encodeURIComponent(conversationId)}/generation`)
-    if (!response.ok) throw new Error(`generation_query_${response.status}`)
-    const body: unknown = await response.json()
-    if (!isRecord(body)) throw new Error('generation_query_invalid')
-    if (body.job === null && body.streamUrl === null) {
+    const pendingBeforeQuery = await readPendingChatSubmission(conversationId)
+    const body = await queryConversationGeneration(conversationId)
+    if (!body && !pendingBeforeQuery) throw new Error('generation_query_unavailable')
+    if (!body || (body.job === null && body.streamUrl === null)) {
+      const pending = pendingBeforeQuery ?? await readPendingChatSubmission(conversationId)
+      const pendingBody = pending ? pendingSubmissionBody(pending) : null
+      if (!pending || !pendingBody) {
+        if (pending) await removePendingChatSubmission(conversationId, pending.generationId)
+        report(true)
+        return
+      }
+      activeIdentity = { id: pending.generationId, assistantMessageId: pending.assistantMessageId }
+      markGeneration(conversationId, {
+        status: 'running',
+        generationId: pending.generationId,
+        assistantMessageId: pending.assistantMessageId,
+        begin: true,
+      })
       report(true)
+      controller = new AbortController()
+      registerAbort(conversationId, controller)
+      const accepted = await enqueueJobUntilAccepted(
+        pending.path,
+        pendingBody,
+        controller.signal,
+        () => markWarning(
+          setConversations,
+          conversationId,
+          pending.assistantMessageId,
+          '消息已保存；连接恢复后会自动继续，无需重新发送。',
+        ),
+      )
+      await removePendingChatSubmission(conversationId, pending.generationId)
+      const initial = initialPendingSnapshot(pending, accepted)
+      applySnapshot(setConversations, conversationId, initial)
+      setConversations(previous => previous.map(conversation => conversation.id === conversationId
+        ? { ...conversation, draft: false }
+        : conversation))
+      await consumeGenerationStream({ accepted, initial, controller, setConversations, markGeneration })
       return
     }
     const job = parseJob(body.job)
@@ -161,6 +299,7 @@ export async function resumeConversationGeneration(options: {
     const initial = snapshotFromJob(job, conversationId)
     if (!initial || initial.conversationId !== conversationId) throw new Error('generation_identity_invalid')
     activeIdentity = { id: job.id, assistantMessageId: initial.assistantMessageId }
+    await removePendingChatSubmission(conversationId, pendingGenerationId(pendingBeforeQuery, job.id))
     if (terminal(job.status)) {
       await applyTerminal({ conversationId, snapshot: initial, setConversations, markGeneration })
       report(true)
@@ -176,60 +315,20 @@ export async function resumeConversationGeneration(options: {
     report(true)
     controller = new AbortController()
     registerAbort(conversationId, controller)
-    let content = ''
-    let thinking = ''
-    const media: GeneratedMedia[] = []
-    for await (const event of streamJobEvents({
-      jobId: job.id,
-      status: job.status,
-      streamUrl: body.streamUrl,
-    }, controller.signal)) {
-      if (event.kind === 'job.retry_scheduled'
-        || (event.kind === 'job.leased'
-          && typeof event.payload.attempt === 'number' && event.payload.attempt > 1)) {
-        content = ''
-        thinking = ''
-        media.splice(0, media.length)
-      }
-      if (event.kind === 'text.delta' && typeof event.payload.text === 'string') {
-        content += event.payload.text
-      } else if (event.kind === 'thinking.delta' && typeof event.payload.thinking === 'string') {
-        thinking += event.payload.thinking
-      } else if (event.kind === 'media.uploaded') {
-        const item = normalizeGeneratedMedia(event.payload.media)
-        if (item && !media.some(existing => existing.type === item.type && existing.url === item.url)) media.push(item)
-      }
-      if (event.kind === 'job.terminal') {
-        const result = isRecord(event.payload.result) ? event.payload.result : {}
-        const snapshot = normalizeConversationGenerationSnapshot({
-          id: job.id,
-          conversationId,
-          assistantMessageId: initial.assistantMessageId,
-          status: event.payload.status,
-          content: typeof result.content === 'string' ? result.content : content,
-          thinking: typeof result.thinking === 'string' ? result.thinking : thinking,
-          media: Array.isArray(result.media) ? normalizeGeneratedMediaList(result.media) : media,
-          sequence: event.seq,
-          error: typeof event.payload.errorCode === 'string' ? event.payload.errorCode : null,
-        })
-        if (!snapshot || !(await applyTerminal({ conversationId, snapshot, setConversations, markGeneration }))) {
-          throw new Error('generation_terminal_invalid')
-        }
-        return
-      }
-      applySnapshot(setConversations, conversationId, {
-        ...initial,
-        status: 'running',
-        content,
-        thinking,
-        media: [...media],
-        sequence: event.seq,
-        error: null,
-      })
-    }
-    throw new Error('generation_terminal_missing')
+    await consumeGenerationStream({
+      accepted: {
+        jobId: job.id,
+        status: job.status,
+        streamUrl: body.streamUrl,
+      },
+      initial,
+      controller,
+      setConversations,
+      markGeneration,
+    })
   } catch (error) {
     if (controller?.signal.aborted || (error instanceof Error && error.name === 'AbortError')) return
+    await removePermanentlyRejectedSubmission(conversationId, activeIdentity, error)
     const response = error instanceof Error ? error.message : 'unknown'
     console.warn('resumeConversationGeneration', response)
     if (activeIdentity) {
