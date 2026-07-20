@@ -1,4 +1,4 @@
-name: Report Render iOS deploy
+name: Report Render regeneration deploy
 
 on:
   pull_request:
