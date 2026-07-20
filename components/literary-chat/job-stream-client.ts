@@ -24,6 +24,11 @@ type EnqueueJobDependencies = {
   totalTimeoutMs: number
 }
 
+export type EnqueueTimeoutPolicy = Pick<
+  EnqueueJobDependencies,
+  'requestTimeoutMs' | 'reconcileTimeoutMs' | 'totalTimeoutMs'
+>
+
 type EnqueueAttempt = {
   accepted: AcceptedJob | null
   error: Error | null
@@ -36,6 +41,25 @@ const RETRYABLE_ENQUEUE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504])
 const ENQUEUE_REQUEST_TIMEOUT_MS = 15_000
 const RECONCILE_REQUEST_TIMEOUT_MS = 3_000
 const ENQUEUE_TOTAL_TIMEOUT_MS = 30_000
+const REGENERATION_REQUEST_TIMEOUT_MS = 45_000
+const REGENERATION_RECONCILE_TIMEOUT_MS = 10_000
+const REGENERATION_TOTAL_TIMEOUT_MS = 90_000
+
+function isRegenerationRequest(body: unknown): boolean {
+  return isRecord(body) && isRecord(body.turn) && body.turn.schemaVersion === 2
+}
+
+export function enqueueTimeoutPolicy(body: unknown): EnqueueTimeoutPolicy {
+  return isRegenerationRequest(body) ? {
+    requestTimeoutMs: REGENERATION_REQUEST_TIMEOUT_MS,
+    reconcileTimeoutMs: REGENERATION_RECONCILE_TIMEOUT_MS,
+    totalTimeoutMs: REGENERATION_TOTAL_TIMEOUT_MS,
+  } : {
+    requestTimeoutMs: ENQUEUE_REQUEST_TIMEOUT_MS,
+    reconcileTimeoutMs: RECONCILE_REQUEST_TIMEOUT_MS,
+    totalTimeoutMs: ENQUEUE_TOTAL_TIMEOUT_MS,
+  }
+}
 
 function responseError(value: unknown, status: number): string {
   if (!isRecord(value)) return `请求失败（${status}）`
@@ -181,7 +205,11 @@ export async function enqueueJob(
   signal: AbortSignal,
   dependencyOverrides: Partial<EnqueueJobDependencies> = {},
 ): Promise<AcceptedJob> {
-  const dependencies = { ...DEFAULT_ENQUEUE_DEPENDENCIES, ...dependencyOverrides }
+  const dependencies = {
+    ...DEFAULT_ENQUEUE_DEPENDENCIES,
+    ...enqueueTimeoutPolicy(body),
+    ...dependencyOverrides,
+  }
   const serializedBody = JSON.stringify(body)
   const deadline = dependencies.now() + Math.max(1, dependencies.totalTimeoutMs)
   let lastError = networkError()
