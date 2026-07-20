@@ -1,0 +1,42 @@
+name: Restore Render worker
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/restore-render-worker.yml
+
+permissions:
+  contents: read
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+      READY_URL: https://mychat-nm6x.onrender.com/api/ready
+    steps:
+      - name: Disable drain and verify production
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            --request PUT \
+            --header "Authorization: Bearer $RENDER_API_KEY" \
+            --header 'Content-Type: application/json' \
+            --data '{"value":"off"}' \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/MYCHAT_MAINTENANCE_MODE" >/dev/null
+          for attempt in {1..90}; do
+            payload="$(curl --silent --show-error --connect-timeout 10 --max-time 30 \
+              --header 'Accept: application/json' "$READY_URL" || true)"
+            ready="$(jq -r '.ready // false' <<<"$payload" 2>/dev/null || true)"
+            revision="$(jq -r '.revision // empty' <<<"$payload" 2>/dev/null || true)"
+            draining="$(jq -r '.checks.worker.draining // true' <<<"$payload" 2>/dev/null || true)"
+            echo "Attempt $attempt: ready=$ready revision=${revision:-missing} draining=$draining"
+            if [[ "$ready" == "true" && "$revision" == "f7d3ef2c423c" && "$draining" == "false" ]]; then
+              jq '{ready,revision,checks}' <<<"$payload"
+              exit 0
+            fi
+            sleep 5
+          done
+          exit 1
