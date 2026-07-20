@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { enqueueJob } from '../components/literary-chat/job-stream-client'
+import { enqueueJob, enqueueTimeoutPolicy } from '../components/literary-chat/job-stream-client'
 
 const conversationId = '99000000-0000-4000-8000-000000000001'
 const generationId = '99000000-0000-4000-8000-000000000002'
@@ -23,6 +23,26 @@ function acceptedResponse(): Response {
 function emptyGenerationResponse(): Response {
   return Response.json({ job: null, streamUrl: null })
 }
+
+test('regeneration admission keeps the full server-authoritative processing window', () => {
+  assert.deepEqual(enqueueTimeoutPolicy(body), {
+    requestTimeoutMs: 15_000,
+    reconcileTimeoutMs: 3_000,
+    totalTimeoutMs: 30_000,
+  })
+  assert.deepEqual(enqueueTimeoutPolicy({
+    ...body,
+    turn: {
+      schemaVersion: 2,
+      operation: 'replace-from-user',
+      expectedTailMessageId: body.assistantMessageId,
+    },
+  }), {
+    requestTimeoutMs: 45_000,
+    reconcileTimeoutMs: 10_000,
+    totalTimeoutMs: 90_000,
+  })
+})
 
 test('lost enqueue acknowledgement is reconciled without submitting a second turn', async () => {
   let postCalls = 0
