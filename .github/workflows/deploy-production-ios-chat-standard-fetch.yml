@@ -1,4 +1,4 @@
-name: Deploy production iOS chat transport fix
+name: Deploy production regeneration admission fix
 
 on:
   pull_request:
@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      TARGET_SHA: e7a8e269bffa92329ea061b3486f2d1a9f2668e9
+      TARGET_SHA: f7d3ef2c423c356edf2b3b452153967589910c49
       READY_URL: https://mychat-nm6x.onrender.com/api/ready
       RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
       RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
