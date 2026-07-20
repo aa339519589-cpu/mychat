@@ -1,0 +1,121 @@
+name: Diagnose production regeneration timeout
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/diagnose-production-regeneration.yml
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      LIVE_URL: https://mychat-nm6x.onrender.com
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts --legacy-peer-deps
+      - run: npx playwright install --with-deps webkit
+      - name: Exercise a real regeneration request
+        run: |
+          cat > "$GITHUB_WORKSPACE/.diagnose-regeneration.mjs" <<'EOF'
+          import { webkit } from '@playwright/test'
+
+          const browser = await webkit.launch({ headless: true })
+          const context = await browser.newContext({
+            viewport: { width: 390, height: 844 },
+            userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1',
+          })
+          const page = await context.newPage()
+          const started = new Map()
+          const chatRequests = []
+
+          page.on('request', request => {
+            if (!request.url().includes('/api/')) return
+            started.set(request, Date.now())
+            if (request.url().endsWith('/api/chat')) {
+              try { chatRequests.push(request.postDataJSON()) } catch { chatRequests.push(request.postData()) }
+            }
+            console.log(`REQUEST ${request.method()} ${request.url()}`)
+          })
+          page.on('response', async response => {
+            if (!response.url().includes('/api/')) return
+            const elapsed = Date.now() - (started.get(response.request()) ?? Date.now())
+            let body = ''
+            try { body = await response.text() } catch {}
+            console.log(`RESPONSE ${response.status()} ${elapsed}ms ${response.url()} ${body.slice(0, 1600)}`)
+          })
+          page.on('requestfailed', request => {
+            if (request.url().includes('/api/')) console.log(`FAILED ${request.method()} ${request.url()} ${request.failure()?.errorText}`)
+          })
+          page.on('console', message => console.log(`BROWSER ${message.type()} ${message.text()}`))
+
+          try {
+            await page.goto(process.env.LIVE_URL, { waitUntil: 'domcontentloaded', timeout: 120_000 })
+            const input = page.getByPlaceholder('说点什么……')
+            if (!await input.isVisible().catch(() => false)) {
+              const guest = page.getByRole('button', { name: '以游客身份继续' })
+              await guest.waitFor({ state: 'visible', timeout: 60_000 })
+              await guest.click()
+              await input.waitFor({ state: 'visible', timeout: 60_000 })
+            }
+
+            await input.fill('你好')
+            await input.press('Enter')
+            await page.waitForFunction(() => !!document.querySelector('button[title="复制"]'), { timeout: 90_000 })
+            const first = chatRequests[0]
+            console.log(`FIRST_REQUEST ${JSON.stringify(first)}`)
+            if (!first || typeof first !== 'object') throw new Error('initial request was not captured')
+
+            const regeneration = await page.evaluate(async firstRequest => {
+              const generationId = crypto.randomUUID()
+              const assistantMessageId = crypto.randomUUID()
+              const body = {
+                ...firstRequest,
+                generationId,
+                assistantMessageId,
+                turn: {
+                  schemaVersion: 2,
+                  operation: 'replace-from-user',
+                  expectedTailMessageId: firstRequest.assistantMessageId,
+                },
+              }
+              const startedAt = Date.now()
+              const response = await fetch('/api/chat', {
+                method: 'POST',
+                credentials: 'same-origin',
+                cache: 'no-store',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+              })
+              return {
+                status: response.status,
+                elapsed: Date.now() - startedAt,
+                response: await response.text(),
+                request: body,
+              }
+            }, first)
+
+            console.log(`REGENERATION ${JSON.stringify(regeneration)}`)
+            console.log(`BODY ${JSON.stringify((await page.locator('body').innerText()).slice(0, 4000))}`)
+            if (regeneration.status !== 202) process.exitCode = 1
+          } finally {
+            await browser.close()
+          }
+          EOF
+          set -o pipefail
+          node "$GITHUB_WORKSPACE/.diagnose-regeneration.mjs" 2>&1 | tee "$RUNNER_TEMP/production-regeneration.txt"
+      - name: Upload diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: production-regeneration-diagnostic
+          path: ${{ runner.temp }}/production-regeneration.txt
+          if-no-files-found: error
+          retention-days: 1
