@@ -67,7 +67,7 @@ jobs:
             echo "SUPABASE_ADMIN_URL=$supabase_url"
             echo "SUPABASE_SERVICE_KEY=$service_key"
           } >> "$GITHUB_ENV"
-      - name: Exercise a real regeneration request
+      - name: Exercise the real frontend regeneration flow
         run: |
           cat > "$GITHUB_WORKSPACE/.diagnose-regeneration.mjs" <<'EOF'
           import { webkit } from '@playwright/test'
@@ -79,22 +79,17 @@ jobs:
           })
           const page = await context.newPage()
           const started = new Map()
-          const chatRequests = []
+          const chatResponses = []
 
           page.on('request', request => {
-            if (!request.url().includes('/api/')) return
-            started.set(request, Date.now())
-            if (request.url().endsWith('/api/chat')) {
-              try { chatRequests.push(request.postDataJSON()) } catch { chatRequests.push(request.postData()) }
-            }
-            console.log(`REQUEST ${request.method()} ${request.url()}`)
+            if (request.url().endsWith('/api/chat')) started.set(request, Date.now())
           })
           page.on('response', async response => {
-            if (!response.url().includes('/api/')) return
+            if (!response.url().endsWith('/api/chat')) return
             const elapsed = Date.now() - (started.get(response.request()) ?? Date.now())
-            let body = ''
-            try { body = await response.text() } catch {}
-            console.log(`RESPONSE ${response.status()} ${elapsed}ms ${response.url()} ${body.slice(0, 1600)}`)
+            const body = await response.text().catch(() => '')
+            chatResponses.push({ status: response.status(), elapsed, body })
+            console.log(`CHAT_RESPONSE ${response.status()} ${elapsed}ms ${body.slice(0, 1600)}`)
           })
           page.on('requestfailed', request => {
             if (request.url().includes('/api/')) console.log(`FAILED ${request.method()} ${request.url()} ${request.failure()?.errorText}`)
@@ -105,52 +100,30 @@ jobs:
             await page.goto(process.env.LIVE_URL, { waitUntil: 'domcontentloaded', timeout: 120_000 })
             await page.getByLabel('邮箱地址').fill(process.env.TEST_EMAIL)
             await page.getByLabel('密码').fill(process.env.TEST_PASSWORD)
-            const loginResponse = page.waitForResponse(response => response.url().endsWith('/api/auth/email'), { timeout: 60_000 })
             await page.getByRole('button', { name: '登录', exact: true }).click()
-            const login = await loginResponse
-            console.log(`LOGIN ${login.status()} ${(await login.text()).slice(0, 800)}`)
 
             const input = page.getByPlaceholder('说点什么……')
             await input.waitFor({ state: 'visible', timeout: 60_000 })
             await input.fill('你好')
             await input.press('Enter')
-            await page.waitForFunction(() => !!document.querySelector('button[title="复制"]'), { timeout: 90_000 })
-            const first = chatRequests[0]
-            console.log(`FIRST_REQUEST ${JSON.stringify(first)}`)
-            if (!first || typeof first !== 'object') throw new Error('initial request was not captured')
+            await page.getByTitle('复制').waitFor({ state: 'visible', timeout: 90_000 })
 
-            const regeneration = await page.evaluate(async firstRequest => {
-              const generationId = crypto.randomUUID()
-              const assistantMessageId = crypto.randomUUID()
-              const body = {
-                ...firstRequest,
-                generationId,
-                assistantMessageId,
-                turn: {
-                  schemaVersion: 2,
-                  operation: 'replace-from-user',
-                  expectedTailMessageId: firstRequest.assistantMessageId,
-                },
-              }
-              const startedAt = Date.now()
-              const response = await fetch('/api/chat', {
-                method: 'POST',
-                credentials: 'same-origin',
-                cache: 'no-store',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-              })
-              return {
-                status: response.status,
-                elapsed: Date.now() - startedAt,
-                response: await response.text(),
-                request: body,
-              }
-            }, first)
+            const regenerate = page.getByTitle('重新生成')
+            await regenerate.waitFor({ state: 'attached', timeout: 30_000 })
+            const startedAt = Date.now()
+            await regenerate.click({ force: true })
+            await page.waitForFunction(() => {
+              const text = document.body.innerText
+              if (text.includes('无法开始重新生成') || text.includes('连接超时，请重试')) return 'failed'
+              return document.querySelector('button[title="复制"]') && !text.includes('Thinking') ? 'completed' : null
+            }, { timeout: 120_000 })
 
-            console.log(`REGENERATION ${JSON.stringify(regeneration)}`)
-            console.log(`BODY ${JSON.stringify((await page.locator('body').innerText()).slice(0, 4000))}`)
-            if (regeneration.status !== 202) process.exitCode = 1
+            const body = await page.locator('body').innerText()
+            console.log(`REGEN_UI elapsed=${Date.now() - startedAt}ms`)
+            console.log(`CHAT_RESPONSES ${JSON.stringify(chatResponses)}`)
+            console.log(`BODY ${JSON.stringify(body.slice(0, 4000))}`)
+            if (body.includes('无法开始重新生成') || body.includes('连接超时，请重试')) process.exitCode = 1
+            if (chatResponses.length < 2 || chatResponses.at(-1)?.status !== 202) process.exitCode = 1
           } finally {
             await browser.close()
           }
