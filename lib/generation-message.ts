@@ -22,7 +22,9 @@ export function generationTerminalWarning(
   if (generation?.status === 'cancelled') return '已停止生成'
   if (generation?.status !== 'failed') return undefined
   if (generation.error === 'stale_generation_lease_expired') {
-    return '生成任务执行租约已失效，请重新生成'
+    return '这次回复已中断，请点击重新生成'
   }
-  return generation.error || '生成任务失败'
+  // Backend error codes and control-plane details are operational diagnostics,
+  // not useful chat content. Keep them in logs and show one stable recovery path.
+  return '这次回复没有生成成功，请点击重新生成'
 }
