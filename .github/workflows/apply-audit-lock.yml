@@ -1,0 +1,38 @@
+name: Apply Audit Lock
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'fix/reliable-chat-and-scroll'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repair branch
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: fix/reliable-chat-and-scroll
+          persist-credentials: true
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+          cache: npm
+      - name: Refresh vulnerable production dependencies
+        run: npm audit fix --package-lock-only --omit=dev --legacy-peer-deps
+      - name: Verify production audit
+        run: npm audit --omit=dev --audit-level=high
+      - name: Remove temporary repair workflows
+        run: rm -f .github/workflows/apply-audit-lock.yml .github/workflows/fix-audit-lock.yml .github/workflows/diagnose-chat-fix.yml
+      - name: Commit repaired lockfile
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json .github/workflows
+          git diff --cached --quiet && exit 0
+          git commit -m "修复生产依赖安全审计并清理诊断工作流"
+          git push origin HEAD:fix/reliable-chat-and-scroll
