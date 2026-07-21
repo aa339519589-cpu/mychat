@@ -21,8 +21,9 @@ jobs:
             if curl --fail --silent --show-error --max-time 20 "$READY_URL" -o ready.json; then
               cat ready.json
               if jq --exit-status --arg revision "$EXPECTED_REVISION" '
+                (.revision // "") as $actual |
                 .ready == true and
-                (.revision == $revision or ($revision | startswith(.revision)) or (.revision | startswith($revision)))
+                ($actual == $revision or ($revision | startswith($actual)) or ($actual | startswith($revision)))
               ' ready.json >/dev/null; then
                 exit 0
               fi
