@@ -117,6 +117,27 @@ async function discardRetryResponse(response: Response): Promise<void> {
   }
 }
 
+function retryDelays(options: RunTurnOptions | undefined): readonly number[] {
+  return options?.retryDelaysMs?.length
+    ? options.retryDelaysMs
+    : TURN_TRANSPORT_RETRY_DELAYS_MS
+}
+
+function responseEndsRetry(opened: OpenTurnResponse, finalAttempt: boolean): boolean {
+  if (opened.response.ok) return true
+  if (!retryableTurnStatus(opened.response.status)) return true
+  return finalAttempt
+}
+
+function assertRetryCanContinue(
+  error: unknown,
+  signal: AbortSignal | undefined,
+  finalAttempt: boolean,
+): void {
+  if (signal?.aborted) throw signal.reason ?? error
+  if (finalAttempt) throw error
+}
+
 async function openTurnWithRetry(input: {
   url: string
   apiKey: string
@@ -125,23 +146,18 @@ async function openTurnWithRetry(input: {
   tools: ModelToolDefinition[]
   options?: RunTurnOptions
 }): Promise<OpenTurnResponse> {
-  const delays = input.options?.retryDelaysMs?.length
-    ? input.options.retryDelaysMs
-    : TURN_TRANSPORT_RETRY_DELAYS_MS
+  const delays = retryDelays(input.options)
   let lastError: unknown = null
   for (let attempt = 0; attempt < delays.length; attempt += 1) {
     await retryDelay(delays[attempt] ?? 0, input.options?.signal)
+    const finalAttempt = attempt === delays.length - 1
     try {
       const opened = await openTurnResponse(input)
-      const finalAttempt = attempt === delays.length - 1
-      if (opened.response.ok || !retryableTurnStatus(opened.response.status) || finalAttempt) {
-        return opened
-      }
+      if (responseEndsRetry(opened, finalAttempt)) return opened
       await discardRetryResponse(opened.response)
     } catch (error) {
-      if (input.options?.signal?.aborted) throw input.options.signal.reason ?? error
       lastError = error
-      if (attempt === delays.length - 1) throw error
+      assertRetryCanContinue(error, input.options?.signal, finalAttempt)
     }
   }
   throw lastError ?? new Error('模型服务连接失败')
