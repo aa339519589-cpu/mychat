@@ -48,6 +48,8 @@ export type RunTurnOptions = {
   logTiming?: boolean
   maxOutputTokens?: number
   idempotencyNamespace?: string
+  /** Test/embedded override; production uses the bounded defaults below. */
+  retryDelaysMs?: readonly number[]
 }
 
 const TURN_TRANSPORT_RETRY_DELAYS_MS = [0, 600, 1_800] as const
@@ -94,11 +96,15 @@ function retryDelay(delayMs: number, signal: AbortSignal | undefined): Promise<v
       reject(signal.reason)
       return
     }
-    const timer = setTimeout(resolve, delayMs)
-    signal?.addEventListener('abort', () => {
+    const onAbort = () => {
       clearTimeout(timer)
-      reject(signal.reason)
-    }, { once: true })
+      reject(signal?.reason)
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, delayMs)
+    signal?.addEventListener('abort', onAbort, { once: true })
   })
 }
 
@@ -119,12 +125,15 @@ async function openTurnWithRetry(input: {
   tools: ModelToolDefinition[]
   options?: RunTurnOptions
 }): Promise<OpenTurnResponse> {
+  const delays = input.options?.retryDelaysMs?.length
+    ? input.options.retryDelaysMs
+    : TURN_TRANSPORT_RETRY_DELAYS_MS
   let lastError: unknown = null
-  for (let attempt = 0; attempt < TURN_TRANSPORT_RETRY_DELAYS_MS.length; attempt += 1) {
-    await retryDelay(TURN_TRANSPORT_RETRY_DELAYS_MS[attempt] ?? 0, input.options?.signal)
+  for (let attempt = 0; attempt < delays.length; attempt += 1) {
+    await retryDelay(delays[attempt] ?? 0, input.options?.signal)
     try {
       const opened = await openTurnResponse(input)
-      const finalAttempt = attempt === TURN_TRANSPORT_RETRY_DELAYS_MS.length - 1
+      const finalAttempt = attempt === delays.length - 1
       if (opened.response.ok || !retryableTurnStatus(opened.response.status) || finalAttempt) {
         return opened
       }
@@ -132,7 +141,7 @@ async function openTurnWithRetry(input: {
     } catch (error) {
       if (input.options?.signal?.aborted) throw input.options.signal.reason ?? error
       lastError = error
-      if (attempt === TURN_TRANSPORT_RETRY_DELAYS_MS.length - 1) throw error
+      if (attempt === delays.length - 1) throw error
     }
   }
   throw lastError ?? new Error('模型服务连接失败')
