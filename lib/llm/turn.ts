@@ -53,6 +53,7 @@ export type RunTurnOptions = {
 }
 
 const TURN_TRANSPORT_RETRY_DELAYS_MS = [0, 600, 1_800] as const
+const SINGLE_TURN_ATTEMPT = [0] as const
 
 export function retryableTurnStatus(status: number): boolean {
   return status === 408 || status === 425 || status === 429 || status >= 500
@@ -118,9 +119,12 @@ async function discardRetryResponse(response: Response): Promise<void> {
 }
 
 function retryDelays(options: RunTurnOptions | undefined): readonly number[] {
-  return options?.retryDelaysMs?.length
-    ? options.retryDelaysMs
-    : TURN_TRANSPORT_RETRY_DELAYS_MS
+  if (options?.retryDelaysMs?.length) return options.retryDelaysMs
+  // User-defined generic endpoints are opaque and may return one-shot bodies or
+  // implement their own retry semantics. Keep automatic retries on platform
+  // providers only; explicit callers can still opt in through retryDelaysMs.
+  if (options?.adapter === 'generic-openai') return SINGLE_TURN_ATTEMPT
+  return TURN_TRANSPORT_RETRY_DELAYS_MS
 }
 
 function responseEndsRetry(opened: OpenTurnResponse, finalAttempt: boolean): boolean {
