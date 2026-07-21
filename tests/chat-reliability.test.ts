@@ -3,6 +3,7 @@ import test from 'node:test'
 import { generationTerminalWarning } from '@/lib/generation-message'
 import { retryableTurnStatus, runTurn, type RunTurnOptions } from '@/lib/llm/turn'
 
+// Keep retry behavior deterministic so transient provider failures cannot regress silently.
 const messages = [{ role: 'user' as const, content: 'hello' }]
 
 async function runFailedTurn(fetcher: NonNullable<RunTurnOptions['fetcher']>, retryDelaysMs = [0, 0, 0]) {
