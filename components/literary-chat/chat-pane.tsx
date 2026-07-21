@@ -1,6 +1,6 @@
 "use client"
 
-import type { ComponentProps, RefObject } from "react"
+import { useLayoutEffect, type ComponentProps, type RefObject } from "react"
 import { ChevronDown, Folder, PanelLeft } from "lucide-react"
 import { motion, useReducedMotion } from "motion/react"
 import type { Conversation } from "@/lib/chat-data"
@@ -44,6 +44,8 @@ export function ChatPane({
   messageProps,
   inputProps,
 }: ChatPaneProps) {
+  useConversationBottomAnchor(active?.id, scrollRef)
+
   return (
     <main className={cn("flex min-w-0 flex-1 flex-col overflow-hidden", !mobile && "ml-0")}>
       <ChatHeader mobile={mobile} sidebarCollapsed={sidebarCollapsed} active={active} activeProject={activeProject} menuAnchor={menuAnchor} renaming={renaming} onOpenSidebar={onOpenSidebar} onToggleSidebar={onToggleSidebar} onMenuAnchorChange={onMenuAnchorChange} onRenamingChange={onRenamingChange} onRename={onRename} />
@@ -64,6 +66,42 @@ export function ChatPane({
       <ChatInput {...inputProps} mobile={mobile} />
     </main>
   )
+}
+
+function useConversationBottomAnchor(
+  conversationId: string | undefined,
+  scrollRef: RefObject<HTMLDivElement | null>,
+) {
+  useLayoutEffect(() => {
+    const element = scrollRef.current
+    if (!element || !conversationId) return
+
+    let stopped = false
+    let secondFrame = 0
+    const pinToBottom = () => {
+      if (!stopped) element.scrollTop = element.scrollHeight
+    }
+
+    // The first scroll can run before cached/remote messages and fonts have
+    // finished laying out. Pin again across the next frames and while the
+    // newly opened conversation hydrates so reopening always lands at the end.
+    pinToBottom()
+    const firstFrame = window.requestAnimationFrame(() => {
+      pinToBottom()
+      secondFrame = window.requestAnimationFrame(pinToBottom)
+    })
+    const mutations = new MutationObserver(pinToBottom)
+    mutations.observe(element, { childList: true, subtree: true, characterData: true })
+    const timeout = window.setTimeout(() => mutations.disconnect(), 1_500)
+
+    return () => {
+      stopped = true
+      window.cancelAnimationFrame(firstFrame)
+      if (secondFrame) window.cancelAnimationFrame(secondFrame)
+      window.clearTimeout(timeout)
+      mutations.disconnect()
+    }
+  }, [conversationId, scrollRef])
 }
 
 function ChatHeader({ mobile, sidebarCollapsed, active, activeProject, menuAnchor, renaming, onOpenSidebar, onToggleSidebar, onMenuAnchorChange, onRenamingChange, onRename }: {
