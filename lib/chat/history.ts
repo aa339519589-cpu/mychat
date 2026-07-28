@@ -24,6 +24,10 @@ export async function prepareChatHistory(options: {
   customEndpoint: boolean
   signal?: AbortSignal
 }): Promise<{ conversationId: string | null; renderedContext: string }> {
+  if (!options.historyRetrievalEnabled) {
+    return { conversationId: options.conversationId ?? null, renderedContext: '' }
+  }
+
   const summary = await prepareConversationSummary({
     supabase: options.supabase,
     userId: options.userId,
@@ -33,10 +37,6 @@ export async function prepareChatHistory(options: {
     allowCompaction: !options.customEndpoint,
   })
 
-  if (!options.historyRetrievalEnabled) {
-    return { conversationId: summary.conversationId, renderedContext: summary.renderedSummary }
-  }
-
   if (!options.customEndpoint) {
     await ensureConversationIndexed(
       options.supabase,
@@ -45,6 +45,7 @@ export async function prepareChatHistory(options: {
       options.signal,
     )
   }
+
   const historyContext = await retrieveHistoryContext({
     supabase: options.supabase,
     userId: options.userId,
@@ -54,6 +55,7 @@ export async function prepareChatHistory(options: {
     mode: options.customEndpoint ? 'light' : historyRetrievalModeForTier(options.tier),
     signal: options.signal,
   })
+
   return {
     conversationId: summary.conversationId,
     renderedContext: summary.renderedSummary + historyContext,
