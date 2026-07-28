@@ -45,7 +45,7 @@ export async function GET(
   request: NextRequest,
   context: { params: Promise<{ conversationId: string }> },
 ) {
-  const auth = await resolveAuth()
+  const auth = await resolveAuth(request)
 
   // This endpoint only restores an already-running generation. A stale or
   // device-specific browser session must never lock the composer. Returning an
@@ -53,7 +53,6 @@ export async function GET(
   // database-fenced by the write endpoint.
   if (auth.authUnavailable) return degradedGenerationStatus('auth_unavailable')
   if (!auth.supabase || !auth.userId) return degradedGenerationStatus('auth_missing')
-
   const { conversationId } = await context.params
   if (!isUuid(conversationId)) return apiErrorResponseV1(request, {
     status: 400, code: 'INVALID_REQUEST', message: 'conversationId 无效', retryable: false,

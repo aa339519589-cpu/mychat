@@ -6,7 +6,7 @@ import { SupabaseJobRepository } from '@/lib/jobs/supabase-repository'
 import { isUuid } from '@/lib/validation'
 
 export async function POST(request: NextRequest, context: { params: Promise<{ jobId: string }> }) {
-  const auth = await resolveAuth()
+  const auth = await resolveAuth(request)
   if (auth.authUnavailable) return apiErrorResponseV1(request, {
     status: 503, code: 'AUTH_DEPENDENCY_UNAVAILABLE', message: '认证服务暂时不可用', retryable: true,
     headers: { 'Retry-After': '5' },
