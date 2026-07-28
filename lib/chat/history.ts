@@ -24,6 +24,15 @@ export async function prepareChatHistory(options: {
   customEndpoint: boolean
   signal?: AbortSignal
 }): Promise<{ conversationId: string | null; renderedContext: string }> {
+  if (!options.historyRetrievalEnabled) {
+    return {
+      conversationId: typeof options.conversationId === 'string' && options.conversationId
+        ? options.conversationId
+        : null,
+      renderedContext: '',
+    }
+  }
+
   const summary = await prepareConversationSummary({
     supabase: options.supabase,
     userId: options.userId,
@@ -32,10 +41,6 @@ export async function prepareChatHistory(options: {
     signal: options.signal,
     allowCompaction: !options.customEndpoint,
   })
-
-  if (!options.historyRetrievalEnabled) {
-    return { conversationId: summary.conversationId, renderedContext: summary.renderedSummary }
-  }
 
   if (!options.customEndpoint) {
     await ensureConversationIndexed(
