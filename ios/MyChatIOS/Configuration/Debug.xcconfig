@@ -1,2 +1,4 @@
 // Change this to your reachable development server when testing on-device.
-MYCHAT_API_BASE_URL = https://mychat-nm6x.onrender.com
+// In .xcconfig files, `//` begins a comment. The empty variable expansion
+// preserves the two URL slashes in the final Info.plist value.
+MYCHAT_API_BASE_URL = https:/$()/mychat-nm6x.onrender.com
