@@ -1,6 +1,6 @@
 // Route 守卫层：把流式 route 的「鉴权 + 限流 + 额度」前导逻辑收敛到一处。
 // 大请求可先单独执行 enforceRequestRateLimit，再在解析 body 后执行 enforceQuotaLimit。
-import { createClient } from '@/lib/supabase/server'
+import { createBearerClient, createClient } from '@/lib/supabase/server'
 import { checkRateLimit } from '@/lib/rate-limit'
 import { checkQuotaExceeded } from '@/lib/quota'
 import { log } from '@/lib/logger'
@@ -21,10 +21,14 @@ function json(obj: unknown, status: number): Response {
 
 // A missing session is a valid anonymous request. An authentication dependency
 // exception is different: mark it unavailable so protected traffic fails closed.
-export async function resolveAuth(): Promise<AuthCtx> {
+export async function resolveAuth(request?: Request): Promise<AuthCtx> {
   try {
-    const supabase = await createClient()
-    const { data, error } = await supabase.auth.getUser()
+    const authorization = request?.headers.get('authorization')
+    const accessToken = authorization?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim()
+    const supabase = accessToken ? createBearerClient(accessToken) : await createClient()
+    const { data, error } = accessToken
+      ? await supabase.auth.getUser(accessToken)
+      : await supabase.auth.getUser()
     if (isAuthDependencyUnavailable(error)) {
       log.error('auth', 'Authentication dependency returned an error', {
         name: error?.name ?? 'unknown',

@@ -25,7 +25,7 @@ function configurationError(request: Request, message: string): Response {
 export async function POST(request: NextRequest) {
   const maintenance = expensiveWriteMaintenanceResponse(request)
   if (maintenance) return maintenance
-  const auth = await resolveAuth()
+  const auth = await resolveAuth(request)
   const rate = await enforceRequestRateLimit(auth, request)
   if (rate.response) return rate.response
   if (!auth.supabase || !auth.userId) return apiErrorResponseV1(request, {

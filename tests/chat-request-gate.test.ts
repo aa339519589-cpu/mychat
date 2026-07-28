@@ -10,7 +10,7 @@ import type { RateLimitResult } from '../lib/rate-limit'
 
 test('chat authenticates and applies distributed rate limiting before reading the large body', () => {
   const route = readFileSync(new URL('../app/api/chat/route.ts', import.meta.url), 'utf8')
-  const auth = route.indexOf('await resolveAuth()')
+  const auth = route.indexOf('await resolveAuth(request)')
   const rate = route.indexOf('await enforceRequestRateLimit(auth, request)')
   const body = route.indexOf('await readJson(request, { maxBytes: 8 * 1024 * 1024 })')
   const quota = route.indexOf('await enforceQuotaLimit(auth, { quota: body.endpointId === undefined })')
@@ -19,7 +19,7 @@ test('chat authenticates and applies distributed rate limiting before reading th
   assert.ok(auth < rate)
   assert.ok(rate < body)
   assert.ok(body < quota)
-  assert.equal(route.match(/await resolveAuth\(\)/g)?.length, 1)
+  assert.equal(route.match(/await resolveAuth\(request\)/g)?.length, 1)
   assert.equal(route.match(/await enforceRequestRateLimit\(auth, request\)/g)?.length, 1)
   assert.equal(route.includes('enforceLimits(auth, request'), false)
 })
