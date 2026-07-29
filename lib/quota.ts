@@ -51,10 +51,12 @@ export async function checkQuotaExceeded(
     const row = data as Record<string, unknown>
     const t5h = finiteNonnegative(row.tokens5h)
     const t7d = finiteNonnegative(row.tokens7d)
-    const balance = finiteNonnegative(row.balance)
+    // A newly authenticated principal can legitimately have no profile row yet.
+    // PostgreSQL then returns null balance/limits; admission creates the row atomically.
+    const balance = finiteNonnegative(row.balance) ?? 0
     const limit5h = finiteNonnegative(row.limit5h) ?? QUOTA_LIMIT_5H
     const limit7d = finiteNonnegative(row.limit7d) ?? QUOTA_LIMIT_7D
-    if (t5h === null || t7d === null || balance === null) {
+    if (t5h === null || t7d === null) {
       return { exceeded: false, unavailable: true }
     }
     const windowExceeded = t5h >= limit5h || t7d >= limit7d
