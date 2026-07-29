@@ -162,3 +162,16 @@ export async function enqueueCompatibleTurn(
     .eq('id', body.conversationId).eq('user_id', input.userId)
   return { created: result.created, job: { id: result.job.id, status: result.job.status } }
 }
+
+/**
+ * Schema-v1 native turns now have exactly one admission implementation.
+ * The legacy callback remains in the call signature only until regeneration and
+ * web callers are separated; it is never executed for a native append turn.
+ */
+export async function enqueueTurnWithCompatibility(
+  input: CompatibleTurnInput & {
+    authoritative: () => Promise<{ created: boolean; job: ChatJobAdmission }>
+  },
+): Promise<{ created: boolean; job: ChatJobAdmission }> {
+  return enqueueCompatibleTurn(input)
+}
