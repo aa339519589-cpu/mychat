@@ -1,11 +1,13 @@
 import SwiftUI
 
 enum AppPalette {
-    static let background = Color(red: 0.982, green: 0.981, blue: 0.973)
-    static let surface = Color.white
-    static let mutedSurface = Color(red: 0.946, green: 0.945, blue: 0.938)
-    static let border = Color.black.opacity(0.085)
-    static let text = Color(red: 0.075, green: 0.073, blue: 0.068)
+    static let background = Color(uiColor: .systemBackground)
+    static let surface = Color(uiColor: .systemBackground)
+    static let mutedSurface = Color(uiColor: .secondarySystemBackground)
+    static let elevatedSurface = Color(uiColor: .tertiarySystemBackground)
+    static let border = Color(uiColor: .separator).opacity(0.52)
+    static let text = Color(uiColor: .label)
+    static let secondaryText = Color(uiColor: .secondaryLabel)
 }
 
 @MainActor
@@ -295,6 +297,7 @@ final class ChatStore: ObservableObject {
                 replaceEmptyAssistant(assistantID, with: "发送失败")
                 failedMessageID = assistantID
                 retryContext = RetryContext(text: text, userID: userID, assistantID: assistantID)
+                self.error = error.localizedDescription
             }
         }
     }
@@ -355,6 +358,8 @@ struct NativeChatView: View {
     let onSignOut: () -> Void
     @StateObject private var store: ChatStore
     @State private var sidebarVisible = false
+    @State private var attachmentSheetVisible = false
+    @State private var destination: WorkspaceDestination?
     @State private var draft = ""
     @FocusState private var composerFocused: Bool
 
@@ -390,7 +395,10 @@ struct NativeChatView: View {
                     draft: $draft,
                     isFocused: $composerFocused,
                     isSending: store.isSending,
-                    newConversation: store.newConversation,
+                    openAttachments: {
+                        composerFocused = false
+                        attachmentSheetVisible = true
+                    },
                     send: {
                         let value = draft
                         draft = ""
@@ -400,6 +408,23 @@ struct NativeChatView: View {
                 )
             }
             .disabled(sidebarVisible)
+
+            if !sidebarVisible {
+                Color.clear
+                    .frame(width: 18)
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 18)
+                            .onEnded { value in
+                                guard value.translation.width > 54,
+                                      abs(value.translation.height) < 90 else { return }
+                                lightHaptic()
+                                withAnimation(.interactiveSpring(response: 0.3, dampingFraction: 0.9)) {
+                                    sidebarVisible = true
+                                }
+                            }
+                    )
+            }
 
             if sidebarVisible {
                 SidebarOverlay(
@@ -417,13 +442,29 @@ struct NativeChatView: View {
                         store.newConversation()
                         sidebarVisible = false
                     },
-                    signOut: onSignOut
+                    openDestination: {
+                        destination = $0
+                        sidebarVisible = false
+                    }
                 )
-                .transition(.opacity)
+                .transition(.asymmetric(
+                    insertion: .opacity,
+                    removal: .opacity
+                ))
                 .zIndex(2)
             }
         }
-        .animation(.easeOut(duration: 0.18), value: sidebarVisible)
+        .animation(.interactiveSpring(response: 0.3, dampingFraction: 0.9), value: sidebarVisible)
+        .sheet(isPresented: $attachmentSheetVisible) {
+            AttachmentActionsSheet()
+                .presentationDetents([.height(370)])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(AppPalette.background)
+        }
+        .sheet(item: $destination) { destination in
+            WorkspaceDestinationView(destination: destination, signOut: onSignOut)
+                .presentationBackground(AppPalette.background)
+        }
         .alert(
             "提示",
             isPresented: Binding(
@@ -610,25 +651,24 @@ struct Composer: View {
     @Binding var draft: String
     let isFocused: FocusState<Bool>.Binding
     let isSending: Bool
-    let newConversation: () -> Void
+    let openAttachments: () -> Void
     let send: () -> Void
     let reportError: (String) -> Void
     @StateObject private var speech = SpeechInput()
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 6) {
-            Button(action: newConversation) {
+            Button {
+                lightHaptic()
+                openAttachments()
+            } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 20, weight: .regular))
                     .foregroundStyle(AppPalette.text)
-                    .frame(width: 40, height: 40)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(AppPalette.border, lineWidth: 0.7)
-                    }
+                    .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
-            .accessibilityLabel("新对话")
+            .accessibilityLabel("添加")
 
             TextField("Ask anything", text: $draft, axis: .vertical)
                 .font(.system(size: 17))
@@ -642,25 +682,25 @@ struct Composer: View {
                 Image(systemName: actionIcon)
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(actionForeground)
-                    .frame(width: 40, height: 40)
-                    .background(actionBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .frame(width: 44, height: 44)
+                    .background {
+                        if !draftIsEmpty {
+                            Circle().fill(actionBackground)
+                                .frame(width: 36, height: 36)
+                        }
+                    }
             }
             .disabled(isSending)
             .accessibilityLabel(draftIsEmpty ? (speech.isRecording ? "停止听写" : "语音输入") : "发送")
         }
-        .padding(6)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
         .background(AppPalette.surface)
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(AppPalette.border, lineWidth: 0.7)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(AppPalette.border)
+                .frame(height: 0.5)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .shadow(color: .black.opacity(0.045), radius: 7, x: 0, y: 2)
-        .padding(.horizontal, 14)
-        .padding(.top, 7)
-        .padding(.bottom, 8)
-        .background(AppPalette.background)
         .onChange(of: speech.transcript) { _, value in
             if !value.isEmpty { draft = value }
         }
@@ -689,15 +729,46 @@ struct Composer: View {
 
     private var actionBackground: Color {
         if !draftIsEmpty { return .primary }
-        return AppPalette.mutedSurface
+        return .clear
     }
 
     private func primaryAction() {
+        lightHaptic()
         if draftIsEmpty {
             Task { await speech.toggle() }
         } else {
             speech.stop()
             send()
+        }
+    }
+}
+
+enum WorkspaceDestination: String, Identifiable {
+    case projects
+    case artifacts
+    case code
+    case profile
+    case settings
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .projects: return "项目"
+        case .artifacts: return "作品"
+        case .code: return "代码"
+        case .profile: return "账户"
+        case .settings: return "设置"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .projects: return "folder"
+        case .artifacts: return "square.grid.2x2"
+        case .code: return "chevron.left.forwardslash.chevron.right"
+        case .profile: return "person"
+        case .settings: return "gearshape"
         }
     }
 }
@@ -708,68 +779,256 @@ struct SidebarOverlay: View {
     let close: () -> Void
     let select: (Conversation) -> Void
     let newConversation: () -> Void
-    let signOut: () -> Void
+    let openDestination: (WorkspaceDestination) -> Void
 
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
-                Color.black.opacity(0.18)
+                Color.black.opacity(0.22)
                     .ignoresSafeArea()
                     .onTapGesture(perform: close)
                 VStack(alignment: .leading, spacing: 0) {
-                    HStack {
-                        Text("对话")
-                            .font(.title2.weight(.semibold))
+                    HStack(spacing: 11) {
+                        MyChatMark()
+                        Text("MyChat")
+                            .font(.system(size: 20, weight: .semibold))
                         Spacer()
-                        Button(action: newConversation) {
-                            Image(systemName: "square.and.pencil")
+                        Button(action: close) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 14, weight: .semibold))
                                 .frame(width: 44, height: 44)
                         }
-                        .accessibilityLabel("新对话")
+                        .accessibilityLabel("关闭侧边栏")
                     }
-                    .padding(.leading, 20)
+                    .padding(.leading, 18)
                     .padding(.trailing, 8)
-                    .frame(height: 56)
+                    .frame(height: 62)
+
+                    VStack(spacing: 0) {
+                        SidebarAction(title: "新对话", symbol: "square.and.pencil") {
+                            lightHaptic()
+                            newConversation()
+                        }
+                        SidebarAction(title: "项目", symbol: WorkspaceDestination.projects.symbol) {
+                            openDestination(.projects)
+                        }
+                        SidebarAction(title: "作品", symbol: WorkspaceDestination.artifacts.symbol) {
+                            openDestination(.artifacts)
+                        }
+                        SidebarAction(title: "代码", symbol: WorkspaceDestination.code.symbol) {
+                            openDestination(.code)
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.top, 2)
+
+                    Text("对话")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 22)
+                        .padding(.bottom, 8)
 
                     ScrollView {
-                        LazyVStack(spacing: 2) {
+                        LazyVStack(alignment: .leading, spacing: 0) {
                             ForEach(conversations) { conversation in
                                 Button {
+                                    lightHaptic()
                                     select(conversation)
                                 } label: {
-                                    Text(conversation.title)
-                                        .font(.system(size: 16))
-                                        .lineLimit(1)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding(.horizontal, 14)
-                                        .frame(height: 46)
-                                        .background(
-                                            selected?.id == conversation.id
-                                                ? AppPalette.mutedSurface
-                                                : .clear
-                                        )
-                                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    HStack(spacing: 10) {
+                                        Rectangle()
+                                            .fill(selected?.id == conversation.id ? AppPalette.text : .clear)
+                                            .frame(width: 2, height: 18)
+                                        Text(conversation.title)
+                                            .font(.system(
+                                                size: 16,
+                                                weight: selected?.id == conversation.id ? .medium : .regular
+                                            ))
+                                            .lineLimit(1)
+                                        Spacer(minLength: 0)
+                                    }
+                                    .foregroundStyle(AppPalette.text)
+                                    .frame(height: 45)
+                                    .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
                             }
                         }
-                        .padding(.horizontal, 8)
+                        .padding(.horizontal, 12)
                     }
 
-                    Divider()
-                    Button(action: signOut) {
-                        Label("退出登录", systemImage: "rectangle.portrait.and.arrow.right")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .frame(height: 50)
+                    Rectangle()
+                        .fill(AppPalette.border)
+                        .frame(height: 0.5)
+                    HStack {
+                        Button {
+                            openDestination(.profile)
+                        } label: {
+                            Label("账户", systemImage: "person")
+                                .font(.system(size: 15, weight: .medium))
+                                .frame(minWidth: 72, minHeight: 44, alignment: .leading)
+                        }
+                        Spacer()
+                        Button {
+                            openDestination(.settings)
+                        } label: {
+                            Image(systemName: "gearshape")
+                                .font(.system(size: 18))
+                                .frame(width: 44, height: 44)
+                        }
+                        .accessibilityLabel("设置")
                     }
                     .buttonStyle(.plain)
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 8)
+                    .foregroundStyle(AppPalette.text)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 4)
                 }
-                .frame(width: min(332, geometry.size.width * 0.86))
+                .frame(width: min(350, geometry.size.width * 0.86))
                 .background(AppPalette.background)
-                .ignoresSafeArea(edges: .bottom)
+                .gesture(
+                    DragGesture(minimumDistance: 18)
+                        .onEnded { value in
+                            guard value.translation.width < -48 else { return }
+                            close()
+                        }
+                )
             }
         }
     }
+}
+
+private struct MyChatMark: View {
+    var body: some View {
+        Text("M")
+            .font(.system(size: 18, weight: .bold, design: .rounded))
+            .frame(width: 30, height: 30)
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(AppPalette.border, lineWidth: 0.8)
+            }
+            .accessibilityHidden(true)
+    }
+}
+
+private struct SidebarAction: View {
+    let title: String
+    let symbol: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: symbol)
+                .font(.system(size: 16, weight: .medium))
+                .frame(maxWidth: .infinity, minHeight: 45, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(AppPalette.text)
+        .padding(.horizontal, 10)
+    }
+}
+
+private struct AttachmentActionsSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("添加")
+                .font(.system(size: 20, weight: .semibold))
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+                .padding(.bottom, 12)
+
+            AttachmentAction(title: "照片", symbol: "photo") { dismiss() }
+            AttachmentAction(title: "拍照", symbol: "camera") { dismiss() }
+            AttachmentAction(title: "文件", symbol: "doc") { dismiss() }
+
+            Rectangle()
+                .fill(AppPalette.border)
+                .frame(height: 0.5)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 7)
+
+            AttachmentAction(title: "联网", symbol: "globe") { dismiss() }
+            AttachmentAction(title: "检索", symbol: "magnifyingglass") { dismiss() }
+        }
+        .foregroundStyle(AppPalette.text)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(AppPalette.background)
+    }
+}
+
+private struct AttachmentAction: View {
+    let title: String
+    let symbol: String
+    let action: () -> Void
+
+    var body: some View {
+        Button {
+            lightHaptic()
+            action()
+        } label: {
+            Label(title, systemImage: symbol)
+                .font(.system(size: 17))
+                .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 20)
+    }
+}
+
+private struct WorkspaceDestinationView: View {
+    let destination: WorkspaceDestination
+    let signOut: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if destination == .settings {
+                    List {
+                        Section {
+                            LabeledContent("外观", value: "跟随系统")
+                            LabeledContent("客户端", value: "iPhone 原生版")
+                        }
+                        Section {
+                            Button("退出登录", role: .destructive) {
+                                dismiss()
+                                signOut()
+                            }
+                        }
+                    }
+                    .scrollContentBackground(.hidden)
+                } else if destination == .profile {
+                    List {
+                        Section {
+                            LabeledContent("账户状态", value: "已登录")
+                        }
+                    }
+                    .scrollContentBackground(.hidden)
+                } else {
+                    ContentUnavailableView(
+                        destination.title,
+                        systemImage: destination.symbol,
+                        description: Text("这里将直接连接 MyChat 的真实数据。")
+                    )
+                }
+            }
+            .background(AppPalette.background)
+            .navigationTitle(destination.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") { dismiss() }
+                        .foregroundStyle(AppPalette.text)
+                }
+            }
+        }
+    }
+}
+
+private func lightHaptic() {
+    UIImpactFeedbackGenerator(style: .light).impactOccurred()
 }

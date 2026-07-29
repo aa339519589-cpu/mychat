@@ -9,31 +9,57 @@
   <script src="katex/katex.min.js"></script>
   <script src="katex/auto-render.min.js"></script>
   <style>
-    :root{color-scheme:light}
+    :root{
+      color-scheme:light dark;
+      --text:#151412;
+      --secondary:#686763;
+      --muted:#777;
+      --fill:#f1f1ef;
+      --soft-fill:#f7f7f5;
+      --border:rgba(0,0,0,.1);
+      --quote:#c8c7c3;
+      --error:#8a3a32;
+      --error-fill:#fff5f3;
+      --error-border:#efd5d0;
+    }
     *{box-sizing:border-box}
-    html,body{margin:0;padding:0;background:transparent;color:#151412}
+    html,body{margin:0;padding:0;background:transparent;color:var(--text)}
     body{-webkit-text-size-adjust:100%;font:400 17px/1.58 -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;overflow:hidden;overflow-wrap:anywhere}
     #root{width:100%;padding:0 0 1px}
     p{margin:0 0 11px} p:last-child{margin-bottom:0}
     h1,h2,h3,h4{line-height:1.25;margin:20px 0 9px;font-weight:700;letter-spacing:-.01em}
     h1{font-size:26px} h2{font-size:23px} h3{font-size:20px} h4{font-size:18px}
     ul,ol{margin:7px 0 12px;padding-left:23px} li{margin:4px 0}
-    strong{font-weight:750} em{font-style:italic} del{color:#777}
-    a{color:#2d65a8;text-decoration:underline;text-underline-offset:3px}
-    code{font:500 .86em ui-monospace,SFMono-Regular,Menlo,monospace;background:#f1f1ef;border-radius:5px;padding:2px 5px}
-    pre{margin:12px 0;overflow:auto;background:#f1f1ef;border:1px solid rgba(0,0,0,.07);border-radius:10px;padding:13px}
+    strong{font-weight:750} em{font-style:italic} del{color:var(--muted)}
+    a{color:inherit;text-decoration:underline;text-underline-offset:3px}
+    code{font:500 .86em ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--fill);border-radius:5px;padding:2px 5px}
+    pre{margin:12px 0;overflow:auto;background:var(--fill);border:1px solid var(--border);border-radius:10px;padding:13px}
     pre code{padding:0;background:transparent;white-space:pre;font-size:13px}
-    blockquote{margin:12px 0;padding:4px 0 4px 13px;border-left:3px solid #c8c7c3;color:#686763}
-    hr{border:0;border-top:1px solid rgba(0,0,0,.12);margin:20px 0}
+    blockquote{margin:12px 0;padding:4px 0 4px 13px;border-left:3px solid var(--quote);color:var(--secondary)}
+    hr{border:0;border-top:1px solid var(--border);margin:20px 0}
     table{display:block;max-width:100%;overflow:auto;border-collapse:collapse;margin:12px 0;font-size:14px}
-    th,td{border:1px solid rgba(0,0,0,.1);padding:7px 9px;text-align:left} th{background:#f1f1ef}
+    th,td{border:1px solid var(--border);padding:7px 9px;text-align:left} th{background:var(--fill)}
     img,svg,canvas{display:block;max-width:100%;height:auto;margin:10px auto}
     .katex-display{overflow-x:auto;overflow-y:hidden;padding:6px 0}
     .complex{margin:13px 0;max-width:100%;overflow:hidden}
-    .pending{color:#777;font-size:14px}
-    .error{color:#8a3a32;background:#fff5f3;border:1px solid #efd5d0;border-radius:9px;padding:9px 11px}
-    .artifact-button{width:100%;min-height:48px;border:1px solid rgba(0,0,0,.1);border-radius:12px;background:#f7f7f5;color:#171614;text-align:left;padding:12px 14px;font:600 15px -apple-system,BlinkMacSystemFont,sans-serif}
-    .artifact-preview{display:none;margin-top:8px;max-height:520px;overflow:auto;border:1px solid rgba(0,0,0,.09);border-radius:12px;padding:12px;background:#fff}
+    .pending{color:var(--muted);font-size:14px}
+    .error{color:var(--error);background:var(--error-fill);border:1px solid var(--error-border);border-radius:9px;padding:9px 11px}
+    .artifact-button{width:100%;min-height:48px;border:1px solid var(--border);border-radius:12px;background:var(--soft-fill);color:var(--text);text-align:left;padding:12px 14px;font:600 15px -apple-system,BlinkMacSystemFont,sans-serif}
+    .artifact-preview{display:none;margin-top:8px;max-height:520px;overflow:auto;border:1px solid var(--border);border-radius:12px;padding:12px;background:var(--soft-fill)}
+    @media (prefers-color-scheme:dark){
+      :root{
+        --text:#f2f2f2;
+        --secondary:#aaa9a5;
+        --muted:#949391;
+        --fill:#242426;
+        --soft-fill:#1c1c1e;
+        --border:rgba(255,255,255,.13);
+        --quote:#555558;
+        --error:#ffb4aa;
+        --error-fill:#2d1d1b;
+        --error-border:#5b3330;
+      }
+    }
   </style>
 </head>
 <body><main id="root"></main>
