@@ -10,7 +10,7 @@ type ChatJobAdmission = {
   status: JobStatus
 }
 
-export type CompatibleTurnInput = {
+type DirectTurnInput = {
   client: NonNullable<ReturnType<typeof createAdminClient>>
   body: DurableChatRequestBody
   userId: string
@@ -23,24 +23,16 @@ export type CompatibleTurnInput = {
   maxAttempts: number
 }
 
-export function isMissingAuthoritativeRpc(error: unknown): boolean {
-  if (!(error instanceof JobRuntimeError)) return false
-  const databaseCode = error.details.databaseCode
-  return databaseCode === 'PGRST202' || databaseCode === '42883'
-}
-
-export function rejectMissingAuthoritativeRpc(error: JobRuntimeError): JobRuntimeError {
-  if (isMissingAuthoritativeRpc(error)) throw error
-  return error
-}
-
 export function requiredAdminClient(client: ReturnType<typeof createAdminClient>) {
-  if (!client) throw new Error('command authority unavailable')
+  if (!client) throw new JobRuntimeError(
+    'JOB_DEPENDENCY_UNAVAILABLE',
+    'Database authority is unavailable',
+  )
   return client
 }
 
 async function ensureConversation(
-  input: CompatibleTurnInput,
+  input: DirectTurnInput,
   authority: ChatAppendAuthority,
   createdAt: string,
 ): Promise<void> {
@@ -72,26 +64,29 @@ async function ensureConversation(
   }
 }
 
-async function persistMessages(
-  input: CompatibleTurnInput,
-  userMessage: RawMsg,
-  createdAt: string,
-): Promise<void> {
-  const { body } = input
-  const images = userMessage.images?.length || userMessage.imageSummary
+function messageImages(userMessage: RawMsg) {
+  return userMessage.images?.length || userMessage.imageSummary
     ? {
         refs: userMessage.images ?? [],
         image_summary: userMessage.imageSummary ?? null,
         generated_media: [],
       }
     : null
+}
+
+async function persistMessages(
+  input: DirectTurnInput,
+  userMessage: RawMsg,
+  createdAt: string,
+): Promise<void> {
+  const { body } = input
   const userWrite = await input.client.from('messages').upsert({
     id: body.userMessageId,
     conversation_id: body.conversationId,
     user_id: input.userId,
     role: 'user',
     content: userMessage.content,
-    images,
+    images: messageImages(userMessage),
     status: 'terminal',
     created_at: createdAt,
     updated_at: createdAt,
@@ -120,7 +115,9 @@ async function persistMessages(
   }
 }
 
-async function persistTurn(input: CompatibleTurnInput): Promise<void> {
+export async function enqueueDirectTurn(
+  input: DirectTurnInput,
+): Promise<{ created: boolean; job: ChatJobAdmission }> {
   const { body } = input
   const authority = body.turn
   const userMessage = body.messages.find(message =>
@@ -128,16 +125,13 @@ async function persistTurn(input: CompatibleTurnInput): Promise<void> {
   if (!userMessage || typeof userMessage.content !== 'string' || authority?.schemaVersion !== 1) {
     throw new JobRuntimeError('JOB_INVALID_INPUT', 'Chat turn is incomplete')
   }
-  const createdAt = input.requestedAt ?? new Date().toISOString()
+
+  const createdAt = typeof userMessage.ts === 'string'
+    ? userMessage.ts
+    : input.requestedAt ?? new Date().toISOString()
   await ensureConversation(input, authority, createdAt)
   await persistMessages(input, userMessage, createdAt)
-}
 
-export async function enqueueCompatibleTurn(
-  input: CompatibleTurnInput,
-): Promise<{ created: boolean; job: ChatJobAdmission }> {
-  await persistTurn(input)
-  const { body } = input
   const result = await input.repository.enqueue({
     jobId: body.generationId,
     type: 'chat.generation',
@@ -158,20 +152,10 @@ export async function enqueueCompatibleTurn(
     priority: 0,
     maxAttempts: input.maxAttempts,
   })
-  await input.client.from('conversations').update({ updated_at: input.requestedAt ?? new Date().toISOString() })
-    .eq('id', body.conversationId).eq('user_id', input.userId)
-  return { created: result.created, job: { id: result.job.id, status: result.job.status } }
-}
 
-/**
- * Schema-v1 native turns now have exactly one admission implementation.
- * The legacy callback remains in the call signature only until regeneration and
- * web callers are separated; it is never executed for a native append turn.
- */
-export async function enqueueTurnWithCompatibility(
-  input: CompatibleTurnInput & {
-    authoritative: () => Promise<{ created: boolean; job: ChatJobAdmission }>
-  },
-): Promise<{ created: boolean; job: ChatJobAdmission }> {
-  return enqueueCompatibleTurn(input)
+  await input.client.from('conversations').update({
+    updated_at: input.requestedAt ?? createdAt,
+  }).eq('id', body.conversationId).eq('user_id', input.userId)
+
+  return { created: result.created, job: { id: result.job.id, status: result.job.status } }
 }

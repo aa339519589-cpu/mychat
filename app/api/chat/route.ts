@@ -22,6 +22,18 @@ function configurationError(request: Request, message: string): Response {
   })
 }
 
+function admissionError(request: Request, error: unknown): Response {
+  if (error instanceof JobPayloadStorageError) return configurationError(request, error.message)
+  if (!isJobRuntimeError(error)) return configurationError(request, '聊天任务入队失败')
+  if (error.code === 'JOB_CONFLICT') return apiErrorResponseV1(request, {
+    status: 409, code: 'CONFLICT', message: error.message, retryable: false,
+  })
+  if (error.code === 'JOB_INVALID_INPUT') return apiErrorResponseV1(request, {
+    status: 400, code: 'INVALID_REQUEST', message: error.message, retryable: false,
+  })
+  return configurationError(request, error.message)
+}
+
 export async function POST(request: NextRequest) {
   const maintenance = expensiveWriteMaintenanceResponse(request)
   if (maintenance) return maintenance
@@ -116,10 +128,6 @@ export async function POST(request: NextRequest) {
       },
     })
   } catch (error) {
-    if (error instanceof JobPayloadStorageError) return configurationError(request, error.message)
-    if (isJobRuntimeError(error) && error.code === 'JOB_CONFLICT') return apiErrorResponseV1(request, {
-      status: 409, code: 'CONFLICT', message: error.message, retryable: false,
-    })
-    return configurationError(request, '作业控制面暂时不可用')
+    return admissionError(request, error)
   }
 }
