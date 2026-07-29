@@ -14,7 +14,7 @@ import { isRecord } from '@/lib/unknown-value'
 import type { JobRepository } from '@/lib/jobs/repository'
 import { JobRuntimeError } from '@/lib/jobs/errors'
 import { loadRegenerationCleanupKeys } from './regeneration-cleanup'
-import { enqueueDirectTurn, requiredAdminClient } from './compatible-turn-admission'
+import { enqueueDirectTurn, requiredAdminClient } from './direct-turn-admission'
 import type { EnqueueChatJobInput } from './job-command-types'
 import { referencesPayload, rpcObject, sanitizedAttachments } from './job-command-support'
 
