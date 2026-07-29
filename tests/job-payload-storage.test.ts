@@ -50,6 +50,32 @@ test('private job payload storage is idempotent and verifies scope and digest', 
   assert.equal(storage.objects.size, 0)
 })
 
+test('job payload UUID scopes are canonicalized before upload and validation', async () => {
+  const storage = memoryStorage()
+  const uppercaseScope = {
+    userId: '88000000-0000-4000-8000-00000000000A',
+    jobId: '88000000-0000-4000-8000-00000000000B',
+  }
+  const reference = await persistJobPayload({
+    ...uppercaseScope,
+    payload: { source: 'Foundation.UUID.uuidString' },
+  }, storage.dependencies)
+
+  assert.match(reference.objectKey,
+    /^88000000-0000-4000-8000-00000000000a\/88000000-0000-4000-8000-00000000000b\//)
+  assert.deepEqual(
+    await loadJobPayload(reference, uppercaseScope, storage.dependencies),
+    { source: 'Foundation.UUID.uuidString' },
+  )
+  assert.deepEqual(
+    await loadJobPayload(reference, {
+      userId: uppercaseScope.userId.toLowerCase(),
+      jobId: uppercaseScope.jobId.toLowerCase(),
+    }, storage.dependencies),
+    { source: 'Foundation.UUID.uuidString' },
+  )
+})
+
 test('job payload storage fails closed without service credentials', async () => {
   await assert.rejects(
     persistJobPayload({ userId: 'user', jobId: 'job', payload: {} }, { createAdminClient: () => null }),

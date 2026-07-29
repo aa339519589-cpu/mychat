@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { parseJobRecord, SupabaseJobRepository } from '../lib/jobs/supabase-repository'
+import { JobRuntimeError } from '../lib/jobs/errors'
 
 const timestamp = '2026-07-13T12:00:00.000Z'
 
@@ -38,7 +39,10 @@ function databaseJob(overrides: Record<string, unknown> = {}) {
 }
 
 function repositoryWith(
-  rpc: (name: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: null | { code: string } }>,
+  rpc: (name: string, args: Record<string, unknown>) => Promise<{
+    data: unknown
+    error: null | { code: string; message?: string; details?: string; hint?: string }
+  }>,
   rpcTimeoutMs = 100,
 ) {
   const client = { rpc } as unknown as SupabaseClient
@@ -133,6 +137,48 @@ test('Supabase repository enqueues bounded JSON and maps the canonical job contr
   assert.equal(result.job.principal.id, '00000000-0000-4000-8000-000000000002')
   assert.equal(result.job.lease, null)
   assert.equal(result.job.usage.rawTokens, 20)
+})
+
+test('Supabase repository preserves actionable PostgreSQL diagnostics', async () => {
+  const repository = repositoryWith(async () => ({
+    data: null,
+    error: {
+      code: '22023',
+      message: 'invalid_job_payload_reference',
+      details: 'payload object key does not match the canonical job scope',
+      hint: 'canonicalize UUID path segments',
+    },
+  }))
+
+  await assert.rejects(
+    repository.enqueue({
+      jobId: '00000000-0000-4000-8000-000000000001',
+      type: 'chat.generation',
+      queue: 'chat',
+      principal: {
+        id: '00000000-0000-4000-8000-000000000002',
+        authClass: 'registered',
+      },
+      subject: {},
+      idempotencyKey: 'intent-1',
+      inputHash: '0123456789abcdef',
+      input: {},
+    }),
+    error => {
+      assert.ok(error instanceof JobRuntimeError)
+      assert.equal(error.message,
+        'Job repository enqueue_job (22023) failed: invalid_job_payload_reference')
+      assert.equal(error.retryable, false)
+      assert.deepEqual(error.details, {
+        rpc: 'enqueue_job',
+        databaseCode: '22023',
+        databaseMessage: 'invalid_job_payload_reference',
+        databaseDetails: 'payload object key does not match the canonical job scope',
+        databaseHint: 'canonicalize UUID path segments',
+      })
+      return true
+    },
+  )
 })
 
 test('Supabase repository preserves claim fencing and emits schema-versioned batches', async () => {

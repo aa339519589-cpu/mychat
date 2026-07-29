@@ -1,4 +1,9 @@
-import { typedRpc, type RpcArgs, type SupabaseClient } from '@/lib/supabase/types'
+import {
+  typedRpc,
+  type RpcArgs,
+  type RpcError,
+  type SupabaseClient,
+} from '@/lib/supabase/types'
 import { toJson } from '@/lib/supabase/json'
 import { log } from '@/lib/logger'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -11,6 +16,7 @@ import {
   isIsoTimestamp,
   isJobIdentifier,
   isTerminalJobStatus,
+  type JsonObject,
 } from './contracts'
 import { JobRuntimeError } from './errors'
 import type { JobRepository } from './repository'
@@ -59,6 +65,36 @@ function rpcObject(value: unknown): Record<string, unknown> | null {
   return objectOf(Array.isArray(value) ? value[0] : value)
 }
 
+function databaseFailureDetails(name: JobRpcName, error: RpcError): JsonObject {
+  return {
+    rpc: name,
+    ...(error.code ? { databaseCode: error.code } : {}),
+    ...(error.message ? { databaseMessage: error.message } : {}),
+    ...(error.details ? { databaseDetails: error.details } : {}),
+    ...(error.hint ? { databaseHint: error.hint } : {}),
+  }
+}
+
+function databaseFailureMessage(name: JobRpcName, error: RpcError): string {
+  const identity = error.code ? `${name} (${error.code})` : name
+  return error.message
+    ? `Job repository ${identity} failed: ${error.message}`
+    : `Job repository ${identity} failed`
+}
+
+function deterministicDatabaseFailure(code: string | undefined): boolean {
+  return code === '22023'
+    || code === '22P02'
+    || code === '23502'
+    || code === '23503'
+    || code === '23505'
+    || code === '23514'
+    || code === '42501'
+    || code === '42P01'
+    || code === '42703'
+    || code === '42883'
+}
+
 export class SupabaseJobRepository implements JobRepository {
   private readonly dependencies: SupabaseJobRepositoryDependencies
 
@@ -98,10 +134,13 @@ export class SupabaseJobRepository implements JobRepository {
         }),
       ])
       if (response.error) {
-        log.error('jobs', 'Job repository RPC failed', { rpc: name, code: response.error.code })
-        throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'Job repository operation failed', {
-          details: { rpc: name, ...(response.error.code ? { databaseCode: response.error.code } : {}) },
-        })
+        const details = databaseFailureDetails(name, response.error)
+        log.error('jobs', 'Job repository RPC failed', details)
+        throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE',
+          databaseFailureMessage(name, response.error), {
+            retryable: !deterministicDatabaseFailure(response.error.code),
+            details,
+          })
       }
       return rpcObject(response.data) ?? malformed(name)
     } finally {

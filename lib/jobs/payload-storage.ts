@@ -6,6 +6,7 @@ import { canonicalJobJson, sha256JobBytes } from './canonical'
 const JOB_PAYLOAD_BUCKET = 'job-payloads' as const
 const MAX_JOB_PAYLOAD_BYTES = 8 * 1024 * 1024
 const SCOPE = /^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,127})$/
+const UUID_SCOPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 export type JobPayloadReference = {
   bucket: typeof JOB_PAYLOAD_BUCKET
@@ -41,6 +42,17 @@ function safeSegment(value: string): string {
   return value
 }
 
+/**
+ * PostgreSQL serializes uuid values in lowercase. The database validates payload
+ * object keys against that canonical text, so every UUID scope must use the same
+ * representation before upload. This keeps admission independent of client UUID
+ * casing (Foundation's UUID.uuidString is uppercase).
+ */
+function canonicalScopeSegment(value: string): string {
+  const segment = safeSegment(value)
+  return UUID_SCOPE.test(segment) ? segment.toLowerCase() : segment
+}
+
 function clientFor(dependencies: Dependencies): SupabaseClient {
   let client: SupabaseClient | null
   try {
@@ -64,8 +76,8 @@ function validateReference(
   userId: string,
   jobId: string,
 ): void {
-  const safeUser = safeSegment(userId)
-  const safeJob = safeSegment(jobId)
+  const safeUser = canonicalScopeSegment(userId)
+  const safeJob = canonicalScopeSegment(jobId)
   const expected = `${safeUser}/${safeJob}/${reference.sha256}.json`
   if (reference.bucket !== JOB_PAYLOAD_BUCKET
     || !/^[0-9a-f]{64}$/.test(reference.sha256)
@@ -82,8 +94,8 @@ export async function persistJobPayload(
   input: { userId: string; jobId: string; payload: JsonObject },
   dependencies: Dependencies = {},
 ): Promise<JobPayloadReference> {
-  const userId = safeSegment(input.userId)
-  const jobId = safeSegment(input.jobId)
+  const userId = canonicalScopeSegment(input.userId)
+  const jobId = canonicalScopeSegment(input.jobId)
   let serialized: string
   try {
     serialized = canonicalJobJson(input.payload)
