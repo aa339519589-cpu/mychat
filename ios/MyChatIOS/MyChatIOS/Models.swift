@@ -32,11 +32,20 @@ struct ChatMessage: Codable, Identifiable, Hashable {
     let id: UUID
     let role: String
     var content: String
+    var thinking: String?
     let createdAt: Date?
 
     enum CodingKeys: String, CodingKey {
-        case id, role, content
+        case id, role, content, thinking
         case createdAt = "created_at"
+    }
+
+    init(id: UUID, role: String, content: String, thinking: String? = nil, createdAt: Date?) {
+        self.id = id
+        self.role = role
+        self.content = content
+        self.thinking = thinking
+        self.createdAt = createdAt
     }
 }
 
@@ -103,6 +112,11 @@ enum JSONValue: Decodable {
 
     var string: String? {
         if case let .string(value) = self { return value }
+        return nil
+    }
+
+    var object: [String: JSONValue]? {
+        if case let .object(value) = self { return value }
         return nil
     }
 }

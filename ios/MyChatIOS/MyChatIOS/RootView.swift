@@ -1,11 +1,11 @@
 import SwiftUI
 
 enum AppPalette {
-    static let background = Color(red: 0.988, green: 0.978, blue: 0.952)
+    static let background = Color(red: 0.982, green: 0.981, blue: 0.973)
     static let surface = Color.white
-    static let mutedSurface = Color(red: 0.944, green: 0.937, blue: 0.918)
-    static let border = Color.black.opacity(0.09)
-    static let text = Color(red: 0.08, green: 0.075, blue: 0.065)
+    static let mutedSurface = Color(red: 0.946, green: 0.945, blue: 0.938)
+    static let border = Color.black.opacity(0.085)
+    static let text = Color(red: 0.075, green: 0.073, blue: 0.068)
 }
 
 @MainActor
@@ -268,6 +268,13 @@ final class ChatStore: ObservableObject {
                     if event.kind == "text.delta", let delta = event.payload["text"]?.string {
                         append(delta, to: assistantID)
                     }
+                    if event.kind == "thinking.delta",
+                       let delta = event.payload["thinking"]?.string {
+                        appendThinking(delta, to: assistantID)
+                    }
+                    if event.kind == "job.retry_scheduled" {
+                        resetAssistant(assistantID)
+                    }
                     if event.kind == "job.warning", let message = event.payload["message"]?.string {
                         error = message
                     }
@@ -275,6 +282,10 @@ final class ChatStore: ObservableObject {
                        let status = event.payload["status"]?.string,
                        status != "completed" {
                         throw APIError.message(event.payload["error"]?.string ?? "生成未完成")
+                    }
+                    if event.kind == "job.terminal",
+                       let result = event.payload["result"]?.object {
+                        applyTerminal(result, to: assistantID)
                     }
                 }
                 try await refresh(conversationID: conversation.id)
@@ -301,6 +312,27 @@ final class ChatStore: ObservableObject {
     private func append(_ delta: String, to id: UUID) {
         guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
         messages[index].content += delta
+    }
+
+    private func appendThinking(_ delta: String, to id: UUID) {
+        guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
+        messages[index].thinking = (messages[index].thinking ?? "") + delta
+    }
+
+    private func resetAssistant(_ id: UUID) {
+        guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
+        messages[index].content = ""
+        messages[index].thinking = nil
+    }
+
+    private func applyTerminal(_ result: [String: JSONValue], to id: UUID) {
+        guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
+        if let content = result["content"]?.string {
+            messages[index].content = content
+        }
+        if let thinking = result["thinking"]?.string {
+            messages[index].thinking = thinking.isEmpty ? nil : thinking
+        }
     }
 
     private func replaceEmptyAssistant(_ id: UUID, with value: String) {
@@ -343,7 +375,7 @@ struct NativeChatView: View {
                     newConversation: store.newConversation
                 )
                 if store.messages.isEmpty {
-                    WelcomeHome()
+                    Color.clear
                 } else {
                     MessageList(
                         messages: store.messages,
@@ -404,27 +436,6 @@ struct NativeChatView: View {
             Text(store.error ?? "")
         }
         .task { await store.load() }
-    }
-}
-
-struct WelcomeHome: View {
-    var body: some View {
-        VStack(spacing: 16) {
-            Spacer()
-            Image("companion")
-                .resizable()
-                .interpolation(.none)
-                .scaledToFit()
-                .frame(width: 76, height: 76)
-                .accessibilityHidden(true)
-            Text("欢迎回来")
-                .font(.system(size: 30, weight: .semibold))
-                .foregroundStyle(AppPalette.text)
-            Spacer()
-                .frame(height: 170)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -500,6 +511,7 @@ struct MessageList: View {
                     ForEach(messages) { message in
                         NativeMessageRow(
                             message: message,
+                            isActive: isSending && message.id == messages.last?.id,
                             failed: failedMessageID == message.id,
                             retry: retry
                         )
@@ -529,8 +541,10 @@ struct MessageList: View {
 
 struct NativeMessageRow: View {
     let message: ChatMessage
+    let isActive: Bool
     let failed: Bool
     let retry: () -> Void
+    @State private var thinkingExpanded = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -548,12 +562,29 @@ struct NativeMessageRow: View {
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(displayText)
-                        .font(.system(size: 17))
-                        .lineSpacing(5)
-                        .textSelection(.enabled)
-                        .foregroundStyle(AppPalette.text)
-                        .fixedSize(horizontal: false, vertical: true)
+                    if let thinking = message.thinking, !thinking.isEmpty {
+                        DisclosureGroup(isExpanded: $thinkingExpanded) {
+                            Text(thinking)
+                                .font(.system(size: 14))
+                                .lineSpacing(3)
+                                .foregroundStyle(.secondary)
+                                .padding(.top, 6)
+                                .textSelection(.enabled)
+                        } label: {
+                            Label(
+                                isActive ? "正在思考" : "思考过程",
+                                systemImage: "brain"
+                            )
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(.secondary)
+                        }
+                        .tint(.secondary)
+                    }
+                    if message.content.isEmpty && isActive {
+                        NativeThinkingIndicator()
+                    } else {
+                        RichAssistantContent(text: displayText)
+                    }
                     if failed {
                         Button(action: retry) {
                             Label("重试", systemImage: "arrow.clockwise")
@@ -571,7 +602,6 @@ struct NativeMessageRow: View {
     }
 
     private var displayText: String {
-        if message.role == "assistant", message.content.isEmpty { return "正在思考…" }
         return message.content
     }
 }
@@ -590,6 +620,7 @@ struct Composer: View {
             Button(action: newConversation) {
                 Image(systemName: "plus")
                     .font(.system(size: 20, weight: .regular))
+                    .foregroundStyle(AppPalette.text)
                     .frame(width: 40, height: 40)
                     .overlay {
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -599,7 +630,7 @@ struct Composer: View {
             }
             .accessibilityLabel("新对话")
 
-            TextField("发消息", text: $draft, axis: .vertical)
+            TextField("Ask anything", text: $draft, axis: .vertical)
                 .font(.system(size: 17))
                 .lineLimit(1...6)
                 .focused(isFocused)
@@ -613,7 +644,7 @@ struct Composer: View {
                     .foregroundStyle(actionForeground)
                     .frame(width: 40, height: 40)
                     .background(actionBackground)
-                    .clipShape(Circle())
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
             .disabled(isSending)
             .accessibilityLabel(draftIsEmpty ? (speech.isRecording ? "停止听写" : "语音输入") : "发送")
@@ -621,11 +652,11 @@ struct Composer: View {
         .padding(6)
         .background(AppPalette.surface)
         .overlay {
-            RoundedRectangle(cornerRadius: 19, style: .continuous)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(AppPalette.border, lineWidth: 0.7)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 19, style: .continuous))
-        .shadow(color: .black.opacity(0.07), radius: 9, x: 0, y: 3)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .shadow(color: .black.opacity(0.045), radius: 7, x: 0, y: 2)
         .padding(.horizontal, 14)
         .padding(.top, 7)
         .padding(.bottom, 8)
@@ -648,7 +679,7 @@ struct Composer: View {
 
     private var actionIcon: String {
         if !draftIsEmpty { return "arrow.up" }
-        return speech.isRecording ? "stop.fill" : "waveform"
+        return speech.isRecording ? "stop.fill" : "mic"
     }
 
     private var actionForeground: Color {

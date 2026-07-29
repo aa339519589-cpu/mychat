@@ -87,7 +87,7 @@ actor APIClient {
     func messages(conversationID: UUID) async throws -> [ChatMessage] {
         let config = try await loadBootstrap()
         let url = try restURL(config, path: "messages", query: [
-            "select": "id,role,content,created_at",
+            "select": "id,role,content,thinking,created_at",
             "conversation_id": "eq.\(conversationID.uuidString)",
             "order": "created_at.asc",
             "limit": "300",
@@ -145,13 +145,20 @@ actor APIClient {
             "userMessageId": userMessageID.uuidString,
             "assistantMessageId": assistantMessageID.uuidString,
             "generationId": generationID.uuidString,
-            "messages": messages.map {
-                [
-                    "id": $0.id.uuidString,
-                    "role": $0.role,
-                    "content": $0.content,
-                    "ts": ISO8601DateFormatter().string(from: $0.createdAt ?? Date()),
+            "messages": messages.map { message -> [String: Any] in
+                var value: [String: Any] = [
+                    "id": message.id.uuidString,
+                    "role": message.role,
+                    "content": message.content,
                 ]
+                // The submitted turn must use server time. Device clocks can be
+                // minutes or hours ahead and the authoritative RPC intentionally
+                // rejects future timestamps. Historical timestamps remain useful
+                // context but are never authority for the new user message.
+                if message.id != userMessageID, let createdAt = message.createdAt {
+                    value["ts"] = ISO8601DateFormatter().string(from: createdAt)
+                }
+                return value
             },
             "turn": [
                 "schemaVersion": 1,

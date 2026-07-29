@@ -1,0 +1,135 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src data: blob: https:; connect-src 'none'; media-src data: blob:; object-src 'none'; form-action 'none'">
+  <link rel="stylesheet" href="katex/katex.min.css">
+  <script src="marked.umd.js"></script>
+  <script src="katex/katex.min.js"></script>
+  <script src="katex/auto-render.min.js"></script>
+  <style>
+    :root{color-scheme:light}
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0;background:transparent;color:#151412}
+    body{-webkit-text-size-adjust:100%;font:400 17px/1.58 -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;overflow:hidden;overflow-wrap:anywhere}
+    #root{width:100%;padding:0 0 1px}
+    p{margin:0 0 11px} p:last-child{margin-bottom:0}
+    h1,h2,h3,h4{line-height:1.25;margin:20px 0 9px;font-weight:700;letter-spacing:-.01em}
+    h1{font-size:26px} h2{font-size:23px} h3{font-size:20px} h4{font-size:18px}
+    ul,ol{margin:7px 0 12px;padding-left:23px} li{margin:4px 0}
+    strong{font-weight:750} em{font-style:italic} del{color:#777}
+    a{color:#2d65a8;text-decoration:underline;text-underline-offset:3px}
+    code{font:500 .86em ui-monospace,SFMono-Regular,Menlo,monospace;background:#f1f1ef;border-radius:5px;padding:2px 5px}
+    pre{margin:12px 0;overflow:auto;background:#f1f1ef;border:1px solid rgba(0,0,0,.07);border-radius:10px;padding:13px}
+    pre code{padding:0;background:transparent;white-space:pre;font-size:13px}
+    blockquote{margin:12px 0;padding:4px 0 4px 13px;border-left:3px solid #c8c7c3;color:#686763}
+    hr{border:0;border-top:1px solid rgba(0,0,0,.12);margin:20px 0}
+    table{display:block;max-width:100%;overflow:auto;border-collapse:collapse;margin:12px 0;font-size:14px}
+    th,td{border:1px solid rgba(0,0,0,.1);padding:7px 9px;text-align:left} th{background:#f1f1ef}
+    img,svg,canvas{display:block;max-width:100%;height:auto;margin:10px auto}
+    .katex-display{overflow-x:auto;overflow-y:hidden;padding:6px 0}
+    .complex{margin:13px 0;max-width:100%;overflow:hidden}
+    .pending{color:#777;font-size:14px}
+    .error{color:#8a3a32;background:#fff5f3;border:1px solid #efd5d0;border-radius:9px;padding:9px 11px}
+    .artifact-button{width:100%;min-height:48px;border:1px solid rgba(0,0,0,.1);border-radius:12px;background:#f7f7f5;color:#171614;text-align:left;padding:12px 14px;font:600 15px -apple-system,BlinkMacSystemFont,sans-serif}
+    .artifact-preview{display:none;margin-top:8px;max-height:520px;overflow:auto;border:1px solid rgba(0,0,0,.09);border-radius:12px;padding:12px;background:#fff}
+  </style>
+</head>
+<body><main id="root"></main>
+<script>
+  marked.setOptions({gfm:true,breaks:true});
+  var myChatBlockTags=[
+    ["vega","<vega>","</vega>"],["mermaid","<mermaid>","</mermaid>"],
+    ["function","<function-plot>","</function-plot>"],
+    ["svg","<inline-artifact>","</inline-artifact>"],["artifact","<artifact>","</artifact>"]
+  ];
+  var renderID=0;
+  var scriptPromises={};
+  var mermaidReady=false;
+  function loadScript(source){
+    if(scriptPromises[source])return scriptPromises[source];
+    scriptPromises[source]=new Promise((resolve,reject)=>{
+      const script=document.createElement("script");
+      script.src=source;script.onload=resolve;script.onerror=()=>reject(new Error(source+" 加载失败"));
+      document.head.appendChild(script);
+    });
+    return scriptPromises[source];
+  }
+  function sanitize(container){
+    container.querySelectorAll("script,iframe,object,embed,form,link,meta,base").forEach(n=>n.remove());
+    container.querySelectorAll("*").forEach(node=>{
+      [...node.attributes].forEach(attr=>{
+        const n=attr.name.toLowerCase(),v=attr.value.trim();
+        if(n.startsWith("on")||n==="srcdoc"||n==="nonce"||/javascript:/i.test(v))node.removeAttribute(attr.name);
+        if(["href","src","xlink:href"].includes(n)&&!(/^https:\/\//i.test(v)||/^#/.test(v)||/^data:image\//i.test(v)))node.removeAttribute(attr.name);
+      });
+    });
+  }
+  function parts(raw){
+    const out=[];let cursor=0;
+    while(cursor<raw.length){
+      let found=null;
+      for(const t of myChatBlockTags){const i=raw.indexOf(t[1],cursor);if(i>=0&&(!found||i<found.i))found={t,i};}
+      if(!found){out.push({kind:"text",raw:raw.slice(cursor)});break;}
+      if(found.i>cursor)out.push({kind:"text",raw:raw.slice(cursor,found.i)});
+      const start=found.i+found.t[1].length,end=raw.indexOf(found.t[2],start);
+      out.push({kind:found.t[0],raw:raw.slice(start,end<0?raw.length:end),done:end>=0});
+      cursor=end<0?raw.length:end+found.t[2].length;
+    }
+    return out;
+  }
+  function markdown(raw){
+    const host=document.createElement("section");
+    host.innerHTML=marked.parse(raw);
+    sanitize(host);
+    renderMathInElement(host,{throwOnError:false,strict:false,delimiters:[
+      {left:"$$",right:"$$",display:true},{left:"\\[",right:"\\]",display:true},
+      {left:"\\(",right:"\\)",display:false},{left:"$",right:"$",display:false}
+    ]});
+    return host;
+  }
+  async function complex(part,root){
+    const host=document.createElement("section");host.className="complex";root.appendChild(host);
+    if(!part.done&&part.kind!=="svg"){host.className+=" pending";host.textContent="生成中…";return;}
+    try{
+      if(part.kind==="svg"){host.innerHTML=part.raw+(part.raw.includes("</svg>")?"":"</svg>");sanitize(host);}
+      else if(part.kind==="mermaid"){
+        await loadScript("mermaid.min.js");
+        if(!mermaidReady){
+          mermaid.initialize({startOnLoad:false,securityLevel:"strict",theme:"neutral",fontFamily:"-apple-system,BlinkMacSystemFont,sans-serif"});
+          mermaidReady=true;
+        }
+        const r=await mermaid.render("m"+(++renderID),part.raw.trim());host.innerHTML=r.svg;sanitize(host);
+      }
+      else if(part.kind==="vega"){
+        await loadScript("vega.min.js");await loadScript("vega-lite.min.js");await loadScript("vega-embed.min.js");
+        const spec=JSON.parse(part.raw);spec.width="container";spec.background="transparent";await vegaEmbed(host,spec,{actions:false,renderer:"svg"});
+      }
+      else if(part.kind==="function"){
+        await loadScript("function-plot.js");
+        const spec=JSON.parse(part.raw);functionPlot({...spec,target:host,width:Math.max(270,root.clientWidth),height:240,grid:true});
+      }else{
+        const button=document.createElement("button");button.className="artifact-button";button.textContent="打开作品";
+        const preview=document.createElement("div");preview.className="artifact-preview";preview.innerHTML=part.raw;sanitize(preview);
+        button.onclick=()=>{preview.style.display=preview.style.display==="block"?"none":"block";reportHeight();};
+        host.append(button,preview);
+      }
+    }catch(error){host.className+=" error";host.textContent="内容显示失败："+(error&&error.message?error.message:"格式无效");}
+  }
+  async function renderMessage(raw){
+    const root=document.getElementById("root");root.replaceChildren();
+    for(const part of parts(raw)){if(part.kind==="text"){if(part.raw.trim())root.appendChild(markdown(part.raw));}else await complex(part,root);}
+    reportHeight();
+  }
+  var heightTimer=0;
+  function reportHeight(){
+    clearTimeout(heightTimer);
+    heightTimer=setTimeout(()=>{
+      const root=document.getElementById("root");
+      webkit.messageHandlers.height.postMessage(Math.ceil(root.scrollHeight)+1);
+    },20);
+  }
+  new ResizeObserver(reportHeight).observe(document.body);
+  window.addEventListener("load",reportHeight);
+</script></body></html>
