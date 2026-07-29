@@ -1,0 +1,5 @@
+Production release trigger for native iPhone chat recovery.
+
+Required application revision: e55b38be039b1c4d0d4164e4762dc1a2d0f287a0
+Reason: publish the compatible native chat admission and null-profile quota fixes to Render.
+Triggered at: 2026-07-29T21:28:00+08:00
