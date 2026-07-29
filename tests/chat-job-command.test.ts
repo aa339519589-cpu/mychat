@@ -62,33 +62,33 @@ function enqueuedJob(subject: Record<string, unknown>): JobRecord {
     id: generationId,
     type: 'chat.generation',
     queue: 'chat',
-    principalId: userId,
-    authClass: 'registered',
-    subject,
+    principal: { id: userId, authClass: 'registered' },
+    subject: subject as JobRecord['subject'],
     inputHash: sha256,
-    payload: {},
-    budget: { tokenLimit: 160_000 },
+    input: {},
     status: 'queued',
     attempt: 0,
     maxAttempts: 3,
     priority: 0,
     availableAt: timestamp,
-    leaseOwner: null,
-    leaseVersion: 0,
-    leaseExpiresAt: null,
+    budget: { tokenLimit: 160_000 },
+    usage: {
+      wallTimeMs: 0,
+      rawTokens: 0,
+      weightedTokens: 0,
+      costMicros: 0,
+      sandboxTimeMs: 0,
+      toolCalls: 0,
+    },
+    checkpoint: null,
+    result: null,
+    error: null,
+    lease: null,
     cancelRequestedAt: null,
     createdAt: timestamp,
     updatedAt: timestamp,
     terminalAt: null,
-    cancelRequestedAt: null,
-    progress: {},
-    result: null,
-    errorClass: null,
-    errorCode: null,
-    eventSequence: 0,
-    checkpoint: null,
-    accounting: [],
-  } as JobRecord
+  }
 }
 
 function compensationClient(data: unknown, error: unknown = null): SupabaseClient {
@@ -119,11 +119,9 @@ function directClient(options: DirectClientOptions = {}) {
       throw new Error('standard chat admission must not call RPC')
     },
     from: (table: string) => {
-      let lastUpsert: unknown
       const query: Record<string, unknown> = {
         error: null,
         upsert: async (value: unknown) => {
-          lastUpsert = value
           writes.push({ table, operation: 'upsert', value })
           if (table === 'conversations' && options.conversationError) {
             return { data: null, error: options.conversationError }
@@ -137,7 +135,7 @@ function directClient(options: DirectClientOptions = {}) {
               return { data: null, error: options.assistantMessageError }
             }
           }
-          return { data: lastUpsert, error: null }
+          return { data: value, error: null }
         },
         select: () => query,
         update: (value: unknown) => {
@@ -157,13 +155,13 @@ function directClient(options: DirectClientOptions = {}) {
   return { client, writes, rpcCalls: () => rpcCalls }
 }
 
-function dependencies(client: SupabaseClient, enqueue?: () => never) {
+function dependencies(client: SupabaseClient, beforeEnqueue?: () => never) {
   return {
     persistPayload: async () => reference,
     removePayload: async () => undefined,
     createRepository: () => ({
-      enqueue: async (value: { subject: Record<string, unknown> }) => {
-        if (enqueue) enqueue()
+      enqueue: async value => {
+        if (beforeEnqueue) beforeEnqueue()
         return { created: true, job: enqueuedJob(value.subject) }
       },
     }),
