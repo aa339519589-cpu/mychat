@@ -119,131 +119,29 @@ test('ambiguous compensation preserves the payload for the asynchronous janitor'
   assert.deepEqual(removed, [])
 })
 
-test('server-authoritative turns atomically persist messages and enqueue without the generic repository', async () => {
+function directTurnInput(createConversation: boolean): EnqueueChatJobInput {
   const input = command()
   input.body.messages = [{
     id: input.body.userMessageId,
     role: 'user',
-    content: 'hello',
+    content: createConversation ? 'first native turn' : 'next native turn',
     images: ['https://example.com/image.png'],
     ts: '2026-07-17T00:00:00.000Z',
   }]
   input.body.turn = {
     schemaVersion: 1,
-    createConversation: true,
-    title: '未命名的篇章',
+    createConversation,
+    title: 'Native conversation',
     projectId: null,
   }
-  const calls: Array<{ name: string; args: Record<string, unknown> }> = []
-  const client = {
-    rpc: async (name: string, args: Record<string, unknown>) => {
-      calls.push({ name, args })
-      return {
-        data: enqueuedJob({
-          conversationId: input.body.conversationId,
-          userMessageId: input.body.userMessageId,
-          assistantMessageId: input.body.assistantMessageId,
-        }),
-        error: null,
-      }
-    },
-  } as unknown as SupabaseClient
-  const result = await enqueueChatJob(input, {
-    persistPayload: async () => reference,
-    removePayload: async () => undefined,
-    createRepository: () => ({
-      enqueue: async () => { throw new Error('generic enqueue must not run') },
-    }),
-    createAdminClient: () => client,
-  })
-  assert.equal(result.created, true)
-  assert.equal(result.job.id, generationId)
-  assert.equal(calls.length, 1)
-  assert.equal(calls[0]?.name, 'enqueue_chat_turn_v1')
-  assert.equal(calls[0]?.args.input_create_conversation, true)
-  assert.equal(calls[0]?.args.input_user_content, 'hello')
-  assert.deepEqual(calls[0]?.args.input_user_images, {
-    refs: ['https://example.com/image.png'],
-    image_summary: null,
-    generated_media: [],
-  })
-  assert.deepEqual(calls[0]?.args.input_budget, {
-    wallTimeMs: 600_000,
-    tokenLimit: 160_000,
-    toolCallLimit: 64,
-  })
-})
+  return input
+}
 
-test('server-authoritative turns survive transient control-plane startup failures', async () => {
-  const input = command()
-  input.body.messages = [{
-    id: input.body.userMessageId,
-    role: 'user',
-    content: 'hello after deploy',
-  }]
-  input.body.turn = {
-    schemaVersion: 1,
-    createConversation: true,
-    title: '未命名的篇章',
-    projectId: null,
-  }
-  let attempts = 0
-  let payloadWrites = 0
-  const delays: number[] = []
-  const client = {
+function directTurnClient(input: EnqueueChatJobInput, writes: string[]): SupabaseClient {
+  return {
     rpc: async () => {
-      attempts += 1
-      if (attempts === 1) throw new TypeError('fetch failed while instance warms')
-      if (attempts === 2) return { data: null, error: { code: 'PGRST000' } }
-      return {
-        data: {
-          enqueued: true,
-          replayed: false,
-          job: { id: generationId, status: 'queued' },
-        },
-        error: null,
-      }
+      throw new Error('schema-v1 native append must not call an authoritative turn RPC')
     },
-  } as unknown as SupabaseClient
-
-  const result = await enqueueChatJob(input, {
-    persistPayload: async () => {
-      payloadWrites += 1
-      return reference
-    },
-    removePayload: async () => undefined,
-    createRepository: () => ({
-      enqueue: async () => { throw new Error('generic enqueue must not run') },
-    }),
-    createAdminClient: () => client,
-    sleep: async milliseconds => { delays.push(milliseconds) },
-  })
-
-  assert.equal(result.created, true)
-  assert.equal(result.job.id, generationId)
-  assert.equal(result.job.status, 'queued')
-  assert.equal(attempts, 3)
-  assert.equal(payloadWrites, 1)
-  assert.deepEqual(delays, [250, 500])
-})
-
-test('native turns fall back immediately when the authoritative RPC is not deployed', async () => {
-  const input = command()
-  input.body.messages = [{
-    id: input.body.userMessageId,
-    role: 'user',
-    content: 'hello from iPhone',
-  }]
-  input.body.turn = {
-    schemaVersion: 1,
-    createConversation: true,
-    title: 'iPhone conversation',
-    projectId: null,
-  }
-  const writes: string[] = []
-  let genericEnqueues = 0
-  const client = {
-    rpc: async () => ({ data: null, error: { code: 'PGRST202' } }),
     from: (table: string) => {
       const query = {
         upsert: async () => {
@@ -261,141 +159,76 @@ test('native turns fall back immediately when the authoritative RPC is not deplo
       return query
     },
   } as unknown as SupabaseClient
+}
 
+async function runDirectTurn(createConversation: boolean) {
+  const input = directTurnInput(createConversation)
+  const writes: string[] = []
+  let repositoryEnqueues = 0
   const result = await enqueueChatJob(input, {
     persistPayload: async () => reference,
     removePayload: async () => undefined,
     createRepository: () => ({
       enqueue: async value => {
-        genericEnqueues += 1
+        repositoryEnqueues += 1
         return {
           created: true,
           job: enqueuedJob(value.subject).job as unknown as JobRecord,
         }
       },
     }),
-    createAdminClient: () => client,
-    sleep: async () => { throw new Error('missing RPC must not be retried') },
+    createAdminClient: () => directTurnClient(input, writes),
+    sleep: async () => { throw new Error('native append admission must not retry an obsolete RPC') },
   })
+  return { input, result, writes, repositoryEnqueues }
+}
 
+test('new native turns use one direct durable admission path', async () => {
+  const { result, writes, repositoryEnqueues } = await runDirectTurn(true)
   assert.equal(result.created, true)
   assert.equal(result.job.id, generationId)
-  assert.equal(genericEnqueues, 1)
+  assert.equal(repositoryEnqueues, 1)
   assert.deepEqual(writes, ['conversations', 'messages', 'messages'])
 })
 
-test('native turns fall back after authoritative admission stays unavailable', async () => {
-  const input = command()
-  input.body.messages = [{
-    id: input.body.userMessageId,
-    role: 'user',
-    content: 'hello after bounded retries',
-  }]
-  input.body.turn = {
-    schemaVersion: 1,
-    createConversation: true,
-    title: 'iPhone retry fallback',
-    projectId: null,
-  }
-  let attempts = 0
-  let genericEnqueues = 0
-  const delays: number[] = []
+test('existing native conversations use the same direct durable admission path', async () => {
+  const { result, writes, repositoryEnqueues } = await runDirectTurn(false)
+  assert.equal(result.created, true)
+  assert.equal(result.job.id, generationId)
+  assert.equal(repositoryEnqueues, 1)
+  assert.deepEqual(writes, ['messages', 'messages'])
+})
+
+test('native turn rejects an unowned existing conversation before enqueue', async () => {
+  const input = directTurnInput(false)
+  let repositoryEnqueues = 0
   const client = {
-    rpc: async () => {
-      attempts += 1
-      return { data: null, error: { code: 'PGRST000' } }
-    },
     from: (table: string) => {
       const query = {
         upsert: async () => ({ data: null, error: null }),
         select: () => query,
         update: () => query,
         eq: () => query,
-        maybeSingle: async () => ({
-          data: table === 'conversations' ? { id: input.body.conversationId } : null,
-          error: null,
-        }),
+        maybeSingle: async () => ({ data: table === 'conversations' ? null : {}, error: null }),
       }
       return query
     },
   } as unknown as SupabaseClient
-
-  const result = await enqueueChatJob(input, {
+  await assert.rejects(enqueueChatJob(input, {
     persistPayload: async () => reference,
     removePayload: async () => undefined,
     createRepository: () => ({
-      enqueue: async value => {
-        genericEnqueues += 1
-        return {
-          created: true,
-          job: enqueuedJob(value.subject).job as unknown as JobRecord,
-        }
+      enqueue: async () => {
+        repositoryEnqueues += 1
+        throw new Error('must not enqueue')
       },
     }),
     createAdminClient: () => client,
-    sleep: async milliseconds => { delays.push(milliseconds) },
-  })
-
-  assert.equal(result.created, true)
-  assert.equal(result.job.id, generationId)
-  assert.equal(attempts, 8)
-  assert.equal(genericEnqueues, 1)
-  assert.deepEqual(delays, [250, 500, 1_000, 2_000, 4_000, 8_000, 8_000])
+  }), /Conversation does not belong to this account/)
+  assert.equal(repositoryEnqueues, 0)
 })
 
-test('native turns treat database constraint failures as compatible admission', async () => {
-  const input = command()
-  input.body.messages = [{
-    id: input.body.userMessageId,
-    role: 'user',
-    content: 'hello after database conflict',
-  }]
-  input.body.turn = {
-    schemaVersion: 1,
-    createConversation: true,
-    title: 'iPhone conflict fallback',
-    projectId: null,
-  }
-  let genericEnqueues = 0
-  const client = {
-    rpc: async () => ({ data: null, error: { code: '23503' } }),
-    from: (table: string) => {
-      const query = {
-        upsert: async () => ({ data: null, error: null }),
-        select: () => query,
-        update: () => query,
-        eq: () => query,
-        maybeSingle: async () => ({
-          data: table === 'conversations' ? { id: input.body.conversationId } : null,
-          error: null,
-        }),
-      }
-      return query
-    },
-  } as unknown as SupabaseClient
-
-  const result = await enqueueChatJob(input, {
-    persistPayload: async () => reference,
-    removePayload: async () => undefined,
-    createRepository: () => ({
-      enqueue: async value => {
-        genericEnqueues += 1
-        return {
-          created: true,
-          job: enqueuedJob(value.subject).job as unknown as JobRecord,
-        }
-      },
-    }),
-    createAdminClient: () => client,
-    sleep: async () => { throw new Error('database conflicts must fall back immediately') },
-  })
-
-  assert.equal(result.created, true)
-  assert.equal(result.job.id, generationId)
-  assert.equal(genericEnqueues, 1)
-})
-
-test('server-authoritative regeneration uses the fenced RPC and durable cleanup receipts', async () => {
+test('server-authoritative regeneration still uses the fenced RPC and cleanup receipts', async () => {
   const input = command()
   input.body.messages = [{
     id: input.body.userMessageId,
