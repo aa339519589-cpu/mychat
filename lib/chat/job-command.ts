@@ -14,20 +14,25 @@ import { isRecord } from '@/lib/unknown-value'
 import type { JobRepository } from '@/lib/jobs/repository'
 import { JobRuntimeError } from '@/lib/jobs/errors'
 import { loadRegenerationCleanupKeys } from './regeneration-cleanup'
-import { enqueueTurnWithCompatibility, rejectMissingAuthoritativeRpc, requiredAdminClient } from './compatible-turn-admission'
+import { enqueueDirectTurn, requiredAdminClient } from './compatible-turn-admission'
 import type { EnqueueChatJobInput } from './job-command-types'
 import { referencesPayload, rpcObject, sanitizedAttachments } from './job-command-support'
+
 export type { EnqueueChatJobInput } from './job-command-types'
+
 const CHAT_POLICY_VERSION = '2026-07-13'
-const AUTHORITATIVE_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000, 8_000] as const
+const REGENERATION_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000, 8_000] as const
+
 type ChatJobAdmission = {
   id: string
   status: JobStatus
 }
+
 type AuthoritativeRpcResponse = {
   data: unknown
   error: unknown
 }
+
 type EnqueueChatJobDependencies = {
   persistPayload: typeof persistJobPayload
   removePayload: typeof removeJobPayload
@@ -66,9 +71,7 @@ function thrownAuthoritativeRpcError(error: unknown, fallback: string): JobRunti
   if (error instanceof JobRuntimeError) return error
   return new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', fallback, {
     cause: error,
-    details: {
-      name: error instanceof Error ? error.name : 'unknown',
-    },
+    details: { name: error instanceof Error ? error.name : 'unknown' },
   })
 }
 
@@ -83,7 +86,7 @@ function parseJobAdmission(value: unknown, rpcName: string, expectedJobId: strin
   return { id: source.id, status: source.status }
 }
 
-async function callAuthoritativeRpc(input: {
+async function callRegenerationRpc(input: {
   rpcName: string
   fallback: string
   jobId: string
@@ -91,7 +94,7 @@ async function callAuthoritativeRpc(input: {
   sleep: EnqueueChatJobDependencies['sleep']
 }): Promise<{ created: boolean; job: ChatJobAdmission }> {
   let lastError: JobRuntimeError | null = null
-  for (let attempt = 0; attempt <= AUTHORITATIVE_RETRY_DELAYS_MS.length; attempt += 1) {
+  for (let attempt = 0; attempt <= REGENERATION_RETRY_DELAYS_MS.length; attempt += 1) {
     try {
       const response = await input.invoke()
       const result = rpcObject(response.data)
@@ -103,90 +106,16 @@ async function callAuthoritativeRpc(input: {
         job: parseJobAdmission(result.job, input.rpcName, input.jobId),
       }
     } catch (error) {
-      const normalized = rejectMissingAuthoritativeRpc(
-        thrownAuthoritativeRpcError(error, input.fallback),
-      )
+      const normalized = thrownAuthoritativeRpcError(error, input.fallback)
       if (!normalized.retryable) throw normalized
       lastError = normalized
     }
 
-    const delayMs = AUTHORITATIVE_RETRY_DELAYS_MS[attempt]
+    const delayMs = REGENERATION_RETRY_DELAYS_MS[attempt]
     if (delayMs === undefined) break
-    log.warn('jobs', 'Chat control-plane admission is warming; retrying', {
-      rpc: input.rpcName,
-      jobId: input.jobId,
-      attempt: attempt + 1,
-      delayMs,
-      databaseCode: typeof lastError?.details.databaseCode === 'string'
-        ? lastError.details.databaseCode
-        : undefined,
-    })
     await input.sleep(delayMs)
   }
-
-  log.error('jobs', 'Chat control-plane admission remained unavailable after retries', {
-    rpc: input.rpcName,
-    jobId: input.jobId,
-    code: lastError?.code ?? 'JOB_DEPENDENCY_UNAVAILABLE',
-    databaseCode: typeof lastError?.details.databaseCode === 'string'
-      ? lastError.details.databaseCode
-      : undefined,
-  })
   throw lastError ?? new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', input.fallback)
-}
-
-async function enqueueAuthoritativeTurn(input: {
-  client: NonNullable<ReturnType<typeof createAdminClient>>
-  command: EnqueueChatJobInput
-  payload: JsonObject
-  budget: JsonObject
-  queue: string
-  maxAttempts: number
-  sleep: EnqueueChatJobDependencies['sleep']
-}): Promise<{ created: boolean; job: ChatJobAdmission }> {
-  const { body } = input.command
-  const authority = body.turn
-  const userMessage = body.messages.find(message => message.id === body.userMessageId && message.role === 'user')
-  if (!userMessage || typeof userMessage.content !== 'string' || authority?.schemaVersion !== 1) {
-    throw new JobRuntimeError('JOB_INVALID_INPUT', 'Authoritative chat turn is incomplete')
-  }
-  const userContent = userMessage.content
-  const userCreatedAt = typeof userMessage.ts === 'string'
-    ? userMessage.ts
-    : input.command.requestedAt ?? new Date().toISOString()
-  const images = userMessage.images?.length || userMessage.imageSummary
-    ? {
-        refs: userMessage.images ?? [],
-        image_summary: userMessage.imageSummary ?? null,
-        generated_media: [],
-      }
-    : null
-  return callAuthoritativeRpc({
-    rpcName: 'enqueue_chat_turn_v1',
-    fallback: 'Authoritative chat turn enqueue failed',
-    jobId: body.generationId,
-    sleep: input.sleep,
-    invoke: () => input.client.rpc('enqueue_chat_turn_v1', {
-      input_user_id: input.command.userId,
-      input_conversation_id: body.conversationId,
-      input_create_conversation: authority.createConversation,
-      input_project_id: authority.projectId,
-      input_conversation_title: authority.title,
-      input_user_message_id: body.userMessageId,
-      input_user_content: userContent,
-      input_user_images: images,
-      input_user_created_at: userCreatedAt,
-      input_assistant_message_id: body.assistantMessageId,
-      input_job_id: body.generationId,
-      input_auth_class: input.command.isAnonymous ? 'anonymous' : 'registered',
-      input_idempotency_key: `chat:${body.generationId}`,
-      input_input_hash: String(input.payload.payloadHash),
-      input_payload: input.payload,
-      input_budget: input.budget,
-      input_queue: input.queue,
-      input_max_attempts: input.maxAttempts,
-    }) as unknown as PromiseLike<AuthoritativeRpcResponse>,
-  })
 }
 
 async function enqueueAuthoritativeRegeneration(input: {
@@ -201,11 +130,11 @@ async function enqueueAuthoritativeRegeneration(input: {
   sleep: EnqueueChatJobDependencies['sleep']
 }): Promise<{ created: boolean; job: ChatJobAdmission }> {
   const { body } = input.command
-  const userMessage = body.messages.find(message => message.id === body.userMessageId && message.role === 'user')
+  const userMessage = body.messages.find(message =>
+    message.id === body.userMessageId && message.role === 'user')
   if (!userMessage || typeof userMessage.content !== 'string') {
     throw new JobRuntimeError('JOB_INVALID_INPUT', 'Authoritative regeneration source is incomplete')
   }
-  const userContent = userMessage.content
   const cleanupObjectKeys = await input.loadCleanupKeys({
     client: input.client,
     userId: input.command.userId,
@@ -213,7 +142,7 @@ async function enqueueAuthoritativeRegeneration(input: {
     sourceUserMessageId: body.userMessageId,
     authority: input.authority,
   })
-  return callAuthoritativeRpc({
+  return callRegenerationRpc({
     rpcName: 'enqueue_chat_regeneration_v1',
     fallback: 'Authoritative regeneration enqueue failed',
     jobId: body.generationId,
@@ -225,7 +154,7 @@ async function enqueueAuthoritativeRegeneration(input: {
       input_source_user_message_id: body.userMessageId,
       input_target_assistant_message_id: input.authority.targetAssistantMessageId ?? null,
       input_expected_tail_message_id: input.authority.expectedTailMessageId,
-      input_user_content: userContent,
+      input_user_content: userMessage.content,
       input_assistant_message_id: body.assistantMessageId,
       input_job_id: body.generationId,
       input_auth_class: input.command.isAnonymous ? 'anonymous' : 'registered',
@@ -252,9 +181,8 @@ async function admitChatJob(input: {
   const { body } = input.command
   const admin = body.turn ? input.dependencies.createAdminClient() : null
   if (body.turn?.schemaVersion === 1) {
-    const client = requiredAdminClient(admin)
-    return enqueueTurnWithCompatibility({
-      client,
+    return enqueueDirectTurn({
+      client: requiredAdminClient(admin),
       body,
       userId: input.command.userId,
       isAnonymous: input.command.isAnonymous,
@@ -264,15 +192,6 @@ async function admitChatJob(input: {
       budget: input.budget,
       queue: input.queue,
       maxAttempts: input.maxAttempts,
-      authoritative: () => enqueueAuthoritativeTurn({
-        client,
-        command: input.command,
-        payload: input.payload,
-        budget: input.budget,
-        queue: input.queue,
-        maxAttempts: input.maxAttempts,
-        sleep: input.dependencies.sleep,
-      }),
     })
   }
   if (body.turn?.schemaVersion === 2) {
@@ -369,8 +288,6 @@ export async function enqueueChatJob(
       maxAttempts,
     })
   } catch (error) {
-    // Preserve a payload if the database accepted the job but the response was
-    // lost. Only compensate a proven non-enqueue; otherwise cleanup owns it.
     const admin = dependencies.createAdminClient()
     let accepted: { data: unknown; error: unknown } | null = null
     try {
@@ -383,7 +300,8 @@ export async function enqueueChatJob(
     if (accepted && !accepted.error && referencesPayload(accepted.data, reference.objectKey) === false) {
       try {
         await dependencies.removePayload(reference, {
-          userId: input.userId, jobId: body.generationId,
+          userId: input.userId,
+          jobId: body.generationId,
         })
       } catch (cleanupError) {
         log.warn('jobs', 'Immediate orphan payload compensation failed', {
