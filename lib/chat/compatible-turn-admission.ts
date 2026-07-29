@@ -3,7 +3,6 @@ import type { RawMsg } from '@/lib/llm/types'
 import type { JobRepository } from '@/lib/jobs/repository'
 import type { JobStatus, JsonObject } from '@/lib/jobs/contracts'
 import { JobRuntimeError } from '@/lib/jobs/errors'
-import { log } from '@/lib/logger'
 import type { createAdminClient } from '@/lib/supabase/admin'
 
 type ChatJobAdmission = {
@@ -11,7 +10,7 @@ type ChatJobAdmission = {
   status: JobStatus
 }
 
-type CompatibleTurnInput = {
+export type CompatibleTurnInput = {
   client: NonNullable<ReturnType<typeof createAdminClient>>
   body: DurableChatRequestBody
   userId: string
@@ -30,16 +29,6 @@ export function isMissingAuthoritativeRpc(error: unknown): boolean {
   return databaseCode === 'PGRST202' || databaseCode === '42883'
 }
 
-function canUseCompatibleAdmission(error: unknown): error is JobRuntimeError {
-  if (!(error instanceof JobRuntimeError)) return false
-  if (error.code === 'JOB_DEPENDENCY_UNAVAILABLE') return true
-  // PostgreSQL constraint/program-state errors describe a failed atomic RPC,
-  // not a validated user conflict. Re-run through the idempotent compatibility
-  // path, whose ownership and input-hash checks still reject real conflicts.
-  return error.code === 'JOB_CONFLICT'
-    && typeof error.details.databaseCode === 'string'
-}
-
 export function rejectMissingAuthoritativeRpc(error: JobRuntimeError): JobRuntimeError {
   if (isMissingAuthoritativeRpc(error)) throw error
   return error
@@ -50,7 +39,7 @@ export function requiredAdminClient(client: ReturnType<typeof createAdminClient>
   return client
 }
 
-async function ensureCompatibleConversation(
+async function ensureConversation(
   input: CompatibleTurnInput,
   authority: ChatAppendAuthority,
   createdAt: string,
@@ -66,10 +55,7 @@ async function ensureCompatibleConversation(
     }, { onConflict: 'id', ignoreDuplicates: true })
     if (conversation.error) {
       throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'Conversation persistence failed', {
-        details: {
-          databaseCode: conversation.error.code ?? 'unknown',
-          compatibilityFallback: true,
-        },
+        details: { databaseCode: conversation.error.code ?? 'unknown' },
       })
     }
   }
@@ -78,10 +64,7 @@ async function ensureCompatibleConversation(
     .eq('id', body.conversationId).eq('user_id', input.userId).maybeSingle()
   if (owner.error) {
     throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'Conversation lookup failed', {
-      details: {
-        databaseCode: owner.error.code ?? 'unknown',
-        compatibilityFallback: true,
-      },
+      details: { databaseCode: owner.error.code ?? 'unknown' },
     })
   }
   if (!owner.data) {
@@ -89,7 +72,7 @@ async function ensureCompatibleConversation(
   }
 }
 
-async function persistCompatibleMessages(
+async function persistMessages(
   input: CompatibleTurnInput,
   userMessage: RawMsg,
   createdAt: string,
@@ -115,10 +98,7 @@ async function persistCompatibleMessages(
   } as never, { onConflict: 'id', ignoreDuplicates: true })
   if (userWrite.error) {
     throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'User message persistence failed', {
-      details: {
-        databaseCode: userWrite.error.code ?? 'unknown',
-        compatibilityFallback: true,
-      },
+      details: { databaseCode: userWrite.error.code ?? 'unknown' },
     })
   }
 
@@ -135,31 +115,28 @@ async function persistCompatibleMessages(
   } as never, { onConflict: 'id', ignoreDuplicates: true })
   if (assistantWrite.error) {
     throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'Assistant message persistence failed', {
-      details: {
-        databaseCode: assistantWrite.error.code ?? 'unknown',
-        compatibilityFallback: true,
-      },
+      details: { databaseCode: assistantWrite.error.code ?? 'unknown' },
     })
   }
 }
 
-async function persistCompatibleTurn(input: CompatibleTurnInput): Promise<void> {
+async function persistTurn(input: CompatibleTurnInput): Promise<void> {
   const { body } = input
   const authority = body.turn
   const userMessage = body.messages.find(message =>
     message.id === body.userMessageId && message.role === 'user')
   if (!userMessage || typeof userMessage.content !== 'string' || authority?.schemaVersion !== 1) {
-    throw new JobRuntimeError('JOB_INVALID_INPUT', 'Compatible chat turn is incomplete')
+    throw new JobRuntimeError('JOB_INVALID_INPUT', 'Chat turn is incomplete')
   }
   const createdAt = input.requestedAt ?? new Date().toISOString()
-  await ensureCompatibleConversation(input, authority, createdAt)
-  await persistCompatibleMessages(input, userMessage, createdAt)
+  await ensureConversation(input, authority, createdAt)
+  await persistMessages(input, userMessage, createdAt)
 }
 
-async function enqueueCompatibleTurn(
+export async function enqueueCompatibleTurn(
   input: CompatibleTurnInput,
 ): Promise<{ created: boolean; job: ChatJobAdmission }> {
-  await persistCompatibleTurn(input)
+  await persistTurn(input)
   const { body } = input
   const result = await input.repository.enqueue({
     jobId: body.generationId,
@@ -186,25 +163,15 @@ async function enqueueCompatibleTurn(
   return { created: result.created, job: { id: result.job.id, status: result.job.status } }
 }
 
+/**
+ * Schema-v1 native turns now have exactly one admission implementation.
+ * The legacy callback remains in the call signature only until regeneration and
+ * web callers are separated; it is never executed for a native append turn.
+ */
 export async function enqueueTurnWithCompatibility(
   input: CompatibleTurnInput & {
     authoritative: () => Promise<{ created: boolean; job: ChatJobAdmission }>
   },
 ): Promise<{ created: boolean; job: ChatJobAdmission }> {
-  try {
-    return await input.authoritative()
-  } catch (error) {
-    // The compatibility path is idempotent under the same conversation,
-    // message, job, and input-hash identities. It is therefore also safe when
-    // the RPC exists but its schema is stale, its response was lost, or its
-    // admission dependency remains unavailable after the bounded retry window.
-    // Conflicts and invalid input still fail closed.
-    if (!canUseCompatibleAdmission(error)) throw error
-    const normalized = error
-    log.warn('jobs', 'Authoritative chat RPC is unavailable; using compatible admission', {
-      jobId: input.body.generationId,
-      databaseCode: normalized.details.databaseCode,
-    })
-    return enqueueCompatibleTurn(input)
-  }
+  return enqueueCompatibleTurn(input)
 }
