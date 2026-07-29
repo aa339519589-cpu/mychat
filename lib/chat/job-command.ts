@@ -135,6 +135,7 @@ async function enqueueAuthoritativeRegeneration(input: {
   if (!userMessage || typeof userMessage.content !== 'string') {
     throw new JobRuntimeError('JOB_INVALID_INPUT', 'Authoritative regeneration source is incomplete')
   }
+  const userContent = userMessage.content
   const cleanupObjectKeys = await input.loadCleanupKeys({
     client: input.client,
     userId: input.command.userId,
@@ -154,7 +155,7 @@ async function enqueueAuthoritativeRegeneration(input: {
       input_source_user_message_id: body.userMessageId,
       input_target_assistant_message_id: input.authority.targetAssistantMessageId ?? null,
       input_expected_tail_message_id: input.authority.expectedTailMessageId,
-      input_user_content: userMessage.content,
+      input_user_content: userContent,
       input_assistant_message_id: body.assistantMessageId,
       input_job_id: body.generationId,
       input_auth_class: input.command.isAnonymous ? 'anonymous' : 'registered',
