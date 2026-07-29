@@ -1,6 +1,11 @@
 import type { SupabaseClient } from '@/lib/supabase/types'
-import { isTerminalJobStatus, type JobStatus } from './contracts'
-import { readOwnedJob, readOwnedJobEvents } from './read-model'
+import { isTerminalJobStatus, type JobStatus, type JsonObject } from './contracts'
+import {
+  readOwnedJob,
+  readOwnedJobEvents,
+  type PublicJobEvent,
+  type PublicJobSnapshot,
+} from './read-model'
 
 const INITIAL_POLL_INTERVAL_MS = 250
 const MAX_POLL_INTERVAL_MS = 2_000
@@ -77,6 +82,38 @@ function eventFrame(event: {
   return `id: ${event.seq}\nevent: ${event.kind}\ndata: ${JSON.stringify(event)}\n\n`
 }
 
+function terminalPayload(snapshot: PublicJobSnapshot): JsonObject {
+  const payload: JsonObject = { status: snapshot.status }
+  if (snapshot.result !== null) payload.result = snapshot.result
+  if (snapshot.status !== 'completed') {
+    const error = snapshot.errorCode ?? '生成未完成'
+    payload.errorCode = error
+    payload.error = error
+  }
+  return payload
+}
+
+function syntheticTerminalEvent(snapshot: PublicJobSnapshot, sequence: number): PublicJobEvent {
+  return {
+    id: `synthetic-terminal:${snapshot.id}:${sequence}`,
+    jobId: snapshot.id,
+    seq: sequence,
+    kind: 'job.terminal',
+    schemaVersion: 1,
+    payload: terminalPayload(snapshot),
+    createdAt: snapshot.terminalAt ?? snapshot.updatedAt,
+  }
+}
+
+function streamErrorFrame(jobId: string): string {
+  return `event: stream.error\ndata: ${JSON.stringify({
+    schemaVersion: 1,
+    jobId,
+    code: 'DEPENDENCY_UNAVAILABLE',
+    retryable: true,
+  })}\n\n`
+}
+
 export function createJobEventStream(input: {
   client: SupabaseClient
   principalId: string
@@ -111,6 +148,7 @@ export function createJobEventStream(input: {
       }
       let sequence = input.fromSequence
       let status = input.initialStatus
+      let terminalDelivered = false
       let pollIntervalMs = dependencies.initialPollIntervalMs
       let lastHeartbeat = dependencies.now()
       let lastStatusRefresh = dependencies.now()
@@ -131,12 +169,7 @@ export function createJobEventStream(input: {
             signal,
           )
           if (!result.ok) {
-            await send(`event: stream.error\ndata: ${JSON.stringify({
-              schemaVersion: 1,
-              jobId: input.jobId,
-              code: 'DEPENDENCY_UNAVAILABLE',
-              retryable: true,
-            })}\n\n`)
+            await send(streamErrorFrame(input.jobId))
             break
           }
           for (const event of result.value) {
@@ -148,10 +181,33 @@ export function createJobEventStream(input: {
             const terminalStatus = event.kind === 'job.terminal' ? event.payload.status : null
             if (typeof terminalStatus === 'string' && isTerminalJobStatus(terminalStatus)) {
               status = terminalStatus
+              terminalDelivered = true
             }
           }
           if (signal.aborted) break
-          if (isTerminalJobStatus(status) && result.value.length === 0) break
+          if (isTerminalJobStatus(status) && result.value.length === 0) {
+            if (terminalDelivered) break
+            const snapshot = await dependencies.readJob(
+              input.client,
+              input.principalId,
+              input.jobId,
+              signal,
+            )
+            if (!snapshot.ok) {
+              await send(streamErrorFrame(input.jobId))
+              break
+            }
+            status = snapshot.value.status
+            if (!isTerminalJobStatus(status)) continue
+            const terminal = syntheticTerminalEvent(snapshot.value, sequence + 1)
+            if (!await send(eventFrame(terminal))) {
+              stop.abort(new Error('slow_consumer'))
+              break
+            }
+            sequence = terminal.seq
+            terminalDelivered = true
+            break
+          }
           const now = dependencies.now()
           if (result.value.length === 0
             && now - lastStatusRefresh >= dependencies.statusRefreshIntervalMs) {
