@@ -1,14 +1,34 @@
-# MyChat iOS (phase 1)
+# MyChat Native iPhone Client
 
-Open `MyChatIOS.xcodeproj` in Xcode, select your iPhone as the run target, set
-your Apple development team under **Signing & Capabilities**, then Run.
+This directory is the native iOS client. It shares the production backend with
+the web client, but it does not embed or import the web UI.
 
-The first build points to the currently configured MyChat server in
-`Configuration/Debug.xcconfig`. For a different environment, change only
-`MYCHAT_API_BASE_URL` to its HTTPS base URL. The app downloads the public
-Supabase bootstrap config from `/api/mobile/config`; it never contains a
-service-role key.
+## Release boundary
 
-Implemented scope: email/password login, existing conversation list and
-history, new text chats, durable server-side enqueue, and native SSE rendering
-of AI output. It is a SwiftUI client, not a WebView wrapper.
+- Native client branch: `codex/native-ios-client`
+- Native commits must be path-limited to `ios/MyChatIOS`.
+- Do not merge this branch into or deploy it as the web frontend during native
+  iteration.
+- A native iteration is complete only after commit, GitHub push, signed device
+  build, install, launch, and device-side verification.
+
+## Architecture
+
+- SwiftUI renders the app shell, history, model menu, messages, and composer.
+- `URLSession` talks directly to the existing HTTPS API and durable SSE stream.
+- Supabase access and refresh tokens are stored in the iOS Keychain.
+- There is no `WKWebView`.
+
+## Repeatable device deployment
+
+With the developer iPhone connected and unlocked:
+
+```bash
+ios/MyChatIOS/scripts/deploy-device.sh
+```
+
+Override the device when necessary:
+
+```bash
+MYCHAT_DEVICE_ID="<device identifier>" ios/MyChatIOS/scripts/deploy-device.sh
+```

@@ -40,9 +40,40 @@ struct ChatMessage: Codable, Identifiable, Hashable {
     }
 }
 
+struct ModelChoice: Identifiable, Hashable {
+    enum Selection: Hashable {
+        case platform(tier: String)
+        case endpoint(id: UUID)
+    }
+
+    let id: String
+    let name: String
+    let detail: String
+    let selection: Selection
+
+    static let platform: [ModelChoice] = [
+        ModelChoice(id: "platform-deep", name: "深度", detail: "深入思考", selection: .platform(tier: "鸿篇")),
+        ModelChoice(id: "platform-balanced", name: "均衡", detail: "思考与速度平衡", selection: .platform(tier: "正构")),
+        ModelChoice(id: "platform-fast", name: "快速", detail: "快速响应", selection: .platform(tier: "绝句")),
+    ]
+}
+
+struct EndpointRow: Decodable {
+    let id: UUID
+    let name: String
+    let model: String
+    let outputKind: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, model
+        case outputKind = "output_kind"
+    }
+}
+
 struct ChatEnqueueResponse: Decodable {
     let jobId: UUID
     let streamUrl: String
+    let status: String
 }
 
 struct JobEvent: Decodable {
@@ -53,7 +84,12 @@ struct JobEvent: Decodable {
 }
 
 enum JSONValue: Decodable {
-    case string(String), number(Double), bool(Bool), object([String: JSONValue]), array([JSONValue]), null
+    case string(String)
+    case number(Double)
+    case bool(Bool)
+    case object([String: JSONValue])
+    case array([JSONValue])
+    case null
 
     init(from decoder: Decoder) throws {
         let box = try decoder.singleValueContainer()
@@ -65,6 +101,8 @@ enum JSONValue: Decodable {
         else { self = .array(try box.decode([JSONValue].self)) }
     }
 
-    var string: String? { if case let .string(value) = self { value } else { nil } }
-    var object: [String: JSONValue]? { if case let .object(value) = self { value } else { nil } }
+    var string: String? {
+        if case let .string(value) = self { return value }
+        return nil
+    }
 }
