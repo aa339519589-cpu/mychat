@@ -73,7 +73,6 @@
     "lib/github.ts": { "complexity": [30, 27, 23, 16] },
     "lib/jobs/budget.ts": { "complexity": [27] },
     "lib/jobs/contracts.ts": { "complexity": [21] },
-    "lib/jobs/event-stream.ts": { "complexity": [23], "maxLines": [114, 83] },
     "lib/jobs/handlers/agent-operation.ts": { "complexity": [24], "maxLines": [90] },
     "lib/jobs/handlers/chat-media.ts": { "complexity": [19], "maxLines": [151] },
     "lib/jobs/handlers/title.ts": { "complexity": [24], "maxLines": [87] },
