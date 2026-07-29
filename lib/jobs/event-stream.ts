@@ -114,7 +114,7 @@ function streamErrorFrame(jobId: string): string {
   })}\n\n`
 }
 
-export function createJobEventStream(input: {
+type StreamInput = {
   client: SupabaseClient
   principalId: string
   jobId: string
@@ -124,7 +124,149 @@ export function createJobEventStream(input: {
   maxDurationMs?: number
   renewAdmission?: (signal?: AbortSignal) => Promise<boolean>
   onClosed?: () => void | Promise<void>
-}, dependencyOverrides: Partial<JobEventStreamDependencies> = {}): ReadableStream<Uint8Array> {
+}
+
+type StreamSend = (value: string) => Promise<boolean>
+
+class JobEventStreamRunner {
+  private sequence: number
+  private status: JobStatus
+  private terminalDelivered = false
+  private pollIntervalMs: number
+  private lastHeartbeat: number
+  private lastStatusRefresh: number
+  private lastAdmissionRenewal: number
+
+  constructor(
+    private readonly input: StreamInput,
+    private readonly dependencies: JobEventStreamDependencies,
+    private readonly signal: AbortSignal,
+    private readonly stop: AbortController,
+    private readonly send: StreamSend,
+  ) {
+    this.sequence = input.fromSequence
+    this.status = input.initialStatus
+    this.pollIntervalMs = dependencies.initialPollIntervalMs
+    const now = dependencies.now()
+    this.lastHeartbeat = now
+    this.lastStatusRefresh = now
+    this.lastAdmissionRenewal = now
+  }
+
+  async run(): Promise<void> {
+    while (!this.signal.aborted) {
+      if (!await this.renewAdmission()) return
+      const events = await this.readEvents()
+      if (events === null || !await this.forwardEvents(events)) return
+      if (this.signal.aborted || await this.finishTerminal(events.length)) return
+      const now = this.dependencies.now()
+      if (!await this.refreshStatus(now, events.length)) return
+      if (!await this.sendHeartbeat(now)) return
+      await this.waitForNextPoll(events.length)
+    }
+  }
+
+  private async renewAdmission(): Promise<boolean> {
+    if (!this.input.renewAdmission) return true
+    const now = this.dependencies.now()
+    if (now - this.lastAdmissionRenewal < this.dependencies.admissionRenewIntervalMs) return true
+    const renewed = await this.input.renewAdmission(this.signal)
+    if (renewed) this.lastAdmissionRenewal = now
+    return renewed
+  }
+
+  private async readEvents(): Promise<PublicJobEvent[] | null> {
+    const result = await this.dependencies.readEvents(
+      this.input.client,
+      this.input.principalId,
+      this.input.jobId,
+      this.sequence,
+      200,
+      this.signal,
+    )
+    if (result.ok) return result.value
+    await this.send(streamErrorFrame(this.input.jobId))
+    return null
+  }
+
+  private async forwardEvents(events: PublicJobEvent[]): Promise<boolean> {
+    for (const event of events) {
+      if (!await this.send(eventFrame(event))) {
+        this.stop.abort(new Error('slow_consumer'))
+        return false
+      }
+      this.sequence = event.seq
+      const terminalStatus = event.kind === 'job.terminal' ? event.payload.status : null
+      if (typeof terminalStatus === 'string' && isTerminalJobStatus(terminalStatus)) {
+        this.status = terminalStatus
+        this.terminalDelivered = true
+      }
+    }
+    return true
+  }
+
+  private async finishTerminal(eventCount: number): Promise<boolean> {
+    if (!isTerminalJobStatus(this.status) || eventCount > 0) return false
+    if (this.terminalDelivered) return true
+    const snapshot = await this.readSnapshot()
+    if (!snapshot) return true
+    this.status = snapshot.status
+    if (!isTerminalJobStatus(this.status)) return false
+    const terminal = syntheticTerminalEvent(snapshot, this.sequence + 1)
+    if (!await this.send(eventFrame(terminal))) {
+      this.stop.abort(new Error('slow_consumer'))
+      return true
+    }
+    this.sequence = terminal.seq
+    this.terminalDelivered = true
+    return true
+  }
+
+  private async refreshStatus(now: number, eventCount: number): Promise<boolean> {
+    if (eventCount > 0
+      || now - this.lastStatusRefresh < this.dependencies.statusRefreshIntervalMs) return true
+    const snapshot = await this.readSnapshot()
+    if (!snapshot) return false
+    this.status = snapshot.status
+    this.lastStatusRefresh = now
+    return true
+  }
+
+  private async readSnapshot(): Promise<PublicJobSnapshot | null> {
+    const snapshot = await this.dependencies.readJob(
+      this.input.client,
+      this.input.principalId,
+      this.input.jobId,
+      this.signal,
+    )
+    if (snapshot.ok) return snapshot.value
+    await this.send(streamErrorFrame(this.input.jobId))
+    return null
+  }
+
+  private async sendHeartbeat(now: number): Promise<boolean> {
+    if (now - this.lastHeartbeat < this.dependencies.heartbeatIntervalMs) return true
+    if (await this.send(`: heartbeat ${this.sequence}\n\n`)) {
+      this.lastHeartbeat = this.dependencies.now()
+      return true
+    }
+    this.stop.abort(new Error('slow_consumer'))
+    return false
+  }
+
+  private async waitForNextPoll(eventCount: number): Promise<void> {
+    if (isTerminalJobStatus(this.status)) return
+    this.pollIntervalMs = eventCount > 0
+      ? this.dependencies.initialPollIntervalMs
+      : Math.min(this.dependencies.maxPollIntervalMs, this.pollIntervalMs * 2)
+    await this.dependencies.wait(this.pollIntervalMs, this.signal)
+  }
+}
+
+export function createJobEventStream(
+  input: StreamInput,
+  dependencyOverrides: Partial<JobEventStreamDependencies> = {},
+): ReadableStream<Uint8Array> {
   const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides }
   const stop = new AbortController()
   const deadline = AbortSignal.timeout(input.maxDurationMs ?? 15 * 60_000)
@@ -140,100 +282,14 @@ export function createJobEventStream(input: {
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
-      const send = async (value: string): Promise<boolean> => {
+      const send: StreamSend = async value => {
         if (closed || signal.aborted) return false
         if (!await waitForCapacity(controller, signal, dependencies)) return false
         controller.enqueue(encoder.encode(value))
         return true
       }
-      let sequence = input.fromSequence
-      let status = input.initialStatus
-      let terminalDelivered = false
-      let pollIntervalMs = dependencies.initialPollIntervalMs
-      let lastHeartbeat = dependencies.now()
-      let lastStatusRefresh = dependencies.now()
-      let lastAdmissionRenewal = dependencies.now()
       try {
-        while (!signal.aborted) {
-          if (input.renewAdmission
-            && dependencies.now() - lastAdmissionRenewal >= dependencies.admissionRenewIntervalMs) {
-            if (!await input.renewAdmission(signal)) break
-            lastAdmissionRenewal = dependencies.now()
-          }
-          const result = await dependencies.readEvents(
-            input.client,
-            input.principalId,
-            input.jobId,
-            sequence,
-            200,
-            signal,
-          )
-          if (!result.ok) {
-            await send(streamErrorFrame(input.jobId))
-            break
-          }
-          for (const event of result.value) {
-            if (!await send(eventFrame(event))) {
-              stop.abort(new Error('slow_consumer'))
-              break
-            }
-            sequence = event.seq
-            const terminalStatus = event.kind === 'job.terminal' ? event.payload.status : null
-            if (typeof terminalStatus === 'string' && isTerminalJobStatus(terminalStatus)) {
-              status = terminalStatus
-              terminalDelivered = true
-            }
-          }
-          if (signal.aborted) break
-          if (isTerminalJobStatus(status) && result.value.length === 0) {
-            if (terminalDelivered) break
-            const snapshot = await dependencies.readJob(
-              input.client,
-              input.principalId,
-              input.jobId,
-              signal,
-            )
-            if (!snapshot.ok) {
-              await send(streamErrorFrame(input.jobId))
-              break
-            }
-            status = snapshot.value.status
-            if (!isTerminalJobStatus(status)) continue
-            const terminal = syntheticTerminalEvent(snapshot.value, sequence + 1)
-            if (!await send(eventFrame(terminal))) {
-              stop.abort(new Error('slow_consumer'))
-              break
-            }
-            sequence = terminal.seq
-            terminalDelivered = true
-            break
-          }
-          const now = dependencies.now()
-          if (result.value.length === 0
-            && now - lastStatusRefresh >= dependencies.statusRefreshIntervalMs) {
-            const snapshot = await dependencies.readJob(
-              input.client,
-              input.principalId,
-              input.jobId,
-              signal,
-            )
-            if (!snapshot.ok) break
-            status = snapshot.value.status
-            lastStatusRefresh = now
-          }
-          if (now - lastHeartbeat >= dependencies.heartbeatIntervalMs) {
-            if (!await send(`: heartbeat ${sequence}\n\n`)) {
-              stop.abort(new Error('slow_consumer'))
-              break
-            }
-            lastHeartbeat = dependencies.now()
-          }
-          if (!isTerminalJobStatus(status)) {
-            if (result.value.length > 0) pollIntervalMs = dependencies.initialPollIntervalMs
-            else pollIntervalMs = Math.min(dependencies.maxPollIntervalMs, pollIntervalMs * 2)
-            await dependencies.wait(pollIntervalMs, signal)
-          }
-        }
+        await new JobEventStreamRunner(input, dependencies, signal, stop, send).run()
       } catch {
         // Disconnect and cancellation are normal; the client resumes by sequence.
       } finally {
