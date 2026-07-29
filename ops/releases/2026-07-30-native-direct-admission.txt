@@ -1,0 +1,5 @@
+Release the native schema-v1 direct admission rewrite.
+
+Source change: 763759cb005a10cd2645a2fc9968ff2e90a47e09
+Behavior: persist conversation and messages, enqueue once through the durable repository.
+Removed runtime dependency: enqueue_chat_turn_v1 for normal native append turns.
