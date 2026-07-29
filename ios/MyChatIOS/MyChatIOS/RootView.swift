@@ -1,5 +1,13 @@
 import SwiftUI
 
+enum AppPalette {
+    static let background = Color(red: 0.988, green: 0.978, blue: 0.952)
+    static let surface = Color.white
+    static let mutedSurface = Color(red: 0.944, green: 0.937, blue: 0.918)
+    static let border = Color.black.opacity(0.09)
+    static let text = Color(red: 0.08, green: 0.075, blue: 0.065)
+}
+
 @MainActor
 final class SessionStore: ObservableObject {
     enum Phase {
@@ -35,7 +43,7 @@ struct RootView: View {
             case .restoring:
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color(uiColor: .systemBackground))
+                    .background(AppPalette.background)
             case .signedOut:
                 LoginView(session: session)
             case .signedIn:
@@ -123,7 +131,7 @@ struct LoginView: View {
                 .padding(.bottom, 12)
         }
         .padding(.horizontal, 24)
-        .background(Color(uiColor: .systemBackground).ignoresSafeArea())
+        .background(AppPalette.background.ignoresSafeArea())
     }
 
     private func submitLogin() {
@@ -158,6 +166,12 @@ private extension View {
 
 @MainActor
 final class ChatStore: ObservableObject {
+    private struct RetryContext {
+        let text: String
+        let userID: UUID
+        let assistantID: UUID
+    }
+
     @Published var conversations: [Conversation] = []
     @Published var selectedConversation: Conversation?
     @Published var messages: [ChatMessage] = []
@@ -166,9 +180,11 @@ final class ChatStore: ObservableObject {
     @Published var isLoading = true
     @Published var isSending = false
     @Published var error: String?
+    @Published var failedMessageID: UUID?
 
     private let api: APIClient
     private var streamTask: Task<Void, Never>?
+    private var retryContext: RetryContext?
 
     init(api: APIClient) {
         self.api = api
@@ -199,6 +215,10 @@ final class ChatStore: ObservableObject {
 
     func select(_ conversation: Conversation) async throws {
         guard selectedConversation?.id != conversation.id || messages.isEmpty else { return }
+        streamTask?.cancel()
+        isSending = false
+        failedMessageID = nil
+        retryContext = nil
         selectedConversation = conversation
         messages = try await api.messages(conversationID: conversation.id)
     }
@@ -208,6 +228,8 @@ final class ChatStore: ObservableObject {
         selectedConversation = Conversation(id: UUID(), title: "新对话", updatedAt: nil)
         messages = []
         isSending = false
+        failedMessageID = nil
+        retryContext = nil
     }
 
     func send(_ value: String) {
@@ -220,6 +242,9 @@ final class ChatStore: ObservableObject {
         let userID = UUID()
         let assistantID = UUID()
         let generationID = UUID()
+        let createConversation = !conversations.contains { $0.id == conversation.id }
+        failedMessageID = nil
+        retryContext = nil
         messages.append(ChatMessage(id: userID, role: "user", content: text, createdAt: Date()))
         messages.append(ChatMessage(id: assistantID, role: "assistant", content: "", createdAt: Date()))
         isSending = true
@@ -232,6 +257,8 @@ final class ChatStore: ObservableObject {
                     conversationID: conversation.id,
                     history: history,
                     model: selectedModel,
+                    createConversation: createConversation,
+                    conversationTitle: createConversation ? text : conversation.title,
                     userMessageID: userID,
                     assistantMessageID: assistantID,
                     generationID: generationID
@@ -254,10 +281,21 @@ final class ChatStore: ObservableObject {
             } catch is CancellationError {
                 return
             } catch {
-                replaceEmptyAssistant(assistantID, with: "发送失败：\(error.localizedDescription)")
-                self.error = error.localizedDescription
+                replaceEmptyAssistant(assistantID, with: "发送失败")
+                failedMessageID = assistantID
+                retryContext = RetryContext(text: text, userID: userID, assistantID: assistantID)
             }
         }
+    }
+
+    func retryFailedMessage() {
+        guard let retryContext else { return }
+        messages.removeAll {
+            $0.id == retryContext.userID || $0.id == retryContext.assistantID
+        }
+        failedMessageID = nil
+        self.retryContext = nil
+        send(retryContext.text)
     }
 
     private func append(_ delta: String, to id: UUID) {
@@ -272,6 +310,8 @@ final class ChatStore: ObservableObject {
     }
 
     private func refresh(conversationID: UUID) async throws {
+        failedMessageID = nil
+        retryContext = nil
         messages = try await api.messages(conversationID: conversationID)
         conversations = try await api.conversations()
         selectedConversation = conversations.first(where: { $0.id == conversationID })
@@ -293,7 +333,7 @@ struct NativeChatView: View {
 
     var body: some View {
         ZStack(alignment: .leading) {
-            Color(uiColor: .systemBackground).ignoresSafeArea()
+            AppPalette.background.ignoresSafeArea()
             VStack(spacing: 0) {
                 ChatTopBar(
                     models: store.models,
@@ -302,7 +342,16 @@ struct NativeChatView: View {
                     selectModel: { store.selectedModel = $0 },
                     newConversation: store.newConversation
                 )
-                MessageList(messages: store.messages, isSending: store.isSending)
+                if store.messages.isEmpty {
+                    WelcomeHome()
+                } else {
+                    MessageList(
+                        messages: store.messages,
+                        isSending: store.isSending,
+                        failedMessageID: store.failedMessageID,
+                        retry: store.retryFailedMessage
+                    )
+                }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 Composer(
@@ -343,12 +392,6 @@ struct NativeChatView: View {
             }
         }
         .animation(.easeOut(duration: 0.18), value: sidebarVisible)
-        .overlay {
-            if store.isLoading {
-                ProgressView()
-                    .controlSize(.regular)
-            }
-        }
         .alert(
             "提示",
             isPresented: Binding(
@@ -361,6 +404,27 @@ struct NativeChatView: View {
             Text(store.error ?? "")
         }
         .task { await store.load() }
+    }
+}
+
+struct WelcomeHome: View {
+    var body: some View {
+        VStack(spacing: 16) {
+            Spacer()
+            Image("companion")
+                .resizable()
+                .interpolation(.none)
+                .scaledToFit()
+                .frame(width: 76, height: 76)
+                .accessibilityHidden(true)
+            Text("欢迎回来")
+                .font(.system(size: 30, weight: .semibold))
+                .foregroundStyle(AppPalette.text)
+            Spacer()
+                .frame(height: 170)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -416,22 +480,29 @@ struct ChatTopBar: View {
             }
             .accessibilityLabel("新对话")
         }
-        .foregroundStyle(.primary)
+        .foregroundStyle(AppPalette.text)
         .padding(.horizontal, 12)
         .frame(height: 54)
+        .background(AppPalette.background)
     }
 }
 
 struct MessageList: View {
     let messages: [ChatMessage]
     let isSending: Bool
+    let failedMessageID: UUID?
+    let retry: () -> Void
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 22) {
                     ForEach(messages) { message in
-                        NativeMessageRow(message: message)
+                        NativeMessageRow(
+                            message: message,
+                            failed: failedMessageID == message.id,
+                            retry: retry
+                        )
                             .id(message.id)
                     }
                 }
@@ -458,24 +529,43 @@ struct MessageList: View {
 
 struct NativeMessageRow: View {
     let message: ChatMessage
+    let failed: Bool
+    let retry: () -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
-            if message.role == "user" { Spacer(minLength: 52) }
-            Text(displayText)
-                .font(.system(size: 17))
-                .lineSpacing(4)
-                .textSelection(.enabled)
-                .foregroundStyle(.primary)
-                .padding(.horizontal, message.role == "user" ? 14 : 0)
-                .padding(.vertical, message.role == "user" ? 10 : 0)
-                .background {
-                    if message.role == "user" {
-                        Color(uiColor: .secondarySystemBackground)
+            if message.role == "user" {
+                Spacer(minLength: 64)
+                Text(displayText)
+                    .font(.system(size: 16))
+                    .lineSpacing(3)
+                    .textSelection(.enabled)
+                    .foregroundStyle(AppPalette.text)
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 9)
+                    .background(AppPalette.mutedSurface)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(displayText)
+                        .font(.system(size: 17))
+                        .lineSpacing(5)
+                        .textSelection(.enabled)
+                        .foregroundStyle(AppPalette.text)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if failed {
+                        Button(action: retry) {
+                            Label("重试", systemImage: "arrow.clockwise")
+                                .font(.system(size: 14, weight: .medium))
+                                .frame(minHeight: 36)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
                     }
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            if message.role != "user" { Spacer(minLength: 28) }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .frame(maxWidth: .infinity)
     }
@@ -497,31 +587,31 @@ struct Composer: View {
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 6) {
-            Menu {
-                Button(action: newConversation) {
-                    Label("新对话", systemImage: "square.and.pencil")
-                }
-            } label: {
+            Button(action: newConversation) {
                 Image(systemName: "plus")
-                    .font(.system(size: 21, weight: .regular))
-                    .frame(width: 44, height: 44)
+                    .font(.system(size: 20, weight: .regular))
+                    .frame(width: 40, height: 40)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(AppPalette.border, lineWidth: 0.7)
+                    }
                     .contentShape(Rectangle())
             }
-            .accessibilityLabel("更多")
+            .accessibilityLabel("新对话")
 
             TextField("发消息", text: $draft, axis: .vertical)
                 .font(.system(size: 17))
                 .lineLimit(1...6)
                 .focused(isFocused)
                 .padding(.horizontal, 4)
-                .padding(.vertical, 11)
+                .padding(.vertical, 9)
                 .disabled(isSending)
 
             Button(action: primaryAction) {
                 Image(systemName: actionIcon)
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(actionForeground)
-                    .frame(width: 44, height: 44)
+                    .frame(width: 40, height: 40)
                     .background(actionBackground)
                     .clipShape(Circle())
             }
@@ -529,16 +619,17 @@ struct Composer: View {
             .accessibilityLabel(draftIsEmpty ? (speech.isRecording ? "停止听写" : "语音输入") : "发送")
         }
         .padding(6)
-        .background(Color(uiColor: .secondarySystemBackground))
+        .background(AppPalette.surface)
         .overlay {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: 19, style: .continuous)
+                .stroke(AppPalette.border, lineWidth: 0.7)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .padding(.horizontal, 12)
-        .padding(.top, 8)
-        .padding(.bottom, 7)
-        .background(Color(uiColor: .systemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 19, style: .continuous))
+        .shadow(color: .black.opacity(0.07), radius: 9, x: 0, y: 3)
+        .padding(.horizontal, 14)
+        .padding(.top, 7)
+        .padding(.bottom, 8)
+        .background(AppPalette.background)
         .onChange(of: speech.transcript) { _, value in
             if !value.isEmpty { draft = value }
         }
@@ -567,7 +658,7 @@ struct Composer: View {
 
     private var actionBackground: Color {
         if !draftIsEmpty { return .primary }
-        return Color(uiColor: .tertiarySystemFill)
+        return AppPalette.mutedSurface
     }
 
     private func primaryAction() {
@@ -623,7 +714,7 @@ struct SidebarOverlay: View {
                                         .frame(height: 46)
                                         .background(
                                             selected?.id == conversation.id
-                                                ? Color(uiColor: .secondarySystemBackground)
+                                                ? AppPalette.mutedSurface
                                                 : .clear
                                         )
                                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -645,7 +736,7 @@ struct SidebarOverlay: View {
                     .padding(.bottom, 8)
                 }
                 .frame(width: min(332, geometry.size.width * 0.86))
-                .background(Color(uiColor: .systemBackground))
+                .background(AppPalette.background)
                 .ignoresSafeArea(edges: .bottom)
             }
         }

@@ -125,6 +125,8 @@ actor APIClient {
         conversationID: UUID,
         history: [ChatMessage],
         model: ModelChoice,
+        createConversation: Bool,
+        conversationTitle: String,
         userMessageID: UUID,
         assistantMessageID: UUID,
         generationID: UUID
@@ -153,8 +155,8 @@ actor APIClient {
             },
             "turn": [
                 "schemaVersion": 1,
-                "createConversation": history.isEmpty,
-                "title": title.isEmpty ? "新对话" : title,
+                "createConversation": createConversation,
+                "title": String((conversationTitle.isEmpty ? title : conversationTitle).prefix(200)),
                 "projectId": NSNull(),
             ],
         ]
