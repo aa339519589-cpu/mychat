@@ -2,11 +2,15 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { enqueueChatJob, type EnqueueChatJobInput } from '../lib/chat/job-command'
+import { JobRuntimeError } from '../lib/jobs/errors'
 import type { JobRecord } from '../lib/jobs/contracts'
 import type { JobPayloadReference } from '../lib/jobs/payload-storage'
 
 const userId = '88000000-0000-4000-8000-000000000001'
 const generationId = '88000000-0000-4000-8000-000000000002'
+const conversationId = '88000000-0000-4000-8000-000000000003'
+const userMessageId = '88000000-0000-4000-8000-000000000004'
+const assistantMessageId = '88000000-0000-4000-8000-000000000005'
 const sha256 = 'a'.repeat(64)
 const reference: JobPayloadReference = {
   bucket: 'job-payloads',
@@ -20,9 +24,9 @@ function command(): EnqueueChatJobInput {
   return {
     body: {
       messages: [{ role: 'user', content: 'hello' }],
-      conversationId: '88000000-0000-4000-8000-000000000003',
-      userMessageId: '88000000-0000-4000-8000-000000000004',
-      assistantMessageId: '88000000-0000-4000-8000-000000000005',
+      conversationId,
+      userMessageId,
+      assistantMessageId,
       generationId,
     },
     userId,
@@ -34,7 +38,60 @@ function command(): EnqueueChatJobInput {
   }
 }
 
-function adminResult(data: unknown, error: unknown = null): SupabaseClient {
+function directTurn(createConversation: boolean): EnqueueChatJobInput {
+  const input = command()
+  input.body.messages = [{
+    id: userMessageId,
+    role: 'user',
+    content: 'hello from iPhone',
+    images: ['https://example.com/image.png'],
+    ts: '2026-07-17T00:00:00.000Z',
+  }]
+  input.body.turn = {
+    schemaVersion: 1,
+    createConversation,
+    title: 'iPhone conversation',
+    projectId: null,
+  }
+  return input
+}
+
+function enqueuedJob(subject: Record<string, unknown>): JobRecord {
+  const timestamp = '2026-07-17T00:00:00.000Z'
+  return {
+    id: generationId,
+    type: 'chat.generation',
+    queue: 'chat',
+    principalId: userId,
+    authClass: 'registered',
+    subject,
+    inputHash: sha256,
+    payload: {},
+    budget: { tokenLimit: 160_000 },
+    status: 'queued',
+    attempt: 0,
+    maxAttempts: 3,
+    priority: 0,
+    availableAt: timestamp,
+    leaseOwner: null,
+    leaseVersion: 0,
+    leaseExpiresAt: null,
+    cancelRequestedAt: null,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    terminalAt: null,
+    cancelRequestedAt: null,
+    progress: {},
+    result: null,
+    errorClass: null,
+    errorCode: null,
+    eventSequence: 0,
+    checkpoint: null,
+    accounting: [],
+  } as JobRecord
+}
+
+function compensationClient(data: unknown, error: unknown = null): SupabaseClient {
   const result = { data, error }
   const query = {
     select: () => query,
@@ -44,34 +101,74 @@ function adminResult(data: unknown, error: unknown = null): SupabaseClient {
   return { from: () => query } as unknown as SupabaseClient
 }
 
-function enqueuedJob(subject: Record<string, unknown>) {
-  const timestamp = '2026-07-17T00:00:00.000Z'
-  return {
-    enqueued: true,
-    replayed: false,
-    job: {
-      id: generationId,
-      type: 'chat.generation',
-      queue: 'chat',
-      principalId: userId,
-      authClass: 'registered',
-      subject,
-      inputHash: sha256,
-      payload: {},
-      budget: { tokenLimit: 160_000 },
-      status: 'queued',
-      attempt: 0,
-      maxAttempts: 3,
-      priority: 0,
-      availableAt: timestamp,
-      leaseOwner: null,
-      leaseVersion: 0,
-      leaseExpiresAt: null,
-      cancelRequestedAt: null,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      terminalAt: null,
+type DirectClientOptions = {
+  owner?: boolean
+  conversationError?: { code: string } | null
+  userMessageError?: { code: string } | null
+  assistantMessageError?: { code: string } | null
+}
+
+function directClient(options: DirectClientOptions = {}) {
+  const writes: Array<{ table: string; operation: string; value?: unknown }> = []
+  let rpcCalls = 0
+  const owner = options.owner ?? true
+
+  const client = {
+    rpc: async () => {
+      rpcCalls += 1
+      throw new Error('standard chat admission must not call RPC')
     },
+    from: (table: string) => {
+      let lastUpsert: unknown
+      const query: Record<string, unknown> = {
+        error: null,
+        upsert: async (value: unknown) => {
+          lastUpsert = value
+          writes.push({ table, operation: 'upsert', value })
+          if (table === 'conversations' && options.conversationError) {
+            return { data: null, error: options.conversationError }
+          }
+          if (table === 'messages') {
+            const role = (value as { role?: string }).role
+            if (role === 'user' && options.userMessageError) {
+              return { data: null, error: options.userMessageError }
+            }
+            if (role === 'assistant' && options.assistantMessageError) {
+              return { data: null, error: options.assistantMessageError }
+            }
+          }
+          return { data: lastUpsert, error: null }
+        },
+        select: () => query,
+        update: (value: unknown) => {
+          writes.push({ table, operation: 'update', value })
+          return query
+        },
+        eq: () => query,
+        maybeSingle: async () => ({
+          data: table === 'conversations' && owner ? { id: conversationId } : null,
+          error: null,
+        }),
+      }
+      return query
+    },
+  } as unknown as SupabaseClient
+
+  return { client, writes, rpcCalls: () => rpcCalls }
+}
+
+function dependencies(client: SupabaseClient, enqueue?: () => never) {
+  return {
+    persistPayload: async () => reference,
+    removePayload: async () => undefined,
+    createRepository: () => ({
+      enqueue: async (value: { subject: Record<string, unknown> }) => {
+        if (enqueue) enqueue()
+        return { created: true, job: enqueuedJob(value.subject) }
+      },
+    }),
+    createAdminClient: () => client,
+    sleep: async () => undefined,
   }
 }
 
@@ -91,11 +188,11 @@ async function rejectedEnqueue(
 
 test('failed enqueue removes a payload proven to be unreferenced', async () => {
   const removed: JobPayloadReference[] = []
-  await rejectedEnqueue(adminResult(null), value => removed.push(value))
+  await rejectedEnqueue(compensationClient(null), value => removed.push(value))
   assert.deepEqual(removed, [reference])
 
   removed.length = 0
-  await rejectedEnqueue(adminResult({
+  await rejectedEnqueue(compensationClient({
     id: generationId,
     payload: { payloadRef: `${userId}/${generationId}/${'b'.repeat(64)}.json` },
   }), value => removed.push(value))
@@ -104,350 +201,74 @@ test('failed enqueue removes a payload proven to be unreferenced', async () => {
 
 test('failed enqueue preserves a payload referenced by an accepted job', async () => {
   const removed: JobPayloadReference[] = []
-  await rejectedEnqueue(adminResult({
+  await rejectedEnqueue(compensationClient({
     id: generationId,
     payload: { payloadRef: reference.objectKey },
   }), value => removed.push(value))
   assert.deepEqual(removed, [])
 })
 
-test('ambiguous compensation preserves the payload for the asynchronous janitor', async () => {
-  const removed: JobPayloadReference[] = []
-  await rejectedEnqueue(adminResult(null, { code: 'database_unavailable' }), value => removed.push(value))
-  await rejectedEnqueue(null, value => removed.push(value))
-  await rejectedEnqueue(adminResult({ id: generationId }), value => removed.push(value))
-  assert.deepEqual(removed, [])
-})
+test('standard chat turns persist and enqueue directly without the chat RPC', async () => {
+  const mock = directClient()
+  const result = await enqueueChatJob(directTurn(true), dependencies(mock.client))
 
-test('server-authoritative turns atomically persist messages and enqueue without the generic repository', async () => {
-  const input = command()
-  input.body.messages = [{
-    id: input.body.userMessageId,
-    role: 'user',
-    content: 'hello',
-    images: ['https://example.com/image.png'],
-    ts: '2026-07-17T00:00:00.000Z',
-  }]
-  input.body.turn = {
-    schemaVersion: 1,
-    createConversation: true,
-    title: '未命名的篇章',
-    projectId: null,
-  }
-  const calls: Array<{ name: string; args: Record<string, unknown> }> = []
-  const client = {
-    rpc: async (name: string, args: Record<string, unknown>) => {
-      calls.push({ name, args })
-      return {
-        data: enqueuedJob({
-          conversationId: input.body.conversationId,
-          userMessageId: input.body.userMessageId,
-          assistantMessageId: input.body.assistantMessageId,
-        }),
-        error: null,
-      }
-    },
-  } as unknown as SupabaseClient
-  const result = await enqueueChatJob(input, {
-    persistPayload: async () => reference,
-    removePayload: async () => undefined,
-    createRepository: () => ({
-      enqueue: async () => { throw new Error('generic enqueue must not run') },
-    }),
-    createAdminClient: () => client,
-  })
   assert.equal(result.created, true)
   assert.equal(result.job.id, generationId)
-  assert.equal(calls.length, 1)
-  assert.equal(calls[0]?.name, 'enqueue_chat_turn_v1')
-  assert.equal(calls[0]?.args.input_create_conversation, true)
-  assert.equal(calls[0]?.args.input_user_content, 'hello')
-  assert.deepEqual(calls[0]?.args.input_user_images, {
+  assert.equal(mock.rpcCalls(), 0)
+  assert.deepEqual(mock.writes.map(value => `${value.table}:${value.operation}`), [
+    'conversations:upsert',
+    'messages:upsert',
+    'messages:upsert',
+    'conversations:update',
+  ])
+  const user = mock.writes[1]?.value as { images?: unknown }
+  assert.deepEqual(user.images, {
     refs: ['https://example.com/image.png'],
     image_summary: null,
     generated_media: [],
   })
-  assert.deepEqual(calls[0]?.args.input_budget, {
-    wallTimeMs: 600_000,
-    tokenLimit: 160_000,
-    toolCallLimit: 64,
-  })
 })
 
-test('server-authoritative turns survive transient control-plane startup failures', async () => {
-  const input = command()
-  input.body.messages = [{
-    id: input.body.userMessageId,
-    role: 'user',
-    content: 'hello after deploy',
-  }]
-  input.body.turn = {
-    schemaVersion: 1,
-    createConversation: true,
-    title: '未命名的篇章',
-    projectId: null,
-  }
-  let attempts = 0
-  let payloadWrites = 0
-  const delays: number[] = []
-  const client = {
-    rpc: async () => {
-      attempts += 1
-      if (attempts === 1) throw new TypeError('fetch failed while instance warms')
-      if (attempts === 2) return { data: null, error: { code: 'PGRST000' } }
-      return {
-        data: {
-          enqueued: true,
-          replayed: false,
-          job: { id: generationId, status: 'queued' },
-        },
-        error: null,
-      }
-    },
-  } as unknown as SupabaseClient
+test('existing conversations do not require a create RPC or duplicate conversation write', async () => {
+  const mock = directClient()
+  const result = await enqueueChatJob(directTurn(false), dependencies(mock.client))
 
-  const result = await enqueueChatJob(input, {
-    persistPayload: async () => {
-      payloadWrites += 1
-      return reference
-    },
-    removePayload: async () => undefined,
-    createRepository: () => ({
-      enqueue: async () => { throw new Error('generic enqueue must not run') },
-    }),
-    createAdminClient: () => client,
-    sleep: async milliseconds => { delays.push(milliseconds) },
-  })
-
-  assert.equal(result.created, true)
-  assert.equal(result.job.id, generationId)
   assert.equal(result.job.status, 'queued')
-  assert.equal(attempts, 3)
-  assert.equal(payloadWrites, 1)
-  assert.deepEqual(delays, [250, 500])
+  assert.equal(mock.rpcCalls(), 0)
+  assert.deepEqual(mock.writes.map(value => `${value.table}:${value.operation}`), [
+    'messages:upsert',
+    'messages:upsert',
+    'conversations:update',
+  ])
 })
 
-test('native turns fall back immediately when the authoritative RPC is not deployed', async () => {
-  const input = command()
-  input.body.messages = [{
-    id: input.body.userMessageId,
-    role: 'user',
-    content: 'hello from iPhone',
-  }]
-  input.body.turn = {
-    schemaVersion: 1,
-    createConversation: true,
-    title: 'iPhone conversation',
-    projectId: null,
-  }
-  const writes: string[] = []
-  let genericEnqueues = 0
-  const client = {
-    rpc: async () => ({ data: null, error: { code: 'PGRST202' } }),
-    from: (table: string) => {
-      const query = {
-        upsert: async () => {
-          writes.push(table)
-          return { data: null, error: null }
-        },
-        select: () => query,
-        update: () => query,
-        eq: () => query,
-        maybeSingle: async () => ({
-          data: table === 'conversations' ? { id: input.body.conversationId } : null,
-          error: null,
-        }),
-      }
-      return query
-    },
-  } as unknown as SupabaseClient
-
-  const result = await enqueueChatJob(input, {
-    persistPayload: async () => reference,
-    removePayload: async () => undefined,
-    createRepository: () => ({
-      enqueue: async value => {
-        genericEnqueues += 1
-        return {
-          created: true,
-          job: enqueuedJob(value.subject).job as unknown as JobRecord,
-        }
-      },
-    }),
-    createAdminClient: () => client,
-    sleep: async () => { throw new Error('missing RPC must not be retried') },
-  })
+test('a stale createConversation flag is idempotent for an existing owned conversation', async () => {
+  const mock = directClient({ owner: true })
+  const result = await enqueueChatJob(directTurn(true), dependencies(mock.client))
 
   assert.equal(result.created, true)
-  assert.equal(result.job.id, generationId)
-  assert.equal(genericEnqueues, 1)
-  assert.deepEqual(writes, ['conversations', 'messages', 'messages'])
+  assert.equal(mock.rpcCalls(), 0)
+  assert.equal(mock.writes[0]?.table, 'conversations')
 })
 
-test('native turns fall back after authoritative admission stays unavailable', async () => {
-  const input = command()
-  input.body.messages = [{
-    id: input.body.userMessageId,
-    role: 'user',
-    content: 'hello after bounded retries',
-  }]
-  input.body.turn = {
-    schemaVersion: 1,
-    createConversation: true,
-    title: 'iPhone retry fallback',
-    projectId: null,
-  }
-  let attempts = 0
-  let genericEnqueues = 0
-  const delays: number[] = []
-  const client = {
-    rpc: async () => {
-      attempts += 1
-      return { data: null, error: { code: 'PGRST000' } }
-    },
-    from: (table: string) => {
-      const query = {
-        upsert: async () => ({ data: null, error: null }),
-        select: () => query,
-        update: () => query,
-        eq: () => query,
-        maybeSingle: async () => ({
-          data: table === 'conversations' ? { id: input.body.conversationId } : null,
-          error: null,
-        }),
-      }
-      return query
-    },
-  } as unknown as SupabaseClient
-
-  const result = await enqueueChatJob(input, {
-    persistPayload: async () => reference,
-    removePayload: async () => undefined,
-    createRepository: () => ({
-      enqueue: async value => {
-        genericEnqueues += 1
-        return {
-          created: true,
-          job: enqueuedJob(value.subject).job as unknown as JobRecord,
-        }
-      },
-    }),
-    createAdminClient: () => client,
-    sleep: async milliseconds => { delays.push(milliseconds) },
-  })
-
-  assert.equal(result.created, true)
-  assert.equal(result.job.id, generationId)
-  assert.equal(attempts, 8)
-  assert.equal(genericEnqueues, 1)
-  assert.deepEqual(delays, [250, 500, 1_000, 2_000, 4_000, 8_000, 8_000])
+test('direct admission rejects a conversation not owned by the user', async () => {
+  const mock = directClient({ owner: false })
+  await assert.rejects(
+    enqueueChatJob(directTurn(false), dependencies(mock.client)),
+    (error: unknown) => error instanceof JobRuntimeError && error.code === 'JOB_CONFLICT',
+  )
 })
 
-test('native turns treat database constraint failures as compatible admission', async () => {
-  const input = command()
-  input.body.messages = [{
-    id: input.body.userMessageId,
-    role: 'user',
-    content: 'hello after database conflict',
-  }]
-  input.body.turn = {
-    schemaVersion: 1,
-    createConversation: true,
-    title: 'iPhone conflict fallback',
-    projectId: null,
-  }
-  let genericEnqueues = 0
-  const client = {
-    rpc: async () => ({ data: null, error: { code: '23503' } }),
-    from: (table: string) => {
-      const query = {
-        upsert: async () => ({ data: null, error: null }),
-        select: () => query,
-        update: () => query,
-        eq: () => query,
-        maybeSingle: async () => ({
-          data: table === 'conversations' ? { id: input.body.conversationId } : null,
-          error: null,
-        }),
-      }
-      return query
-    },
-  } as unknown as SupabaseClient
-
-  const result = await enqueueChatJob(input, {
-    persistPayload: async () => reference,
-    removePayload: async () => undefined,
-    createRepository: () => ({
-      enqueue: async value => {
-        genericEnqueues += 1
-        return {
-          created: true,
-          job: enqueuedJob(value.subject).job as unknown as JobRecord,
-        }
-      },
-    }),
-    createAdminClient: () => client,
-    sleep: async () => { throw new Error('database conflicts must fall back immediately') },
-  })
-
-  assert.equal(result.created, true)
-  assert.equal(result.job.id, generationId)
-  assert.equal(genericEnqueues, 1)
-})
-
-test('server-authoritative regeneration uses the fenced RPC and durable cleanup receipts', async () => {
-  const input = command()
-  input.body.messages = [{
-    id: input.body.userMessageId,
-    role: 'user',
-    content: 'edited authority',
-  }]
-  input.body.turn = {
-    schemaVersion: 2,
-    operation: 'replace-from-user',
-    expectedTailMessageId: '88000000-0000-4000-8000-000000000006',
-  }
-  const cleanupKey = `${userId}/${input.body.conversationId}/${'88000000-0000-4000-8000-000000000007'}/asset.png`
-  const calls: Array<{ name: string; args: Record<string, unknown> }> = []
-  const client = {
-    rpc: async (name: string, args: Record<string, unknown>) => {
-      calls.push({ name, args })
-      return {
-        data: enqueuedJob({
-          conversationId: input.body.conversationId,
-          userMessageId: input.body.userMessageId,
-          assistantMessageId: input.body.assistantMessageId,
-          regenerationOperation: 'replace-from-user',
-          replacedTailMessageId: input.body.turn?.schemaVersion === 2
-            ? input.body.turn.expectedTailMessageId
-            : null,
-        }),
-        error: null,
-      }
-    },
-  } as unknown as SupabaseClient
-  const cleanupInputs: Record<string, unknown>[] = []
-  const result = await enqueueChatJob(input, {
-    persistPayload: async () => reference,
-    removePayload: async () => undefined,
-    createRepository: () => ({
-      enqueue: async () => { throw new Error('generic enqueue must not run') },
-    }),
-    createAdminClient: () => client,
-    loadRegenerationCleanupKeys: async value => {
-      cleanupInputs.push(value as unknown as Record<string, unknown>)
-      return [cleanupKey]
-    },
-  })
-  assert.equal(result.created, true)
-  assert.equal(calls.length, 1)
-  assert.equal(calls[0]?.name, 'enqueue_chat_regeneration_v1')
-  assert.equal(calls[0]?.args.input_operation, 'replace-from-user')
-  assert.equal(calls[0]?.args.input_user_content, 'edited authority')
-  assert.equal(calls[0]?.args.input_target_assistant_message_id, null)
-  assert.equal(calls[0]?.args.input_expected_tail_message_id,
-    '88000000-0000-4000-8000-000000000006')
-  assert.deepEqual(calls[0]?.args.input_cleanup_object_keys, [cleanupKey])
-  assert.equal(cleanupInputs[0]?.conversationId, input.body.conversationId)
-  assert.deepEqual(cleanupInputs[0]?.authority, input.body.turn)
+test('direct admission fails before enqueue when message persistence fails', async () => {
+  const mock = directClient({ userMessageError: { code: 'PGRST500' } })
+  let enqueued = false
+  await assert.rejects(
+    enqueueChatJob(directTurn(true), dependencies(mock.client, () => {
+      enqueued = true
+      throw new Error('must not enqueue')
+    })),
+    (error: unknown) => error instanceof JobRuntimeError
+      && error.code === 'JOB_DEPENDENCY_UNAVAILABLE',
+  )
+  assert.equal(enqueued, false)
 })
