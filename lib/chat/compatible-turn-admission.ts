@@ -31,7 +31,13 @@ export function isMissingAuthoritativeRpc(error: unknown): boolean {
 }
 
 function canUseCompatibleAdmission(error: unknown): error is JobRuntimeError {
-  return error instanceof JobRuntimeError && error.code === 'JOB_DEPENDENCY_UNAVAILABLE'
+  if (!(error instanceof JobRuntimeError)) return false
+  if (error.code === 'JOB_DEPENDENCY_UNAVAILABLE') return true
+  // PostgreSQL constraint/program-state errors describe a failed atomic RPC,
+  // not a validated user conflict. Re-run through the idempotent compatibility
+  // path, whose ownership and input-hash checks still reject real conflicts.
+  return error.code === 'JOB_CONFLICT'
+    && typeof error.details.databaseCode === 'string'
 }
 
 export function rejectMissingAuthoritativeRpc(error: JobRuntimeError): JobRuntimeError {
