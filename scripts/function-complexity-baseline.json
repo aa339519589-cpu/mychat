@@ -6,7 +6,7 @@
   },
   "files": {
     "app/api/auth/email/route.ts": { "complexity": [17] },
-    "app/api/chat/route.ts": { "complexity": [31], "maxLines": [94] },
+    "app/api/chat/route.ts": { "complexity": [28] },
     "app/api/chat/title/route.ts": { "complexity": [18] },
     "app/api/endpoints/[endpointId]/route.ts": { "complexity": [28], "maxLines": [85] },
     "app/api/endpoints/discover/route.ts": { "complexity": [18] },
@@ -55,7 +55,7 @@
     "lib/agent/workspace-inspection.ts": { "complexity": [17, 16] },
     "lib/api/generated-media.ts": { "complexity": [24] },
     "lib/chat/history-deletion.ts": { "complexity": [18] },
-    "lib/chat/job-command.ts": { "complexity": [22], "maxLines": [87] },
+    "lib/chat/job-command.ts": { "complexity": [16] },
     "lib/chat/model-selection.ts": { "complexity": [30], "maxLines": [92] },
     "lib/chat/request-context.ts": { "complexity": [17] },
     "lib/code-agent/apply-request.ts": { "complexity": [25, 25] },

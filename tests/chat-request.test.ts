@@ -11,13 +11,24 @@ const identity = {
 }
 
 test('general chat requires one complete durable generation identity', () => {
-  const complete = validateChatRequest({ messages: [{ role: 'user', content: 'hello' }], ...identity })
+  const turn = {
+    schemaVersion: 1 as const,
+    createConversation: true,
+    title: 'New conversation',
+    projectId: null,
+  }
+  const complete = validateChatRequest({
+    messages: [{ role: 'user', content: 'hello' }],
+    ...identity,
+    turn,
+  })
   assert.doesNotThrow(() => requireDurableChatIdentity(complete))
 
   for (const partial of [
     {},
-    { conversationId: identity.conversationId },
-    { ...identity, assistantMessageId: undefined },
+    { conversationId: identity.conversationId, turn },
+    { ...identity, assistantMessageId: undefined, turn },
+    { ...identity },
   ]) {
     const body = validateChatRequest({ messages: [{ role: 'user', content: 'hello' }], ...partial })
     assert.throws(

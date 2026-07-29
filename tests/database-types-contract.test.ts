@@ -15,13 +15,13 @@ test('database types are generated from the complete canonical PostgreSQL schema
   assert.match(replay, /-f "\$ROOT\/supabase\/agent-tasks\.sql"/)
   assert.match(replay, /-f "\$ROOT\/supabase\/baseline\/20260623_legacy_compatibility\.sql"/)
   assert.match(replay, /migrations\.manifest\.json/)
-  assert.match(replay, /20260717020000_schema_contract_attestation_v2\.sql/)
+  assert.match(replay, /20260729020000_schema_contract_attestation_v3\.sql/)
   assert.match(replay, /generate-database-types\.mjs" --database "\$DB" "\$MODE"/)
   assert.match(generator, /current !== generated/)
   assert.match(generator, /Generated database types are stale/)
   assert.match(generated, /^\/\/ Generated from the canonical PostgreSQL 16 schema\./)
   assert.match(generated, /"messages": \{/)
-  assert.match(generated, /"verify_schema_contract_v2": \{/)
+  assert.match(generated, /"verify_schema_contract_v3": \{/)
 })
 
 test('database type drift is a required digest-pinned verification gate', () => {

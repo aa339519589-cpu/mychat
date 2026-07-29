@@ -1,9 +1,10 @@
-import type { ChatAppendAuthority, DurableChatRequestBody } from '@/lib/llm/chat-request'
+import type { DurableChatRequestBody } from '@/lib/llm/chat-request'
 import type { RawMsg } from '@/lib/llm/types'
-import type { JobRepository } from '@/lib/jobs/repository'
-import type { JobStatus, JsonObject } from '@/lib/jobs/contracts'
+import { isJobIdentifier, isJobStatus, type JobStatus, type JsonObject } from '@/lib/jobs/contracts'
 import { JobRuntimeError } from '@/lib/jobs/errors'
+import { log } from '@/lib/logger'
 import type { createAdminClient } from '@/lib/supabase/admin'
+import { isRecord } from '@/lib/unknown-value'
 
 type ChatJobAdmission = {
   id: string
@@ -16,7 +17,6 @@ type DirectTurnInput = {
   userId: string
   isAnonymous: boolean
   requestedAt?: string
-  repository: Pick<JobRepository, 'enqueue'>
   payload: JsonObject
   budget: JsonObject
   queue: string
@@ -31,39 +31,6 @@ export function requiredAdminClient(client: ReturnType<typeof createAdminClient>
   return client
 }
 
-async function ensureConversation(
-  input: DirectTurnInput,
-  authority: ChatAppendAuthority,
-  createdAt: string,
-): Promise<void> {
-  const { body } = input
-  if (authority.createConversation) {
-    const conversation = await input.client.from('conversations').upsert({
-      id: body.conversationId,
-      user_id: input.userId,
-      title: authority.title,
-      project_id: authority.projectId,
-      updated_at: createdAt,
-    }, { onConflict: 'id', ignoreDuplicates: true })
-    if (conversation.error) {
-      throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'Conversation persistence failed', {
-        details: { databaseCode: conversation.error.code ?? 'unknown' },
-      })
-    }
-  }
-
-  const owner = await input.client.from('conversations').select('id')
-    .eq('id', body.conversationId).eq('user_id', input.userId).maybeSingle()
-  if (owner.error) {
-    throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'Conversation lookup failed', {
-      details: { databaseCode: owner.error.code ?? 'unknown' },
-    })
-  }
-  if (!owner.data) {
-    throw new JobRuntimeError('JOB_CONFLICT', 'Conversation does not belong to this account')
-  }
-}
-
 function messageImages(userMessage: RawMsg) {
   return userMessage.images?.length || userMessage.imageSummary
     ? {
@@ -74,44 +41,65 @@ function messageImages(userMessage: RawMsg) {
     : null
 }
 
-async function persistMessages(
-  input: DirectTurnInput,
-  userMessage: RawMsg,
-  createdAt: string,
-): Promise<void> {
-  const { body } = input
-  const userWrite = await input.client.from('messages').upsert({
-    id: body.userMessageId,
-    conversation_id: body.conversationId,
-    user_id: input.userId,
-    role: 'user',
-    content: userMessage.content,
-    images: messageImages(userMessage),
-    status: 'terminal',
-    created_at: createdAt,
-    updated_at: createdAt,
-  } as never, { onConflict: 'id', ignoreDuplicates: true })
-  if (userWrite.error) {
-    throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'User message persistence failed', {
-      details: { databaseCode: userWrite.error.code ?? 'unknown' },
-    })
+function databaseDetails(error: unknown): JsonObject {
+  if (!isRecord(error)) return {}
+  return {
+    ...(typeof error.code === 'string' ? { databaseCode: error.code } : {}),
+    ...(typeof error.message === 'string' ? { databaseMessage: error.message } : {}),
+    ...(typeof error.details === 'string' ? { databaseDetails: error.details } : {}),
+    ...(typeof error.hint === 'string' ? { databaseHint: error.hint } : {}),
+    ...(typeof error.status === 'number' || typeof error.status === 'string'
+      ? { status: error.status }
+      : {}),
   }
+}
 
-  const assistantWrite = await input.client.from('messages').upsert({
-    id: body.assistantMessageId,
-    conversation_id: body.conversationId,
-    user_id: input.userId,
-    role: 'assistant',
-    content: '',
-    images: null,
-    status: 'draft',
-    created_at: createdAt,
-    updated_at: createdAt,
-  } as never, { onConflict: 'id', ignoreDuplicates: true })
-  if (assistantWrite.error) {
-    throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'Assistant message persistence failed', {
-      details: { databaseCode: assistantWrite.error.code ?? 'unknown' },
-    })
+function directAdmissionError(error: unknown): JobRuntimeError {
+  const details = databaseDetails(error)
+  const code = typeof details.databaseCode === 'string' ? details.databaseCode : ''
+  const message = typeof details.databaseMessage === 'string'
+    ? `Direct chat admission (${code || 'unknown'}) failed: ${details.databaseMessage}`
+    : `Direct chat admission${code ? ` (${code})` : ''} failed`
+  const deterministicInfrastructure = ['42501', '42P01', '42703', '42883'].includes(code)
+  const invalidInput = ['22023', '22P02', '23502', '23514'].includes(code)
+  const conflict = ['23503', '23505', '40001', '55000'].includes(code)
+  const normalized = new JobRuntimeError(
+    invalidInput ? 'JOB_INVALID_INPUT' : conflict ? 'JOB_CONFLICT' : 'JOB_DEPENDENCY_UNAVAILABLE',
+    message,
+    {
+      retryable: !invalidInput && !conflict && !deterministicInfrastructure,
+      details,
+      cause: error,
+    },
+  )
+  log.error('jobs', 'Direct chat admission RPC failed', {
+    rpc: 'admit_chat_turn_v2',
+    ...details,
+  })
+  return normalized
+}
+
+function admissionResult(
+  data: unknown,
+  expectedJobId: string,
+): { created: boolean; job: ChatJobAdmission } {
+  const result = isRecord(Array.isArray(data) ? data[0] : data)
+    ? (Array.isArray(data) ? data[0] : data)
+    : null
+  const job = isRecord(result?.job) ? result.job : null
+  if ((result?.enqueued !== true && result?.replayed !== true)
+    || !isJobIdentifier(job?.id)
+    || job.id !== expectedJobId
+    || !isJobStatus(job.status)) {
+    throw new JobRuntimeError(
+      'JOB_DEPENDENCY_UNAVAILABLE',
+      'Direct chat admission response was malformed',
+      { retryable: false, details: { rpc: 'admit_chat_turn_v2', expectedJobId } },
+    )
+  }
+  return {
+    created: result.enqueued === true && result.replayed !== true,
+    job: { id: job.id, status: job.status },
   }
 }
 
@@ -129,33 +117,31 @@ export async function enqueueDirectTurn(
   const createdAt = typeof userMessage.ts === 'string'
     ? userMessage.ts
     : input.requestedAt ?? new Date().toISOString()
-  await ensureConversation(input, authority, createdAt)
-  await persistMessages(input, userMessage, createdAt)
-
-  const result = await input.repository.enqueue({
-    jobId: body.generationId,
-    type: 'chat.generation',
-    queue: input.queue,
-    principal: {
-      id: input.userId,
-      authClass: input.isAnonymous ? 'anonymous' : 'registered',
-    },
-    subject: {
-      conversationId: body.conversationId,
-      userMessageId: body.userMessageId,
-      assistantMessageId: body.assistantMessageId,
-    },
-    idempotencyKey: `chat:${body.generationId}`,
-    inputHash: String(input.payload.payloadHash),
-    input: input.payload,
-    budget: input.budget,
-    priority: 0,
-    maxAttempts: input.maxAttempts,
-  })
-
-  await input.client.from('conversations').update({
-    updated_at: input.requestedAt ?? createdAt,
-  }).eq('id', body.conversationId).eq('user_id', input.userId)
-
-  return { created: result.created, job: { id: result.job.id, status: result.job.status } }
+  let response: { data: unknown; error: unknown }
+  try {
+    response = await input.client.rpc('admit_chat_turn_v2', {
+      input_user_id: input.userId,
+      input_conversation_id: body.conversationId,
+      input_create_conversation: authority.createConversation,
+      input_project_id: authority.projectId,
+      input_conversation_title: authority.title,
+      input_user_message_id: body.userMessageId,
+      input_user_content: userMessage.content,
+      input_user_images: messageImages(userMessage),
+      input_user_created_at: createdAt,
+      input_assistant_message_id: body.assistantMessageId,
+      input_job_id: body.generationId,
+      input_auth_class: input.isAnonymous ? 'anonymous' : 'registered',
+      input_idempotency_key: `chat:${body.generationId}`,
+      input_input_hash: String(input.payload.payloadHash),
+      input_payload: input.payload,
+      input_budget: input.budget,
+      input_queue: input.queue,
+      input_max_attempts: input.maxAttempts,
+    })
+  } catch (error) {
+    throw directAdmissionError(error)
+  }
+  if (response.error) throw directAdmissionError(response.error)
+  return admissionResult(response.data, body.generationId)
 }

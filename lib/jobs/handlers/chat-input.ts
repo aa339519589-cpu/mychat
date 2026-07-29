@@ -8,9 +8,11 @@ import { resolveChatModelSelection, type ChatModelSelection } from '@/lib/chat/m
 import type { SearchMode } from '@/lib/chat/request-context'
 import { loadCustomSystemPrompt } from '@/lib/chat/user-system-prompt'
 import type { Attachment } from '@/lib/llm/types'
+import { log } from '@/lib/logger'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { sha256JobValue } from '../canonical'
 import { loadJobPayload, type JobPayloadReference } from '../payload-storage'
-import type { JobRecord, JsonObject } from '../contracts'
+import { isJsonValue, type JobRecord, type JsonObject } from '../contracts'
 import { JobRuntimeError } from '../errors'
 
 export type LoadedChatJob = {
@@ -61,6 +63,35 @@ function reference(job: JobRecord): JobPayloadReference {
     sha256: input.payloadHash,
     bytes: Number(input.payloadBytes),
     contentType: 'application/json',
+  }
+}
+
+function embeddedCommand(job: JobRecord): JsonObject | null {
+  const input = record(job.input)
+  if (!input) {
+    throw new JobRuntimeError('JOB_INVALID_INPUT', 'Chat job input is invalid')
+  }
+  const value = record(input?.command)
+  if (!value) return null
+  if (input?.payloadRef !== undefined
+    || typeof input.payloadHash !== 'string'
+    || !/^[0-9a-f]{64}$/.test(input.payloadHash)
+    || !isJsonValue(value)
+    || sha256JobValue(value) !== input.payloadHash) {
+    throw new JobRuntimeError('JOB_INVALID_INPUT', 'Inline chat command integrity failed')
+  }
+  return value
+}
+
+async function loadCommandPayload(
+  job: JobRecord,
+  scope: { userId: string; jobId: string },
+): Promise<{ payload: JsonObject; mode: 'inline' | 'object' }> {
+  const inline = embeddedCommand(job)
+  if (inline) return { payload: inline, mode: 'inline' }
+  return {
+    payload: await loadJobPayload(reference(job), scope),
+    mode: 'object',
   }
 }
 
@@ -120,6 +151,7 @@ function allowInstantContext(value: LoadedChatJob['command']): boolean {
 }
 
 export async function loadChatJob(job: JobRecord): Promise<LoadedChatJob> {
+  const startedAt = Date.now()
   let client: SupabaseClient | null
   try { client = createAdminClient() } catch (error) {
     throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'Database authority is unavailable', { cause: error })
@@ -129,13 +161,17 @@ export async function loadChatJob(job: JobRecord): Promise<LoadedChatJob> {
   const conversationId = identity(job, 'conversationId')
   const userMessageId = identity(job, 'userMessageId')
   const assistantMessageId = identity(job, 'assistantMessageId')
-  const payload = await loadJobPayload(reference(job), { userId, jobId: job.id })
-  const parsedCommand = command(payload)
-  const jobInput = record(job.input)
-  const admission = record(jobInput?.admission)
-  const billingClass = jobInput?.billingClass
   try {
-    const [authoritativeContext, selection, customSystemPrompt] = await Promise.all([
+    const [loadedCommand, customSystemPrompt] = await Promise.all([
+      loadCommandPayload(job, { userId, jobId: job.id }),
+      loadCustomSystemPrompt(client, userId),
+    ])
+    const payloadReadyAt = Date.now()
+    const parsedCommand = command(loadedCommand.payload)
+    const jobInput = record(job.input)
+    const admission = record(jobInput?.admission)
+    const billingClass = jobInput?.billingClass
+    const [authoritativeContext, selection] = await Promise.all([
       loadAuthoritativeChatContext({
         client,
         userId,
@@ -150,7 +186,6 @@ export async function loadChatJob(job: JobRecord): Promise<LoadedChatJob> {
         supabase: client as unknown as SupabaseServer,
         userId,
       }),
-      loadCustomSystemPrompt(client, userId),
     ])
     const selectedKind = selection.outputKind === 'chat' ? 'text' : selection.outputKind
     if (selectedKind !== parsedCommand.outputKind) {
@@ -160,6 +195,13 @@ export async function loadChatJob(job: JobRecord): Promise<LoadedChatJob> {
       || (billingClass !== 'customer' && billingClass !== 'platform')) {
       throw new JobRuntimeError('JOB_CONFLICT', 'Billing authority changed after enqueue')
     }
+    log.info('jobs', 'Chat job preparation timing', {
+      jobId: job.id,
+      payloadMode: loadedCommand.mode,
+      payloadAndPromptMs: payloadReadyAt - startedAt,
+      contextAndPolicyMs: Date.now() - payloadReadyAt,
+      totalMs: Date.now() - startedAt,
+    })
     return {
       client,
       userId,

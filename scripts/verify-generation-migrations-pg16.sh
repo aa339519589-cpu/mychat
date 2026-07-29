@@ -1360,28 +1360,22 @@ done
 "${PSQL[@]}" -d "$DB" -f "$ROOT/tests/platform-authority-v2-pg16.sql" >/dev/null
 "${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260717010000_platform_authority_v2.sql" >/dev/null
 
-CONTRACT_VERSION="$(node -e \
-  "process.stdout.write(String(require(process.argv[1]).contractVersion))" \
-  "$ROOT/supabase/migrations.manifest.json")"
-CONTRACT_DIGEST="$(node -e \
-  "process.stdout.write(require(process.argv[1]).contractDigest)" \
-  "$ROOT/supabase/migrations.manifest.json")"
-CONTRACT_MIGRATION_COUNT="$(node -e \
-  "process.stdout.write(String(require(process.argv[1]).migrationCount))" \
-  "$ROOT/supabase/migrations.manifest.json")"
+V2_CONTRACT_VERSION=2
+V2_CONTRACT_DIGEST='c0c1dd9dcf788761cae5ac5a0bcb3ddd49e13ab8c59638e2c91d53ce1c5fcacc'
+V2_CONTRACT_MIGRATION_COUNT=45
 "${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260717020000_schema_contract_attestation_v2.sql" >/dev/null
 "${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260717020000_schema_contract_attestation_v2.sql" >/dev/null
 
 SCHEMA_CONTRACT_RESULT="$("${PSQL[@]}" -qAt -d "$DB" -c \
-  "set role service_role; select public.verify_schema_contract_v2(${CONTRACT_VERSION}, '${CONTRACT_DIGEST}', ${CONTRACT_MIGRATION_COUNT})")"
+  "set role service_role; select public.verify_schema_contract_v2(${V2_CONTRACT_VERSION}, '${V2_CONTRACT_DIGEST}', ${V2_CONTRACT_MIGRATION_COUNT})")"
 if [[ "$SCHEMA_CONTRACT_RESULT" != "t" ]]; then
   echo "Exact v2 schema contract attestation was not accepted" >&2
   exit 1
 fi
 for mismatch in \
-  "$((CONTRACT_VERSION + 1)) '${CONTRACT_DIGEST}' ${CONTRACT_MIGRATION_COUNT}" \
-  "${CONTRACT_VERSION} '$(printf '0%.0s' {1..64})' ${CONTRACT_MIGRATION_COUNT}" \
-  "${CONTRACT_VERSION} '${CONTRACT_DIGEST}' $((CONTRACT_MIGRATION_COUNT + 1))"; do
+  "$((V2_CONTRACT_VERSION + 1)) '${V2_CONTRACT_DIGEST}' ${V2_CONTRACT_MIGRATION_COUNT}" \
+  "${V2_CONTRACT_VERSION} '$(printf '0%.0s' {1..64})' ${V2_CONTRACT_MIGRATION_COUNT}" \
+  "${V2_CONTRACT_VERSION} '${V2_CONTRACT_DIGEST}' $((V2_CONTRACT_MIGRATION_COUNT + 1))"; do
   read -r version digest count <<<"$mismatch"
   result="$("${PSQL[@]}" -qAt -d "$DB" -c \
     "set role service_role; select public.verify_schema_contract_v2(${version}, ${digest}, ${count})")"
@@ -1398,7 +1392,7 @@ if [[ "$SCHEMA_CONTRACT_ROWS" != "2" ]]; then
 fi
 for role in anon authenticated; do
   if "${PSQL[@]}" -qAt -d "$DB" -c \
-    "set role ${role}; select public.verify_schema_contract_v2(${CONTRACT_VERSION}, '${CONTRACT_DIGEST}', ${CONTRACT_MIGRATION_COUNT})" \
+    "set role ${role}; select public.verify_schema_contract_v2(${V2_CONTRACT_VERSION}, '${V2_CONTRACT_DIGEST}', ${V2_CONTRACT_MIGRATION_COUNT})" \
     >/dev/null 2>&1; then
     echo "$role can execute the service-only v2 schema contract RPC" >&2
     exit 1
@@ -1409,6 +1403,57 @@ for mutation in \
   "delete from public.schema_contract_attestations"; do
   if "${PSQL[@]}" -qAt -d "$DB" -c "$mutation" >/dev/null 2>&1; then
     echo "Schema contract attestation accepted a forbidden mutation" >&2
+    exit 1
+  fi
+done
+
+# Replace the obsolete turn RPC with direct atomic admission, prove its durable
+# graph and least-privilege contract, replay it, then seal schema contract v3.
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260729010000_direct_chat_admission_v2.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/tests/direct-chat-admission-v2-pg16.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260729010000_direct_chat_admission_v2.sql" >/dev/null
+
+CONTRACT_VERSION="$(node -e \
+  "process.stdout.write(String(require(process.argv[1]).contractVersion))" \
+  "$ROOT/supabase/migrations.manifest.json")"
+CONTRACT_DIGEST="$(node -e \
+  "process.stdout.write(require(process.argv[1]).contractDigest)" \
+  "$ROOT/supabase/migrations.manifest.json")"
+CONTRACT_MIGRATION_COUNT="$(node -e \
+  "process.stdout.write(String(require(process.argv[1]).migrationCount))" \
+  "$ROOT/supabase/migrations.manifest.json")"
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260729020000_schema_contract_attestation_v3.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260729020000_schema_contract_attestation_v3.sql" >/dev/null
+
+SCHEMA_CONTRACT_RESULT="$("${PSQL[@]}" -qAt -d "$DB" -c \
+  "set role service_role; select public.verify_schema_contract_v3(${CONTRACT_VERSION}, '${CONTRACT_DIGEST}', ${CONTRACT_MIGRATION_COUNT})")"
+if [[ "$SCHEMA_CONTRACT_RESULT" != "t" ]]; then
+  echo "Exact v3 schema contract attestation was not accepted" >&2
+  exit 1
+fi
+for mismatch in \
+  "$((CONTRACT_VERSION + 1)) '${CONTRACT_DIGEST}' ${CONTRACT_MIGRATION_COUNT}" \
+  "${CONTRACT_VERSION} '$(printf '0%.0s' {1..64})' ${CONTRACT_MIGRATION_COUNT}" \
+  "${CONTRACT_VERSION} '${CONTRACT_DIGEST}' $((CONTRACT_MIGRATION_COUNT + 1))"; do
+  read -r version digest count <<<"$mismatch"
+  result="$("${PSQL[@]}" -qAt -d "$DB" -c \
+    "set role service_role; select public.verify_schema_contract_v3(${version}, ${digest}, ${count})")"
+  if [[ "$result" != "f" ]]; then
+    echo "Mismatched v3 schema contract was accepted: $mismatch" >&2
+    exit 1
+  fi
+done
+SCHEMA_CONTRACT_ROWS="$("${PSQL[@]}" -qAt -d "$DB" -c \
+  "select count(*) from public.schema_contract_attestations")"
+if [[ "$SCHEMA_CONTRACT_ROWS" != "3" ]]; then
+  echo "Schema contract v3 replay created unexpected attestation rows" >&2
+  exit 1
+fi
+for role in anon authenticated; do
+  if "${PSQL[@]}" -qAt -d "$DB" -c \
+    "set role ${role}; select public.verify_schema_contract_v3(${CONTRACT_VERSION}, '${CONTRACT_DIGEST}', ${CONTRACT_MIGRATION_COUNT})" \
+    >/dev/null 2>&1; then
+    echo "$role can execute the service-only v3 schema contract RPC" >&2
     exit 1
   fi
 done

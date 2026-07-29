@@ -131,13 +131,13 @@ before any production claim.
 - Only `assets.cleanup` and `payloads.cleanup` are deliverable outbox topics. Lifecycle
   topics without a real consumer are suppressed instead of being labelled published;
   their facts remain in authoritative Job/event/audit records.
-- Runtime v15 and immutable schema contract v2 bind all 45 manifest migrations to
-  digest `c0c1dd9dcf788761cae5ac5a0bcb3ddd49e13ab8c59638e2c91d53ce1c5fcacc`.
+- Runtime v16 and immutable schema contract v3 bind all 47 manifest migrations to
+  digest `469579b5140dfe314e118405847128c6d7288fa605238275f48b568372d444f5`.
 
 ### Generated database and runtime contracts
 
 - A disposable PostgreSQL 16 + pgvector database now replays both canonical baselines,
-  the legacy compatibility baseline, all manifest migrations, and the v2 seal before
+  the legacy compatibility baseline, all manifest migrations, and the v3 seal before
   generating `lib/supabase/database.types.ts` from catalogs.
 - `npm run database:types:check` compares generated output byte-for-byte and is part of
   `npm run verify`; CI uses a digest-pinned PostgreSQL 16 pgvector image.

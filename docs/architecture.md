@@ -48,7 +48,7 @@ The budgets in `scripts/architecture-baseline.json` are enforceable ceilings: AP
 
 ## Database contracts and generated types
 
-`lib/supabase/database.types.ts` is generated from a disposable PostgreSQL 16 database, not handwritten or inferred from browser queries. `npm run database:types:check` replays `supabase/schema.sql`, `supabase/agent-tasks.sql`, the legacy compatibility baseline, all 45 files in the closed migration manifest, and the v2 schema attestation before comparing catalog-derived output byte-for-byte. CI uses a digest-pinned `pgvector/pgvector:pg16` image, so a schema change, migration-order change, relation/RPC drift, or edited generated file fails verification.
+`lib/supabase/database.types.ts` is generated from a disposable PostgreSQL 16 database, not handwritten or inferred from browser queries. `npm run database:types:check` replays `supabase/schema.sql`, `supabase/agent-tasks.sql`, the legacy compatibility baseline, all 47 files in the closed migration manifest, and the v3 schema attestation before comparing catalog-derived output byte-for-byte. CI uses a digest-pinned `pgvector/pgvector:pg16` image, so a schema change, migration-order change, relation/RPC drift, or edited generated file fails verification.
 
 Runtime Supabase clients use `SupabaseClient<Database>`. Dynamic generic RPC callers cross the SDK limitation through the single `typedRpc` adapter in `lib/supabase/types.ts`; database `jsonb` inputs pass through the bounded plain-JSON normalizer in `lib/supabase/json.ts`. Database text/json values that represent closed Agent domain enums are validated by mappers before entering domain objects.
 

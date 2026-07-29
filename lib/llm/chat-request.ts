@@ -58,7 +58,7 @@ export type ChatTurnAuthority = ChatAppendAuthority | ChatRegenerationAuthority
 
 export type DurableChatRequestBody = ChatRequestBody & Required<Pick<
   ChatRequestBody,
-  'conversationId' | 'userMessageId' | 'generationId' | 'assistantMessageId'
+  'conversationId' | 'userMessageId' | 'generationId' | 'assistantMessageId' | 'turn'
 >>
 
 function validImageRef(value: unknown): value is string {
@@ -298,10 +298,11 @@ export function validateChatRequest(value: unknown): ChatRequestBody {
 export function requireDurableChatIdentity(
   body: ChatRequestBody,
 ): asserts body is DurableChatRequestBody {
-  if (!body.conversationId || !body.userMessageId || !body.generationId || !body.assistantMessageId) {
+  if (!body.conversationId || !body.userMessageId || !body.generationId
+    || !body.assistantMessageId || !body.turn) {
     throw new RequestError(
       400,
-      'conversationId、userMessageId、generationId 和 assistantMessageId 必须同时提供',
+      'conversationId、userMessageId、generationId、assistantMessageId 和 turn 必须同时提供',
     )
   }
 }
