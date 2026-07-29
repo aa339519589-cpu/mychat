@@ -1,0 +1,6 @@
+Production release retrigger for native iPhone chat recovery.
+
+Required application revision: e55b38be039b1c4d0d4164e4762dc1a2d0f287a0
+Observed production failure: Authoritative chat turn enqueue failed
+Reason: force the verified PR merge path and publish the compatibility admission fix to Render.
+Triggered at: 2026-07-29T22:21:00+08:00
