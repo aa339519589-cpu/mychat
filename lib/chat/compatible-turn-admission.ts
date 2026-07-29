@@ -30,6 +30,10 @@ export function isMissingAuthoritativeRpc(error: unknown): boolean {
   return databaseCode === 'PGRST202' || databaseCode === '42883'
 }
 
+function canUseCompatibleAdmission(error: unknown): error is JobRuntimeError {
+  return error instanceof JobRuntimeError && error.code === 'JOB_DEPENDENCY_UNAVAILABLE'
+}
+
 export function rejectMissingAuthoritativeRpc(error: JobRuntimeError): JobRuntimeError {
   if (isMissingAuthoritativeRpc(error)) throw error
   return error
@@ -184,8 +188,13 @@ export async function enqueueTurnWithCompatibility(
   try {
     return await input.authoritative()
   } catch (error) {
-    if (!isMissingAuthoritativeRpc(error)) throw error
-    const normalized = error as JobRuntimeError
+    // The compatibility path is idempotent under the same conversation,
+    // message, job, and input-hash identities. It is therefore also safe when
+    // the RPC exists but its schema is stale, its response was lost, or its
+    // admission dependency remains unavailable after the bounded retry window.
+    // Conflicts and invalid input still fail closed.
+    if (!canUseCompatibleAdmission(error)) throw error
+    const normalized = error
     log.warn('jobs', 'Authoritative chat RPC is unavailable; using compatible admission', {
       jobId: input.body.generationId,
       databaseCode: normalized.details.databaseCode,

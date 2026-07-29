@@ -284,6 +284,65 @@ test('native turns fall back immediately when the authoritative RPC is not deplo
   assert.deepEqual(writes, ['conversations', 'messages', 'messages'])
 })
 
+test('native turns fall back after authoritative admission stays unavailable', async () => {
+  const input = command()
+  input.body.messages = [{
+    id: input.body.userMessageId,
+    role: 'user',
+    content: 'hello after bounded retries',
+  }]
+  input.body.turn = {
+    schemaVersion: 1,
+    createConversation: true,
+    title: 'iPhone retry fallback',
+    projectId: null,
+  }
+  let attempts = 0
+  let genericEnqueues = 0
+  const delays: number[] = []
+  const client = {
+    rpc: async () => {
+      attempts += 1
+      return { data: null, error: { code: 'PGRST000' } }
+    },
+    from: (table: string) => {
+      const query = {
+        upsert: async () => ({ data: null, error: null }),
+        select: () => query,
+        update: () => query,
+        eq: () => query,
+        maybeSingle: async () => ({
+          data: table === 'conversations' ? { id: input.body.conversationId } : null,
+          error: null,
+        }),
+      }
+      return query
+    },
+  } as unknown as SupabaseClient
+
+  const result = await enqueueChatJob(input, {
+    persistPayload: async () => reference,
+    removePayload: async () => undefined,
+    createRepository: () => ({
+      enqueue: async value => {
+        genericEnqueues += 1
+        return {
+          created: true,
+          job: enqueuedJob(value.subject).job as unknown as JobRecord,
+        }
+      },
+    }),
+    createAdminClient: () => client,
+    sleep: async milliseconds => { delays.push(milliseconds) },
+  })
+
+  assert.equal(result.created, true)
+  assert.equal(result.job.id, generationId)
+  assert.equal(attempts, 8)
+  assert.equal(genericEnqueues, 1)
+  assert.deepEqual(delays, [250, 500, 1_000, 2_000, 4_000, 8_000, 8_000])
+})
+
 test('server-authoritative regeneration uses the fenced RPC and durable cleanup receipts', async () => {
   const input = command()
   input.body.messages = [{
