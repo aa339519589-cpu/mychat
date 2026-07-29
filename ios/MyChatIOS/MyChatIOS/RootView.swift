@@ -168,6 +168,37 @@ private extension View {
 
 @MainActor
 final class ChatStore: ObservableObject {
+    private enum SavedModelSelection: Codable {
+        case platform(tier: String)
+        case endpoint(id: UUID)
+
+        private enum CodingKeys: String, CodingKey { case kind, tier, id }
+        private enum Kind: String, Codable { case platform, endpoint }
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            switch try values.decode(Kind.self, forKey: .kind) {
+            case .platform:
+                self = .platform(tier: try values.decode(String.self, forKey: .tier))
+            case .endpoint:
+                self = .endpoint(id: try values.decode(UUID.self, forKey: .id))
+            }
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var values = encoder.container(keyedBy: CodingKeys.self)
+            switch self {
+            case let .platform(tier):
+                try values.encode(Kind.platform, forKey: .kind)
+                try values.encode(tier, forKey: .tier)
+            case let .endpoint(id):
+                try values.encode(Kind.endpoint, forKey: .kind)
+                try values.encode(id, forKey: .id)
+            }
+        }
+    }
+
+    private static let modelSelectionKey = "com.mychat.ios.selected-model.v1"
     private struct RetryContext {
         let text: String
         let userID: UUID
@@ -201,9 +232,7 @@ final class ChatStore: ObservableObject {
         defer { isLoading = false }
         do {
             models = try await api.models()
-            if !models.contains(selectedModel) {
-                selectedModel = models.first ?? ModelChoice.platform[1]
-            }
+            restoreSavedModelSelection()
             conversations = try await api.conversations()
             if let first = conversations.first {
                 try await select(first)
@@ -232,6 +261,53 @@ final class ChatStore: ObservableObject {
         isSending = false
         failedMessageID = nil
         retryContext = nil
+    }
+
+    func selectModel(_ model: ModelChoice) {
+        selectedModel = model
+        guard let saved = savedSelection(for: model),
+              let data = try? JSONEncoder().encode(saved) else { return }
+        UserDefaults.standard.set(data, forKey: Self.modelSelectionKey)
+    }
+
+    private func restoreSavedModelSelection() {
+        guard
+            let data = UserDefaults.standard.data(forKey: Self.modelSelectionKey),
+            let saved = try? JSONDecoder().decode(SavedModelSelection.self, from: data)
+        else {
+            selectedModel = models.first(where: { $0 == selectedModel })
+                ?? ModelChoice.platform[1]
+            return
+        }
+
+        let restored: ModelChoice?
+        switch saved {
+        case let .platform(tier):
+            restored = models.first {
+                if case let .platform(candidate) = $0.selection { return candidate == tier }
+                return false
+            }
+        case let .endpoint(id):
+            restored = models.first {
+                if case let .endpoint(candidate) = $0.selection { return candidate == id }
+                return false
+            }
+        }
+        if let restored {
+            selectedModel = restored
+        } else {
+            // A deleted or reconnected endpoint must never leave the composer
+            // pointing at an ID the server can no longer resolve.
+            UserDefaults.standard.removeObject(forKey: Self.modelSelectionKey)
+            selectedModel = ModelChoice.platform[1]
+        }
+    }
+
+    private func savedSelection(for model: ModelChoice) -> SavedModelSelection? {
+        switch model.selection {
+        case let .platform(tier): return .platform(tier: tier)
+        case let .endpoint(id): return .endpoint(id: id)
+        }
     }
 
     func send(_ value: String) {
@@ -376,7 +452,7 @@ struct NativeChatView: View {
                     models: store.models,
                     selected: store.selectedModel,
                     openSidebar: { sidebarVisible = true },
-                    selectModel: { store.selectedModel = $0 },
+                    selectModel: store.selectModel,
                     newConversation: store.newConversation
                 )
                 if store.messages.isEmpty {
