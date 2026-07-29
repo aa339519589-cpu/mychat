@@ -1,2 +1,0 @@
-// Change this to your reachable development server when testing on-device.
-MYCHAT_API_BASE_URL = https://mychat-nm6x.onrender.com
