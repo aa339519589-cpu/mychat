@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { enqueueChatJob, type EnqueueChatJobInput } from '../lib/chat/job-command'
+import type { JobRecord } from '../lib/jobs/contracts'
 import type { JobPayloadReference } from '../lib/jobs/payload-storage'
 
 const userId = '88000000-0000-4000-8000-000000000001'
@@ -224,6 +225,63 @@ test('server-authoritative turns survive transient control-plane startup failure
   assert.equal(attempts, 3)
   assert.equal(payloadWrites, 1)
   assert.deepEqual(delays, [250, 500])
+})
+
+test('native turns fall back immediately when the authoritative RPC is not deployed', async () => {
+  const input = command()
+  input.body.messages = [{
+    id: input.body.userMessageId,
+    role: 'user',
+    content: 'hello from iPhone',
+  }]
+  input.body.turn = {
+    schemaVersion: 1,
+    createConversation: true,
+    title: 'iPhone conversation',
+    projectId: null,
+  }
+  const writes: string[] = []
+  let genericEnqueues = 0
+  const client = {
+    rpc: async () => ({ data: null, error: { code: 'PGRST202' } }),
+    from: (table: string) => {
+      const query = {
+        upsert: async () => {
+          writes.push(table)
+          return { data: null, error: null }
+        },
+        select: () => query,
+        update: () => query,
+        eq: () => query,
+        maybeSingle: async () => ({
+          data: table === 'conversations' ? { id: input.body.conversationId } : null,
+          error: null,
+        }),
+      }
+      return query
+    },
+  } as unknown as SupabaseClient
+
+  const result = await enqueueChatJob(input, {
+    persistPayload: async () => reference,
+    removePayload: async () => undefined,
+    createRepository: () => ({
+      enqueue: async value => {
+        genericEnqueues += 1
+        return {
+          created: true,
+          job: enqueuedJob(value.subject).job as unknown as JobRecord,
+        }
+      },
+    }),
+    createAdminClient: () => client,
+    sleep: async () => { throw new Error('missing RPC must not be retried') },
+  })
+
+  assert.equal(result.created, true)
+  assert.equal(result.job.id, generationId)
+  assert.equal(genericEnqueues, 1)
+  assert.deepEqual(writes, ['conversations', 'messages', 'messages'])
 })
 
 test('server-authoritative regeneration uses the fenced RPC and durable cleanup receipts', async () => {

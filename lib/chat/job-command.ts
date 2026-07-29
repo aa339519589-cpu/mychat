@@ -1,7 +1,4 @@
-import type { Attachment } from '@/lib/llm/types'
-import type { ChatRegenerationAuthority, DurableChatRequestBody } from '@/lib/llm/chat-request'
-import type { ModelOutputKind } from '@/lib/model-endpoints'
-import type { SearchMode } from './request-context'
+import type { ChatRegenerationAuthority } from '@/lib/llm/chat-request'
 import { SupabaseJobRepository } from '@/lib/jobs/supabase-repository'
 import { persistJobPayload, removeJobPayload } from '@/lib/jobs/payload-storage'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -17,41 +14,20 @@ import { isRecord } from '@/lib/unknown-value'
 import type { JobRepository } from '@/lib/jobs/repository'
 import { JobRuntimeError } from '@/lib/jobs/errors'
 import { loadRegenerationCleanupKeys } from './regeneration-cleanup'
-
+import { enqueueTurnWithCompatibility, rejectMissingAuthoritativeRpc, requiredAdminClient } from './compatible-turn-admission'
+import type { EnqueueChatJobInput } from './job-command-types'
+import { referencesPayload, rpcObject, sanitizedAttachments } from './job-command-support'
+export type { EnqueueChatJobInput } from './job-command-types'
 const CHAT_POLICY_VERSION = '2026-07-13'
 const AUTHORITATIVE_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000, 8_000] as const
 type ChatJobAdmission = {
   id: string
   status: JobStatus
 }
-
 type AuthoritativeRpcResponse = {
   data: unknown
   error: unknown
 }
-
-function sanitizedAttachments(attachments: Attachment[] | undefined): JsonObject[] | undefined {
-  if (!attachments?.length) return undefined
-  return attachments.map(attachment => ({
-    name: attachment.name,
-    dataUrl: typeof attachment.dataUrl === 'string' ? attachment.dataUrl : '',
-    isPdf: attachment.isPdf === true,
-    ...(typeof attachment.text === 'string' ? { text: attachment.text } : {}),
-    ...(Array.isArray(attachment.pageImages) ? { pageImages: attachment.pageImages } : {}),
-  }))
-}
-
-export type EnqueueChatJobInput = {
-  body: DurableChatRequestBody
-  userId: string
-  isAnonymous: boolean
-  usingBalance: boolean
-  searchMode: SearchMode
-  outputKind: ModelOutputKind
-  requestId: string
-  requestedAt?: string
-}
-
 type EnqueueChatJobDependencies = {
   persistPayload: typeof persistJobPayload
   removePayload: typeof removeJobPayload
@@ -68,20 +44,6 @@ const DEFAULT_DEPENDENCIES: EnqueueChatJobDependencies = {
   createAdminClient,
   loadRegenerationCleanupKeys,
   sleep: milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
-}
-
-function referencesPayload(value: unknown, objectKey: string): boolean | null {
-  if (value === null) return false
-  if (!isRecord(value) || !isRecord(value.payload)) return null
-  const reference = value.payload.payloadRef
-  if (reference === objectKey) return true
-  if (isRecord(reference) && reference.objectKey === objectKey) return true
-  return false
-}
-
-function rpcObject(value: unknown): Record<string, unknown> | null {
-  const normalized = Array.isArray(value) ? value[0] : value
-  return isRecord(normalized) ? normalized : null
 }
 
 function authoritativeRpcError(error: unknown, fallback: string): JobRuntimeError {
@@ -141,7 +103,9 @@ async function callAuthoritativeRpc(input: {
         job: parseJobAdmission(result.job, input.rpcName, input.jobId),
       }
     } catch (error) {
-      const normalized = thrownAuthoritativeRpcError(error, input.fallback)
+      const normalized = rejectMissingAuthoritativeRpc(
+        thrownAuthoritativeRpcError(error, input.fallback),
+      )
       if (!normalized.retryable) throw normalized
       lastError = normalized
     }
@@ -276,6 +240,76 @@ async function enqueueAuthoritativeRegeneration(input: {
   })
 }
 
+async function admitChatJob(input: {
+  command: EnqueueChatJobInput
+  dependencies: EnqueueChatJobDependencies
+  repository: Pick<JobRepository, 'enqueue'>
+  payload: JsonObject
+  budget: JsonObject
+  queue: string
+  maxAttempts: number
+}): Promise<{ created: boolean; job: ChatJobAdmission }> {
+  const { body } = input.command
+  const admin = body.turn ? input.dependencies.createAdminClient() : null
+  if (body.turn?.schemaVersion === 1) {
+    const client = requiredAdminClient(admin)
+    return enqueueTurnWithCompatibility({
+      client,
+      body,
+      userId: input.command.userId,
+      isAnonymous: input.command.isAnonymous,
+      requestedAt: input.command.requestedAt,
+      repository: input.repository,
+      payload: input.payload,
+      budget: input.budget,
+      queue: input.queue,
+      maxAttempts: input.maxAttempts,
+      authoritative: () => enqueueAuthoritativeTurn({
+        client,
+        command: input.command,
+        payload: input.payload,
+        budget: input.budget,
+        queue: input.queue,
+        maxAttempts: input.maxAttempts,
+        sleep: input.dependencies.sleep,
+      }),
+    })
+  }
+  if (body.turn?.schemaVersion === 2) {
+    return enqueueAuthoritativeRegeneration({
+      client: requiredAdminClient(admin),
+      command: input.command,
+      authority: body.turn,
+      payload: input.payload,
+      budget: input.budget,
+      queue: input.queue,
+      maxAttempts: input.maxAttempts,
+      loadCleanupKeys: input.dependencies.loadRegenerationCleanupKeys,
+      sleep: input.dependencies.sleep,
+    })
+  }
+  return input.repository.enqueue({
+    jobId: body.generationId,
+    type: 'chat.generation',
+    queue: input.queue,
+    principal: {
+      id: input.command.userId,
+      authClass: input.command.isAnonymous ? 'anonymous' : 'registered',
+    },
+    subject: {
+      conversationId: body.conversationId,
+      userMessageId: body.userMessageId,
+      assistantMessageId: body.assistantMessageId,
+    },
+    idempotencyKey: `chat:${body.generationId}`,
+    inputHash: String(input.payload.payloadHash),
+    input: input.payload,
+    budget: input.budget,
+    priority: 0,
+    maxAttempts: input.maxAttempts,
+  })
+}
+
 export async function enqueueChatJob(
   input: EnqueueChatJobInput,
   dependencyOverrides: Partial<EnqueueChatJobDependencies> = {},
@@ -325,49 +359,15 @@ export async function enqueueChatJob(
   const repository = dependencies.createRepository()
   let result: { created: boolean; job: ChatJobAdmission }
   try {
-    const admin = body.turn ? dependencies.createAdminClient() : null
-    result = body.turn?.schemaVersion === 1
-      ? await enqueueAuthoritativeTurn({
-          client: admin ?? (() => { throw new Error('command authority unavailable') })(),
-          command: input,
-          payload: storedPayload,
-          budget,
-          queue,
-          maxAttempts,
-          sleep: dependencies.sleep,
-        })
-      : body.turn?.schemaVersion === 2
-        ? await enqueueAuthoritativeRegeneration({
-            client: admin ?? (() => { throw new Error('command authority unavailable') })(),
-            command: input,
-            authority: body.turn,
-            payload: storedPayload,
-            budget,
-            queue,
-            maxAttempts,
-            loadCleanupKeys: dependencies.loadRegenerationCleanupKeys,
-            sleep: dependencies.sleep,
-          })
-        : await repository.enqueue({
-            jobId: body.generationId,
-            type: 'chat.generation',
-            queue,
-            principal: {
-              id: input.userId,
-              authClass: input.isAnonymous ? 'anonymous' : 'registered',
-            },
-            subject: {
-              conversationId: body.conversationId,
-              userMessageId: body.userMessageId,
-              assistantMessageId: body.assistantMessageId,
-            },
-            idempotencyKey: `chat:${body.generationId}`,
-            inputHash: reference.sha256,
-            input: storedPayload,
-            budget,
-            priority: 0,
-            maxAttempts,
-          })
+    result = await admitChatJob({
+      command: input,
+      dependencies,
+      repository,
+      payload: storedPayload,
+      budget,
+      queue,
+      maxAttempts,
+    })
   } catch (error) {
     // Preserve a payload if the database accepted the job but the response was
     // lost. Only compensate a proven non-enqueue; otherwise cleanup owns it.
