@@ -12,26 +12,42 @@ import { isJobRuntimeError } from '@/lib/jobs/errors'
 import { JobPayloadStorageError } from '@/lib/jobs/payload-storage'
 import { expensiveWriteMaintenanceResponse } from '@/lib/api/maintenance'
 
-function configurationError(request: Request, message: string): Response {
+function configurationError(
+  request: Request,
+  message: string,
+  details: Readonly<Record<string, unknown>> = {},
+): Response {
   return apiErrorResponseV1(request, {
     status: 503,
     code: 'DEPENDENCY_UNAVAILABLE',
     message,
     retryable: true,
+    details,
     headers: { 'Retry-After': '5' },
   })
 }
 
 function admissionError(request: Request, error: unknown): Response {
-  if (error instanceof JobPayloadStorageError) return configurationError(request, error.message)
+  if (error instanceof JobPayloadStorageError) return configurationError(
+    request,
+    error.message,
+    { storageCode: error.code },
+  )
   if (!isJobRuntimeError(error)) return configurationError(request, '聊天任务入队失败')
   if (error.code === 'JOB_CONFLICT') return apiErrorResponseV1(request, {
-    status: 409, code: 'CONFLICT', message: error.message, retryable: false,
+    status: 409, code: 'CONFLICT', message: error.message, retryable: false, details: error.details,
   })
   if (error.code === 'JOB_INVALID_INPUT') return apiErrorResponseV1(request, {
-    status: 400, code: 'INVALID_REQUEST', message: error.message, retryable: false,
+    status: 400, code: 'INVALID_REQUEST', message: error.message, retryable: false, details: error.details,
   })
-  return configurationError(request, error.message)
+  if (!error.retryable) return apiErrorResponseV1(request, {
+    status: 500,
+    code: 'INTERNAL_ERROR',
+    message: error.message,
+    retryable: false,
+    details: error.details,
+  })
+  return configurationError(request, error.message, error.details)
 }
 
 export async function POST(request: NextRequest) {

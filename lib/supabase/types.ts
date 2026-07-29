@@ -11,7 +11,12 @@ export type RpcReturns<Name extends RpcName> = Functions[Name] extends { Returns
   ? Returns
   : never
 
-export type RpcError = { code?: string; message?: string }
+export type RpcError = {
+  code?: string
+  message?: string
+  details?: string
+  hint?: string
+}
 export type RpcResponse<Returns = unknown> = {
   data: Returns | null
   error: RpcError | null
