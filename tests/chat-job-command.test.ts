@@ -343,6 +343,58 @@ test('native turns fall back after authoritative admission stays unavailable', a
   assert.deepEqual(delays, [250, 500, 1_000, 2_000, 4_000, 8_000, 8_000])
 })
 
+test('native turns treat database constraint failures as compatible admission', async () => {
+  const input = command()
+  input.body.messages = [{
+    id: input.body.userMessageId,
+    role: 'user',
+    content: 'hello after database conflict',
+  }]
+  input.body.turn = {
+    schemaVersion: 1,
+    createConversation: true,
+    title: 'iPhone conflict fallback',
+    projectId: null,
+  }
+  let genericEnqueues = 0
+  const client = {
+    rpc: async () => ({ data: null, error: { code: '23503' } }),
+    from: (table: string) => {
+      const query = {
+        upsert: async () => ({ data: null, error: null }),
+        select: () => query,
+        update: () => query,
+        eq: () => query,
+        maybeSingle: async () => ({
+          data: table === 'conversations' ? { id: input.body.conversationId } : null,
+          error: null,
+        }),
+      }
+      return query
+    },
+  } as unknown as SupabaseClient
+
+  const result = await enqueueChatJob(input, {
+    persistPayload: async () => reference,
+    removePayload: async () => undefined,
+    createRepository: () => ({
+      enqueue: async value => {
+        genericEnqueues += 1
+        return {
+          created: true,
+          job: enqueuedJob(value.subject).job as unknown as JobRecord,
+        }
+      },
+    }),
+    createAdminClient: () => client,
+    sleep: async () => { throw new Error('database conflicts must fall back immediately') },
+  })
+
+  assert.equal(result.created, true)
+  assert.equal(result.job.id, generationId)
+  assert.equal(genericEnqueues, 1)
+})
+
 test('server-authoritative regeneration uses the fenced RPC and durable cleanup receipts', async () => {
   const input = command()
   input.body.messages = [{
