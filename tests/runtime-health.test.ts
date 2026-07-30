@@ -39,7 +39,7 @@ test('database readiness requires a successful migration-aware RPC', async () =>
       return { data: true, error: null }
     },
   }), true)
-  assert.equal(rpcName, 'verify_schema_contract_v2')
+  assert.equal(rpcName, 'verify_schema_contract_v3')
   assert.deepEqual(rpcArgs, {
     input_contract_version: MIGRATION_CONTRACT.version,
     input_manifest_sha256: MIGRATION_CONTRACT.digest,
@@ -75,7 +75,7 @@ test('production readiness never falls back to an older infrastructure contract'
   })
 
   assert.equal(ready, false)
-  assert.deepEqual(calls, ['verify_schema_contract_v2'])
+  assert.deepEqual(calls, ['verify_schema_contract_v3'])
 })
 
 test('local development also refuses an older infrastructure contract', async () => {
@@ -83,14 +83,14 @@ test('local development also refuses an older infrastructure contract', async ()
   const ready = await probeDatabase({
     rpc: async name => {
       calls.push(name)
-      return name === 'verify_schema_contract_v2'
+      return name === 'verify_schema_contract_v3'
         ? { data: null, error: { code: 'missing_function' } }
         : { data: true, error: null }
     },
   })
 
   assert.equal(ready, false)
-  assert.deepEqual(calls, ['verify_schema_contract_v2'])
+  assert.deepEqual(calls, ['verify_schema_contract_v3'])
 })
 
 test('readiness timeout aborts an abortable PostgREST request', async () => {
@@ -200,7 +200,7 @@ test('runtime readiness fails closed when worker coverage is stale', async () =>
     RENDER_GIT_COMMIT: 'abcdef0123456789abcdef0123456789abcdef01',
   }
   const health = await getRuntimeHealth(environment, {
-    rpc: async name => name === 'verify_schema_contract_v2'
+    rpc: async name => name === 'verify_schema_contract_v3'
       ? { data: true, error: null }
       : { data: { ready: false, missingQueues: ['agent'] }, error: null },
   })
@@ -221,7 +221,7 @@ test('maintenance drain remains read-ready while exposing the intentional worker
     RENDER_GIT_COMMIT: 'abcdef0123456789abcdef0123456789abcdef01',
   }
   const health = await getRuntimeHealth(environment, {
-    rpc: async name => name === 'verify_schema_contract_v2'
+    rpc: async name => name === 'verify_schema_contract_v3'
       ? { data: true, error: null }
       : { data: { ready: false, missingQueues: ['chat'] }, error: null },
   })
@@ -240,7 +240,7 @@ test('maintenance drain cannot hide an unidentified production release', async (
     STREAM_ADMISSION_HASH_KEY: 'stream-admission-test-key-material-00000001',
     METRICS_BEARER_TOKEN: METRICS_TOKEN,
   }, {
-    rpc: async name => name === 'verify_schema_contract_v2'
+    rpc: async name => name === 'verify_schema_contract_v3'
       ? { data: true, error: null }
       : { data: { ready: true }, error: null },
   })

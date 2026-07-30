@@ -1,6 +1,9 @@
 import type { ChatRegenerationAuthority } from '@/lib/llm/chat-request'
-import { SupabaseJobRepository } from '@/lib/jobs/supabase-repository'
-import { persistJobPayload, removeJobPayload } from '@/lib/jobs/payload-storage'
+import {
+  persistJobPayload,
+  removeJobPayload,
+  type JobPayloadReference,
+} from '@/lib/jobs/payload-storage'
 import { createAdminClient } from '@/lib/supabase/admin'
 import {
   isJobIdentifier,
@@ -11,8 +14,8 @@ import {
 import { jobMetrics } from '@/lib/observability/job-metrics'
 import { log } from '@/lib/logger'
 import { isRecord } from '@/lib/unknown-value'
-import type { JobRepository } from '@/lib/jobs/repository'
 import { JobRuntimeError } from '@/lib/jobs/errors'
+import { sha256JobValue } from '@/lib/jobs/canonical'
 import { loadRegenerationCleanupKeys } from './regeneration-cleanup'
 import { enqueueDirectTurn, requiredAdminClient } from './direct-turn-admission'
 import type { EnqueueChatJobInput } from './job-command-types'
@@ -33,10 +36,15 @@ type AuthoritativeRpcResponse = {
   error: unknown
 }
 
+type PreparedChatPayload = {
+  mode: 'inline' | 'object'
+  reference: JobPayloadReference | null
+  stored: JsonObject
+}
+
 type EnqueueChatJobDependencies = {
   persistPayload: typeof persistJobPayload
   removePayload: typeof removeJobPayload
-  createRepository: () => Pick<JobRepository, 'enqueue'>
   createAdminClient: typeof createAdminClient
   loadRegenerationCleanupKeys: typeof loadRegenerationCleanupKeys
   sleep: (milliseconds: number) => Promise<void>
@@ -45,25 +53,37 @@ type EnqueueChatJobDependencies = {
 const DEFAULT_DEPENDENCIES: EnqueueChatJobDependencies = {
   persistPayload: persistJobPayload,
   removePayload: removeJobPayload,
-  createRepository: () => new SupabaseJobRepository(),
   createAdminClient,
   loadRegenerationCleanupKeys,
   sleep: milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)),
 }
 
-function authoritativeRpcError(error: unknown, fallback: string): JobRuntimeError {
-  const code = isRecord(error) && typeof error.code === 'string' ? error.code : ''
-  const details: JsonObject = {}
-  if (code) details.databaseCode = code
-  if (isRecord(error) && (typeof error.status === 'number' || typeof error.status === 'string')) {
-    details.status = error.status
+function authoritativeDatabaseDetails(error: unknown): JsonObject {
+  if (!isRecord(error)) return {}
+  return {
+    ...(typeof error.code === 'string' ? { databaseCode: error.code } : {}),
+    ...(typeof error.message === 'string' ? { databaseMessage: error.message } : {}),
+    ...(typeof error.details === 'string' ? { databaseDetails: error.details } : {}),
+    ...(typeof error.hint === 'string' ? { databaseHint: error.hint } : {}),
+    ...(typeof error.status === 'number' || typeof error.status === 'string'
+      ? { status: error.status }
+      : {}),
   }
+}
+
+function authoritativeRpcError(error: unknown, fallback: string): JobRuntimeError {
+  const details = authoritativeDatabaseDetails(error)
+  const code = typeof details.databaseCode === 'string' ? details.databaseCode : ''
+  const databaseMessage = typeof details.databaseMessage === 'string' ? details.databaseMessage : ''
+  const deterministicInfrastructure = ['42501', '42P01', '42703', '42883'].includes(code)
+  const conflict = ['22023', '22P02', '23502', '23503', '23505', '23514', '40001', '54000', '55000']
+    .includes(code)
   return new JobRuntimeError(
-    ['22023', '23503', '23505', '40001', '54000', '55000'].includes(code)
-      ? 'JOB_CONFLICT'
-      : 'JOB_DEPENDENCY_UNAVAILABLE',
-    fallback,
-    { details },
+    conflict ? 'JOB_CONFLICT' : 'JOB_DEPENDENCY_UNAVAILABLE',
+    databaseMessage
+      ? `${fallback}${code ? ` (${code})` : ''}: ${databaseMessage}`
+      : fallback,
+    { retryable: !conflict && !deterministicInfrastructure, details },
   )
 }
 
@@ -173,67 +193,115 @@ async function enqueueAuthoritativeRegeneration(input: {
 async function admitChatJob(input: {
   command: EnqueueChatJobInput
   dependencies: EnqueueChatJobDependencies
-  repository: Pick<JobRepository, 'enqueue'>
   payload: JsonObject
   budget: JsonObject
   queue: string
   maxAttempts: number
 }): Promise<{ created: boolean; job: ChatJobAdmission }> {
   const { body } = input.command
-  const admin = body.turn ? input.dependencies.createAdminClient() : null
-  if (body.turn?.schemaVersion === 1) {
+  const admin = input.dependencies.createAdminClient()
+  if (body.turn.schemaVersion === 1) {
     return enqueueDirectTurn({
       client: requiredAdminClient(admin),
       body,
       userId: input.command.userId,
       isAnonymous: input.command.isAnonymous,
       requestedAt: input.command.requestedAt,
-      repository: input.repository,
       payload: input.payload,
       budget: input.budget,
       queue: input.queue,
       maxAttempts: input.maxAttempts,
     })
   }
-  if (body.turn?.schemaVersion === 2) {
-    return enqueueAuthoritativeRegeneration({
-      client: requiredAdminClient(admin),
-      command: input.command,
-      authority: body.turn,
-      payload: input.payload,
-      budget: input.budget,
-      queue: input.queue,
-      maxAttempts: input.maxAttempts,
-      loadCleanupKeys: input.dependencies.loadRegenerationCleanupKeys,
-      sleep: input.dependencies.sleep,
-    })
-  }
-  return input.repository.enqueue({
-    jobId: body.generationId,
-    type: 'chat.generation',
-    queue: input.queue,
-    principal: {
-      id: input.command.userId,
-      authClass: input.command.isAnonymous ? 'anonymous' : 'registered',
-    },
-    subject: {
-      conversationId: body.conversationId,
-      userMessageId: body.userMessageId,
-      assistantMessageId: body.assistantMessageId,
-    },
-    idempotencyKey: `chat:${body.generationId}`,
-    inputHash: String(input.payload.payloadHash),
-    input: input.payload,
+  return enqueueAuthoritativeRegeneration({
+    client: requiredAdminClient(admin),
+    command: input.command,
+    authority: body.turn,
+    payload: input.payload,
     budget: input.budget,
-    priority: 0,
+    queue: input.queue,
     maxAttempts: input.maxAttempts,
+    loadCleanupKeys: input.dependencies.loadRegenerationCleanupKeys,
+    sleep: input.dependencies.sleep,
   })
+}
+
+async function prepareChatPayload(input: {
+  command: JsonObject
+  userId: string
+  jobId: string
+  outputKind: 'text' | 'image' | 'video'
+  billingClass: 'customer' | 'platform'
+  requestId: string
+  persistPayload: typeof persistJobPayload
+}): Promise<PreparedChatPayload> {
+  const inputHash = sha256JobValue(input.command)
+  const common: JsonObject = {
+    schemaVersion: 2,
+    payloadHash: inputHash,
+    outputKind: input.outputKind,
+    billingClass: input.billingClass,
+    requestId: input.requestId,
+  }
+  if (input.command.attachments === undefined) {
+    return {
+      mode: 'inline',
+      reference: null,
+      stored: { ...common, command: input.command },
+    }
+  }
+  const reference = await input.persistPayload({
+    userId: input.userId,
+    jobId: input.jobId,
+    payload: input.command,
+  })
+  return {
+    mode: 'object',
+    reference,
+    stored: {
+      ...common,
+      payloadRef: reference.objectKey,
+      payloadBytes: reference.bytes,
+      payloadContentType: reference.contentType,
+    },
+  }
+}
+
+async function compensateRejectedPayload(input: {
+  dependencies: EnqueueChatJobDependencies
+  reference: JobPayloadReference
+  userId: string
+  jobId: string
+}): Promise<void> {
+  const admin = input.dependencies.createAdminClient()
+  let accepted: { data: unknown; error: unknown } | null = null
+  try {
+    accepted = admin
+      ? await admin.from('jobs').select('id,payload').eq('id', input.jobId).maybeSingle()
+      : null
+  } catch {
+    accepted = null
+  }
+  if (!accepted || accepted.error
+    || referencesPayload(accepted.data, input.reference.objectKey) !== false) return
+  try {
+    await input.dependencies.removePayload(input.reference, {
+      userId: input.userId,
+      jobId: input.jobId,
+    })
+  } catch (cleanupError) {
+    log.warn('jobs', 'Immediate orphan payload compensation failed', {
+      jobId: input.jobId,
+      name: cleanupError instanceof Error ? cleanupError.name : 'unknown',
+    })
+  }
 }
 
 export async function enqueueChatJob(
   input: EnqueueChatJobInput,
   dependencyOverrides: Partial<EnqueueChatJobDependencies> = {},
 ): Promise<{ created: boolean; job: ChatJobAdmission }> {
+  const startedAt = Date.now()
   const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides }
   const { body } = input
   const outputKind = input.outputKind === 'chat' ? 'text' : input.outputKind
@@ -251,11 +319,16 @@ export async function enqueueChatJob(
     ...(body.endpointId ? { endpointId: body.endpointId } : {}),
     ...(attachments ? { attachments } : {}),
   }
-  const reference = await dependencies.persistPayload({
+  const prepared = await prepareChatPayload({
+    command,
     userId: input.userId,
     jobId: body.generationId,
-    payload: command,
+    outputKind,
+    billingClass: body.endpointId ? 'customer' : 'platform',
+    requestId: input.requestId,
+    persistPayload: dependencies.persistPayload,
   })
+  const payloadPreparedAt = Date.now()
   const queue = outputKind === 'text' ? 'chat' : 'media'
   const budget: JsonObject = outputKind === 'text' ? {
     wallTimeMs: 10 * 60_000,
@@ -266,54 +339,36 @@ export async function enqueueChatJob(
     costMicros: 50_000_000,
   }
   const maxAttempts = outputKind === 'text' ? 3 : 2
-  const storedPayload: JsonObject = {
-    schemaVersion: 1,
-    payloadRef: reference.objectKey,
-    payloadHash: reference.sha256,
-    payloadBytes: reference.bytes,
-    payloadContentType: reference.contentType,
-    outputKind,
-    billingClass: body.endpointId ? 'customer' : 'platform',
-    requestId: input.requestId,
-  }
-  const repository = dependencies.createRepository()
   let result: { created: boolean; job: ChatJobAdmission }
   try {
     result = await admitChatJob({
       command: input,
       dependencies,
-      repository,
-      payload: storedPayload,
+      payload: prepared.stored,
       budget,
       queue,
       maxAttempts,
     })
   } catch (error) {
-    const admin = dependencies.createAdminClient()
-    let accepted: { data: unknown; error: unknown } | null = null
-    try {
-      accepted = admin
-        ? await admin.from('jobs').select('id,payload').eq('id', body.generationId).maybeSingle()
-        : null
-    } catch {
-      accepted = null
-    }
-    if (accepted && !accepted.error && referencesPayload(accepted.data, reference.objectKey) === false) {
-      try {
-        await dependencies.removePayload(reference, {
-          userId: input.userId,
-          jobId: body.generationId,
-        })
-      } catch (cleanupError) {
-        log.warn('jobs', 'Immediate orphan payload compensation failed', {
-          jobId: body.generationId,
-          name: cleanupError instanceof Error ? cleanupError.name : 'unknown',
-        })
-      }
-    }
+    const reference = prepared.reference
+    if (!reference) throw error
+    await compensateRejectedPayload({
+      dependencies,
+      reference,
+      userId: input.userId,
+      jobId: body.generationId,
+    })
     throw error
   }
   if (result.created) jobMetrics.recordEnqueued(outputKind === 'text' ? 'chat_generation'
     : outputKind === 'image' ? 'media_image' : 'media_video')
+  log.info('jobs', 'Chat job admission timing', {
+    jobId: body.generationId,
+    requestId: input.requestId,
+    payloadMode: prepared.mode,
+    payloadMs: payloadPreparedAt - startedAt,
+    admissionMs: Date.now() - payloadPreparedAt,
+    totalMs: Date.now() - startedAt,
+  })
   return result
 }

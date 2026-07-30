@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { enqueueChatJob, type EnqueueChatJobInput } from '../lib/chat/job-command'
-import type { JobRecord } from '../lib/jobs/contracts'
+import { JobRuntimeError } from '../lib/jobs/errors'
 import type { JobPayloadReference } from '../lib/jobs/payload-storage'
 
 const userId = '88000000-0000-4000-8000-000000000001'
@@ -19,11 +19,21 @@ const reference: JobPayloadReference = {
 function command(): EnqueueChatJobInput {
   return {
     body: {
-      messages: [{ role: 'user', content: 'hello' }],
+      messages: [{
+        id: '88000000-0000-4000-8000-000000000004',
+        role: 'user',
+        content: 'hello',
+      }],
       conversationId: '88000000-0000-4000-8000-000000000003',
       userMessageId: '88000000-0000-4000-8000-000000000004',
       assistantMessageId: '88000000-0000-4000-8000-000000000005',
       generationId,
+      turn: {
+        schemaVersion: 1,
+        createConversation: false,
+        title: 'Existing conversation',
+        projectId: null,
+      },
     },
     userId,
     isAnonymous: false,
@@ -34,6 +44,17 @@ function command(): EnqueueChatJobInput {
   }
 }
 
+function externalCommand(): EnqueueChatJobInput {
+  const input = command()
+  input.body.attachments = [{
+    name: 'context.txt',
+    dataUrl: 'data:text/plain;base64,aGVsbG8=',
+    isPdf: false,
+    text: 'hello',
+  }]
+  return input
+}
+
 function adminResult(data: unknown, error: unknown = null): SupabaseClient {
   const result = { data, error }
   const query = {
@@ -41,7 +62,13 @@ function adminResult(data: unknown, error: unknown = null): SupabaseClient {
     eq: () => query,
     maybeSingle: async () => result,
   }
-  return { from: () => query } as unknown as SupabaseClient
+  return {
+    from: () => query,
+    rpc: async () => ({
+      data: null,
+      error: { code: '23505', message: 'job_idempotency_conflict' },
+    }),
+  } as unknown as SupabaseClient
 }
 
 function enqueuedJob(subject: Record<string, unknown>) {
@@ -79,14 +106,11 @@ async function rejectedEnqueue(
   accepted: SupabaseClient | null,
   remove: (value: JobPayloadReference) => void,
 ): Promise<void> {
-  await assert.rejects(enqueueChatJob(command(), {
+  await assert.rejects(enqueueChatJob(externalCommand(), {
     persistPayload: async () => reference,
     removePayload: async value => { remove(value) },
-    createRepository: () => ({
-      enqueue: async () => { throw new Error('job_idempotency_conflict') },
-    }),
     createAdminClient: () => accepted,
-  }), /job_idempotency_conflict/)
+  }))
 }
 
 test('failed enqueue removes a payload proven to be unreferenced', async () => {
@@ -119,6 +143,37 @@ test('ambiguous compensation preserves the payload for the asynchronous janitor'
   assert.deepEqual(removed, [])
 })
 
+test('ordinary text jobs keep their tiny command inline without storage round trips', async () => {
+  let uploads = 0
+  const acceptedInputs: Record<string, unknown>[] = []
+  const input = command()
+  const client = {
+    rpc: async (_name: string, args: Record<string, unknown>) => {
+      acceptedInputs.push(args.input_payload as Record<string, unknown>)
+      return {
+        data: enqueuedJob({
+          conversationId: input.body.conversationId,
+          userMessageId: input.body.userMessageId,
+          assistantMessageId: input.body.assistantMessageId,
+        }),
+        error: null,
+      }
+    },
+  } as unknown as SupabaseClient
+  const result = await enqueueChatJob(input, {
+    persistPayload: async () => {
+      uploads += 1
+      return reference
+    },
+    createAdminClient: () => client,
+  })
+  assert.equal(result.created, true)
+  assert.equal(uploads, 0)
+  assert.equal(typeof acceptedInputs[0]?.command, 'object')
+  assert.equal(acceptedInputs[0]?.payloadRef, undefined)
+  assert.match(String(acceptedInputs[0]?.payloadHash), /^[0-9a-f]{64}$/)
+})
+
 function directTurnInput(createConversation: boolean): EnqueueChatJobInput {
   const input = command()
   input.body.messages = [{
@@ -137,95 +192,83 @@ function directTurnInput(createConversation: boolean): EnqueueChatJobInput {
   return input
 }
 
-function directTurnClient(input: EnqueueChatJobInput, writes: string[]): SupabaseClient {
+function directTurnClient(
+  input: EnqueueChatJobInput,
+  calls: Array<{ name: string; args: Record<string, unknown> }>,
+): SupabaseClient {
   return {
-    rpc: async () => {
-      throw new Error('schema-v1 native append must not call an authoritative turn RPC')
-    },
-    from: (table: string) => {
-      const query = {
-        upsert: async () => {
-          writes.push(table)
-          return { data: null, error: null }
-        },
-        select: () => query,
-        update: () => query,
-        eq: () => query,
-        maybeSingle: async () => ({
-          data: table === 'conversations' ? { id: input.body.conversationId } : null,
-          error: null,
+    rpc: async (name: string, args: Record<string, unknown>) => {
+      calls.push({ name, args })
+      return {
+        data: enqueuedJob({
+          conversationId: input.body.conversationId,
+          userMessageId: input.body.userMessageId,
+          assistantMessageId: input.body.assistantMessageId,
         }),
+        error: null,
       }
-      return query
     },
   } as unknown as SupabaseClient
 }
 
 async function runDirectTurn(createConversation: boolean) {
   const input = directTurnInput(createConversation)
-  const writes: string[] = []
-  let repositoryEnqueues = 0
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = []
   const result = await enqueueChatJob(input, {
-    persistPayload: async () => reference,
+    persistPayload: async () => { throw new Error('inline chat must not upload a payload') },
     removePayload: async () => undefined,
-    createRepository: () => ({
-      enqueue: async value => {
-        repositoryEnqueues += 1
-        return {
-          created: true,
-          job: enqueuedJob(value.subject).job as unknown as JobRecord,
-        }
-      },
-    }),
-    createAdminClient: () => directTurnClient(input, writes),
-    sleep: async () => { throw new Error('native append admission must not retry an obsolete RPC') },
+    createAdminClient: () => directTurnClient(input, calls),
   })
-  return { input, result, writes, repositoryEnqueues }
+  return { input, result, calls }
 }
 
-test('new native turns use one direct durable admission path', async () => {
-  const { result, writes, repositoryEnqueues } = await runDirectTurn(true)
+test('new native turns use one atomic direct durable admission RPC', async () => {
+  const { result, calls } = await runDirectTurn(true)
   assert.equal(result.created, true)
   assert.equal(result.job.id, generationId)
-  assert.equal(repositoryEnqueues, 1)
-  assert.deepEqual(writes, ['conversations', 'messages', 'messages'])
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]?.name, 'admit_chat_turn_v2')
+  assert.equal(calls[0]?.args.input_create_conversation, true)
+  assert.equal(calls[0]?.args.input_user_content, 'first native turn')
+  assert.equal(typeof calls[0]?.args.input_payload, 'object')
 })
 
-test('existing native conversations use the same direct durable admission path', async () => {
-  const { result, writes, repositoryEnqueues } = await runDirectTurn(false)
+test('existing native conversations use the same atomic admission RPC', async () => {
+  const { result, calls } = await runDirectTurn(false)
   assert.equal(result.created, true)
   assert.equal(result.job.id, generationId)
-  assert.equal(repositoryEnqueues, 1)
-  assert.deepEqual(writes, ['messages', 'messages'])
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]?.name, 'admit_chat_turn_v2')
+  assert.equal(calls[0]?.args.input_create_conversation, false)
+  assert.equal(calls[0]?.args.input_user_content, 'next native turn')
 })
 
-test('native turn rejects an unowned existing conversation before enqueue', async () => {
+test('native turn exposes the exact PostgreSQL failure', async () => {
   const input = directTurnInput(false)
-  let repositoryEnqueues = 0
   const client = {
-    from: (table: string) => {
-      const query = {
-        upsert: async () => ({ data: null, error: null }),
-        select: () => query,
-        update: () => query,
-        eq: () => query,
-        maybeSingle: async () => ({ data: table === 'conversations' ? null : {}, error: null }),
-      }
-      return query
-    },
-  } as unknown as SupabaseClient
-  await assert.rejects(enqueueChatJob(input, {
-    persistPayload: async () => reference,
-    removePayload: async () => undefined,
-    createRepository: () => ({
-      enqueue: async () => {
-        repositoryEnqueues += 1
-        throw new Error('must not enqueue')
+    rpc: async () => ({
+      data: null,
+      error: {
+        code: '23503',
+        message: 'direct_chat_conversation_not_found',
+        details: 'conversation_id is not owned by input_user_id',
+        hint: 'create the conversation or use its owner',
       },
     }),
+  } as unknown as SupabaseClient
+  await assert.rejects(enqueueChatJob(input, {
+    persistPayload: async () => { throw new Error('inline chat must not upload a payload') },
+    removePayload: async () => undefined,
     createAdminClient: () => client,
-  }), /Conversation does not belong to this account/)
-  assert.equal(repositoryEnqueues, 0)
+  }), (error: unknown) => {
+    assert.ok(error instanceof JobRuntimeError)
+    assert.equal(error.code, 'JOB_CONFLICT')
+    assert.match(error.message, /23503.*direct_chat_conversation_not_found/)
+    assert.equal(error.details.databaseCode, '23503')
+    assert.equal(error.details.databaseDetails, 'conversation_id is not owned by input_user_id')
+    assert.equal(error.details.databaseHint, 'create the conversation or use its owner')
+    return true
+  })
 })
 
 test('server-authoritative regeneration still uses the fenced RPC and cleanup receipts', async () => {
@@ -263,9 +306,6 @@ test('server-authoritative regeneration still uses the fenced RPC and cleanup re
   const result = await enqueueChatJob(input, {
     persistPayload: async () => reference,
     removePayload: async () => undefined,
-    createRepository: () => ({
-      enqueue: async () => { throw new Error('generic enqueue must not run') },
-    }),
     createAdminClient: () => client,
     loadRegenerationCleanupKeys: async value => {
       cleanupInputs.push(value as unknown as Record<string, unknown>)

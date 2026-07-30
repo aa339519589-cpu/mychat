@@ -13,14 +13,16 @@ test('chat authenticates and applies distributed rate limiting before reading th
   const auth = route.indexOf('await resolveAuth(request)')
   const rate = route.indexOf('await enforceRequestRateLimit(auth, request)')
   const body = route.indexOf('await readJson(request, { maxBytes: 8 * 1024 * 1024 })')
-  const quota = route.indexOf('await enforceQuotaLimit(auth, { quota: body.endpointId === undefined })')
+  const policy = route.indexOf('await resolveAdmissionPolicy(request, auth, body)')
 
   assert.ok(auth >= 0)
   assert.ok(auth < rate)
   assert.ok(rate < body)
-  assert.ok(body < quota)
+  assert.ok(body < policy)
   assert.equal(route.match(/await resolveAuth\(request\)/g)?.length, 1)
   assert.equal(route.match(/await enforceRequestRateLimit\(auth, request\)/g)?.length, 1)
+  assert.equal(route.match(/enforceQuotaLimit\(auth, \{ quota: body\.endpointId === undefined \}\)/g)?.length, 1)
+  assert.match(route, /Promise\.allSettled\(\[[\s\S]*enforceQuotaLimit[\s\S]*resolveChatModelSelection/)
   assert.equal(route.includes('enforceLimits(auth, request'), false)
 })
 

@@ -66,7 +66,7 @@ export type RuntimeHealthOptions = {
   timeoutMs?: number
 }
 
-const RUNTIME_HEALTHCHECK_RPC = 'verify_schema_contract_v2'
+const RUNTIME_HEALTHCHECK_RPC = 'verify_schema_contract_v3'
 const WORKER_READINESS_RPC = 'read_job_worker_readiness_v3'
 
 export function safeRevision(environment: HealthEnvironment = process.env): string {
@@ -184,7 +184,7 @@ async function probeDatabaseClient(
   timeoutMs: number,
 ): Promise<boolean> {
   // The database compares this build's closed migration manifest with its
-  // immutable schema attestation and runtime v15 in one fail-closed RPC.
+  // immutable schema attestation and runtime v16 in one fail-closed RPC.
   return probeRpc(client, current => current.rpc(RUNTIME_HEALTHCHECK_RPC, {
     input_contract_version: MIGRATION_CONTRACT.version,
     input_manifest_sha256: MIGRATION_CONTRACT.digest,

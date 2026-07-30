@@ -16,9 +16,9 @@
 一次发布只有同时满足以下条件才完成：
 
 1. 冻结的 PR head 同时通过 `Verify`、CodeQL、Dependency review 和 Secret scan；合并后的 `main` 检查也成功。
-2. 闭合 manifest 的 45 个文件、`platform_authority_v2` 和 v2 seal 的顺序、SHA-256 与生产执行结果都有不可变发布记录，没有用函数名相同或 SQL Editor 历史代替 checksum 证据。
+2. 闭合 manifest 的 47 个文件、direct chat admission v2 和 v3 seal 的顺序、SHA-256 与生产执行结果都有不可变发布记录，没有用函数名相同或 SQL Editor 历史代替 checksum 证据。
 3. 所有兼容性迁移先完成；进入 `2400` 前，generation admission 与 planned command write 已真实冻结，非终态 Job 和待交付 outbox 已收敛。
-4. 数据库只接受当前代码携带的 contract v2、45-file SHA-256 和 migration count；该检查同时要求 `runtime_healthcheck_v15()`、新鲜且 release-ready 的计费 reconciliation 和零 blocker。
+4. 数据库只接受当前代码携带的 contract v3、47-file SHA-256 和 migration count；该检查同时要求 `runtime_healthcheck_v16()`、新鲜且 release-ready 的计费 reconciliation 和零 blocker。
 5. 代码只从 GitHub 合并后的 `main` 部署，线上 revision 与 merge commit 匹配；五个固定队列只能由同一 revision 的新鲜进程 heartbeat 满足 readiness v3。
 6. `/api/ready` 严格成功，Worker 不处于 draining；受保护 `/api/metrics` 可读，关键 dead、expired、orphan 和 billing 指标无未解释异常。
 7. 聊天、标题或媒体、Agent、取消、SSE 与恢复中和本次改动相关的真实用户边界烟测通过。
@@ -72,6 +72,8 @@ contract_files=(
   supabase/migrations/20260713310000_schema_contract_attestation.sql
   supabase/migrations/20260717010000_platform_authority_v2.sql
   supabase/migrations/20260717020000_schema_contract_attestation_v2.sql
+  supabase/migrations/20260729010000_direct_chat_admission_v2.sql
+  supabase/migrations/20260729020000_schema_contract_attestation_v3.sql
 )
 
 export MIGRATION_MANIFEST="$RELEASE_EVIDENCE_DIR/mychat-$PR_HEAD_SHA-migrations.sha256"
@@ -81,9 +83,9 @@ done > "$MIGRATION_MANIFEST"
 shasum -a 256 -c "$MIGRATION_MANIFEST"
 ```
 
-上面的 checksum manifest 覆盖本批 17 个操作文件，是本次发布证据，不是数据库 secret。将它保存在受控证据目录而不是工作树，并作为只写一次的 release artifact 绑定 PR head。每次执行某文件前都重新运行 `shasum -a 256 -c "$MIGRATION_MANIFEST"`；结果必须与冻结 PR 完全一致。
+上面的 checksum manifest 覆盖本批 19 个操作文件，是本次发布证据，不是数据库 secret。将它保存在受控证据目录而不是工作树，并作为只写一次的 release artifact 绑定 PR head。每次执行某文件前都重新运行 `shasum -a 256 -c "$MIGRATION_MANIFEST"`；结果必须与冻结 PR 完全一致。
 
-仓库中的 `supabase/migrations.manifest.json` 是另一种证据：它闭合列出包括 v1 seal 和 `platform_authority_v2` 在内的全部 45 个 SQL 文件及各自 SHA-256，contract v2 digest 为 `c0c1dd9dcf788761cae5ac5a0bcb3ddd49e13ab8c59638e2c91d53ce1c5fcacc`。`schema_contract_attestation_v2.sql` 不参与自身 digest，以避免递归哈希；它把 version 2、digest 和 count 45 作为不可变 tuple 写入数据库。运行 `node scripts/check-migration-contract.mjs` 必须成功。Verify 生成的 OCI 标签、verified-image artifact、drain artifact 和 activation checkout 都携带并逐跳核对该 tuple。
+仓库中的 `supabase/migrations.manifest.json` 是另一种证据：它闭合列出包括旧 seal、platform authority v2 和 direct chat admission v2 在内的全部 47 个 SQL 文件及各自 SHA-256，contract v3 digest 为 `469579b5140dfe314e118405847128c6d7288fa605238275f48b568372d444f5`。`schema_contract_attestation_v3.sql` 不参与自身 digest，以避免递归哈希；它把 version 3、digest 和 count 47 作为不可变 tuple 写入数据库。运行 `node scripts/check-migration-contract.mjs` 必须成功。Verify 生成的 OCI 标签、verified-image artifact、drain artifact 和 activation checkout 都携带并逐跳核对该 tuple。
 
 `schema_contract_attestations` 只声明“生产 schema 已按对象、数据和 runtime gate 核验后绑定到此仓库契约”，不伪装成 `supabase_migrations.schema_migrations` 执行历史。Supabase Dashboard 没有 managed migration 记录并不能证明 schema 未变，SQL Editor 历史也不能证明执行内容等于冻结文件；以 checksum、不可变 schema attestation、对象 contract 和只读数据检查共同判定。
 
@@ -137,6 +139,8 @@ where status = 'dead';
 | 15 | `20260713310000_schema_contract_attestation.sql` | 把全部 43 个既有迁移的闭合 manifest tuple 追加封印；仅 service role 可执行精确契约检查 |
 | 16 | `20260717010000_platform_authority_v2.sql` | 单一 Agent 价格预算、进程 heartbeat/readiness v3、O(1) SSE admission、服务端原子 chat turn/regeneration、仅真实消费者进入 outbox，升级到 runtime v15 |
 | 17 | `20260717020000_schema_contract_attestation_v2.sql` | 封印 contract v2 / 45-file tuple；保留 v1 verifier 供滚动兼容 |
+| 18 | `20260729010000_direct_chat_admission_v2.sql` | 用单一原子准入事务替换串行 REST 写入，删除旧 chat-turn RPC，升级到 runtime v16 |
+| 19 | `20260729020000_schema_contract_attestation_v3.sql` | 封印 contract v3 / 47-file tuple；生产 readiness 只接受 runtime v16 |
 
 ### 兼容扩展：1900 → 2300
 
@@ -328,7 +332,7 @@ select
 
 `3000` 只对 Worker 已收到并形成累计 usage 报告的用量提供 fenced ledger durability，以及 checkpoint/ledger 原子性，不提供 provider exactly-once。每次 usage callback 会在模型循环继续或返回前落账；但 provider 已完成、进程在 usage 解析或 callback 提交前死亡时仍没有权威数值，usage 已提交而响应 checkpoint 尚未形成时也可能按相同 Idempotency-Key 重发请求。这些窗口仍需 provider response receipt、账单导入和差异补录；外部能力当前未实现，必须作为发布残余风险记录，不能用 v14 健康结果掩盖。
 
-随后在仍保持 drain 时执行 platform authority 与 v2 seal。`platform_authority_v2` 是显式事务：失败必须整体回滚；它保留旧 RPC 供滚动兼容，但新应用在 v2 seal 完成前会因精确 contract 不匹配而 fail closed。
+随后在仍保持 drain 时执行 platform authority、direct chat admission v2 与 v3 seal。`platform_authority_v2` 和 `direct_chat_admission_v2` 都是显式事务：失败必须整体回滚。direct chat migration 会删除已废弃的 `enqueue_chat_turn_v1`，因此只能在旧 revision 已经 drain、不会再接收新 chat turn 后执行；新应用在 v3 seal 完成前会因精确 contract 不匹配而 fail closed。
 
 ```bash
 shasum -a 256 -c "$MIGRATION_MANIFEST"
@@ -337,43 +341,48 @@ psql -X -v ON_ERROR_STOP=1 \
 psql -X -v ON_ERROR_STOP=1 -c 'select public.runtime_healthcheck_v15();'
 psql -X -v ON_ERROR_STOP=1 \
   -f supabase/migrations/20260717020000_schema_contract_attestation_v2.sql
+psql -X -v ON_ERROR_STOP=1 \
+  -f supabase/migrations/20260729010000_direct_chat_admission_v2.sql
+psql -X -v ON_ERROR_STOP=1 -c 'select public.runtime_healthcheck_v16();'
+psql -X -v ON_ERROR_STOP=1 \
+  -f supabase/migrations/20260729020000_schema_contract_attestation_v3.sql
 ```
 
-用 service role 验证精确 v2 tuple 为 true，并确认错误 version/digest/count 都为 false：
+用 service role 验证精确 v3 tuple 为 true，并确认错误 version/digest/count 都为 false：
 
 ```sql
 select
-  public.verify_schema_contract_v2(
-    2,
-    'c0c1dd9dcf788761cae5ac5a0bcb3ddd49e13ab8c59638e2c91d53ce1c5fcacc',
-    45
+  public.verify_schema_contract_v3(
+    3,
+    '469579b5140dfe314e118405847128c6d7288fa605238275f48b568372d444f5',
+    47
   ) as exact_contract,
-  public.verify_schema_contract_v2(
-    1,
-    'c0c1dd9dcf788761cae5ac5a0bcb3ddd49e13ab8c59638e2c91d53ce1c5fcacc',
-    45
-  ) as wrong_version,
-  public.verify_schema_contract_v2(2, repeat('0', 64), 45) as wrong_digest,
-  public.verify_schema_contract_v2(
+  public.verify_schema_contract_v3(
     2,
-    'c0c1dd9dcf788761cae5ac5a0bcb3ddd49e13ab8c59638e2c91d53ce1c5fcacc',
-    44
+    '469579b5140dfe314e118405847128c6d7288fa605238275f48b568372d444f5',
+    47
+  ) as wrong_version,
+  public.verify_schema_contract_v3(3, repeat('0', 64), 47) as wrong_digest,
+  public.verify_schema_contract_v3(
+    3,
+    '469579b5140dfe314e118405847128c6d7288fa605238275f48b568372d444f5',
+    46
   ) as wrong_count;
 
 select
   has_function_privilege(
     'service_role',
-    'public.verify_schema_contract_v2(integer,text,integer)',
+    'public.verify_schema_contract_v3(integer,text,integer)',
     'EXECUTE'
   ) as service_can_verify,
   has_function_privilege(
     'anon',
-    'public.verify_schema_contract_v2(integer,text,integer)',
+    'public.verify_schema_contract_v3(integer,text,integer)',
     'EXECUTE'
   ) as anon_can_verify,
   has_function_privilege(
     'authenticated',
-    'public.verify_schema_contract_v2(integer,text,integer)',
+    'public.verify_schema_contract_v3(integer,text,integer)',
     'EXECUTE'
   ) as authenticated_can_verify;
 ```
@@ -437,7 +446,7 @@ export EXPECTED_REVISION='<merge-commit-sha>'
 node scripts/check-production-health.mjs "$MYCHAT_HEALTH_URL"
 ```
 
-脚本只接受 HTTPS 的精确 `/api/ready` 路径，要求 revision 匹配，并验证 `auth`、`database`、`distributedRateLimit`、`queue`、`worker`、`stream`、`observability` 和 `sandbox` 全部 configured/ready；draining Worker 会失败。随后再次执行精确 schema contract v2、readiness v3 和 billing reconciliation 三组 SQL，不能只依赖 HTTP 聚合结果。
+脚本只接受 HTTPS 的精确 `/api/ready` 路径，要求 revision 匹配，并验证 `auth`、`database`、`distributedRateLimit`、`queue`、`worker`、`stream`、`observability` 和 `sandbox` 全部 configured/ready；draining Worker 会失败。随后再次执行精确 schema contract v3、readiness v3 和 billing reconciliation 三组 SQL，不能只依赖 HTTP 聚合结果。
 
 验证 metrics 的隐藏、授权读取、五队列和 billing release gate：
 
@@ -602,15 +611,16 @@ provider 链路另做一次短断网：切断请求后观察 timeout、退避、
 | `2700` 部分或全部执行 | 先检查 index/constraint/旧 FK 的真实状态，只能修复并向前完成 composite FK contract |
 | 已执行 `2900` | 保留 billing v2、price activation、quote/hash、journal 和 reconciliation；旧 post-paid/browser quota 路径不是回滚目标 |
 | 已执行 `3000` | 保留原子 checkpoint/accounting receipt 与不可变 delta；不得恢复可执行的 legacy checkpoint 写路径 |
-| 已执行 platform authority v2 | 保留服务端 chat transaction、进程 heartbeat、SSE counter 和 outbox suppression；应用只能 roll forward 到 contract v2 兼容 revision |
-| 已执行 v2 seal | `/api/ready` 必须携带精确 version 2 / 45-file tuple；不得删除 v1/v2 attestation 或放宽 verifier 权限 |
+| 已执行 platform authority v2 | 保留服务端 chat transaction、进程 heartbeat、SSE counter 和 outbox suppression；应用只能 roll forward 到兼容 platform authority 的 revision |
+| 已执行 direct chat admission v2 | 保留单次原子 chat admission 与 canonical job enqueue；已删除的 `enqueue_chat_turn_v1` 不得恢复，应用只能 roll forward 到调用 `admit_chat_turn_v2` 的 revision |
+| 已执行 v3 seal | `/api/ready` 必须携带精确 version 3 / 47-file tuple；不得删除 v1/v2/v3 attestation 或放宽 verifier 权限 |
 
 应用或 Render 部署失败时：
 
 1. 保持 generation 与 planned command write freeze；如果新版本已经在 drain，绝不先设 `off`。
 2. 若仍在 `2300` 前，可选择经过兼容验证的 bridge；`2400` 后统一 roll forward，不能以“旧页面能打开”为兼容证据。
 3. 修复走新 PR，重新跑全部 CI、生成新 checksum，并重新核对生产 schema 差异。
-4. 新代码因缺少精确 schema contract（其中包含 runtime v15）时 `/api/ready` 必须 503；补齐/修复迁移，不降低 readiness 或绕过 manifest tuple。
+4. 新代码因缺少精确 schema contract（其中包含 runtime v16）时 `/api/ready` 必须 503；补齐/修复迁移，不降低 readiness 或绕过 manifest tuple。
 5. 第二次解除 drain 部署失败时，恢复 `drain` 并重新部署同一或更新的兼容 revision；确认数据库、reconciliation 和 heartbeat 后再尝试解除。
 
-最终发布记录至少包含：冻结 PR head 与 merge SHA、全部 17 个本批 migration SHA-256、每个实际执行时间和操作者、45-file schema contract v2 的 version/digest/count 及错误 tuple 拒绝证据、`2700` autocommit/索引/约束及 legacy FK 保留证据、runtime v15、chat transaction/CAS/rollback 与 SSE counter 证据、atomic checkpoint replay/冲突证据、billing snapshot 全字段摘要、readiness v3 的 merge revision 与逐队列容量、两次 Render deploy ID、最终线上 revision、stream/metrics secret 已配置的非明文证据、`/api/ready` 与 metrics 结果、烟测 Job ID、任何 redrive/audit request ID、密钥轮换状态、演练证据和未消除的零付费限制。只有全部阻断项清零后才能宣布成功部署。
+最终发布记录至少包含：冻结 PR head 与 merge SHA、全部 19 个本批 migration SHA-256、每个实际执行时间和操作者、47-file schema contract v3 的 version/digest/count 及错误 tuple 拒绝证据、`2700` autocommit/索引/约束及 legacy FK 保留证据、runtime v16、direct chat admission/job/messages 原子性、chat transaction/CAS/rollback 与 SSE counter 证据、atomic checkpoint replay/冲突证据、billing snapshot 全字段摘要、readiness v3 的 merge revision 与逐队列容量、两次 Render deploy ID、最终线上 revision、stream/metrics secret 已配置的非明文证据、`/api/ready` 与 metrics 结果、烟测 Job ID、任何 redrive/audit request ID、密钥轮换状态、演练证据和未消除的零付费限制。只有全部阻断项清零后才能宣布成功部署。

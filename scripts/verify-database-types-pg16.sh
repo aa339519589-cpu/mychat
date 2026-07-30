@@ -90,7 +90,7 @@ done < <(node -e '
   for (const entry of manifest.migrations) console.log(typeof entry === "string" ? entry : entry.file)
 ' "$ROOT/supabase/migrations.manifest.json")
 
-"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260717020000_schema_contract_attestation_v2.sql" >/dev/null
+"${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260729020000_schema_contract_attestation_v3.sql" >/dev/null
 node "$ROOT/scripts/generate-database-types.mjs" --database "$DB" "$MODE"
 
 echo "Canonical PostgreSQL database type verification passed"
