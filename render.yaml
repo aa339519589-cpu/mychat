@@ -6,7 +6,9 @@ services:
     autoDeployTrigger: off
     buildCommand: npm ci --ignore-scripts --legacy-peer-deps && npm run build
     startCommand: npm start
-    healthCheckPath: /api/ready
+    # Platform process health must remain independent from dependency readiness
+    # and maintenance drain state. Release gates continue to use /api/ready.
+    healthCheckPath: /api/live
     maxShutdownDelaySeconds: 300
     envVars:
       - key: NODE_VERSION

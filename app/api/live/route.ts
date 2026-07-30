@@ -3,7 +3,7 @@ import { getRuntimeLiveness } from '@/lib/supabase/health'
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
-/** Dependency-free process liveness. Readiness belongs at /api/ready. */
+/** Dependency-free process liveness used by the Render platform health check. */
 export function GET() {
   return Response.json({
     status: 'ok',

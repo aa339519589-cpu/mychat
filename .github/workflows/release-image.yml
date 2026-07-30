@@ -279,6 +279,27 @@ jobs:
             exit 1
           fi
 
+      - name: Enforce dependency-free Render liveness
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          if [[ -z "$RENDER_API_KEY" ]] \
+            || [[ ! "$RENDER_SERVICE_ID" =~ ^srv-[a-z0-9]+$ ]]; then
+            echo "RENDER_API_KEY and RENDER_SERVICE_ID must be configured" >&2
+            exit 1
+          fi
+          response="$(curl --fail-with-body --silent --show-error \
+            --retry 4 --retry-all-errors --connect-timeout 10 --max-time 60 \
+            --request PATCH \
+            --header "Authorization: Bearer $RENDER_API_KEY" \
+            --header 'Content-Type: application/json' \
+            --data '{"autoDeploy":"no","serviceDetails":{"healthCheckPath":"/api/live"}}' \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID")"
+          jq --exit-status \
+            '.autoDeploy == "no" and .serviceDetails.healthCheckPath == "/api/live"' \
+            <<<"$response" >/dev/null
+
       - name: Preflight the existing production runtime
         id: phase
         env:
