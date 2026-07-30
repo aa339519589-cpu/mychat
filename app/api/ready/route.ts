@@ -3,7 +3,7 @@ import { getRuntimeHealth } from '@/lib/supabase/health'
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
-/** Strict deployment readiness endpoint used by the Render health check. */
+/** Strict dependency readiness used by release and activation gates. */
 export async function GET() {
   const health = await getRuntimeHealth()
   return Response.json({

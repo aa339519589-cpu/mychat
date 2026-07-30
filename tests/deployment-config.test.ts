@@ -9,15 +9,22 @@ function read(path: string) {
   return readFileSync(resolve(root, path), 'utf8')
 }
 
-test('CI and Render use the supported Node runtime and strict readiness', () => {
+test('CI uses strict readiness while Render uses dependency-free liveness', () => {
   const packageJson = JSON.parse(read('package.json')) as { engines?: { node?: string } }
   const workflow = read('.github/workflows/verify.yml')
+  const releaseWorkflow = read('.github/workflows/release-image.yml')
+  const livenessRecovery = read('.github/workflows/reconcile-render-liveness.yml')
   const render = read('render.yaml')
 
   assert.equal(packageJson.engines?.node, '>=24')
   assert.match(workflow, /node-version:\s*24/)
   assert.match(workflow, /playwright install --with-deps chromium/)
-  assert.match(render, /healthCheckPath:\s*\/api\/ready/)
+  assert.match(render, /healthCheckPath:\s*\/api\/live/)
+  assert.match(livenessRecovery, /healthCheckPath":\s*"\/api\/live"/)
+  assert.match(livenessRecovery, /allowed only for an already-drained service/)
+  assert.match(livenessRecovery, /EXPECTED_WORKER_DRAINING=true/)
+  assert.match(releaseWorkflow, /Enforce dependency-free Render liveness/)
+  assert.match(releaseWorkflow, /healthCheckPath":\s*"\/api\/live"/)
   assert.match(render, /autoDeployTrigger:\s*off/)
   assert.match(render, /key:\s*MYCHAT_MAINTENANCE_MODE\s*\n\s*sync:\s*false/)
   assert.match(render, /key:\s*NODE_VERSION\s*\n\s*value:\s*24/)

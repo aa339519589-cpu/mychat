@@ -1,0 +1,146 @@
+name: Reconcile Render Platform Liveness
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-release-main
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    name: Reconcile dependency-free liveness
+    if: >-
+      github.repository == 'aa339519589-cpu/mychat' &&
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment:
+      name: Production-Drain
+      url: https://mychat-nm6x.onrender.com
+    env:
+      PRODUCTION_LIVE_URL: https://mychat-nm6x.onrender.com/api/live
+      PRODUCTION_READY_URL: https://mychat-nm6x.onrender.com/api/ready
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+      TARGET_SHA: ${{ github.sha }}
+    steps:
+      - name: Checkout current main
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Use the production Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Validate recovery authority
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [[ ! "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            || [[ -z "$RENDER_API_KEY" ]] \
+            || [[ ! "$RENDER_SERVICE_ID" =~ ^srv-[a-z0-9]+$ ]]; then
+            echo "Recovery authority is not fully configured" >&2
+            exit 1
+          fi
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          current_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          test "$current_main" = "$TARGET_SHA"
+
+      - name: Require the existing service to be in drain
+        run: |
+          value="$(curl --fail-with-body --silent --show-error \
+            --retry 4 --retry-all-errors --connect-timeout 10 --max-time 60 \
+            --header "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/MYCHAT_MAINTENANCE_MODE" \
+            | jq -er '.value')"
+          if [[ "$value" != "drain" ]]; then
+            echo "Liveness reconciliation is allowed only for an already-drained service" >&2
+            exit 1
+          fi
+
+      - name: Set Render health check to process liveness
+        run: |
+          response="$(curl --fail-with-body --silent --show-error \
+            --retry 4 --retry-all-errors --connect-timeout 10 --max-time 60 \
+            --request PATCH \
+            --header "Authorization: Bearer $RENDER_API_KEY" \
+            --header 'Content-Type: application/json' \
+            --data '{"autoDeploy":"no","serviceDetails":{"healthCheckPath":"/api/live"}}' \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID")"
+          jq --exit-status \
+            '.autoDeploy == "no" and .serviceDetails.healthCheckPath == "/api/live"' \
+            <<<"$response" >/dev/null
+
+      - name: Deploy exact current main in drain
+        id: deploy
+        run: |
+          response="$(curl --fail-with-body --silent --show-error \
+            --retry 4 --retry-all-errors --connect-timeout 10 --max-time 60 \
+            --request POST \
+            --header "Authorization: Bearer $RENDER_API_KEY" \
+            --header 'Content-Type: application/json' \
+            --data "$(jq -nc --arg commitId "$TARGET_SHA" '{commitId: $commitId}')" \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys")"
+          deploy_id="$(jq -er '.id' <<<"$response")"
+          render_commit="$(jq -r '.commit.id // empty' <<<"$response")"
+          if [[ ! "$deploy_id" =~ ^dep-[a-z0-9]+$ ]] \
+            || [[ -n "$render_commit" && "$render_commit" != "$TARGET_SHA" ]]; then
+            echo "Render did not create the exact recovery deploy" >&2
+            exit 1
+          fi
+          echo "deploy_id=$deploy_id" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for exact recovery deploy
+        env:
+          RENDER_DEPLOY_ID: ${{ steps.deploy.outputs.deploy_id }}
+        run: |
+          for attempt in {1..180}; do
+            response="$(curl --fail-with-body --silent --show-error \
+              --retry 3 --retry-all-errors --connect-timeout 10 --max-time 60 \
+              --header "Authorization: Bearer $RENDER_API_KEY" \
+              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys/$RENDER_DEPLOY_ID")"
+            status="$(jq -er '.status' <<<"$response")"
+            render_commit="$(jq -r '.commit.id // empty' <<<"$response")"
+            if [[ -n "$render_commit" && "$render_commit" != "$TARGET_SHA" ]]; then
+              echo "Recovery deploy changed commit identity" >&2
+              exit 1
+            fi
+            case "$status" in
+              live)
+                exit 0
+                ;;
+              build_failed|update_failed|canceled|deactivated)
+                echo "Recovery deploy reached terminal failure: $status" >&2
+                exit 1
+                ;;
+            esac
+            sleep 10
+          done
+          echo "Recovery deploy did not become live before timeout" >&2
+          exit 1
+
+      - name: Verify liveness and drained readiness
+        run: |
+          live_payload="$(curl --fail-with-body --silent --show-error \
+            --retry 8 --retry-all-errors --connect-timeout 10 --max-time 60 \
+            --header 'Accept: application/json' \
+            "$PRODUCTION_LIVE_URL")"
+          live_revision="$(jq -er \
+            '.revision | select(type == "string" and test("^[0-9a-f]{7,12}$"))' \
+            <<<"$live_payload")"
+          if [[ "${TARGET_SHA:0:${#live_revision}}" != "$live_revision" ]]; then
+            echo "Recovered liveness revision does not match current main" >&2
+            exit 1
+          fi
+          EXPECTED_REVISION="$TARGET_SHA" \
+            EXPECTED_WORKER_DRAINING=true \
+            HEALTH_CHECK_ATTEMPTS=8 HEALTH_CHECK_RETRY_MS=5000 \
+            HEALTH_CHECK_TIMEOUT_MS=60000 \
+            node scripts/check-production-health.mjs "$PRODUCTION_READY_URL"
