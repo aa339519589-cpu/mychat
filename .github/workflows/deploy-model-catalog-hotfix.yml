@@ -42,23 +42,23 @@ jobs:
           stage="initializing"
 
           report() {
-            local state="$1" description="$2"
+            local state="$1" context="$2" description="$3"
             curl --silent --show-error --request POST \
               --header "Authorization: Bearer $GH_TOKEN" \
               --header "Accept: application/vnd.github+json" \
               --header "X-GitHub-Api-Version: 2022-11-28" \
-              --data "$(jq -nc --arg state "$state" --arg description "$description" --arg target_url "$PRODUCTION_URL" '{state:$state,context:"Model Catalog Hotfix",description:$description,target_url:$target_url}')" \
+              --data "$(jq -nc --arg state "$state" --arg context "$context" --arg description "$description" --arg target_url "$PRODUCTION_URL" '{state:$state,context:$context,description:$description,target_url:$target_url}')" \
               "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$REVISION" >/dev/null || true
           }
 
           fail() {
             local code=$?
             trap - ERR
-            report failure "Model hotfix failed at $stage"
+            report failure "Model Hotfix Failure: $stage" "Model hotfix failed at $stage"
             exit "$code"
           }
           trap fail ERR
-          report pending "Deploying provider icons and Claude 5 catalog"
+          report pending "Model Catalog Hotfix" "Deploying provider icons and Claude 5 catalog"
 
           stage="credentials"
           test -n "$RENDER_API_KEY"
@@ -116,5 +116,5 @@ jobs:
           done
           [[ -n "$runtime_revision" ]]
           [[ "$REVISION" == "$runtime_revision"* || "$runtime_revision" == "$REVISION"* ]]
-          report success "Provider icons and Claude 5 catalog are live"
+          report success "Model Catalog Hotfix" "Provider icons and Claude 5 catalog are live"
           echo "Render deploy $deploy_id is live at revision $runtime_revision"
