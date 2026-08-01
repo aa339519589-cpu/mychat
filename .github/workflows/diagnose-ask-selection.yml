@@ -1,0 +1,31 @@
+name: Diagnose selected text feature
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: github.head_ref == 'feat/ask-selected-text'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Lint
+        id: lint
+        continue-on-error: true
+        run: npm run lint > lint.txt 2>&1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ask-selection-lint
+          path: lint.txt
+      - name: Fail on lint error
+        if: steps.lint.outcome == 'failure'
+        run: exit 1

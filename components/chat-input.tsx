@@ -13,6 +13,10 @@ import { ComposerBar } from "@/components/chat-input-bar"
 import { ComposerTools } from "@/components/chat-input-tools"
 import { useComposerState } from "@/components/chat-input-state"
 
+const ASK_SELECTED_TEXT_EVENT = "mychat:ask-selected-text"
+
+type ComposerState = ReturnType<typeof useComposerState>
+
 export type ChatInputProps = {
   onSend: (text: string, images?: string[], files?: AttachedFile[]) => void
   activeTier: string
@@ -32,6 +36,30 @@ export type ChatInputProps = {
   onStop: () => void
 }
 
+function quotedSelection(text: string): string {
+  return text.split(/\r?\n/).map(line => `> ${line}`).join("\n")
+}
+
+function useSelectedTextQuote(state: ComposerState) {
+  const { setValue, textAreaRef, resize } = state
+  useEffect(() => {
+    function handle(event: Event) {
+      const detail = (event as CustomEvent<{ text?: unknown }>).detail
+      if (typeof detail?.text !== "string" || !detail.text.trim()) return
+      const quote = quotedSelection(detail.text.trim())
+      setValue(current => current.trim()
+        ? `${current.trimEnd()}\n\n${quote}\n\n`
+        : `${quote}\n\n`)
+      window.requestAnimationFrame(() => {
+        textAreaRef.current?.focus({ preventScroll: false })
+        resize()
+      })
+    }
+    window.addEventListener(ASK_SELECTED_TEXT_EVENT, handle)
+    return () => window.removeEventListener(ASK_SELECTED_TEXT_EVENT, handle)
+  }, [resize, setValue, textAreaRef])
+}
+
 export function ChatInput({
   onSend, activeTier, onTierChange, mobile, searchMode, onSearchModeChange,
   deepResearch, onDeepResearchChange, historyRetrieval, onHistoryRetrievalChange,
@@ -41,6 +69,7 @@ export function ChatInput({
   const [tierMenuOpen, setTierMenuOpen] = useState(false)
   const reducedMotion = useReducedMotion()
   const state = useComposerState({ activeTier, onTierChange, onSend, disabled, isLoading, setPlusOpen })
+  useSelectedTextQuote(state)
 
   useEffect(() => {
     if (!plusOpen) return
