@@ -4,7 +4,7 @@ import type { RefObject } from "react"
 import { ArrowRight, ArrowUp, ChevronDown, Image as ImageIcon, Sparkles, Square } from "lucide-react"
 import { cn } from "@/lib/utils"
 
-export function ComposerBar({ mobile, value, onValueChange, textareaRef, onResize, onSubmit, disabled, isLoading, sendPending, activeTier, activeModelLabel, activeOutputKind, canSend, onStop, onOpenModel }: {
+export function ComposerBar({ mobile, value, onValueChange, textareaRef, onResize, onSubmit, disabled, isLoading, sendPending, activeModelLabel, activeOutputKind, canSend, onStop, onOpenModel }: {
   mobile: boolean
   value: string
   onValueChange: (value: string) => void
@@ -14,7 +14,6 @@ export function ComposerBar({ mobile, value, onValueChange, textareaRef, onResiz
   disabled: boolean
   isLoading: boolean
   sendPending: boolean
-  activeTier: string
   activeModelLabel: string
   activeOutputKind?: string
   canSend: boolean
