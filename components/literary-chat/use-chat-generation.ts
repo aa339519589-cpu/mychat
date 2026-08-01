@@ -10,16 +10,9 @@ import type { ProjectContext } from "@/lib/project-data"
 import type { SearchMode } from "@/lib/search-mode"
 import type { ClientGenerationPatch, ClientGenerationState } from "@/lib/generation-client"
 import { isRunning, reduceClientGenerationState } from "@/lib/generation-client"
-import {
-  cacheConversationMessages,
-  updateConversationTitle,
-} from "@/lib/data"
+import { cacheConversationMessages, updateConversationTitle } from "@/lib/data"
 import type { ChatTurnAuthority } from '@/lib/llm/chat-request'
-import {
-  runChatStream,
-  type HistoryMessage,
-  type RunChatStreamResult,
-} from "./chat-stream-service"
+import { runChatStream, type HistoryMessage, type RunChatStreamResult } from "./chat-stream-service"
 import { hasActiveConversationGeneration, resumeConversationGeneration } from "./generation-api"
 import { generateConversationTitle } from "./generation-job-actions"
 import { cancelActiveGeneration } from "./generation-cancellation"
@@ -33,6 +26,8 @@ type UseChatGenerationOptions = {
   activeTier: Tier
   activeEndpoint: ModelEndpointSummary | null
   activeEndpointId: string | null
+  activeModelId: string | null
+  reasoningEffort: string | null
   memories: Memory[]
   memoryEnabled: boolean
   searchMode: SearchMode
@@ -49,86 +44,32 @@ type UseChatGenerationOptions = {
   onConversationCreated?: (id: string) => void
 }
 
-function createOptimisticTurn(
-  active: Conversation,
-  text: string,
-  images?: string[],
-  files?: AttachedFile[],
-) {
+function createOptimisticTurn(active: Conversation, text: string, images?: string[], files?: AttachedFile[]) {
   const sentAt = Date.now()
-  const userMessage: Message = {
-    id: crypto.randomUUID(), role: "user", content: text, time: "此刻",
-    ts: new Date(sentAt).toISOString(),
-    images: images?.length ? images : undefined,
-    files: files?.map(file => file.name),
-  }
+  const userMessage: Message = { id: crypto.randomUUID(), role: "user", content: text, time: "此刻", ts: new Date(sentAt).toISOString(), images: images?.length ? images : undefined, files: files?.map(file => file.name) }
   const assistantMessageId = crypto.randomUUID()
-  const assistantMessage: Message = {
-    id: assistantMessageId, role: "assistant", content: "", thinking: "", time: "此刻",
-    ts: new Date(sentAt + 1).toISOString(),
-  }
-  return {
-    userMessage,
-    assistantMessageId,
-    baseHistory: active.messages,
-    optimisticMessages: [...active.messages, userMessage, assistantMessage],
-  }
+  const assistantMessage: Message = { id: assistantMessageId, role: "assistant", content: "", thinking: "", time: "此刻", ts: new Date(sentAt + 1).toISOString() }
+  return { userMessage, assistantMessageId, baseHistory: active.messages, optimisticMessages: [...active.messages, userMessage, assistantMessage] }
 }
 
-async function resumeKnownGeneration(
-  conversationId: string,
-  resume: (conversationId: string) => Promise<boolean>,
-): Promise<boolean> {
+async function resumeKnownGeneration(conversationId: string, resume: (conversationId: string) => Promise<boolean>): Promise<boolean> {
   if (!await hasActiveConversationGeneration(conversationId)) return false
   void resume(conversationId)
   return true
 }
 
 export function useChatGeneration(options: UseChatGenerationOptions) {
-  const {
-    user,
-    active,
-    activeId,
-    activeTier,
-    activeEndpoint,
-    activeEndpointId,
-    memories,
-    memoryEnabled,
-    searchMode,
-    deepResearch,
-    historyRetrieval,
-    authorityReady,
-    setConversations,
-    setMemories,
-    setOpenArtifactId,
-    loadedRef,
-    draftIdRef,
-    getProjectContext,
-    onConversationCreated,
-  } = options
-
+  const { user, active, activeId, activeTier, activeEndpoint, activeEndpointId, activeModelId, reasoningEffort, memories, memoryEnabled, searchMode, deepResearch, historyRetrieval, authorityReady, setConversations, setMemories, setOpenArtifactId, loadedRef, draftIdRef, getProjectContext, onConversationCreated } = options
   const [generationByConversation, setGenerationByConversation] = useState<Record<string, ClientGenerationState>>({})
   const generationRef = useRef(generationByConversation)
   generationRef.current = generationByConversation
   const abortByConversationRef = useRef<Map<string, AbortController>>(new Map())
-  const resumeByConversationRef = useRef<Map<string, {
-    operation: Promise<void>
-    reconciled: Promise<boolean>
-  }>>(new Map())
-
+  const resumeByConversationRef = useRef<Map<string, { operation: Promise<void>; reconciled: Promise<boolean> }>>(new Map())
   const activeGeneration = activeId ? generationByConversation[activeId] : undefined
   const isActiveGenerating = isRunning(activeGeneration)
 
-  function markGeneration(conversationId: string, patch: ClientGenerationPatch) {
-    setGenerationByConversation(previous => reduceClientGenerationState(previous, conversationId, patch))
-  }
-
-  function clearAbort(conversationId: string, controller: AbortController) {
-    if (abortByConversationRef.current.get(conversationId) === controller) {
-      abortByConversationRef.current.delete(conversationId)
-    }
-  }
-
+  function markGeneration(conversationId: string, patch: ClientGenerationPatch) { setGenerationByConversation(previous => reduceClientGenerationState(previous, conversationId, patch)) }
+  function clearAbort(conversationId: string, controller: AbortController) { if (abortByConversationRef.current.get(conversationId) === controller) abortByConversationRef.current.delete(conversationId) }
   function resumeGenerationIfNeeded(conversationId: string) {
     const activeController = abortByConversationRef.current.get(conversationId)
     if (activeController && !activeController.signal.aborted) return Promise.resolve(true)
@@ -136,188 +77,65 @@ export function useChatGeneration(options: UseChatGenerationOptions) {
     if (existing) return existing.reconciled
     let resolveReconciled!: (available: boolean) => void
     const reconciled = new Promise<boolean>(resolve => { resolveReconciled = resolve })
-    const operation = resumeConversationGeneration({
-      conversationId,
-      setConversations,
-      markGeneration,
-      registerAbort: (id, controller) => abortByConversationRef.current.set(id, controller),
-      clearAbort,
-      onReconciled: resolveReconciled,
-    })
+    const operation = resumeConversationGeneration({ conversationId, setConversations, markGeneration, registerAbort: (id, controller) => abortByConversationRef.current.set(id, controller), clearAbort, onReconciled: resolveReconciled })
     const entry = { operation, reconciled }
     resumeByConversationRef.current.set(conversationId, entry)
-    const cleanup = () => {
-      if (resumeByConversationRef.current.get(conversationId) === entry) {
-        resumeByConversationRef.current.delete(conversationId)
-      }
-    }
-    void operation.then(cleanup, () => {
-      resolveReconciled(false)
-      cleanup()
-    })
+    const cleanup = () => { if (resumeByConversationRef.current.get(conversationId) === entry) resumeByConversationRef.current.delete(conversationId) }
+    void operation.then(cleanup, () => { resolveReconciled(false); cleanup() })
     return reconciled
   }
 
   function generateTitle(conversationId: string, userText: string, assistantText: string) {
-    return generateConversationTitle({
-      conversationId,
-      userText,
-      assistantText,
-      endpoint: activeEndpoint,
-      setConversations,
-    })
+    return generateConversationTitle({ conversationId, userText, assistantText, endpoint: activeEndpoint, setConversations })
   }
-  async function startStream(
-    history: HistoryMessage[],
-    assistantMessageId: string,
-    conversationId: string,
-    controller: AbortController,
-    attachments?: AttachedFile[],
-    projectContext?: ProjectContext,
-    generationId?: string,
-    turn?: ChatTurnAuthority,
-    onAccepted?: () => void,
-  ) {
-    if (!user) {
-      markGeneration(conversationId, { status: "error", generationId, assistantMessageId })
-      return { content: "", status: "error", accepted: false } satisfies RunChatStreamResult
-    }
-    return runChatStream({
-      userId: user.id,
-      messages: history,
-      assistantMessageId,
-      conversationId,
-      controller,
-      attachments,
-      projectContext,
-      generationId,
-      tier: activeTier,
-      endpoint: activeEndpoint,
-      endpointId: activeEndpointId,
-      memories,
-      memoryEnabled,
-      searchMode,
-      deepResearch,
-      historyRetrieval,
-      turn,
-      onAccepted,
-      setConversations,
-      setMemories,
-      markGeneration,
-      clearAbort,
-    })
+
+  async function startStream(history: HistoryMessage[], assistantMessageId: string, conversationId: string, controller: AbortController, attachments?: AttachedFile[], projectContext?: ProjectContext, generationId?: string, turn?: ChatTurnAuthority, onAccepted?: () => void) {
+    if (!user) { markGeneration(conversationId, { status: "error", generationId, assistantMessageId }); return { content: "", status: "error", accepted: false } satisfies RunChatStreamResult }
+    return runChatStream({ userId: user.id, messages: history, assistantMessageId, conversationId, controller, attachments, projectContext, generationId, tier: activeTier, endpoint: activeEndpoint, endpointId: activeEndpointId, modelId: activeModelId, reasoningEffort, memories, memoryEnabled, searchMode, deepResearch, historyRetrieval, turn, onAccepted, setConversations, setMemories, markGeneration, clearAbort })
   }
 
   async function handleStop() {
     if (!activeId) return
-    await cancelActiveGeneration({
-      conversationId: activeId,
-      generation: generationRef.current[activeId],
-      setConversations,
-      markGeneration, controller: abortByConversationRef.current.get(activeId),
-    })
+    await cancelActiveGeneration({ conversationId: activeId, generation: generationRef.current[activeId], setConversations, markGeneration, controller: abortByConversationRef.current.get(activeId) })
   }
 
   async function handleSend(text: string, images?: string[], files?: AttachedFile[]) {
-    if (!authorityReady || !user || !active) return
-
-    const { userMessage, assistantMessageId, baseHistory, optimisticMessages } = createOptimisticTurn(
-      active, text, images, files,
-    )
+    if (!authorityReady || !user || !active || !activeModelId) return
+    const { userMessage, assistantMessageId, baseHistory, optimisticMessages } = createOptimisticTurn(active, text, images, files)
     const isFirstExchange = active.messages.length === 0
-    const wasDraft = !!active.draft
+    const wasDraft = Boolean(active.draft)
     const draftId = active.id
     const generationId = crypto.randomUUID()
-
-    // Persist the complete optimistic turn before any network await. A user can
-    // switch chats or background iOS immediately after tapping Send without the
-    // submitted prompt disappearing from the conversation.
     cacheConversationMessages(draftId, optimisticMessages)
-    setConversations(previous => previous.map(conversation => conversation.id === draftId
-      ? { ...conversation, messages: optimisticMessages }
-      : conversation))
+    setConversations(previous => previous.map(conversation => conversation.id === draftId ? { ...conversation, messages: optimisticMessages } : conversation))
     markGeneration(draftId, { status: "running", generationId, assistantMessageId, begin: true })
-
     const conversationId = draftId
     try {
-      const turn: ChatTurnAuthority = {
-        schemaVersion: 1,
-        createConversation: wasDraft,
-        title: active.title || '未命名的篇章',
-        projectId: active.projectId ?? null,
-      }
-      const onAccepted = wasDraft ? () => {
-        loadedRef.current.add(conversationId)
-        draftIdRef.current = null
-        setConversations(previous => previous.map(conversation => conversation.id === draftId
-          ? { ...conversation, draft: false }
-          : conversation))
-        onConversationCreated?.(conversationId)
-      } : undefined
-
+      const turn: ChatTurnAuthority = { schemaVersion: 1, createConversation: wasDraft, title: active.title || '未命名的篇章', projectId: active.projectId ?? null }
+      const onAccepted = wasDraft ? () => { loadedRef.current.add(conversationId); draftIdRef.current = null; setConversations(previous => previous.map(conversation => conversation.id === draftId ? { ...conversation, draft: false } : conversation)); onConversationCreated?.(conversationId) } : undefined
       const history = [...baseHistory, userMessage].map(toHistoryMessage)
       const projectContext = await getProjectContext(active.projectId)
       const controller = new AbortController()
       abortByConversationRef.current.set(conversationId, controller)
-      const result = await startStream(
-        history, assistantMessageId, conversationId, controller,
-        files?.length ? files : undefined, projectContext, generationId, turn, onAccepted,
-      )
-
+      const result = await startStream(history, assistantMessageId, conversationId, controller, files?.length ? files : undefined, projectContext, generationId, turn, onAccepted)
       if (isFirstExchange && result.status === "completed" && result.content) {
         if (activeEndpoint && activeEndpoint.outputKind !== "chat") {
           const title = text.trim().replace(/\s+/g, " ").slice(0, 14) || "媒体生成"
-          setConversations(previous => previous.map(conversation => conversation.id === conversationId
-            ? { ...conversation, title }
-            : conversation))
+          setConversations(previous => previous.map(conversation => conversation.id === conversationId ? { ...conversation, title } : conversation))
           updateConversationTitle(conversationId, title)
-        } else {
-          generateTitle(conversationId, text, result.content)
-        }
+        } else generateTitle(conversationId, text, result.content)
       }
     } catch (error) {
       console.error("handleSend failed", error)
       markGeneration(conversationId, { status: "error", generationId, assistantMessageId })
-      setConversations(previous => previous.map(conversation => conversation.id === conversationId ? {
-        ...conversation,
-        messages: conversation.messages.map(message => message.id === assistantMessageId
-          ? { ...message, content: message.content || "发送失败，请重试", isError: true }
-          : message),
-      } : conversation))
+      setConversations(previous => previous.map(conversation => conversation.id === conversationId ? { ...conversation, messages: conversation.messages.map(message => message.id === assistantMessageId ? { ...message, content: message.content || "发送失败，请重试", isError: true } : message) } : conversation))
     }
   }
 
   function regenerationContext() {
-    return {
-      user,
-      active,
-      activeId,
-      isActiveGenerating: !authorityReady || isActiveGenerating,
-      setOpenArtifactId,
-      setConversations,
-      markGeneration,
-      getProjectContext,
-      registerAbort: (conversationId: string, controller: AbortController) => abortByConversationRef.current.set(conversationId, controller),
-      resumeExistingGeneration: (conversationId: string) => resumeKnownGeneration(conversationId, resumeGenerationIfNeeded),
-      startStream,
-    }
+    return { user, active, activeId, isActiveGenerating: !authorityReady || isActiveGenerating, setOpenArtifactId, setConversations, markGeneration, getProjectContext, registerAbort: (conversationId: string, controller: AbortController) => abortByConversationRef.current.set(conversationId, controller), resumeExistingGeneration: (conversationId: string) => resumeKnownGeneration(conversationId, resumeGenerationIfNeeded), startStream }
   }
-
-  function handleRegenerate() {
-    return regenerateLastAssistant(regenerationContext())
-  }
-
-  function regenerateFromUserMessage(userMessageId: string, editedContent?: string) {
-    return regenerateFromUser({ ...regenerationContext(), userMessageId, editedContent })
-  }
-  return {
-    generationByConversation,
-    isActiveGenerating,
-    handleStop,
-    handleSend,
-    handleRegenerate,
-    handleEditUserMessage: (messageId: string, content: string) => regenerateFromUserMessage(messageId, content),
-    handleRegenerateFromUser: (messageId: string) => regenerateFromUserMessage(messageId),
-    resumeGenerationIfNeeded,
-  }
+  function handleRegenerate() { return regenerateLastAssistant(regenerationContext()) }
+  function regenerateFromUserMessage(userMessageId: string, editedContent?: string) { return regenerateFromUser({ ...regenerationContext(), userMessageId, editedContent }) }
+  return { generationByConversation, isActiveGenerating, handleStop, handleSend, handleRegenerate, handleEditUserMessage: (messageId: string, content: string) => regenerateFromUserMessage(messageId, content), handleRegenerateFromUser: (messageId: string) => regenerateFromUserMessage(messageId), resumeGenerationIfNeeded }
 }
