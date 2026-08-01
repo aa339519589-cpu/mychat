@@ -40,9 +40,13 @@ export function MessageList(props: MessageListProps) {
     () => messages.slice(visibleStart),
     [messages, visibleStart],
   )
+  const openingExchange = visibleStart === 0 && messages.length <= 2
 
   return (
-    <article className="mx-auto w-full min-w-0 max-w-[58rem] overflow-x-clip px-3 py-5 sm:px-4 md:px-8 md:py-6">
+    <article className={openingExchange
+      ? "mx-auto w-full min-w-0 max-w-[58rem] overflow-x-clip px-3 pb-5 pt-[clamp(5.5rem,10dvh,8rem)] sm:px-4 md:px-8 md:pb-6 md:pt-[clamp(5rem,9dvh,7rem)]"
+      : "mx-auto w-full min-w-0 max-w-[58rem] overflow-x-clip px-3 py-5 sm:px-4 md:px-8 md:py-6"}
+    >
       <div className="min-w-0 space-y-6 md:space-y-8">
         {visibleStart > 0 && (
           <div className="flex justify-center">
