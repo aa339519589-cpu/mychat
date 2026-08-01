@@ -56,7 +56,7 @@ export function ModelPickerSheet({ open, mobile, models, activeModelId, onClose,
               <button onClick={onClose} className="fluid-press fluid-icon-press absolute right-2.5 flex size-11 items-center justify-center rounded-full border border-border/55 bg-background/85 text-muted-foreground hover:text-foreground dark:border-white/10 dark:bg-white/5" aria-label="关闭模型选择"><X className="size-4" /></button>
             </div>
             <div className="fluid-scroll min-h-0 flex-1 overflow-y-auto px-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-1.5 md:px-3">
-              <ModelCatalogList models={models} activeModelId={activeModelId} onSelect={model => { onSelect(model); if (model.access !== "premium") onClose() }} compact />
+              <ModelCatalogList models={models} activeModelId={activeModelId} onSelect={model => { onSelect(model); if (model.access !== "premium" || model.ownerUnlocked === true) onClose() }} compact />
             </div>
           </motion.section>
         </motion.div>
