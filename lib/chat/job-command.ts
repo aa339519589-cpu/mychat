@@ -121,10 +121,15 @@ async function compensateRejectedPayload(input: { dependencies: EnqueueChatJobDe
   try { await input.dependencies.removePayload(input.reference, { userId: input.userId, jobId: input.jobId }) } catch (cleanupError) { log.warn('jobs', 'Immediate orphan payload compensation failed', { jobId: input.jobId, name: cleanupError instanceof Error ? cleanupError.name : 'unknown' }) }
 }
 
+function resolvedAccessClass(value: EnqueueChatJobInput['accessClass']): NonNullable<EnqueueChatJobInput['accessClass']> {
+  return value || 'legacy'
+}
+
 export async function enqueueChatJob(input: EnqueueChatJobInput, dependencyOverrides: Partial<EnqueueChatJobDependencies> = {}): Promise<{ created: boolean; job: ChatJobAdmission }> {
   const startedAt = Date.now()
   const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides }
   const { body } = input
+  const accessClass = resolvedAccessClass(input.accessClass)
   const outputKind = input.outputKind === 'chat' ? 'text' : input.outputKind
   const attachments = sanitizedAttachments(body.attachments)
   const command: JsonObject = {
@@ -133,7 +138,7 @@ export async function enqueueChatJob(input: EnqueueChatJobInput, dependencyOverr
     tier: body.tier ?? '绝句',
     ...(body.modelId ? { modelId: body.modelId } : {}),
     ...(body.reasoningEffort ? { reasoningEffort: body.reasoningEffort } : {}),
-    accessClass: input.accessClass ?? 'legacy',
+    accessClass,
     searchMode: input.searchMode,
     deepResearch: body.deepResearch === true,
     historyRetrieval: body.historyRetrieval === true,
@@ -146,7 +151,7 @@ export async function enqueueChatJob(input: EnqueueChatJobInput, dependencyOverr
   const prepared = await prepareChatPayload({ command, userId: input.userId, jobId: body.generationId, outputKind, billingClass: body.endpointId ? 'customer' : 'platform', requestId: input.requestId, persistPayload: dependencies.persistPayload })
   const payloadPreparedAt = Date.now()
   const queue = outputKind === 'text' ? 'chat' : 'media'
-  const budget: JsonObject = outputKind === 'text' ? { wallTimeMs: 10 * 60_000, tokenLimit: (input.accessClass ?? 'legacy') === 'trial' ? 30_000 : 160_000, toolCallLimit: 64 } : { wallTimeMs: 15 * 60_000, costMicros: 50_000_000 }
+  const budget: JsonObject = outputKind === 'text' ? { wallTimeMs: 10 * 60_000, tokenLimit: accessClass === 'trial' ? 30_000 : 160_000, toolCallLimit: 64 } : { wallTimeMs: 15 * 60_000, costMicros: 50_000_000 }
   const maxAttempts = outputKind === 'text' ? 3 : 2
   let result: { created: boolean; job: ChatJobAdmission }
   try { result = await admitChatJob({ command: input, dependencies, payload: prepared.stored, budget, queue, maxAttempts }) } catch (error) { const reference = prepared.reference; if (!reference) throw error; await compensateRejectedPayload({ dependencies, reference, userId: input.userId, jobId: body.generationId }); throw error }
