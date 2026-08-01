@@ -32,11 +32,21 @@ function admissionError(request: Request, error: unknown): Response {
 type AdmissionPolicy = { response?: Response; selection?: ChatModelSelection; usingBalance?: boolean }
 type AcceptedChatJob = Awaited<ReturnType<typeof enqueueChatJob>>
 
-function acceptedChatResponse(input: { body: DurableChatRequestBody; enqueued: AcceptedChatJob; requestId: string; startedAt: number; authenticatedAt: number; rateLimitedAt: number; parsedAt: number; policyResolvedAt: number }): Response {
+function acceptedChatResponse(input: { body: DurableChatRequestBody; enqueued: AcceptedChatJob; requestId: string; startedAt: number; authenticatedAt: number; rateLimitedAt: number; parsedAt: number; policyResolvedAt: number; trialRemaining: number | null }): Response {
   const completedAt = Date.now()
   log.info('chat', 'Chat request admission timing', { requestId: input.requestId, jobId: input.enqueued.job.id, authMs: input.authenticatedAt - input.startedAt, rateLimitMs: input.rateLimitedAt - input.authenticatedAt, parseMs: input.parsedAt - input.rateLimitedAt, quotaAndModelPolicyMs: input.policyResolvedAt - input.parsedAt, enqueueMs: completedAt - input.policyResolvedAt, totalMs: completedAt - input.startedAt })
   const streamUrl = `/api/v1/jobs/${input.enqueued.job.id}/events?from_seq=0`
-  return Response.json({ schemaVersion: 1, jobId: input.enqueued.job.id, generationId: input.enqueued.job.id, userMessageId: input.body.userMessageId, assistantMessageId: input.body.assistantMessageId, status: input.enqueued.job.status, created: input.enqueued.created, streamUrl }, { status: 202, headers: { 'Cache-Control': 'no-store', 'Location': `/api/v1/jobs/${input.enqueued.job.id}`, 'X-Idempotency-Key': `chat:${input.body.generationId}` } })
+  return Response.json({
+    schemaVersion: 1,
+    jobId: input.enqueued.job.id,
+    generationId: input.enqueued.job.id,
+    userMessageId: input.body.userMessageId,
+    assistantMessageId: input.body.assistantMessageId,
+    status: input.enqueued.job.status,
+    created: input.enqueued.created,
+    streamUrl,
+    ...(input.trialRemaining !== null ? { trialRemaining: input.trialRemaining, trialLimit: 3 } : {}),
+  }, { status: 202, headers: { 'Cache-Control': 'no-store', 'Location': `/api/v1/jobs/${input.enqueued.job.id}`, 'X-Idempotency-Key': `chat:${input.body.generationId}` } })
 }
 
 function modelSelectionResponse(request: Request, error: ChatModelSelectionError): Response {
@@ -51,7 +61,7 @@ function modelSelectionResponse(request: Request, error: ChatModelSelectionError
 async function resolveAdmissionPolicy(request: Request, auth: AuthCtx, body: DurableChatRequestBody): Promise<AdmissionPolicy> {
   let selection: ChatModelSelection
   try {
-    selection = await resolveChatModelSelection({ tier: body.tier ?? '绝句', deepResearch: body.deepResearch === true, endpointId: body.endpointId, modelId: body.modelId, reasoningEffort: body.reasoningEffort, supabase: auth.supabase, userId: auth.userId, allowPremium: auth.isOwner === true })
+    selection = await resolveChatModelSelection({ tier: body.tier ?? '绝句', deepResearch: body.deepResearch === true, endpointId: body.endpointId, modelId: body.modelId, reasoningEffort: body.reasoningEffort, supabase: auth.supabase, userId: auth.userId, allowPremium: true })
   } catch (error) {
     if (error instanceof ChatModelSelectionError) return { response: modelSelectionResponse(request, error) }
     return { response: configurationError(request, '模型策略暂时不可用') }
@@ -89,14 +99,22 @@ export async function POST(request: NextRequest) {
   const selection = policy.selection
   if (!selection || policy.usingBalance === undefined) return configurationError(request, '聊天准入策略暂时不可用')
   let trialReserved = false
-  if (selection.accessClass === 'trial' && auth.isOwner !== true) {
+  let trialRemaining: number | null = null
+  if (body.modelId && selection.accessClass !== 'quota' && auth.isOwner !== true) {
     try {
       const trial = await reserveTrialCall(auth.supabase, auth.userId, body.generationId, selection.model)
-      if (!trial.allowed) return apiErrorResponseV1(request, { status: 429, code: 'QUOTA_EXCEEDED', message: '中档模型的 3 次免费额度已用完', retryable: false })
+      trialRemaining = trial.remaining
+      if (!trial.allowed) return apiErrorResponseV1(request, {
+        status: 429,
+        code: 'QUOTA_EXCEEDED',
+        message: '非基础模型共享的 3 次试用额度已用完，请切换到上方 3 个基础模型继续使用。',
+        retryable: false,
+        details: { trialLimit: 3, trialRemaining: 0 },
+      })
       trialReserved = !trial.duplicate
       body = clampTrialInput(body)
     } catch (error) {
-      return configurationError(request, error instanceof Error ? error.message : '中档模型额度服务暂时不可用')
+      return configurationError(request, error instanceof Error ? error.message : '非基础模型试用额度服务暂时不可用')
     }
   }
   const policyResolvedAt = Date.now()
@@ -107,7 +125,7 @@ export async function POST(request: NextRequest) {
   const searchMode = body.searchMode === 'web' || body.searchMode === 'deep' ? body.searchMode : normalizeSearchMode(body.webSearch, body.deepWebSearch)
   try {
     const enqueued = await enqueueChatJob({ body, userId: auth.userId, isAnonymous: auth.isAnonymous, usingBalance: policy.usingBalance, searchMode, outputKind: selection.outputKind, accessClass: selection.accessClass, requestId: traceId })
-    return acceptedChatResponse({ body, enqueued, requestId: traceId, startedAt, authenticatedAt, rateLimitedAt, parsedAt, policyResolvedAt })
+    return acceptedChatResponse({ body, enqueued, requestId: traceId, startedAt, authenticatedAt, rateLimitedAt, parsedAt, policyResolvedAt, trialRemaining })
   } catch (error) {
     if (trialReserved) await releaseTrialCall(auth.supabase, auth.userId, body.generationId).catch(() => undefined)
     return admissionError(request, error)
