@@ -10,25 +10,32 @@ import type { ModelCatalogItem } from "@/lib/model-catalog"
 import { cn } from "@/lib/utils"
 
 function ModelGroupDivider({ models }: { models: ModelCatalogItem[] }) {
-  const sample = models.find(model => model.access === "trial")
+  const sample = models.find(model =>
+    model.trialUnlimited === true
+    || typeof model.trialRemaining === "number"
+    || typeof model.trialLimit === "number",
+  )
   const limit = typeof sample?.trialLimit === "number" ? sample.trialLimit : 3
   const remaining = typeof sample?.trialRemaining === "number" ? sample.trialRemaining : null
   const unlimited = sample?.trialUnlimited === true
   return (
-    <div className="px-3 py-3.5">
+    <div className="px-3 py-4">
       <div className="flex items-center gap-2.5">
-        <span className="h-px flex-1 bg-border/70 dark:bg-white/10" />
-        <span className="shrink-0 text-[11px] font-medium tracking-[0.04em] text-foreground/80">以上 3 个为基础模型</span>
-        <span className="h-px flex-1 bg-border/70 dark:bg-white/10" />
+        <span className="h-[2px] flex-1 rounded-full bg-foreground/30 dark:bg-white/30" />
+        <span className="shrink-0 rounded-full border border-foreground/20 bg-background/90 px-3 py-1 text-[12px] font-semibold tracking-[0.02em] text-foreground dark:border-white/20 dark:bg-black/20">以上 3 个为基础模型</span>
+        <span className="h-[2px] flex-1 rounded-full bg-foreground/30 dark:bg-white/30" />
       </div>
-      <p className={cn("mt-2 text-center text-[11px]", remaining === 0 ? "font-medium text-destructive" : "text-muted-foreground")}>
+      <p className={cn(
+        "mx-auto mt-2.5 w-fit rounded-full border px-3 py-1 text-center text-[12px] font-semibold",
+        remaining === 0
+          ? "border-destructive/45 bg-destructive/10 text-destructive"
+          : "border-border/80 bg-secondary/65 text-foreground/85 dark:border-white/15 dark:bg-white/8",
+      )}>
         {unlimited
           ? "会员账户：其他模型不限次数"
           : remaining === null
-            ? `其他可试用模型共享 ${limit} 次额度`
-            : remaining === 0
-              ? "其他可试用模型额度已用完 · 剩余 0 次"
-              : `其他可试用模型共享额度 · 剩余 ${remaining} / ${limit} 次`}
+            ? `其他模型共享 ${limit} 次试用`
+            : `其他模型共享试用：剩余 ${remaining} 次`}
       </p>
     </div>
   )
