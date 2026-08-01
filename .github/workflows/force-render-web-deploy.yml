@@ -22,37 +22,49 @@ jobs:
     timeout-minutes: 45
     env:
       REVISION: ${{ github.sha }}
+      GH_TOKEN: ${{ github.token }}
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
     steps:
-      - name: Report Render deployment pending
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Deploy, wait, and verify production
+        shell: bash
         run: |
-          echo "DEPLOY_STAGE=initializing" >> "$GITHUB_ENV"
-          curl --fail-with-body --silent --show-error \
-            --request POST \
-            --header "Authorization: Bearer $GH_TOKEN" \
-            --header "Accept: application/vnd.github+json" \
-            --header "X-GitHub-Api-Version: 2022-11-28" \
-            --data "$(jq -nc --arg state pending --arg context 'Render Production' --arg description 'Deploying exact Matrix web revision' '{state:$state,context:$context,description:$description}')" \
-            "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$REVISION"
+          set -Eeuo pipefail
+          stage="initializing"
 
-      - name: Validate Render credentials
-        env:
-          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
-        run: |
-          echo "DEPLOY_STAGE=validating credentials" >> "$GITHUB_ENV"
+          report() {
+            local state="$1"
+            local context="$2"
+            local description="$3"
+            curl --silent --show-error \
+              --request POST \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              --data "$(jq -nc --arg state "$state" --arg context "$context" --arg description "$description" --arg target_url "$PRODUCTION_URL" '{state:$state,context:$context,description:$description,target_url:$target_url}')" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$REVISION" >/dev/null || true
+          }
+
+          fail() {
+            local code=$?
+            trap - ERR
+            report failure "Render Failure: $stage" "Exact production deploy failed at $stage"
+            report failure "Render Production" "Render failed at $stage for ${REVISION:0:12}"
+            exit "$code"
+          }
+          trap fail ERR
+
+          report pending "Render Production" "Deploying exact Matrix web revision"
+
+          stage="credentials"
+          report pending "Render Stage: credentials" "Validating Render credentials"
           test -n "$RENDER_API_KEY"
-          [[ "$RENDER_SERVICE_ID" =~ ^srv-[a-z0-9]+$ ]]
+          test -n "$RENDER_SERVICE_ID"
           [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]
+          report success "Render Stage: credentials" "Render credentials validated"
 
-      - name: Start exact revision deploy
-        id: render
-        env:
-          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
-        run: |
-          echo "DEPLOY_STAGE=starting Render deploy" >> "$GITHUB_ENV"
+          stage="start"
+          report pending "Render Stage: start" "Starting exact Render deploy"
           http_code=000
           for attempt in {1..20}; do
             set +e
@@ -81,40 +93,38 @@ jobs:
           [[ "$deploy_id" =~ ^dep-[a-z0-9]+$ ]]
           if [[ -n "$commit_id" && "$commit_id" != "$REVISION" ]]; then
             echo "Render selected $commit_id instead of $REVISION" >&2
-            exit 1
+            false
           fi
-          echo "deploy_id=$deploy_id" >> "$GITHUB_OUTPUT"
+          report success "Render Stage: start" "Render deploy $deploy_id started"
 
-      - name: Wait for Render deploy
-        env:
-          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
-          DEPLOY_ID: ${{ steps.render.outputs.deploy_id }}
-        run: |
-          echo "DEPLOY_STAGE=waiting for Render live" >> "$GITHUB_ENV"
+          stage="wait-live"
+          report pending "Render Stage: wait-live" "Waiting for Render to become live"
           for attempt in {1..180}; do
             response="$(curl --fail-with-body --silent --show-error \
               --retry 3 --retry-all-errors --connect-timeout 10 --max-time 60 \
               --header "Authorization: Bearer $RENDER_API_KEY" \
-              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys/$DEPLOY_ID")"
+              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys/$deploy_id")"
             status="$(jq -er '.status' <<<"$response")"
             commit_id="$(jq -r '.commit.id // empty' <<<"$response")"
             if [[ -n "$commit_id" && "$commit_id" != "$REVISION" ]]; then
               echo "Render deploy changed revision to $commit_id" >&2
-              exit 1
+              false
             fi
             case "$status" in
-              live) exit 0 ;;
-              build_failed|update_failed|canceled|deactivated) echo "Render deploy failed: $status" >&2; exit 1 ;;
+              live) break ;;
+              build_failed|update_failed|canceled|deactivated)
+                echo "Render deploy failed: $status" >&2
+                false
+                ;;
             esac
             sleep 10
           done
-          echo "Render deploy timed out" >&2
-          exit 1
+          [[ "$status" == "live" ]]
+          report success "Render Stage: wait-live" "Render deploy $deploy_id is live"
 
-      - name: Confirm production revision
-        run: |
-          echo "DEPLOY_STAGE=verifying production revision" >> "$GITHUB_ENV"
+          stage="verify-revision"
+          report pending "Render Stage: verify-revision" "Checking production revision"
+          runtime_revision=""
           for attempt in {1..30}; do
             payload="$(curl --fail-with-body --silent --show-error \
               --retry 2 --retry-all-errors --connect-timeout 10 --max-time 60 \
@@ -122,31 +132,12 @@ jobs:
               "$PRODUCTION_URL/api/ready" || true)"
             runtime_revision="$(jq -r '.revision // empty' <<<"$payload" 2>/dev/null || true)"
             if [[ -n "$runtime_revision" && "${REVISION:0:${#runtime_revision}}" == "$runtime_revision" ]]; then
-              echo "Production is serving revision $runtime_revision"
-              exit 0
+              break
             fi
             sleep 5
           done
-          echo "Production did not report the requested revision" >&2
-          exit 1
-
-      - name: Report Render deployment result
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-          JOB_STATUS: ${{ job.status }}
-        run: |
-          if [[ "$JOB_STATUS" == "success" ]]; then
-            state=success
-            description="Render live; exact revision ${REVISION:0:12} verified"
-          else
-            state=failure
-            description="Render failed at ${DEPLOY_STAGE:-unknown} for ${REVISION:0:12}"
-          fi
-          curl --fail-with-body --silent --show-error \
-            --request POST \
-            --header "Authorization: Bearer $GH_TOKEN" \
-            --header "Accept: application/vnd.github+json" \
-            --header "X-GitHub-Api-Version: 2022-11-28" \
-            --data "$(jq -nc --arg state "$state" --arg context 'Render Production' --arg description "$description" --arg target_url "$PRODUCTION_URL" '{state:$state,context:$context,description:$description,target_url:$target_url}')" \
-            "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$REVISION"
+          [[ -n "$runtime_revision" ]]
+          [[ "${REVISION:0:${#runtime_revision}}" == "$runtime_revision" ]]
+          report success "Render Stage: verify-revision" "Production serves $runtime_revision"
+          report success "Render Production" "Render live; exact revision ${REVISION:0:12} verified"
+          echo "Render deploy $deploy_id is live; production revision $runtime_revision"
