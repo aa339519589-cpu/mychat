@@ -51,6 +51,12 @@ jobs:
               "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$REVISION" >/dev/null || true
           }
 
+          render_get() {
+            curl --fail-with-body --silent --show-error \
+              --retry 4 --retry-all-errors --connect-timeout 10 --max-time 60 \
+              --header "Authorization: Bearer $RENDER_API_KEY" "$1"
+          }
+
           fail() {
             local code=$?
             trap - ERR
@@ -68,7 +74,7 @@ jobs:
 
           stage="render-start"
           response_file="$(mktemp)"
-          http_code="$(curl --fail-with-body --silent --show-error \
+          http_code="$(curl --silent --show-error \
             --retry 4 --retry-all-errors --connect-timeout 10 --max-time 60 \
             --request POST \
             --header "Authorization: Bearer $RENDER_API_KEY" \
@@ -80,17 +86,27 @@ jobs:
           [[ "$http_code" =~ ^2[0-9][0-9]$ ]]
 
           stage="render-resolve"
-          deploy_id="$(jq -r '.id // .deploy.id // .[0].id // .[0].deploy.id // empty' "$response_file")"
+          deploy_id="$(jq -r '.id // .deploy.id // .[0].id // .[0].deploy.id // empty' "$response_file" 2>/dev/null || true)"
+          if [[ -z "$deploy_id" ]]; then
+            for attempt in {1..60}; do
+              list="$(render_get "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys?limit=50")"
+              deploy_id="$(jq -r --arg rev "$REVISION" '
+                def rows: if type == "array" then .[] elif type == "object" and (.deploys | type) == "array" then .deploys[] else empty end;
+                [rows | (.deploy // .) | (.commit.id // .commitId // "") as $commit |
+                  select($commit != "" and (($commit == $rev) or ($rev | startswith($commit)) or ($commit | startswith($rev))))
+                ] | first | .id // empty
+              ' <<<"$list")"
+              [[ -n "$deploy_id" ]] && break
+              sleep 5
+            done
+          fi
           test -n "$deploy_id"
 
           stage="render-wait"
           status=""
           for attempt in {1..180}; do
-            response="$(curl --fail-with-body --silent --show-error \
-              --retry 3 --retry-all-errors --connect-timeout 10 --max-time 60 \
-              --header "Authorization: Bearer $RENDER_API_KEY" \
-              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys/$deploy_id")"
-            status="$(jq -r '.status // .deploy.status // empty' <<<"$response")"
+            response="$(render_get "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys/$deploy_id")"
+            status="$(jq -r '.status // .deploy.status // .[0].status // .[0].deploy.status // empty' <<<"$response")"
             case "$status" in
               live) break ;;
               build_failed|update_failed|pre_deploy_failed|canceled|deactivated)
