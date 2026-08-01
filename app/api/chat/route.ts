@@ -107,14 +107,14 @@ export async function POST(request: NextRequest) {
       if (!trial.allowed) return apiErrorResponseV1(request, {
         status: 403,
         code: 'QUOTA_EXCEEDED',
-        message: '中档模型共享的 3 次试用额度已用完，请切换到上方 3 个基础模型继续使用。',
+        message: '其他可试用模型共享的 3 次额度已用完，当前剩余 0 次。请切换到上方 3 个基础模型继续使用。',
         retryable: false,
         details: { trialLimit: 3, trialRemaining: 0 },
       })
       trialReserved = !trial.duplicate
       body = clampTrialInput(body)
     } catch (error) {
-      return configurationError(request, error instanceof Error ? error.message : '中档模型试用额度服务暂时不可用')
+      return configurationError(request, error instanceof Error ? error.message : '可试用模型额度服务暂时不可用')
     }
   }
   const policyResolvedAt = Date.now()
