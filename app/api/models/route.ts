@@ -31,14 +31,22 @@ export async function GET(request: Request) {
       owner,
       trialLimit: SHARED_TRIAL_LIMIT,
       trialRemaining,
-      models: models.map(model => ({
-        ...model,
-        ...(model.access === 'premium' && owner ? { ownerUnlocked: true } : {}),
-        ...(model.access === 'trial' && owner ? { trialUnlimited: true } : {}),
-        ...(model.access === 'trial' && trialRemaining !== null
-          ? { trialLimit: SHARED_TRIAL_LIMIT, trialRemaining }
-          : {}),
-      })),
+      models: models.map(model => {
+        const baseModel = model.access === 'quota'
+        const activeSharedTrial = !owner && trialRemaining !== null && trialRemaining > 0
+        return {
+          ...model,
+          ...(model.access === 'premium' && (owner || activeSharedTrial) ? { ownerUnlocked: true } : {}),
+          ...(!baseModel && owner ? { trialUnlimited: true } : {}),
+          ...(!baseModel && !owner && trialRemaining !== null
+            ? {
+                trialLimit: SHARED_TRIAL_LIMIT,
+                trialRemaining,
+                trialSelectable: trialRemaining > 0,
+              }
+            : {}),
+        }
+      }),
     }, {
       headers: {
         'Cache-Control': 'private, no-store',

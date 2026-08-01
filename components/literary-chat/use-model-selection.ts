@@ -34,7 +34,10 @@ async function fetchCatalog(): Promise<ModelCatalogItem[]> {
 }
 
 function isSelectable(model: ModelCatalogItem): boolean {
-  return model.access !== "premium" || model.ownerUnlocked === true
+  if (model.access === "quota") return true
+  return model.ownerUnlocked === true
+    || model.trialUnlimited === true
+    || model.trialSelectable === true
 }
 
 function preferredEffort(model: ModelCatalogItem, saved?: string | null): string | null {
