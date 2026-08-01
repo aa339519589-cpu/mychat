@@ -6,7 +6,7 @@
   },
   "files": {
     "app/api/auth/email/route.ts": { "complexity": [17] },
-    "app/api/chat/route.ts": { "complexity": [28] },
+    "app/api/chat/route.ts": { "complexity": [27] },
     "app/api/chat/title/route.ts": { "complexity": [18] },
     "app/api/endpoints/[endpointId]/route.ts": { "complexity": [28], "maxLines": [85] },
     "app/api/endpoints/discover/route.ts": { "complexity": [18] },
@@ -91,7 +91,7 @@
     "lib/llm/openai-compatible/discovery.ts": { "complexity": [31, 26], "maxLines": [96] },
     "lib/llm/openai-compatible/safe-fetch.ts": { "complexity": [19], "maxLines": [117] },
     "lib/llm/provider-adapters.ts": { "complexity": [19] },
-    "lib/llm/system.ts": { "complexity": [22], "maxLines": [93] },
+    "lib/llm/system.ts": { "complexity": [21], "maxLines": [86] },
     "lib/llm/turn-response.ts": { "complexity": [30] },
     "lib/llm/turn-stream.ts": { "complexity": [28] },
     "lib/logger.ts": { "complexity": [17] },
