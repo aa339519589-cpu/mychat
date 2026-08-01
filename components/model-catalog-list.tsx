@@ -34,7 +34,7 @@ function ModelCatalogRow({ model, active, onSelect, compact }: {
   onSelect?: (model: ModelCatalogItem) => void
   compact: boolean
 }) {
-  const interactive = Boolean(onSelect) && model.access !== "premium"
+  const interactive = Boolean(onSelect) && (model.access !== "premium" || model.ownerUnlocked === true)
   const tags = [
     model.provider,
     ...(model.flagship ? ["旗舰"] : []),
