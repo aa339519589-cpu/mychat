@@ -29,7 +29,6 @@ export function LiteraryChat() {
   const [activeId, setActiveId] = useState("")
   const [hydratingConversationId, setHydratingConversationId] = useState<string | null>(null)
   const [searchMode, setSearchMode] = useState<SearchMode>("off")
-  const [deepResearch, setDeepResearch] = useState(false)
   const [historyRetrieval, setHistoryRetrieval] = useState(false)
   const [renderEnabled, setRenderEnabled] = useState(false)
   const layout = useLiteraryChatLayoutState()
@@ -45,7 +44,7 @@ export function LiteraryChat() {
   activeIdRef.current = activeId
 
   const memory = useMemories(user)
-  const model = useModelSelection({ setSearchMode, setDeepResearch, setHistoryRetrieval })
+  const model = useModelSelection({ setSearchMode, setHistoryRetrieval, setRenderEnabled })
   const project = useProjects({ user, draftIdRef, setActiveId, setConversations, setDrawerOpen: layout.setDrawerOpen })
   const workspaceReady = useChatBootstrap({
     user,
@@ -84,7 +83,6 @@ export function LiteraryChat() {
     memories: memory.memories,
     memoryEnabled: memory.memoryEnabled,
     searchMode,
-    deepResearch,
     historyRetrieval,
     renderEnabled,
     authorityReady,
