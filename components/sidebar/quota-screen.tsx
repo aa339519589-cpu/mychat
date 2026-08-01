@@ -4,8 +4,22 @@ import { useEffect, useState } from "react"
 import { fetchQuota, type QuotaSnapshot } from "@/lib/data"
 import { cn } from "@/lib/utils"
 
+type AccessPayload = { owner?: unknown }
+
+async function fetchOwnerAccess(): Promise<boolean> {
+  try {
+    const response = await fetch('/api/models', { headers: { Accept: 'application/json' }, cache: 'no-store' })
+    if (!response.ok) return false
+    const payload = await response.json() as AccessPayload
+    return payload.owner === true
+  } catch {
+    return false
+  }
+}
+
 export function QuotaScreen() {
   const [quota, setQuota] = useState<QuotaSnapshot | null>(null)
+  const [owner, setOwner] = useState(false)
   const [loading, setLoading] = useState(true)
   const [codeInput, setCodeInput] = useState('')
   const [codeLoading, setCodeLoading] = useState(false)
@@ -13,14 +27,16 @@ export function QuotaScreen() {
 
   useEffect(() => {
     (async () => {
-      const q = await fetchQuota()
+      const [q, ownerAccess] = await Promise.all([fetchQuota(), fetchOwnerAccess()])
       setQuota(q)
+      setOwner(ownerAccess)
       setLoading(false)
     })()
 
     const timer = setInterval(async () => {
-      const q = await fetchQuota()
+      const [q, ownerAccess] = await Promise.all([fetchQuota(), fetchOwnerAccess()])
       setQuota(q)
+      setOwner(ownerAccess)
     }, 10_000)
 
     return () => { clearInterval(timer) }
@@ -52,7 +68,6 @@ export function QuotaScreen() {
     }
   }
 
-
   function fmtNum(n: number) { return n.toLocaleString() }
   function pct(n: number, max: number) { return Math.min(100, (n / max) * 100) }
   function fmtRemaining(windowStart: string, windowMs: number): string {
@@ -65,6 +80,18 @@ export function QuotaScreen() {
   }
 
   if (loading) return <div className="px-4 py-8 text-center text-sm text-muted-foreground">加载中…</div>
+
+  if (owner) {
+    return (
+      <div className="space-y-4 px-4">
+        <div className="rounded-2xl border border-[#C76747]/70 bg-[#D77A56]/12 px-4 py-4 shadow-[0_1px_3px_rgba(112,48,27,0.08)] dark:border-[#E28A67]/55 dark:bg-[#C96F4D]/12">
+          <div className="text-[11px] font-medium text-[#A84F32] dark:text-[#F0A184]">账户权限</div>
+          <div className="mt-1.5 text-[21px] font-semibold text-foreground">Owner · 无限制</div>
+          <div className="mt-1 text-[11px] leading-relaxed text-muted-foreground">会员模型、5 小时、7 天、中档模型 3 次试用和平台请求频率限制均已解除。</div>
+        </div>
+      </div>
+    )
+  }
 
   const t5h = (quota?.tokens5h ?? 0)
   const t7d = (quota?.tokens7d ?? 0)
@@ -192,4 +219,3 @@ export function QuotaScreen() {
 
 // ── 设置（二级全屏页内容）：两个板块 —— 「基础与记忆」｜「使用额度」──
 // 装在 ScreenPanel 里（顶部统一返回头由外壳提供），标签切换两块内容，不再逐层滑入碎片子页。
-
