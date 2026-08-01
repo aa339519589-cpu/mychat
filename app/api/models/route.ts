@@ -34,6 +34,7 @@ export async function GET(request: Request) {
       models: models.map(model => ({
         ...model,
         ...(model.access === 'premium' ? { ownerUnlocked: true } : {}),
+        ...(model.access !== 'quota' && owner ? { trialUnlimited: true } : {}),
         ...(model.access !== 'quota' && trialRemaining !== null
           ? { trialLimit: SHARED_TRIAL_LIMIT, trialRemaining }
           : {}),
