@@ -7,6 +7,38 @@ import { X } from "lucide-react"
 import { ModelCatalogList } from "@/components/model-catalog-list"
 import { MOMENTUM_SPRING, shouldDismissGesture, transitionFor } from "@/components/motion/fluid"
 import type { ModelCatalogItem } from "@/lib/model-catalog"
+import { cn } from "@/lib/utils"
+
+type TrialDecoratedModel = ModelCatalogItem & {
+  trialLimit?: number
+  trialRemaining?: number
+  trialUnlimited?: boolean
+}
+
+function ModelGroupDivider({ models }: { models: ModelCatalogItem[] }) {
+  const sample = models[0] as TrialDecoratedModel | undefined
+  const limit = typeof sample?.trialLimit === "number" ? sample.trialLimit : 3
+  const remaining = typeof sample?.trialRemaining === "number" ? sample.trialRemaining : null
+  const unlimited = sample?.trialUnlimited === true
+  return (
+    <div className="px-3 py-3.5">
+      <div className="flex items-center gap-2.5">
+        <span className="h-px flex-1 bg-border/70 dark:bg-white/10" />
+        <span className="shrink-0 text-[11px] font-medium tracking-[0.04em] text-foreground/80">以上 3 个为基础模型 · 不限次数</span>
+        <span className="h-px flex-1 bg-border/70 dark:bg-white/10" />
+      </div>
+      <p className={cn("mt-2 text-center text-[11px]", remaining === 0 ? "font-medium text-destructive" : "text-muted-foreground")}>
+        {unlimited
+          ? "会员账户：其余模型不限次数"
+          : remaining === null
+            ? `其余模型共享 ${limit} 次试用额度`
+            : remaining === 0
+              ? "其余模型共享试用已用完 · 剩余 0 次"
+              : `其余模型共享试用 · 剩余 ${remaining} / ${limit} 次`}
+      </p>
+    </div>
+  )
+}
 
 export function ModelPickerSheet({ open, mobile, models, activeModelId, onClose, onSelect }: {
   open: boolean
@@ -18,6 +50,8 @@ export function ModelPickerSheet({ open, mobile, models, activeModelId, onClose,
 }) {
   const dragControls = useDragControls()
   const reducedMotion = useReducedMotion()
+  const baseModels = models.filter(model => model.access === "quota")
+  const otherModels = models.filter(model => model.access !== "quota")
 
   useEffect(() => {
     if (!open) return
@@ -56,7 +90,9 @@ export function ModelPickerSheet({ open, mobile, models, activeModelId, onClose,
               <button onClick={onClose} className="fluid-press fluid-icon-press absolute right-2.5 flex size-11 items-center justify-center rounded-full border border-border/55 bg-background/85 text-muted-foreground hover:text-foreground dark:border-white/10 dark:bg-white/5" aria-label="关闭模型选择"><X className="size-4" /></button>
             </div>
             <div className="fluid-scroll min-h-0 flex-1 overflow-y-auto px-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-1.5 md:px-3">
-              <ModelCatalogList models={models} activeModelId={activeModelId} onSelect={model => { onSelect(model); if (model.access !== "premium" || model.ownerUnlocked === true) onClose() }} compact />
+              <ModelCatalogList models={baseModels} activeModelId={activeModelId} onSelect={model => { onSelect(model); onClose() }} compact />
+              {otherModels.length > 0 && <ModelGroupDivider models={otherModels} />}
+              {otherModels.length > 0 && <ModelCatalogList models={otherModels} activeModelId={activeModelId} onSelect={model => { onSelect(model); onClose() }} compact />}
             </div>
           </motion.section>
         </motion.div>
