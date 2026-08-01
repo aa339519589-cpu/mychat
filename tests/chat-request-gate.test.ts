@@ -28,6 +28,10 @@ test('chat authenticates and applies distributed rate limiting before reading th
   assert.equal(route.match(/await resolveAdmissionPolicy\(request, auth, body\)/g)?.length, 1)
   assert.equal(route.match(/enforceQuotaLimit\(auth, \{ quota: true \}\)/g)?.length, 1)
   assert.match(route, /selection\.accessClass === 'quota'/)
+  assert.match(route, /allowPremium: auth\.isOwner === true/)
+  assert.match(route, /selection\.accessClass === 'trial' && auth\.isOwner !== true/)
+  assert.equal(route.includes('allowPremium: true'), false)
+  assert.equal(route.includes("selection.accessClass !== 'quota'"), false)
   assert.equal(route.includes('enforceLimits(auth, request'), false)
 })
 
@@ -35,6 +39,8 @@ test('staged rate and quota gates consume each dependency exactly once', async (
   const auth = {
     supabase: {} as AuthCtx['supabase'],
     userId: '00000000-0000-4000-8000-000000000001',
+    email: 'user@example.test',
+    isOwner: false,
     isAnonymous: false,
   }
   let rateCalls = 0
@@ -69,11 +75,44 @@ test('staged rate and quota gates consume each dependency exactly once', async (
   assert.equal(quotaCalls, 1)
 })
 
+test('owner account bypasses platform request and quota gates', async () => {
+  const auth: AuthCtx = {
+    supabase: {} as AuthCtx['supabase'],
+    userId: '00000000-0000-4000-8000-000000000002',
+    email: 'owner@example.test',
+    isOwner: true,
+    isAnonymous: false,
+  }
+  let rateCalls = 0
+  let quotaCalls = 0
+
+  const rate = await enforceRequestRateLimit(auth, new Request('https://example.test/api/chat'), {
+    rateLimit: async () => {
+      rateCalls += 1
+      throw new Error('owner rate dependency should not run')
+    },
+  })
+  const quota = await enforceQuotaLimit(auth, { quota: true }, {
+    quotaCheck: async () => {
+      quotaCalls += 1
+      throw new Error('owner quota dependency should not run')
+    },
+  })
+
+  assert.equal(rate.response, undefined)
+  assert.equal(quota.response, undefined)
+  assert.equal(quota.usingBalance, false)
+  assert.equal(rateCalls, 0)
+  assert.equal(quotaCalls, 0)
+})
+
 test('authentication dependency failure stops before consuming rate capacity', async () => {
   let rateCalls = 0
   const gate = await enforceRequestRateLimit({
     supabase: null,
     userId: null,
+    email: null,
+    isOwner: false,
     isAnonymous: true,
     authUnavailable: true,
   }, new Request('https://example.test/api/chat'), {
