@@ -1,7 +1,7 @@
 "use client"
 
 import type { RefObject } from "react"
-import { ArrowRight, ChevronDown, Image as ImageIcon, Server, Sparkles, Square, Video } from "lucide-react"
+import { ArrowRight, ArrowUp, ChevronDown, Image as ImageIcon, Server, Sparkles, Square, Video } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 export function ComposerBar({ mobile, value, onValueChange, textareaRef, onResize, onSubmit, disabled, isLoading, sendPending, activeTier, activeModelLabel, activeOutputKind, canSend, onStop, onOpenModel }: {
@@ -23,6 +23,7 @@ export function ComposerBar({ mobile, value, onValueChange, textareaRef, onResiz
 }) {
   const placeholder = disabled ? "正在同步会话……" : activeTier === "绘影" ? "描述图片，也可附上参考图……" : activeTier === "录像" ? "描述视频，也可附上参考图……" : "说点什么……"
   const modelIcon = outputIcon(activeOutputKind) ?? <Sparkles className="size-[1.1rem] shrink-0" />
+  const SendIcon = value.trim() ? ArrowUp : ArrowRight
 
   return (
     <>
@@ -35,7 +36,18 @@ export function ComposerBar({ mobile, value, onValueChange, textareaRef, onResiz
       {isLoading ? (
         <button onClick={onStop} aria-label="停止生成" className="fluid-press fluid-icon-press order-4 ml-auto flex size-11 shrink-0 items-center justify-center rounded-full bg-foreground text-background shadow-sm hover:opacity-80"><Square className="size-3.5 fill-current" /></button>
       ) : (
-        <button onClick={onSubmit} disabled={!canSend} aria-label="发送" className={cn("fluid-press fluid-icon-press order-4 ml-auto flex size-11 shrink-0 items-center justify-center rounded-full border border-border/70 bg-[linear-gradient(135deg,#EAF6FA_0%,#F5EFE7_100%)] text-[#111111] shadow-[0_2px_8px_rgba(8,8,8,0.05)] dark:border-white/10 dark:bg-none dark:bg-white/10 dark:text-white", canSend ? "hover:brightness-[0.98]" : "cursor-not-allowed opacity-65")}><ArrowRight className="size-[1.1rem]" /></button>
+        <button
+          onClick={onSubmit}
+          disabled={!canSend}
+          aria-label="发送"
+          style={{ backgroundImage: "linear-gradient(135deg, var(--send-gradient-start) 0%, var(--send-gradient-mid) 48%, var(--send-gradient-end) 100%)" }}
+          className={cn(
+            "fluid-press fluid-icon-press order-4 ml-auto flex size-11 shrink-0 items-center justify-center rounded-full border border-[var(--chat-surface-border)] text-[var(--send-gradient-foreground)] shadow-[0_3px_12px_rgba(8,8,8,0.055)]",
+            canSend ? "hover:brightness-[0.985]" : "cursor-not-allowed",
+          )}
+        >
+          <SendIcon className="size-[1.15rem]" />
+        </button>
       )}
     </>
   )
