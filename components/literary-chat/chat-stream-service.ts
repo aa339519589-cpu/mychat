@@ -35,7 +35,6 @@ export type RunChatStreamOptions = {
   memories: Memory[]
   memoryEnabled: boolean
   searchMode: SearchMode
-  deepResearch: boolean
   historyRetrieval: boolean
   renderEnabled: boolean
   turn?: ChatTurnAuthority
@@ -69,7 +68,6 @@ function requestBody(options: RunChatStreamOptions): Record<string, unknown> {
     memories: options.projectContext ? undefined : (options.memoryEnabled && options.memories.length > 0 ? options.memories : undefined),
     attachments: options.attachments?.length ? options.attachments : undefined,
     searchMode: options.searchMode,
-    deepResearch: options.deepResearch,
     historyRetrieval: options.historyRetrieval,
     renderEnabled: options.renderEnabled,
     project: options.projectContext,
