@@ -35,7 +35,7 @@ export const CURATED_OPENROUTER_MODELS: readonly CuratedModel[] = [
   { id: 'openai/gpt-5.5-instant', name: 'GPT-5.5 Instant', provider: 'OpenAI', access: 'trial', flagship: false },
   { id: 'openai/gpt-5.4', name: 'GPT-5.4', provider: 'OpenAI', access: 'trial', flagship: false },
   { id: 'openai/gpt-5.2', name: 'GPT-5.2', provider: 'OpenAI', access: 'trial', flagship: false },
-  { id: 'openai/gpt-5.4-pro', name: 'GPT-5.4 Pro', provider: 'OpenAI', access: 'trial', flagship: false },
+  { id: 'openai/gpt-5.4-pro', name: 'GPT-5.4 Pro', provider: 'OpenAI', access: 'premium', flagship: true },
   { id: 'openai/gpt-5.4-mini', name: 'GPT-5.4 Mini', provider: 'OpenAI', access: 'trial', flagship: false },
   { id: 'openai/gpt-image-2', name: 'GPT Image 2', provider: 'OpenAI', access: 'premium', flagship: true },
   { id: 'anthropic/claude-fable-5', name: 'Claude Fable 5', provider: 'Anthropic', access: 'premium', flagship: true },
