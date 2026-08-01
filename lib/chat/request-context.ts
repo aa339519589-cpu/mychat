@@ -1,20 +1,16 @@
-import type { ModelContentPart, ModelMessage, RawMsg } from '@/lib/llm/types'
+import type { RawMsg } from '@/lib/llm/types'
 import { isRecord } from '@/lib/unknown-value'
 import type { HistoryRetrievalMode } from '@/lib/llm/active-retrieval'
 export { latestBeijingDateFromMessages } from '@/lib/search-mode'
 export type { SearchMode } from '@/lib/search-mode'
 export { appendUserSystemPrompt } from '@/lib/user-system-prompt'
 
-export const DEEP_RESEARCH_PREFIX = `请以最高努力完成当前问题：先理解真实目标，拆解约束，检查边界和反例，最后给出清晰结论。\n---\n`
-
 export function resolveReasoningEffort(options: {
   isDeepTierProxy: boolean
-  deepResearch: boolean
   modelId: string
   configuredEffort?: string
 }): 'low' | 'medium' | 'high' | null {
   if (!options.isDeepTierProxy && !/^grok/i.test(options.modelId)) return null
-  if (options.deepResearch) return 'high'
 
   const configured = (options.configuredEffort ?? process.env.DEEP_TIER_REASONING_EFFORT ?? 'low')
     .trim()
@@ -75,20 +71,4 @@ export function latestUserSourceImages(messages: RawMsg[]): string[] {
     return images.slice(0, 4)
   }
   return []
-}
-
-export function prependDeepResearchInstruction(messages: ModelMessage[]): void {
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const message = messages[index]
-    if (message.role !== 'user') continue
-    if (typeof message.content === 'string') {
-      message.content = DEEP_RESEARCH_PREFIX + message.content
-    } else if (Array.isArray(message.content)) {
-      const textPart = message.content.find((part): part is ModelContentPart => (
-        isRecord(part) && part.type === 'text' && typeof part.text === 'string'
-      ))
-      if (textPart) textPart.text = DEEP_RESEARCH_PREFIX + textPart.text
-    }
-    return
-  }
 }
