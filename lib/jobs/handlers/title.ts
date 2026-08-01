@@ -46,7 +46,7 @@ export const handleChatTitle: JobHandler = async context => {
   if (userError) throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'Title source is unavailable')
   if (!user) throw new JobRuntimeError('JOB_NOT_FOUND', 'Title user message does not exist')
   const selection = await resolveChatModelSelection({
-    tier: '绝句', deepResearch: false, endpointId,
+    tier: '绝句', endpointId,
     supabase: client as unknown as SupabaseServer,
     userId: context.job.principal.id,
   })
