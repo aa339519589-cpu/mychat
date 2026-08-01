@@ -16,6 +16,7 @@ export type ModelCatalogItem = {
   reasoningEfforts: string[]
   defaultReasoningEffort: string | null
   reasoningMandatory: boolean
+  ownerUnlocked?: boolean
 }
 
 type CuratedModel = Pick<ModelCatalogItem, 'id' | 'name' | 'provider' | 'access' | 'flagship'>
@@ -83,4 +84,5 @@ export function isModelCatalogItem(value: unknown): value is ModelCatalogItem {
     && item.reasoningEfforts.every(value => typeof value === 'string')
     && (item.defaultReasoningEffort === null || typeof item.defaultReasoningEffort === 'string')
     && typeof item.reasoningMandatory === 'boolean'
+    && (item.ownerUnlocked === undefined || typeof item.ownerUnlocked === 'boolean')
 }
