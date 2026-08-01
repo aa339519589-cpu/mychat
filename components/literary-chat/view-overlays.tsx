@@ -2,23 +2,16 @@
 
 import type { ComponentType, PointerEvent as ReactPointerEvent } from "react"
 import { AnimatePresence, motion, useDragControls, useReducedMotion } from "motion/react"
-import type { Conversation } from "@/lib/chat-data"
-import type { Project } from "@/lib/project-data"
 import { ArtifactPanel } from "@/components/artifact-panel"
 import type { ArtifactLibraryOverlayProps } from "@/components/artifact-library-overlay"
 import type { CodeConsoleProps } from "@/components/code-console"
-import { ConversationMenu } from "@/components/conversation-menu"
 import { artifactTitle, type ArtifactParsed } from "@/lib/artifact"
 import { PANEL_SPRING, shouldDismissGesture, transitionFor } from "@/components/motion/fluid"
 import type { LiteraryChatLayoutState } from "./layout-state"
-import type { ConversationActions } from "./literary-chat-view"
 
 type ViewOverlaysProps = {
   sessionUserId: string
   layout: LiteraryChatLayoutState
-  active?: Conversation
-  projects: Project[]
-  actions: ConversationActions
   mobile: boolean
   artifact: ArtifactParsed | null
   artifactPanelWidth: number
@@ -27,7 +20,7 @@ type ViewOverlaysProps = {
 }
 
 export function ViewOverlays(props: ViewOverlaysProps) {
-  const { layout, active, projects, actions, artifact, mobile, artifactPanelWidth, codeConsole, artifactLibrary } = props
+  const { layout, artifact, mobile, artifactPanelWidth, codeConsole, artifactLibrary } = props
   return (
     <>
       <CodeConsoleOverlay open={layout.codeOpen} userId={props.sessionUserId} component={codeConsole} onExit={() => layout.setCodeOpen(false)} />
@@ -39,7 +32,6 @@ export function ViewOverlays(props: ViewOverlaysProps) {
         openId={layout.openArtifactId}
         onClose={() => layout.setOpenArtifactId(null)}
       />
-      <HeaderConversationMenu active={active} projects={projects} actions={actions} anchor={layout.headerMenuAnchor} onClose={() => layout.setHeaderMenuAnchor(null)} onRename={() => { layout.setHeaderMenuAnchor(null); layout.setHeaderRenaming(true) }} />
     </>
   )
 }
@@ -88,23 +80,4 @@ function ArtifactOverlay({ artifact, mobile, width, openId, onClose }: { artifac
 
 function startArtifactDrag(event: ReactPointerEvent, mobile: boolean, reducedMotion: boolean | null, controls: ReturnType<typeof useDragControls>) {
   if (mobile && !reducedMotion) controls.start(event)
-}
-
-function HeaderConversationMenu({ active, projects, actions, anchor, onClose, onRename }: { active?: Conversation; projects: ViewOverlaysProps["projects"]; actions: ConversationActions; anchor: LiteraryChatLayoutState["headerMenuAnchor"]; onClose: () => void; onRename: () => void }) {
-  return (
-    <AnimatePresence initial={false}>
-      {active && !active.draft && anchor && <ConversationMenu
-          key={active.id}
-          conversation={active}
-          anchor={anchor}
-          projects={projects}
-          onClose={onClose}
-          onToggleStar={() => { actions.toggleStar(active.id); onClose() }}
-          onTogglePin={() => { actions.togglePin(active.id); onClose() }}
-          onRename={onRename}
-          onMove={projectId => { actions.move(active.id, projectId); onClose() }}
-          onDelete={() => { actions.delete(active.id); onClose() }}
-        />}
-    </AnimatePresence>
-  )
 }
