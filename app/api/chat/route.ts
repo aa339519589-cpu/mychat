@@ -105,7 +105,7 @@ export async function POST(request: NextRequest) {
       const trial = await reserveTrialCall(auth.supabase, auth.userId, body.generationId, selection.model)
       trialRemaining = trial.remaining
       if (!trial.allowed) return apiErrorResponseV1(request, {
-        status: 429,
+        status: 403,
         code: 'QUOTA_EXCEEDED',
         message: '非基础模型共享的 3 次试用额度已用完，请切换到上方 3 个基础模型继续使用。',
         retryable: false,
