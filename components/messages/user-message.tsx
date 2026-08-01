@@ -96,9 +96,11 @@ function UserMessageContent({
   onCommitEdit,
 }: Pick<UserMessageProps, "message" | "editing" | "editDraft" | "onToggleActive" | "onEditDraft" | "onCancelEdit" | "onCommitEdit">) {
   if (!message.content) return null
+  const bubbleClass = "max-w-[84%] min-w-0 overflow-hidden rounded-[0.78rem] border-0 bg-[var(--chat-bubble)] px-3.5 py-1.5 text-left text-[var(--chat-bubble-foreground)] shadow-none [background-clip:padding-box] md:max-w-[80%]"
+
   if (editing) {
     return (
-      <div className="max-w-[84%] min-w-0 rounded-[0.78rem] border border-primary bg-primary px-3.5 py-1.5 text-left text-primary-foreground shadow-[0_6px_18px_rgb(4_21_47/0.16)] md:max-w-[80%]">
+      <div className={bubbleClass}>
         <textarea
           value={editDraft}
           onChange={event => onEditDraft(event.target.value)}
@@ -108,14 +110,14 @@ function UserMessageContent({
           }}
           autoFocus
           rows={Math.min(6, Math.max(2, editDraft.split("\n").length))}
-          className="w-full min-w-0 resize-none bg-transparent font-sans text-[16px] font-[500] leading-[1.38] tracking-[0.001em] text-primary-foreground outline-none [overflow-wrap:anywhere] md:text-[17px]"
+          className="w-full min-w-0 resize-none bg-transparent font-sans text-[16px] font-normal leading-[1.38] tracking-[0.001em] text-[var(--chat-bubble-foreground)] outline-none [overflow-wrap:anywhere] md:text-[17px]"
         />
       </div>
     )
   }
   return (
-    <div role="button" tabIndex={0} onClick={onToggleActive} onKeyDown={event => { if (event.key === "Enter") onToggleActive() }} className="fluid-press max-w-[84%] min-w-0 cursor-pointer rounded-[0.78rem] border border-primary bg-primary px-3.5 py-1.5 text-left text-primary-foreground shadow-[0_6px_18px_rgb(4_21_47/0.16)] md:max-w-[80%]">
-      <p className="break-words text-left font-sans text-[16px] font-[500] not-italic leading-[1.38] tracking-[0.001em] text-primary-foreground [overflow-wrap:anywhere] md:text-[17px]">{message.content}</p>
+    <div role="button" tabIndex={0} onClick={onToggleActive} onKeyDown={event => { if (event.key === "Enter") onToggleActive() }} className={`fluid-press cursor-pointer ${bubbleClass}`}>
+      <p className="break-words text-left font-sans text-[16px] font-normal not-italic leading-[1.38] tracking-[0.001em] text-[var(--chat-bubble-foreground)] [overflow-wrap:anywhere] md:text-[17px]">{message.content}</p>
     </div>
   )
 }
@@ -160,15 +162,15 @@ function ActionButtons({ editing, editDraft, isLoading, onCommitEdit, onCancelEd
   if (editing) {
     return (
       <>
-        <button onClick={onCommitEdit} disabled={!editDraft.trim() || isLoading} title="保存并重新回复" className="fluid-press fluid-icon-press flex size-11 items-center justify-center rounded-full text-muted-foreground hover:bg-primary/10 hover:text-foreground disabled:opacity-30"><Check className="size-4" /></button>
-        <button onClick={onCancelEdit} title="取消" className="fluid-press fluid-icon-press flex size-11 items-center justify-center rounded-full text-muted-foreground hover:bg-primary/10 hover:text-foreground"><X className="size-4" /></button>
+        <button onClick={onCommitEdit} disabled={!editDraft.trim() || isLoading} title="保存并重新回复" className="fluid-press fluid-icon-press flex size-11 items-center justify-center rounded-full text-muted-foreground hover:bg-[var(--chat-bubble)] hover:text-foreground disabled:opacity-30"><Check className="size-4" /></button>
+        <button onClick={onCancelEdit} title="取消" className="fluid-press fluid-icon-press flex size-11 items-center justify-center rounded-full text-muted-foreground hover:bg-[var(--chat-bubble)] hover:text-foreground"><X className="size-4" /></button>
       </>
     )
   }
   return (
     <>
-      <button onClick={onStartEdit} disabled={isLoading} title="编辑" className="fluid-press fluid-icon-press flex size-11 items-center justify-center rounded-full text-muted-foreground hover:bg-primary/10 hover:text-foreground disabled:opacity-30"><Pencil className="size-4" /></button>
-      <button onClick={onRegenerate} disabled={isLoading} title="从这里重新回复" className="fluid-press fluid-icon-press flex size-11 items-center justify-center rounded-full text-muted-foreground hover:bg-primary/10 hover:text-foreground disabled:opacity-30"><RefreshCw className="size-4" /></button>
+      <button onClick={onStartEdit} disabled={isLoading} title="编辑" className="fluid-press fluid-icon-press flex size-11 items-center justify-center rounded-full text-muted-foreground hover:bg-[var(--chat-bubble)] hover:text-foreground disabled:opacity-30"><Pencil className="size-4" /></button>
+      <button onClick={onRegenerate} disabled={isLoading} title="从这里重新回复" className="fluid-press fluid-icon-press flex size-11 items-center justify-center rounded-full text-muted-foreground hover:bg-[var(--chat-bubble)] hover:text-foreground disabled:opacity-30"><RefreshCw className="size-4" /></button>
     </>
   )
 }
