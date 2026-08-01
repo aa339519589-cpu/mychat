@@ -66,9 +66,10 @@ jobs:
           stage="start"
           report pending "Render Stage: start" "Starting exact Render deploy"
           http_code=000
+          curl_status=1
           for attempt in {1..20}; do
-            set +e
-            http_code="$(curl --silent --show-error \
+            if http_code="$(curl --silent --show-error \
+              --retry 4 --retry-all-errors --retry-delay 2 \
               --connect-timeout 10 --max-time 60 \
               --request POST \
               --header "Authorization: Bearer $RENDER_API_KEY" \
@@ -76,16 +77,19 @@ jobs:
               --data "$(jq -nc --arg commitId "$REVISION" '{commitId: $commitId}')" \
               --output /tmp/render-start.json \
               --write-out '%{http_code}' \
-              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys")"
-            curl_status=$?
-            set -e
+              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys")"; then
+              curl_status=0
+            else
+              curl_status=$?
+            fi
             if [[ $curl_status -eq 0 && "$http_code" =~ ^2[0-9][0-9]$ ]]; then
               break
             fi
-            echo "Render deploy start attempt $attempt returned HTTP $http_code" >&2
+            echo "Render deploy start attempt $attempt returned HTTP $http_code (curl $curl_status)" >&2
             cat /tmp/render-start.json >&2 2>/dev/null || true
             sleep 15
           done
+          [[ $curl_status -eq 0 ]]
           [[ "$http_code" =~ ^2[0-9][0-9]$ ]]
           response="$(cat /tmp/render-start.json)"
           deploy_id="$(jq -er '.id' <<<"$response")"
@@ -99,6 +103,7 @@ jobs:
 
           stage="wait-live"
           report pending "Render Stage: wait-live" "Waiting for Render to become live"
+          status=""
           for attempt in {1..180}; do
             response="$(curl --fail-with-body --silent --show-error \
               --retry 3 --retry-all-errors --connect-timeout 10 --max-time 60 \
