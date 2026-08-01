@@ -60,11 +60,11 @@ jobs:
           fail() {
             local code=$?
             trap - ERR
-            report failure "Model Hotfix Failure: $stage" "Model hotfix failed at $stage"
+            report failure "Conversation Position Fix: $stage" "Conversation position fix failed at $stage"
             exit "$code"
           }
           trap fail ERR
-          report pending "Model Catalog Hotfix" "Deploying GPT-5.4 Pro premium access"
+          report pending "Conversation Position Fix" "Deploying stable message-list positioning"
 
           stage="credentials"
           test -n "$RENDER_API_KEY"
@@ -132,5 +132,5 @@ jobs:
           done
           [[ -n "$runtime_revision" ]]
           [[ "$REVISION" == "$runtime_revision"* || "$runtime_revision" == "$REVISION"* ]]
-          report success "Model Catalog Hotfix" "GPT-5.4 Pro premium access is live"
+          report success "Conversation Position Fix" "Stable message-list positioning is live"
           echo "Render deploy $deploy_id is live at revision $runtime_revision"
