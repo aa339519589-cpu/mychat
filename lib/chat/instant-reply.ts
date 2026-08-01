@@ -32,11 +32,10 @@ function hasVisualInput(message: RawMsg): boolean {
 export function isInstantReplyCandidate(options: {
   messages: RawMsg[]
   searchMode: SearchMode
-  deepResearch: boolean
   attachments?: readonly unknown[]
   inProject: boolean
 }): boolean {
-  if (options.searchMode !== 'off' || options.deepResearch || options.attachments?.length || options.inProject) {
+  if (options.searchMode !== 'off' || options.attachments?.length || options.inProject) {
     return false
   }
   const latest = latestUserMessage(options.messages)

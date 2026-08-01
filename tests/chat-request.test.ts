@@ -101,8 +101,8 @@ test('chat request boundary rejects malformed and oversized nested input', () =>
   rejects({ ...base, generateVideo: 'yes' }, /generateVideo 无效/)
   rejects({ ...base, tier: 'unknown' }, /tier 无效/)
   rejects({ ...base, searchMode: 'unknown' }, /searchMode 无效/)
-  rejects({ ...base, deepResearch: 'yes' }, /deepResearch 无效/)
   rejects({ ...base, historyRetrieval: 'yes' }, /historyRetrieval 无效/)
+  rejects({ ...base, renderEnabled: 'yes' }, /renderEnabled 无效/)
   rejects({ ...base, messages: [{ role: 'user', content: 'x', ts: 'not-a-date' }] }, /消息时间无效/)
   rejects({ ...base, turn: { schemaVersion: 2 } }, /turn 无效/)
   rejects({ ...base, turn: {
@@ -147,8 +147,8 @@ test('chat request boundary accepts the complete supported payload', () => {
     endpointId: '40000000-0000-4000-8000-000000000001',
     tier: '正构',
     searchMode: 'web',
-    deepResearch: true,
     historyRetrieval: true,
+    renderEnabled: true,
     generateImage: false,
     generateVideo: false,
     turn: {

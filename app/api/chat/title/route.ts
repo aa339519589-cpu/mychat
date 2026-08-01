@@ -50,7 +50,6 @@ export async function POST(request: NextRequest) {
     // performed in the HTTP process.
     await resolveChatModelSelection({
       tier: '绝句',
-      deepResearch: false,
       endpointId: body.endpointId,
       supabase: auth.supabase,
       userId: auth.userId,

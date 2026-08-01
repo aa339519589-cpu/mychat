@@ -17,7 +17,6 @@ export function instantModelMessages(input: LoadedChatJob): AgentLoopOpts['messa
   if (!isInstantReplyCandidate({
     messages: context.messages,
     searchMode: command.searchMode,
-    deepResearch: command.deepResearch,
     attachments: command.attachments,
     inProject: Boolean(context.project?.id),
   })) return null

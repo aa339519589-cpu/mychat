@@ -296,7 +296,6 @@ function instantContext(
   if (!input.allowInstant || projectId || !isInstantReplyCandidate({
     messages: [currentUserMessage],
     searchMode: 'off',
-    deepResearch: false,
     inProject: false,
   })) return null
   return {

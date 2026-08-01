@@ -42,7 +42,6 @@ const DEFAULT_DEPENDENCIES: ModelSelectionDependencies = {
 
 export async function resolveChatModelSelection(options: {
   tier: string
-  deepResearch: boolean
   endpointId?: string
   modelId?: string
   reasoningEffort?: string
@@ -120,7 +119,7 @@ export async function resolveChatModelSelection(options: {
       platformTierLabel: tierConfig.label,
     }
   }
-  const modelKey = options.deepResearch || tierConfig.id === '鸿篇' ? 'platform-deep' : tierConfig.model
+  const modelKey = tierConfig.id === '鸿篇' ? 'platform-deep' : tierConfig.model
   const capability = getModelCapability(modelKey)
   const apiKeyEnvironment = capability.provider.apiKeyEnv
   const apiKey = apiKeyEnvironment ? process.env[apiKeyEnvironment] ?? '' : ''
@@ -128,7 +127,7 @@ export async function resolveChatModelSelection(options: {
   return {
     customEndpoint: false,
     model: capability.id,
-    thinking: capability.supportsThinking && (options.deepResearch || tierConfig.thinking),
+    thinking: capability.supportsThinking && tierConfig.thinking,
     reasoningEffort: null,
     accessClass: 'legacy',
     capability,

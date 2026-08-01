@@ -26,7 +26,6 @@ export type LoadedChatJob = {
     accessClass: ModelAccessClass | 'legacy'
     endpointId?: string
     searchMode: SearchMode
-    deepResearch: boolean
     historyRetrieval: boolean
     renderEnabled: boolean
     usingBalance: boolean
@@ -73,10 +72,10 @@ function accessClass(value: unknown): ModelAccessClass | 'legacy' {
 }
 function command(value: JsonObject): LoadedChatJob['command'] {
   const outputKind = value.outputKind; const searchMode = value.searchMode
-  if (typeof value.tier !== 'string' || (outputKind !== 'text' && outputKind !== 'image' && outputKind !== 'video') || (searchMode !== 'off' && searchMode !== 'web') || typeof value.deepResearch !== 'boolean' || typeof value.historyRetrieval !== 'boolean' || typeof value.renderEnabled !== 'boolean' || typeof value.usingBalance !== 'boolean' || (value.endpointId !== undefined && typeof value.endpointId !== 'string') || (value.modelId !== undefined && typeof value.modelId !== 'string') || (value.reasoningEffort !== undefined && typeof value.reasoningEffort !== 'string')) throw new JobRuntimeError('JOB_INVALID_INPUT', 'Chat job command is malformed')
-  return { tier: value.tier, outputKind, searchMode, deepResearch: value.deepResearch, historyRetrieval: value.historyRetrieval, renderEnabled: value.renderEnabled, usingBalance: value.usingBalance, accessClass: accessClass(value.accessClass), ...(typeof value.modelId === 'string' ? { modelId: value.modelId } : {}), ...(typeof value.reasoningEffort === 'string' ? { reasoningEffort: value.reasoningEffort } : {}), ...(typeof value.endpointId === 'string' ? { endpointId: value.endpointId } : {}), ...(value.attachments !== undefined ? { attachments: attachments(value.attachments) } : {}) }
+  if (typeof value.tier !== 'string' || (outputKind !== 'text' && outputKind !== 'image' && outputKind !== 'video') || (searchMode !== 'off' && searchMode !== 'web') || typeof value.historyRetrieval !== 'boolean' || typeof value.renderEnabled !== 'boolean' || typeof value.usingBalance !== 'boolean' || (value.endpointId !== undefined && typeof value.endpointId !== 'string') || (value.modelId !== undefined && typeof value.modelId !== 'string') || (value.reasoningEffort !== undefined && typeof value.reasoningEffort !== 'string')) throw new JobRuntimeError('JOB_INVALID_INPUT', 'Chat job command is malformed')
+  return { tier: value.tier, outputKind, searchMode, historyRetrieval: value.historyRetrieval, renderEnabled: value.renderEnabled, usingBalance: value.usingBalance, accessClass: accessClass(value.accessClass), ...(typeof value.modelId === 'string' ? { modelId: value.modelId } : {}), ...(typeof value.reasoningEffort === 'string' ? { reasoningEffort: value.reasoningEffort } : {}), ...(typeof value.endpointId === 'string' ? { endpointId: value.endpointId } : {}), ...(value.attachments !== undefined ? { attachments: attachments(value.attachments) } : {}) }
 }
-function allowInstantContext(value: LoadedChatJob['command']): boolean { return value.outputKind === 'text' && value.searchMode === 'off' && !value.deepResearch && !value.attachments?.length }
+function allowInstantContext(value: LoadedChatJob['command']): boolean { return value.outputKind === 'text' && value.searchMode === 'off' && !value.attachments?.length }
 
 export async function loadChatJob(job: JobRecord): Promise<LoadedChatJob> {
   const startedAt = Date.now()
@@ -91,7 +90,7 @@ export async function loadChatJob(job: JobRecord): Promise<LoadedChatJob> {
     const jobInput = record(job.input); const admission = record(jobInput?.admission); const billingClass = jobInput?.billingClass
     const [authoritativeContext, selection] = await Promise.all([
       loadAuthoritativeChatContext({ client, userId, conversationId, userMessageId, allowInstant: allowInstantContext(parsedCommand) }),
-      resolveChatModelSelection({ tier: parsedCommand.tier, deepResearch: parsedCommand.deepResearch, endpointId: parsedCommand.endpointId, modelId: parsedCommand.modelId, reasoningEffort: parsedCommand.reasoningEffort, supabase: client as unknown as SupabaseServer, userId }),
+      resolveChatModelSelection({ tier: parsedCommand.tier, endpointId: parsedCommand.endpointId, modelId: parsedCommand.modelId, reasoningEffort: parsedCommand.reasoningEffort, supabase: client as unknown as SupabaseServer, userId }),
     ])
     const selectedKind = selection.outputKind === 'chat' ? 'text' : selection.outputKind
     if (selectedKind !== parsedCommand.outputKind || selection.accessClass !== parsedCommand.accessClass) throw new JobRuntimeError('JOB_CONFLICT', 'Model policy changed after enqueue')

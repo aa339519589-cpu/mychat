@@ -22,7 +22,6 @@ test('custom endpoints require an authenticated owner', async () => {
   await assert.rejects(
     resolveChatModelSelection({
       tier: '绝句',
-      deepResearch: false,
       endpointId: 'endpoint-id',
       supabase: null,
       userId: null,
@@ -37,7 +36,6 @@ test('custom endpoint selection resolves credentials, network and media kind onc
   const calls: string[] = []
   const result = await resolveChatModelSelection({
     tier: '绝句',
-    deepResearch: false,
     endpointId: 'endpoint-id',
     supabase: {} as never,
     userId: 'user-id',
@@ -59,7 +57,6 @@ test('invalid stored endpoint output kind remains a reconnect error', async () =
   await assert.rejects(
     resolveChatModelSelection({
       tier: '绝句',
-      deepResearch: false,
       endpointId: 'endpoint-id',
       supabase: {} as never,
       userId: 'user-id',
@@ -77,7 +74,6 @@ test('invalid stored endpoint output kind remains a reconnect error', async () =
 test('platform media tiers do not depend on the chat model API key', async () => {
   const result = await resolveChatModelSelection({
     tier: '录像',
-    deepResearch: false,
     supabase: null,
     userId: null,
   })

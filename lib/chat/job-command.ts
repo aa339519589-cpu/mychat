@@ -140,7 +140,6 @@ export async function enqueueChatJob(input: EnqueueChatJobInput, dependencyOverr
     ...(body.reasoningEffort ? { reasoningEffort: body.reasoningEffort } : {}),
     accessClass,
     searchMode: input.searchMode,
-    deepResearch: body.deepResearch === true,
     historyRetrieval: body.historyRetrieval === true,
     renderEnabled: body.renderEnabled === true,
     usingBalance: input.usingBalance,
