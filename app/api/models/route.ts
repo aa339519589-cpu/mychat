@@ -1,5 +1,21 @@
 import { resolveAuth } from '@/lib/api/guard'
 import { getOpenRouterCatalog } from '@/lib/openrouter-catalog'
+import { createAdminClient } from '@/lib/supabase/admin'
+
+const SHARED_TRIAL_LIMIT = 3
+
+async function resolveTrialRemaining(userId: string | null, owner: boolean): Promise<number | null> {
+  if (owner) return null
+  if (!userId) return SHARED_TRIAL_LIMIT
+  const admin = createAdminClient()
+  if (!admin) return null
+  const { count, error } = await admin
+    .from('medium_model_trial_calls')
+    .select('generation_id', { count: 'exact', head: true })
+    .eq('principal_id', userId)
+  if (error) return null
+  return Math.max(0, SHARED_TRIAL_LIMIT - Math.max(0, count ?? 0))
+}
 
 export async function GET(request: Request) {
   try {
@@ -8,16 +24,23 @@ export async function GET(request: Request) {
       resolveAuth(request),
     ])
     const owner = auth.isOwner === true
+    const trialRemaining = await resolveTrialRemaining(auth.userId, owner)
     return Response.json({
       schemaVersion: 1,
       configured: Boolean(process.env.OPENROUTER_API_KEY?.trim()),
       owner,
-      models: models.map(model => owner && model.access === 'premium'
-        ? { ...model, ownerUnlocked: true }
-        : model),
+      trialLimit: SHARED_TRIAL_LIMIT,
+      trialRemaining,
+      models: models.map(model => ({
+        ...model,
+        ...(model.access === 'premium' ? { ownerUnlocked: true } : {}),
+        ...(model.access !== 'quota' && trialRemaining !== null
+          ? { trialLimit: SHARED_TRIAL_LIMIT, trialRemaining }
+          : {}),
+      })),
     }, {
       headers: {
-        'Cache-Control': 'private, max-age=60, stale-while-revalidate=240',
+        'Cache-Control': 'private, no-store',
       },
     })
   } catch (error) {
@@ -25,6 +48,8 @@ export async function GET(request: Request) {
       schemaVersion: 1,
       configured: Boolean(process.env.OPENROUTER_API_KEY?.trim()),
       owner: false,
+      trialLimit: SHARED_TRIAL_LIMIT,
+      trialRemaining: null,
       models: [],
       error: error instanceof Error ? error.message : '模型目录暂时不可用',
     }, {
