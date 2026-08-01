@@ -28,6 +28,33 @@ body * {
   font-family: var(--mychat-base-font) !important;
 }
 
+body {
+  font-weight: 400 !important;
+}
+
+/* The previous scale rendered SF/PingFang one or two steps heavier than iOS.
+   Keep hierarchy, while returning body and controls to native regular weights. */
+.font-normal,
+[class~="font-[500]"],
+[class~="font-[562]"] {
+  font-weight: 400 !important;
+}
+
+.font-medium,
+[class~="font-[625]"] {
+  font-weight: 500 !important;
+}
+
+.font-semibold,
+[class~="font-[750]"] {
+  font-weight: 600 !important;
+}
+
+.font-bold,
+[class~="font-[875]"] {
+  font-weight: 700 !important;
+}
+
 pre,
 code,
 pre *,
@@ -47,7 +74,7 @@ code * {
   font-family: var(--mychat-base-font) !important;
   font-size: 14px;
   font-style: normal;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.5;
   letter-spacing: 0;
   white-space: nowrap;
