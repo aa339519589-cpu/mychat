@@ -66,6 +66,7 @@ function attachments(value: unknown): Attachment[] | undefined {
   })
 }
 function accessClass(value: unknown): ModelAccessClass | 'legacy' {
+  if (value === undefined) return 'legacy'
   if (value === 'quota' || value === 'trial' || value === 'premium' || value === 'legacy') return value
   throw new JobRuntimeError('JOB_INVALID_INPUT', 'Chat model access class is malformed')
 }
