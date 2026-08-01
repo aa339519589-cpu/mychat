@@ -48,11 +48,12 @@ export async function resolveChatModelSelection(options: {
   reasoningEffort?: string
   supabase: SupabaseServer | null
   userId: string | null
+  allowPremium?: boolean
 }, dependencies: ModelSelectionDependencies = DEFAULT_DEPENDENCIES): Promise<ChatModelSelection> {
   if (options.modelId) {
     const model = await getOpenRouterModel(options.modelId)
     if (!model) throw new ChatModelSelectionError(404, { error: '该模型当前未在 OpenRouter 提供' })
-    if (model.access === 'premium') throw new ChatModelSelectionError(403, { error: '该模型需要会员' })
+    if (model.access === 'premium' && options.allowPremium !== true) throw new ChatModelSelectionError(403, { error: '该模型需要会员' })
     const apiKey = process.env.OPENROUTER_API_KEY?.trim() ?? ''
     if (!apiKey) throw new ChatModelSelectionError(500, { error: '服务未配置（OPENROUTER_API_KEY 未设置）' }, true, 'OPENROUTER_API_KEY not configured')
     const requested = options.reasoningEffort?.toLowerCase()
