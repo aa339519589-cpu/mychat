@@ -1,11 +1,13 @@
 name: Force Render Web Deploy
 
 on:
-  push:
+  pull_request:
     branches:
       - main
-    paths:
-      - .github/workflows/force-render-web-deploy.yml
+    types:
+      - opened
+      - synchronize
+      - reopened
   workflow_dispatch:
 
 permissions:
@@ -17,8 +19,11 @@ env:
 jobs:
   deploy:
     name: Deploy exact Matrix web revision
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      REVISION: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
     steps:
       - name: Validate Render credentials
         env:
@@ -27,13 +32,13 @@ jobs:
         run: |
           test -n "$RENDER_API_KEY"
           [[ "$RENDER_SERVICE_ID" =~ ^srv-[a-z0-9]+$ ]]
+          [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]
 
       - name: Start exact revision deploy
         id: render
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
-          REVISION: ${{ github.sha }}
         run: |
           response="$(curl --fail-with-body --silent --show-error \
             --retry 4 --retry-all-errors --connect-timeout 10 --max-time 60 \
@@ -56,7 +61,6 @@ jobs:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
           DEPLOY_ID: ${{ steps.render.outputs.deploy_id }}
-          REVISION: ${{ github.sha }}
         run: |
           for attempt in {1..180}; do
             response="$(curl --fail-with-body --silent --show-error \
@@ -79,8 +83,6 @@ jobs:
           exit 1
 
       - name: Confirm production revision
-        env:
-          REVISION: ${{ github.sha }}
         run: |
           for attempt in {1..30}; do
             payload="$(curl --fail-with-body --silent --show-error \
