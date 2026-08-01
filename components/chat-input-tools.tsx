@@ -1,5 +1,6 @@
 "use client"
 
+// Deployment retrigger: 2026-08-02 00:39 +08:00
 import { useEffect, useState, type RefObject, type ReactNode } from "react"
 import { AnimatePresence, motion } from "motion/react"
 import { Brain, Check, Globe, Paperclip, Plus, Search, Telescope } from "lucide-react"
