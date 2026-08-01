@@ -1,5 +1,6 @@
 :root {
-  /* Warm ivory and near-black sampled from the supplied B.AI reference. */
+  /* Main canvas stays unchanged. Interaction surfaces use a warmer, slightly
+     deeper neutral so they read as layers without falling back to pure black. */
   --fluid-material: rgb(255 253 248 / 90%);
   --fluid-material-strong: rgb(255 253 248 / 98%);
   --fluid-shadow: 0 18px 50px rgb(8 8 8 / 8%);
@@ -35,6 +36,17 @@
   --sidebar-accent-foreground: #171717;
   --sidebar-border: #EFEDE4;
   --sidebar-ring: #D2CCC1;
+
+  --chat-surface: #F3EFE7;
+  --chat-surface-border: #E5DFD4;
+  --chat-bubble: #EEE9DF;
+  --chat-bubble-foreground: #171513;
+  --sidebar-selection: #EFEAE1;
+  --sidebar-selection-foreground: #171513;
+  --send-gradient-start: #DDF3FC;
+  --send-gradient-mid: #EDF6F0;
+  --send-gradient-end: #F8ECE5;
+  --send-gradient-foreground: #5C5A57;
 }
 
 :root ::selection {
@@ -42,46 +54,58 @@
 }
 
 .dark {
-  /* Dark mode remains available without changing the new light identity. */
+  /* Keep the existing dark canvas. Blue accents are replaced with neutral
+     graphite and warm-gray values; selected surfaces sit deeper than canvas. */
   --fluid-material: rgb(21 27 32 / 82%);
   --fluid-material-strong: rgb(31 39 46 / 94%);
   --fluid-shadow: 0 20px 56px rgb(0 0 0 / 42%);
   --background: #151A1F;
-  --code-accent: #8AD8FF;
-  --foreground: #F3F7FA;
+  --code-accent: #D8D5CE;
+  --foreground: #F3F5F4;
   --card: #20272D;
-  --card-foreground: #F3F7FA;
+  --card-foreground: #F3F5F4;
   --popover: #20272D;
-  --popover-foreground: #F3F7FA;
-  --primary: #69C4F2;
-  --primary-foreground: #071923;
-  --secondary: #29323A;
-  --secondary-foreground: #F3F7FA;
-  --muted: #252D34;
-  --muted-foreground: #AEBBC5;
-  --accent: #294B5D;
-  --accent-foreground: #D7F2FF;
+  --popover-foreground: #F3F5F4;
+  --primary: #D8D5CE;
+  --primary-foreground: #111315;
+  --secondary: #262C31;
+  --secondary-foreground: #F3F5F4;
+  --muted: #22282D;
+  --muted-foreground: #ADB3B7;
+  --accent: #101316;
+  --accent-foreground: #F3F5F4;
   --destructive: #FF8A80;
-  --border: #394650;
-  --input: #4A5A65;
-  --ring: #8AD8FF;
-  --chart-1: #69C4F2;
-  --chart-2: #8AD8FF;
-  --chart-3: #77B8D8;
-  --chart-4: #91AFC8;
-  --chart-5: #AEBBC5;
+  --border: #343B40;
+  --input: #414A50;
+  --ring: #74787B;
+  --chart-1: #D8D5CE;
+  --chart-2: #B8B5AF;
+  --chart-3: #979A9C;
+  --chart-4: #74797D;
+  --chart-5: #ADB3B7;
   --sidebar: #1B2228;
-  --sidebar-foreground: #F3F7FA;
-  --sidebar-primary: #69C4F2;
-  --sidebar-primary-foreground: #071923;
-  --sidebar-accent: #294B5D;
-  --sidebar-accent-foreground: #D7F2FF;
-  --sidebar-border: #394650;
-  --sidebar-ring: #8AD8FF;
+  --sidebar-foreground: #F3F5F4;
+  --sidebar-primary: #D8D5CE;
+  --sidebar-primary-foreground: #111315;
+  --sidebar-accent: #111518;
+  --sidebar-accent-foreground: #F3F5F4;
+  --sidebar-border: #343B40;
+  --sidebar-ring: #74787B;
+
+  --chat-surface: #101316;
+  --chat-surface-border: #282D31;
+  --chat-bubble: #0D1012;
+  --chat-bubble-foreground: #F3F5F4;
+  --sidebar-selection: #0E1113;
+  --sidebar-selection-foreground: #F3F5F4;
+  --send-gradient-start: #262A2D;
+  --send-gradient-mid: #202427;
+  --send-gradient-end: #191D20;
+  --send-gradient-foreground: #D8D5CE;
 }
 
 .dark ::selection {
-  background: rgb(105 196 242 / 34%);
+  background: rgb(216 213 206 / 22%);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -90,41 +114,52 @@
     --fluid-material-strong: rgb(31 39 46 / 94%);
     --fluid-shadow: 0 20px 56px rgb(0 0 0 / 42%);
     --background: #151A1F;
-    --code-accent: #8AD8FF;
-    --foreground: #F3F7FA;
+    --code-accent: #D8D5CE;
+    --foreground: #F3F5F4;
     --card: #20272D;
-    --card-foreground: #F3F7FA;
+    --card-foreground: #F3F5F4;
     --popover: #20272D;
-    --popover-foreground: #F3F7FA;
-    --primary: #69C4F2;
-    --primary-foreground: #071923;
-    --secondary: #29323A;
-    --secondary-foreground: #F3F7FA;
-    --muted: #252D34;
-    --muted-foreground: #AEBBC5;
-    --accent: #294B5D;
-    --accent-foreground: #D7F2FF;
+    --popover-foreground: #F3F5F4;
+    --primary: #D8D5CE;
+    --primary-foreground: #111315;
+    --secondary: #262C31;
+    --secondary-foreground: #F3F5F4;
+    --muted: #22282D;
+    --muted-foreground: #ADB3B7;
+    --accent: #101316;
+    --accent-foreground: #F3F5F4;
     --destructive: #FF8A80;
-    --border: #394650;
-    --input: #4A5A65;
-    --ring: #8AD8FF;
-    --chart-1: #69C4F2;
-    --chart-2: #8AD8FF;
-    --chart-3: #77B8D8;
-    --chart-4: #91AFC8;
-    --chart-5: #AEBBC5;
+    --border: #343B40;
+    --input: #414A50;
+    --ring: #74787B;
+    --chart-1: #D8D5CE;
+    --chart-2: #B8B5AF;
+    --chart-3: #979A9C;
+    --chart-4: #74797D;
+    --chart-5: #ADB3B7;
     --sidebar: #1B2228;
-    --sidebar-foreground: #F3F7FA;
-    --sidebar-primary: #69C4F2;
-    --sidebar-primary-foreground: #071923;
-    --sidebar-accent: #294B5D;
-    --sidebar-accent-foreground: #D7F2FF;
-    --sidebar-border: #394650;
-    --sidebar-ring: #8AD8FF;
+    --sidebar-foreground: #F3F5F4;
+    --sidebar-primary: #D8D5CE;
+    --sidebar-primary-foreground: #111315;
+    --sidebar-accent: #111518;
+    --sidebar-accent-foreground: #F3F5F4;
+    --sidebar-border: #343B40;
+    --sidebar-ring: #74787B;
+
+    --chat-surface: #101316;
+    --chat-surface-border: #282D31;
+    --chat-bubble: #0D1012;
+    --chat-bubble-foreground: #F3F5F4;
+    --sidebar-selection: #0E1113;
+    --sidebar-selection-foreground: #F3F5F4;
+    --send-gradient-start: #262A2D;
+    --send-gradient-mid: #202427;
+    --send-gradient-end: #191D20;
+    --send-gradient-foreground: #D8D5CE;
   }
 
   :root:not(.light) ::selection {
-    background: rgb(105 196 242 / 34%);
+    background: rgb(216 213 206 / 22%);
   }
 }
 
