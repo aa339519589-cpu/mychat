@@ -31,6 +31,7 @@ export function LiteraryChat() {
   const [searchMode, setSearchMode] = useState<SearchMode>("off")
   const [deepResearch, setDeepResearch] = useState(false)
   const [historyRetrieval, setHistoryRetrieval] = useState(false)
+  const [renderEnabled, setRenderEnabled] = useState(false)
   const layout = useLiteraryChatLayoutState()
   const route = useConversationRoute()
   const loadedRef = useRef<Set<string>>(new Set())
@@ -85,6 +86,7 @@ export function LiteraryChat() {
     searchMode,
     deepResearch,
     historyRetrieval,
+    renderEnabled,
     authorityReady,
     setActiveId,
     setConversations,
@@ -205,7 +207,7 @@ export function LiteraryChat() {
     chat: {
       scrollRef,
       messages: { onRegenerate: generation.handleRegenerate, onEditUserMessage: generation.handleEditUserMessage, onRegenerateFromUser: generation.handleRegenerateFromUser, isLoading: !authorityReady || generation.isActiveGenerating, onOpenArtifact: layout.setOpenArtifactId, openArtifactId: layout.openArtifactId },
-      input: { onSend: generation.handleSend, activeTier: model.activeTier, onTierChange: model.handleTierChange, models: model.catalog, activeModelId: model.activeModelId, activeModel: model.activeModel, onModelChange: model.handleModelSelect, reasoningEffort: model.reasoningEffort, onReasoningChange: model.setReasoningEffort, searchMode, onSearchModeChange: setSearchMode, historyRetrieval, onHistoryRetrievalChange: setHistoryRetrieval, disabled: !authorityReady, isLoading: generation.isActiveGenerating, onStop: generation.handleStop },
+      input: { onSend: generation.handleSend, activeTier: model.activeTier, onTierChange: model.handleTierChange, models: model.catalog, activeModelId: model.activeModelId, activeModel: model.activeModel, onModelChange: model.handleModelSelect, reasoningEffort: model.reasoningEffort, onReasoningChange: model.setReasoningEffort, searchMode, onSearchModeChange: setSearchMode, historyRetrieval, onHistoryRetrievalChange: setHistoryRetrieval, renderEnabled, onRenderEnabledChange: setRenderEnabled, disabled: !authorityReady, isLoading: generation.isActiveGenerating, onStop: generation.handleStop },
     },
   }
   return <LiteraryChatView controller={controller} />

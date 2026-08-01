@@ -25,8 +25,8 @@ export type ChatRequestBody = {
   attachments?: Attachment[]
   searchMode?: unknown
   webSearch?: unknown
-  deepWebSearch?: unknown
   deepResearch?: boolean
+  renderEnabled?: boolean
   project?: ProjectContext
   conversationId?: string
   /** Canonical user message that caused this generation. */
@@ -267,7 +267,7 @@ function validateScalarFields(body: Record<string, unknown>): void {
       throw new RequestError(400, `${field} 无效`)
     }
   }
-  for (const field of ['generateImage', 'generateVideo', 'deepResearch', 'historyRetrieval'] as const) {
+  for (const field of ['generateImage', 'generateVideo', 'deepResearch', 'historyRetrieval', 'renderEnabled'] as const) {
     if (body[field] !== undefined && typeof body[field] !== 'boolean') {
       throw new RequestError(400, `${field} 无效`)
     }
@@ -285,7 +285,7 @@ function validateScalarFields(body: Record<string, unknown>): void {
     throw new RequestError(400, 'tier 无效')
   }
   if (body.searchMode !== undefined
-    && (typeof body.searchMode !== 'string' || !['off', 'web', 'deep'].includes(body.searchMode))) {
+    && (typeof body.searchMode !== 'string' || !['off', 'web'].includes(body.searchMode))) {
     throw new RequestError(400, 'searchMode 无效')
   }
 }

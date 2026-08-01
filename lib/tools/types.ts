@@ -33,7 +33,7 @@ export type ToolSchema = {
 // 本次请求的上下文开关，决定哪些工具可用
 export type ToolFlags = {
   loggedIn: boolean       // 已登录 → 记忆类工具可用
-  searchMode: SearchMode  // 搜索档位：关闭 / 联网 / 深度联网
+  searchMode: SearchMode  // 搜索档位：关闭 / 联网
   memoryEnabled: boolean  // 用户开启记忆总开关 → 记忆类工具可用
   projectId?: string | null  // 有值 = 当前在项目内
 }

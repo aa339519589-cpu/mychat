@@ -122,7 +122,7 @@ export async function POST(request: NextRequest) {
   if (selection.capability.provider.id === 'deep-tier' && selection.outputKind === 'image' && !resolveDeepTierImageConfig()) return configurationError(request, '平台生图服务尚未配置')
   if (selection.capability.provider.id === 'deep-tier' && selection.outputKind === 'video' && !resolveDeepTierVideoConfig()) return configurationError(request, '平台视频服务尚未配置')
 
-  const searchMode = body.searchMode === 'web' || body.searchMode === 'deep' ? body.searchMode : normalizeSearchMode(body.webSearch, body.deepWebSearch)
+  const searchMode = body.searchMode === 'web' ? 'web' : normalizeSearchMode(body.webSearch)
   try {
     const enqueued = await enqueueChatJob({ body, userId: auth.userId, isAnonymous: auth.isAnonymous, usingBalance: policy.usingBalance, searchMode, outputKind: selection.outputKind, accessClass: selection.accessClass, requestId: traceId })
     return acceptedChatResponse({ body, enqueued, requestId: traceId, startedAt, authenticatedAt, rateLimitedAt, parsedAt, policyResolvedAt, trialRemaining })

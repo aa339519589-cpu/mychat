@@ -148,6 +148,7 @@ function chatSystem(input: LoadedChatJob, latestBeijingDate: string | null, hist
       tierLabel: selection.customEndpoint ? null : selection.platformTierLabel,
       modelId: selection.customEndpoint ? selection.model : null,
       endpointName: selection.customEndpoint ? selection.endpointDisplayName : null,
+      renderRules: input.command.renderEnabled,
     },
   ) + historyContext
   return appendUserSystemPrompt(backendSystem, input.context.customSystemPrompt)

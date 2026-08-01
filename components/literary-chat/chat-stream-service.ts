@@ -37,6 +37,7 @@ export type RunChatStreamOptions = {
   searchMode: SearchMode
   deepResearch: boolean
   historyRetrieval: boolean
+  renderEnabled: boolean
   turn?: ChatTurnAuthority
   onAccepted?: () => void
   setConversations: Dispatch<SetStateAction<Conversation[]>>
@@ -70,6 +71,7 @@ function requestBody(options: RunChatStreamOptions): Record<string, unknown> {
     searchMode: options.searchMode,
     deepResearch: options.deepResearch,
     historyRetrieval: options.historyRetrieval,
+    renderEnabled: options.renderEnabled,
     project: options.projectContext,
     conversationId: options.conversationId,
     ...(userMessageId ? { userMessageId } : {}),

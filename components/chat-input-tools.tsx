@@ -3,14 +3,14 @@
 // Deployment retrigger: 2026-08-02 00:39 +08:00
 import { useEffect, useState, type RefObject, type ReactNode } from "react"
 import { AnimatePresence, motion } from "motion/react"
-import { Brain, Check, Globe, Paperclip, Plus, Search, Telescope } from "lucide-react"
+import { Brain, Check, Globe, Palette, Paperclip, Plus, Search } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { SearchMode } from "@/lib/search-mode"
 import { POPOVER_SPRING, transitionFor } from "@/components/motion/fluid"
 
 export function ComposerTools({
   open, onOpenChange, inputRef, containerRef, searchMode, onSearchModeChange,
-  historyRetrieval, onHistoryRetrievalChange, hasActiveTools, reducedMotion,
+  historyRetrieval, onHistoryRetrievalChange, renderEnabled, onRenderEnabledChange, hasActiveTools, reducedMotion,
   reasoningEffort, reasoningOptions, onReasoningChange,
 }: {
   open: boolean
@@ -21,6 +21,8 @@ export function ComposerTools({
   onSearchModeChange: (mode: SearchMode) => void
   historyRetrieval: boolean
   onHistoryRetrievalChange: (value: boolean) => void
+  renderEnabled: boolean
+  onRenderEnabledChange: (value: boolean) => void
   hasActiveTools: boolean
   reducedMotion: boolean | null
   reasoningEffort: string | null
@@ -29,7 +31,7 @@ export function ComposerTools({
 }) {
   return (
     <div ref={containerRef} className="relative order-2 flex shrink-0 items-center gap-0.5">
-      <AnimatePresence initial={false}>{open && <motion.div key="composer-tools" initial={reducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.94, y: 6 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={reducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.96, y: 4 }} transition={transitionFor(reducedMotion, POPOVER_SPRING)} className="fluid-material-strong absolute bottom-full left-0 mb-2 w-[9.5rem] origin-bottom-left overflow-hidden rounded-2xl border border-border/70 p-1.5"><PlusItem icon={<Paperclip className="size-4" />} label="添加" onClick={() => { onOpenChange(false); inputRef.current?.click() }} /><div className="mx-2 border-t border-border/50" /><PlusItem icon={<Globe className={cn("size-4", searchMode === "web" && "text-foreground")} />} label="联网" onClick={() => onSearchModeChange(searchMode === "web" ? "off" : "web")} active={searchMode === "web"} /><PlusItem icon={<Search className={cn("size-4 scale-x-[-1]", historyRetrieval && "text-foreground")} />} label="检索" onClick={() => onHistoryRetrievalChange(!historyRetrieval)} active={historyRetrieval} /><PlusItem icon={<Telescope className={cn("size-4", searchMode === "deep" && "text-foreground")} />} label="深度联网" onClick={() => onSearchModeChange(searchMode === "deep" ? "off" : "deep")} active={searchMode === "deep"} /></motion.div>}</AnimatePresence>
+      <AnimatePresence initial={false}>{open && <motion.div key="composer-tools" initial={reducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.94, y: 6 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={reducedMotion ? { opacity: 0 } : { opacity: 0, scale: 0.96, y: 4 }} transition={transitionFor(reducedMotion, POPOVER_SPRING)} className="fluid-material-strong absolute bottom-full left-0 mb-2 w-[9.5rem] origin-bottom-left overflow-hidden rounded-2xl border border-border/70 p-1.5"><PlusItem icon={<Paperclip className="size-4" />} label="添加" onClick={() => { onOpenChange(false); inputRef.current?.click() }} /><div className="mx-2 border-t border-border/50" /><PlusItem icon={<Globe className={cn("size-4", searchMode === "web" && "text-foreground")} />} label="联网" onClick={() => onSearchModeChange(searchMode === "web" ? "off" : "web")} active={searchMode === "web"} /><PlusItem icon={<Search className={cn("size-4 scale-x-[-1]", historyRetrieval && "text-foreground")} />} label="检索" onClick={() => onHistoryRetrievalChange(!historyRetrieval)} active={historyRetrieval} /><PlusItem icon={<Palette className={cn("size-4", renderEnabled && "text-foreground")} />} label="渲染" onClick={() => onRenderEnabledChange(!renderEnabled)} active={renderEnabled} /></motion.div>}</AnimatePresence>
       <button onClick={() => onOpenChange(!open)} aria-label="添加" className={cn("fluid-press fluid-icon-press relative flex size-11 items-center justify-center rounded-full", open ? "bg-secondary text-foreground" : "text-[#929292] hover:bg-secondary/70 hover:text-foreground dark:text-white/55 dark:hover:bg-white/10 dark:hover:text-white")}><motion.span initial={false} animate={{ rotate: open ? 45 : 0 }} transition={transitionFor(reducedMotion)}><Plus className="size-5" /></motion.span>{hasActiveTools && !open && <span className="absolute right-0.5 top-0.5 size-1.5 rounded-full bg-foreground ring-2 ring-card dark:bg-white" />}</button>
       <QuickTool label="联网" active={searchMode === "web"} onClick={() => onSearchModeChange(searchMode === "web" ? "off" : "web")} icon={<Globe className="size-[1.15rem]" />} />
       <ReasoningTool value={reasoningEffort} options={reasoningOptions} onChange={onReasoningChange} reducedMotion={reducedMotion} />

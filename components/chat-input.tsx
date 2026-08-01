@@ -22,6 +22,8 @@ export type ChatInputProps = {
   onSearchModeChange: (mode: SearchMode) => void
   historyRetrieval: boolean
   onHistoryRetrievalChange: (value: boolean) => void
+  renderEnabled: boolean
+  onRenderEnabledChange: (value: boolean) => void
   models: ModelCatalogItem[]
   activeModelId: string | null
   activeModel: ModelCatalogItem | null
@@ -35,7 +37,7 @@ export type ChatInputProps = {
 
 export function ChatInput({
   onSend, activeTier, onTierChange, mobile, searchMode, onSearchModeChange,
-  historyRetrieval, onHistoryRetrievalChange, models, activeModelId, activeModel,
+  historyRetrieval, onHistoryRetrievalChange, renderEnabled, onRenderEnabledChange, models, activeModelId, activeModel,
   onModelChange, reasoningEffort, onReasoningChange, disabled = false, isLoading, onStop,
 }: ChatInputProps) {
   const [plusOpen, setPlusOpen] = useState(false)
@@ -51,7 +53,7 @@ export function ChatInput({
   }, [plusOpen, state.plusMenuRef])
 
   const activeModelLabel = activeModel?.name ?? "模型"
-  const hasActiveTools = searchMode !== "off" || historyRetrieval || Boolean(reasoningEffort && reasoningEffort !== "none")
+  const hasActiveTools = searchMode !== "off" || historyRetrieval || renderEnabled || Boolean(reasoningEffort && reasoningEffort !== "none")
   const canSend = !disabled && !isLoading && !state.sendPending && Boolean(activeModel) && (!!state.value.trim() || state.images.length > 0 || state.files.length > 0)
 
   return (
@@ -59,7 +61,7 @@ export function ChatInput({
       <input ref={state.addInputRef} type="file" accept="image/*,.pdf,.txt,.md,.csv,.json,.log,.xml,.html,.yaml,.yml,text/*,application/pdf" multiple className="hidden" onChange={event => { state.handleAddFiles(event.target.files); event.currentTarget.value = "" }} />
       <AttachmentPreview images={state.images} files={state.files} fileLoading={state.fileLoading} fileError={state.fileError} onRemoveImage={index => state.setImages(previous => previous.filter((_, current) => current !== index))} onRemoveFile={index => state.setFiles(previous => previous.filter((_, current) => current !== index))} />
       <div className="flex min-w-0 flex-wrap items-center gap-x-0.5 rounded-[1.15rem] border border-[var(--chat-surface-border)] bg-[var(--chat-surface)] px-2.5 pb-1.5 pt-2 text-card-foreground shadow-[0_2px_10px_rgba(8,8,8,0.025)] transition-[border-color,box-shadow] duration-150 focus-within:border-[color-mix(in_srgb,var(--chat-surface-border)_72%,var(--foreground))] focus-within:shadow-[0_3px_13px_rgba(8,8,8,0.04)] sm:gap-x-1 sm:px-3">
-        <ComposerTools open={plusOpen} onOpenChange={setPlusOpen} inputRef={state.addInputRef} containerRef={state.plusMenuRef} searchMode={searchMode} onSearchModeChange={onSearchModeChange} historyRetrieval={historyRetrieval} onHistoryRetrievalChange={onHistoryRetrievalChange} hasActiveTools={hasActiveTools} reducedMotion={reducedMotion} reasoningEffort={reasoningEffort} reasoningOptions={activeModel?.reasoningEfforts ?? []} onReasoningChange={onReasoningChange} />
+        <ComposerTools open={plusOpen} onOpenChange={setPlusOpen} inputRef={state.addInputRef} containerRef={state.plusMenuRef} searchMode={searchMode} onSearchModeChange={onSearchModeChange} historyRetrieval={historyRetrieval} onHistoryRetrievalChange={onHistoryRetrievalChange} renderEnabled={renderEnabled} onRenderEnabledChange={onRenderEnabledChange} hasActiveTools={hasActiveTools} reducedMotion={reducedMotion} reasoningEffort={reasoningEffort} reasoningOptions={activeModel?.reasoningEfforts ?? []} onReasoningChange={onReasoningChange} />
         <ComposerBar mobile={mobile} value={state.value} onValueChange={state.setValue} textareaRef={state.textAreaRef} onResize={state.resize} onSubmit={state.submit} disabled={disabled} isLoading={isLoading} sendPending={state.sendPending} activeModelLabel={activeModelLabel} activeOutputKind={activeModel?.outputKind} canSend={canSend} onStop={onStop} onOpenModel={() => setModelPickerOpen(true)} />
       </div>
       <ModelPickerSheet open={modelPickerOpen} mobile={mobile} models={models} activeModelId={activeModelId} onClose={() => setModelPickerOpen(false)} onSelect={onModelChange} />

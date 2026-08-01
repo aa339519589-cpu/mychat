@@ -28,6 +28,7 @@ export type LoadedChatJob = {
     searchMode: SearchMode
     deepResearch: boolean
     historyRetrieval: boolean
+    renderEnabled: boolean
     usingBalance: boolean
     outputKind: 'text' | 'image' | 'video'
     attachments?: Attachment[]
@@ -72,8 +73,8 @@ function accessClass(value: unknown): ModelAccessClass | 'legacy' {
 }
 function command(value: JsonObject): LoadedChatJob['command'] {
   const outputKind = value.outputKind; const searchMode = value.searchMode
-  if (typeof value.tier !== 'string' || (outputKind !== 'text' && outputKind !== 'image' && outputKind !== 'video') || (searchMode !== 'off' && searchMode !== 'web' && searchMode !== 'deep') || typeof value.deepResearch !== 'boolean' || typeof value.historyRetrieval !== 'boolean' || typeof value.usingBalance !== 'boolean' || (value.endpointId !== undefined && typeof value.endpointId !== 'string') || (value.modelId !== undefined && typeof value.modelId !== 'string') || (value.reasoningEffort !== undefined && typeof value.reasoningEffort !== 'string')) throw new JobRuntimeError('JOB_INVALID_INPUT', 'Chat job command is malformed')
-  return { tier: value.tier, outputKind, searchMode, deepResearch: value.deepResearch, historyRetrieval: value.historyRetrieval, usingBalance: value.usingBalance, accessClass: accessClass(value.accessClass), ...(typeof value.modelId === 'string' ? { modelId: value.modelId } : {}), ...(typeof value.reasoningEffort === 'string' ? { reasoningEffort: value.reasoningEffort } : {}), ...(typeof value.endpointId === 'string' ? { endpointId: value.endpointId } : {}), ...(value.attachments !== undefined ? { attachments: attachments(value.attachments) } : {}) }
+  if (typeof value.tier !== 'string' || (outputKind !== 'text' && outputKind !== 'image' && outputKind !== 'video') || (searchMode !== 'off' && searchMode !== 'web') || typeof value.deepResearch !== 'boolean' || typeof value.historyRetrieval !== 'boolean' || typeof value.renderEnabled !== 'boolean' || typeof value.usingBalance !== 'boolean' || (value.endpointId !== undefined && typeof value.endpointId !== 'string') || (value.modelId !== undefined && typeof value.modelId !== 'string') || (value.reasoningEffort !== undefined && typeof value.reasoningEffort !== 'string')) throw new JobRuntimeError('JOB_INVALID_INPUT', 'Chat job command is malformed')
+  return { tier: value.tier, outputKind, searchMode, deepResearch: value.deepResearch, historyRetrieval: value.historyRetrieval, renderEnabled: value.renderEnabled, usingBalance: value.usingBalance, accessClass: accessClass(value.accessClass), ...(typeof value.modelId === 'string' ? { modelId: value.modelId } : {}), ...(typeof value.reasoningEffort === 'string' ? { reasoningEffort: value.reasoningEffort } : {}), ...(typeof value.endpointId === 'string' ? { endpointId: value.endpointId } : {}), ...(value.attachments !== undefined ? { attachments: attachments(value.attachments) } : {}) }
 }
 function allowInstantContext(value: LoadedChatJob['command']): boolean { return value.outputKind === 'text' && value.searchMode === 'off' && !value.deepResearch && !value.attachments?.length }
 
