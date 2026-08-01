@@ -2,7 +2,7 @@
 
 import { useEffect, type ReactNode } from "react"
 import { AnimatePresence, motion, useDragControls, useReducedMotion } from "motion/react"
-import { Check, Image as ImageIcon, Server, Video, X } from "lucide-react"
+import { Check, Server, X } from "lucide-react"
 
 import { MODEL_SHEET_TIERS, TIER_MAP } from "@/lib/chat-data"
 import type { ModelEndpointSummary } from "@/lib/model-endpoints"
@@ -104,7 +104,7 @@ function ModelPickerSurface(props: PickerSurfaceProps) {
         aria-hidden="true"
       ><div className="h-1 w-16 rounded-full bg-muted-foreground/35" /></div>
       <div className="flex h-12 shrink-0 items-center justify-center px-4">
-        <h2 id="model-picker-title" className="text-[16px] font-[750] tracking-normal text-foreground">选择模型</h2>
+        <h2 id="model-picker-title" className="text-[16px] font-semibold tracking-normal text-foreground">选择模型</h2>
         <button onClick={onClose} className="fluid-press fluid-icon-press absolute right-3 flex size-11 items-center justify-center rounded-full border border-border/50 bg-secondary/70 text-muted-foreground shadow-sm hover:text-foreground dark:border-white/10 dark:bg-[#151515]">
           <X className="size-4" />
         </button>
@@ -115,21 +115,26 @@ function ModelPickerSurface(props: PickerSurfaceProps) {
 }
 
 function ModelRows({ activeTier, activeEndpointId, endpoints, onSelectTier, onSelectEndpoint }: PickerSurfaceProps) {
+  const chatTiers = MODEL_SHEET_TIERS.filter(id => {
+    const media = TIER_MAP[id]?.media
+    return media !== "image" && media !== "video"
+  })
+  const chatEndpoints = endpoints.filter(endpoint => endpoint.outputKind !== "image" && endpoint.outputKind !== "video")
+
   return (
     <div className="min-h-0 flex-1 px-4 pb-4">
       <div className="h-full overflow-hidden rounded-xl bg-card/70 dark:bg-[#151515]">
         <div className="fluid-scroll max-h-full overflow-y-auto">
-          {MODEL_SHEET_TIERS.map((id, index) => {
+          {chatTiers.map((id, index) => {
             const config = TIER_MAP[id]
-            const icon = config.media === "image" ? <ImageIcon className="size-4" /> : config.media === "video" ? <Video className="size-4" /> : undefined
-            return <ModelRow key={id} label={config.label} icon={icon} active={!activeEndpointId && activeTier === id} divided={index > 0} onClick={() => onSelectTier(id)} />
+            return <ModelRow key={id} label={config.label} active={!activeEndpointId && activeTier === id} divided={index > 0} onClick={() => onSelectTier(id)} />
           })}
-          {endpoints.map((endpoint, index) => (
+          {chatEndpoints.map((endpoint, index) => (
             <ModelRow
               key={endpoint.id} label={endpoint.name || endpoint.model}
-              desc={`${endpoint.outputKind === "image" ? "图片" : endpoint.outputKind === "video" ? "视频" : "对话"} · ${endpoint.model}`}
-              icon={endpoint.outputKind === "image" ? <ImageIcon className="size-4" /> : endpoint.outputKind === "video" ? <Video className="size-4" /> : <Server className="size-4" />}
-              active={activeEndpointId === endpoint.id} divided={MODEL_SHEET_TIERS.length > 0 || index > 0}
+              desc={`对话 · ${endpoint.model}`}
+              icon={<Server className="size-4" />}
+              active={activeEndpointId === endpoint.id} divided={chatTiers.length > 0 || index > 0}
               onClick={() => onSelectEndpoint(endpoint.id)}
             />
           ))}
@@ -158,8 +163,8 @@ function ModelRow({
     <div className={cn("flex min-h-12 min-w-0 items-center gap-2 px-4 py-2.5", divided && "border-t border-border/40 dark:border-white/10")}>
       {icon && <span className="shrink-0 text-muted-foreground">{icon}</span>}
       <button onClick={onClick} className="fluid-press min-h-11 min-w-0 flex-1 rounded-lg text-left">
-        <div className={cn("truncate text-[15px] font-[750] tracking-normal", active ? "text-foreground" : "text-foreground/92")}>{label}</div>
-        {desc && <div className="mt-0.5 truncate text-[11px] font-[625] text-muted-foreground">{desc}</div>}
+        <div className={cn("truncate text-[15px] font-semibold tracking-normal", active ? "text-foreground" : "text-foreground/92")}>{label}</div>
+        {desc && <div className="mt-0.5 truncate text-[11px] font-medium text-muted-foreground">{desc}</div>}
       </button>
       {active && <Check className="size-5 shrink-0 text-primary" />}
     </div>
