@@ -1,6 +1,6 @@
 "use client"
 
-import type { RefObject, ReactNode } from "react"
+import { useEffect, useState, type RefObject, type ReactNode } from "react"
 import { AnimatePresence, motion } from "motion/react"
 import { Brain, Check, Globe, Paperclip, Plus, Search, Telescope } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -38,7 +38,8 @@ export function ComposerTools({
 
 function ReasoningTool({ value, options, onChange, reducedMotion }: { value: string | null; options: string[]; onChange: (value: string) => void; reducedMotion: boolean | null }) {
   const disabled = options.length === 0
-  const [menuOpen, setMenuOpen] = useReasoningMenu(disabled)
+  const [menuOpen, setMenuOpen] = useState(false)
+  useEffect(() => { if (disabled) setMenuOpen(false) }, [disabled])
   const active = Boolean(value && value !== "none")
   return (
     <div className="relative">
@@ -46,13 +47,6 @@ function ReasoningTool({ value, options, onChange, reducedMotion }: { value: str
       <AnimatePresence initial={false}>{menuOpen && !disabled && <motion.div initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 5, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 4, scale: 0.97 }} transition={transitionFor(reducedMotion, POPOVER_SPRING)} className="fluid-material-strong absolute bottom-full left-1/2 z-30 mb-2 min-w-[8.5rem] -translate-x-1/2 overflow-hidden rounded-2xl border border-border/70 p-1.5 shadow-lg">{options.map(option => <button key={option} type="button" onClick={() => { onChange(option); setMenuOpen(false) }} className="fluid-press flex min-h-10 w-full items-center justify-between rounded-xl px-3 text-left text-[12px] text-foreground hover:bg-secondary/70"><span>{effortLabel(option)}</span>{value === option && <Check className="size-3.5" />}</button>)}</motion.div>}</AnimatePresence>
     </div>
   )
-}
-
-function useReasoningMenu(disabled: boolean): [boolean, (value: boolean) => void] {
-  const React = require("react") as typeof import("react")
-  const [open, setOpen] = React.useState(false)
-  React.useEffect(() => { if (disabled) setOpen(false) }, [disabled])
-  return [open, setOpen]
 }
 
 function effortLabel(value: string): string {
