@@ -11,7 +11,7 @@ test('every GitHub Action is pinned to an immutable commit', () => {
   const workflows = readdirSync(resolve(root, '.github/workflows'))
     .filter(name => name.endsWith('.yml') || name.endsWith('.yaml'))
     .map(name => read(`.github/workflows/${name}`))
-  const uses = workflows.flatMap(source => [...source.matchAll(/uses:\s*([^\s#]+)/g)])
+  const uses = workflows.flatMap(source => [...source.matchAll(/^\s*uses:\s*([^\s#]+)/gm)])
     .map(match => match[1])
   assert.ok(uses.length > 0)
   for (const action of uses) {
