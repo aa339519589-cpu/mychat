@@ -1,0 +1,47 @@
+name: Reduce Job Complexity
+
+on:
+  push:
+    branches:
+      - feature/openrouter-model-catalog-20260801
+    paths:
+      - .github/workflows/reduce-job-complexity.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: feature/openrouter-model-catalog-20260801
+      - name: Extract access default from enqueue complexity
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('lib/chat/job-command.ts')
+          text = path.read_text()
+          anchor = "export async function enqueueChatJob(input: EnqueueChatJobInput, dependencyOverrides: Partial<EnqueueChatJobDependencies> = {}): Promise<{ created: boolean; job: ChatJobAdmission }> {\n  const startedAt = Date.now()"
+          replacement = "function resolvedAccessClass(value: EnqueueChatJobInput['accessClass']): NonNullable<EnqueueChatJobInput['accessClass']> {\n  return value || 'legacy'\n}\n\nexport async function enqueueChatJob(input: EnqueueChatJobInput, dependencyOverrides: Partial<EnqueueChatJobDependencies> = {}): Promise<{ created: boolean; job: ChatJobAdmission }> {\n  const startedAt = Date.now()"
+          if anchor not in text:
+            raise SystemExit('enqueue anchor missing')
+          text = text.replace(anchor, replacement, 1)
+          anchor = "  const { body } = input\n  const outputKind"
+          replacement = "  const { body } = input\n  const accessClass = resolvedAccessClass(input.accessClass)\n  const outputKind"
+          if anchor not in text:
+            raise SystemExit('body anchor missing')
+          text = text.replace(anchor, replacement, 1)
+          text = text.replace("    accessClass: input.accessClass ?? 'legacy',", "    accessClass,", 1)
+          text = text.replace("tokenLimit: (input.accessClass ?? 'legacy') === 'trial' ? 30_000 : 160_000", "tokenLimit: accessClass === 'trial' ? 30_000 : 160_000", 1)
+          path.write_text(text)
+          PY
+      - name: Commit complexity fix
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add lib/chat/job-command.ts
+          git commit -m "Keep legacy access fallback outside enqueue complexity"
+          git push origin HEAD:feature/openrouter-model-catalog-20260801
