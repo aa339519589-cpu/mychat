@@ -16,9 +16,21 @@ type CatalogPayload = {
   models?: unknown
 }
 
+const MODEL_QUOTA_CHANGED_EVENT = "mychat:model-quota-changed"
+
 function modelList(value: unknown): ModelCatalogItem[] {
   if (!Array.isArray(value)) return []
   return value.filter(item => item && typeof item === "object" && !Array.isArray(item)) as ModelCatalogItem[]
+}
+
+async function fetchCatalog(): Promise<ModelCatalogItem[]> {
+  const response = await fetch("/api/models", {
+    cache: "no-store",
+    headers: { Accept: "application/json" },
+  })
+  if (!response.ok) throw new Error(`catalog ${response.status}`)
+  const payload = await response.json() as CatalogPayload
+  return modelList(payload.models)
 }
 
 function isSelectable(model: ModelCatalogItem): boolean {
@@ -44,14 +56,9 @@ export function useModelSelection(options: UseModelSelectionOptions) {
 
   useEffect(() => {
     let cancelled = false
-    void fetch("/api/models", { headers: { Accept: "application/json" } })
-      .then(async response => {
-        if (!response.ok) throw new Error(`catalog ${response.status}`)
-        return response.json() as Promise<CatalogPayload>
-      })
-      .then(payload => {
+    void fetchCatalog()
+      .then(models => {
         if (cancelled) return
-        const models = modelList(payload.models)
         setCatalog(models)
         const savedId = localStorage.getItem("chat_active_model")
         const selected = models.find(model => model.id === savedId && isSelectable(model))
@@ -66,6 +73,20 @@ export function useModelSelection(options: UseModelSelectionOptions) {
         if (!cancelled) setCatalog([])
       })
     return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    const refreshQuota = () => {
+      void fetchCatalog()
+        .then(models => { if (!cancelled) setCatalog(models) })
+        .catch(() => undefined)
+    }
+    window.addEventListener(MODEL_QUOTA_CHANGED_EVENT, refreshQuota)
+    return () => {
+      cancelled = true
+      window.removeEventListener(MODEL_QUOTA_CHANGED_EVENT, refreshQuota)
+    }
   }, [])
 
   function restoreModelSelection(endpoints: ModelEndpointSummary[]) {
