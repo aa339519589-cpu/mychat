@@ -53,7 +53,7 @@ export type LiteraryChatViewController = {
 
 export function LiteraryChatView({ controller }: { controller: LiteraryChatViewController }) {
   const { session, conversation, sidebar, layout, chat } = controller
-  const { active, activeProject, projects, actions } = conversation
+  const { active, projects, actions } = conversation
   const mobile = useMediaQuery("(max-width: 767px)")
   const [artifactPanelWidth, setArtifactPanelWidth] = useState(520)
 
@@ -76,15 +76,9 @@ export function LiteraryChatView({ controller }: { controller: LiteraryChatViewC
           mobile={mobile}
           sidebarCollapsed={layout.sidebarCollapsed}
           active={active}
-          activeProject={activeProject}
           scrollRef={chat.scrollRef}
-          menuAnchor={layout.headerMenuAnchor}
-          renaming={layout.headerRenaming}
           onOpenSidebar={() => layout.setDrawerOpen(true)}
           onToggleSidebar={() => layout.setSidebarCollapsed(value => !value)}
-          onMenuAnchorChange={layout.setHeaderMenuAnchor}
-          onRenamingChange={layout.setHeaderRenaming}
-          onRename={actions.rename}
           messageProps={chat.messages}
           inputProps={chat.input}
         />
