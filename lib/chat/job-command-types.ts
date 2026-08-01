@@ -10,7 +10,7 @@ export type EnqueueChatJobInput = {
   usingBalance: boolean
   searchMode: SearchMode
   outputKind: ModelOutputKind
-  accessClass: ModelAccessClass | 'legacy'
+  accessClass?: ModelAccessClass | 'legacy'
   requestId: string
   requestedAt?: string
 }
