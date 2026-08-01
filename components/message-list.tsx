@@ -44,7 +44,7 @@ export function MessageList(props: MessageListProps) {
 
   return (
     <article className={openingExchange
-      ? "mx-auto w-full min-w-0 max-w-[58rem] overflow-x-clip px-3 pb-5 pt-[clamp(5.5rem,10dvh,8rem)] sm:px-4 md:px-8 md:pb-6 md:pt-[clamp(5rem,9dvh,7rem)]"
+      ? "mx-auto w-full min-w-0 max-w-[58rem] overflow-x-clip px-3 pb-5 pt-[clamp(4.25rem,7dvh,5rem)] sm:px-4 md:px-8 md:pb-6 md:pt-[clamp(5rem,9dvh,7rem)]"
       : "mx-auto w-full min-w-0 max-w-[58rem] overflow-x-clip px-3 py-5 sm:px-4 md:px-8 md:py-6"}
     >
       <div className="min-w-0 space-y-6 md:space-y-8">
