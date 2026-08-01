@@ -1,0 +1,39 @@
+name: Fix Supply Chain Parser
+
+on:
+  push:
+    branches:
+      - feature/openrouter-model-catalog-20260801
+    paths:
+      - .github/workflows/fix-supply-chain-parser.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: feature/openrouter-model-catalog-20260801
+      - name: Anchor uses keys
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('tests/supply-chain-config.test.ts')
+          text = path.read_text()
+          old = "[...source.matchAll(/uses:\\s*([^\\s#]+)/g)]"
+          new = "[...source.matchAll(/^\\s*uses:\\s*([^\\s#]+)/gm)]"
+          if old not in text:
+              raise SystemExit('uses parser anchor missing')
+          path.write_text(text.replace(old, new, 1))
+          PY
+      - name: Commit parser fix
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add tests/supply-chain-config.test.ts
+          git commit -m "Anchor GitHub Action reference parsing"
+          git push origin HEAD:feature/openrouter-model-catalog-20260801
