@@ -1,13 +1,11 @@
 name: Force Render Web Deploy
 
 on:
-  pull_request:
+  push:
     branches:
       - main
-    types:
-      - opened
-      - synchronize
-      - reopened
+    paths:
+      - .github/workflows/force-render-web-deploy.yml
   workflow_dispatch:
 
 permissions:
@@ -19,11 +17,10 @@ env:
 jobs:
   deploy:
     name: Deploy exact Matrix web revision
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      REVISION: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      REVISION: ${{ github.sha }}
     steps:
       - name: Validate Render credentials
         env:
