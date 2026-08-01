@@ -1,0 +1,62 @@
+name: Regenerate Database Types
+
+on:
+  push:
+    branches:
+      - feature/openrouter-model-catalog-20260801
+    paths:
+      - .github/workflows/regenerate-database-types.yml
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: feature/openrouter-model-catalog-20260801
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts --legacy-peer-deps
+      - name: Regenerate canonical database types
+        run: npm run database:types:generate
+      - name: Commit generated database types
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- . ':(exclude)lib/supabase/database.types.ts' || {
+            echo "Unexpected files changed during database type generation" >&2
+            git status --short
+            exit 1
+          }
+          if git diff --quiet -- lib/supabase/database.types.ts; then
+            echo "Database types were already current"
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add lib/supabase/database.types.ts
+          git commit -m "Regenerate database types for model trial quota"
+          git push origin HEAD:feature/openrouter-model-catalog-20260801
