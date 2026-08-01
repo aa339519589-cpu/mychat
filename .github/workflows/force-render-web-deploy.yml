@@ -54,6 +54,11 @@ jobs:
           }
           trap fail ERR
 
+          matches_revision() {
+            local candidate="$1"
+            [[ -z "$candidate" || "${REVISION:0:${#candidate}}" == "$candidate" || "${candidate:0:${#REVISION}}" == "$REVISION" ]]
+          }
+
           report pending "Render Production" "Deploying exact Matrix web revision"
 
           stage="credentials"
@@ -63,7 +68,7 @@ jobs:
           [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]
           report success "Render Stage: credentials" "Render credentials validated"
 
-          stage="start"
+          stage="start-request"
           report pending "Render Stage: start" "Starting exact Render deploy"
           http_code=000
           curl_status=1
@@ -91,14 +96,15 @@ jobs:
           done
           [[ $curl_status -eq 0 ]]
           [[ "$http_code" =~ ^2[0-9][0-9]$ ]]
+
+          stage="start-parse"
           response="$(cat /tmp/render-start.json)"
-          deploy_id="$(jq -er '.id' <<<"$response")"
-          commit_id="$(jq -r '.commit.id // empty' <<<"$response")"
-          [[ "$deploy_id" =~ ^dep-[a-z0-9]+$ ]]
-          if [[ -n "$commit_id" && "$commit_id" != "$REVISION" ]]; then
-            echo "Render selected $commit_id instead of $REVISION" >&2
-            false
-          fi
+          shape="$(jq -r 'if type == "object" then (keys | join(",")) elif type == "array" then "array" else type end' <<<"$response" 2>/dev/null || echo invalid)"
+          report pending "Render Shape: ${shape:0:70}" "Parsing Render deploy response"
+          deploy_id="$(jq -r '.id // .deploy.id // .[0].id // .[0].deploy.id // empty' <<<"$response")"
+          commit_id="$(jq -r '.commit.id // .deploy.commit.id // .commitId // .[0].commit.id // .[0].deploy.commit.id // empty' <<<"$response")"
+          test -n "$deploy_id"
+          matches_revision "$commit_id"
           report success "Render Stage: start" "Render deploy $deploy_id started"
 
           stage="wait-live"
@@ -109,12 +115,10 @@ jobs:
               --retry 3 --retry-all-errors --connect-timeout 10 --max-time 60 \
               --header "Authorization: Bearer $RENDER_API_KEY" \
               "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys/$deploy_id")"
-            status="$(jq -er '.status' <<<"$response")"
-            commit_id="$(jq -r '.commit.id // empty' <<<"$response")"
-            if [[ -n "$commit_id" && "$commit_id" != "$REVISION" ]]; then
-              echo "Render deploy changed revision to $commit_id" >&2
-              false
-            fi
+            status="$(jq -r '.status // .deploy.status // .[0].status // .[0].deploy.status // empty' <<<"$response")"
+            commit_id="$(jq -r '.commit.id // .deploy.commit.id // .commitId // .[0].commit.id // .[0].deploy.commit.id // empty' <<<"$response")"
+            test -n "$status"
+            matches_revision "$commit_id"
             case "$status" in
               live) break ;;
               build_failed|update_failed|canceled|deactivated)
@@ -136,13 +140,13 @@ jobs:
               --header 'Accept: application/json' \
               "$PRODUCTION_URL/api/ready" || true)"
             runtime_revision="$(jq -r '.revision // empty' <<<"$payload" 2>/dev/null || true)"
-            if [[ -n "$runtime_revision" && "${REVISION:0:${#runtime_revision}}" == "$runtime_revision" ]]; then
+            if [[ -n "$runtime_revision" ]] && matches_revision "$runtime_revision"; then
               break
             fi
             sleep 5
           done
-          [[ -n "$runtime_revision" ]]
-          [[ "${REVISION:0:${#runtime_revision}}" == "$runtime_revision" ]]
+          test -n "$runtime_revision"
+          matches_revision "$runtime_revision"
           report success "Render Stage: verify-revision" "Production serves $runtime_revision"
           report success "Render Production" "Render live; exact revision ${REVISION:0:12} verified"
           echo "Render deploy $deploy_id is live; production revision $runtime_revision"
