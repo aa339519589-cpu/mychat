@@ -1,4 +1,5 @@
 name: Recover Render Production
+# Recovery trigger: deploy the visible model boundary and shared 3/2/1/0 countdown.
 
 on:
   workflow_dispatch:
