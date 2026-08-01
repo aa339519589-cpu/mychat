@@ -1,7 +1,3 @@
-
-> mychat@0.1.0 complexity:baseline
-> node scripts/check-function-complexity.mjs --print-baseline
-
 {
   "version": 1,
   "thresholds": {
