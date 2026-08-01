@@ -23,7 +23,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci --ignore-scripts --legacy-peer-deps
-      - run: npm run complexity:baseline > scripts/function-complexity-baseline.json
+      - run: node scripts/check-function-complexity.mjs --print-baseline > scripts/function-complexity-baseline.json
       - name: Commit refreshed baseline
         run: |
           git config user.name github-actions[bot]
