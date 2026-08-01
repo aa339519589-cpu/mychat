@@ -25,7 +25,6 @@ export type ChatRequestBody = {
   attachments?: Attachment[]
   searchMode?: unknown
   webSearch?: unknown
-  deepResearch?: boolean
   renderEnabled?: boolean
   project?: ProjectContext
   conversationId?: string
@@ -267,7 +266,7 @@ function validateScalarFields(body: Record<string, unknown>): void {
       throw new RequestError(400, `${field} 无效`)
     }
   }
-  for (const field of ['generateImage', 'generateVideo', 'deepResearch', 'historyRetrieval', 'renderEnabled'] as const) {
+  for (const field of ['generateImage', 'generateVideo', 'historyRetrieval', 'renderEnabled'] as const) {
     if (body[field] !== undefined && typeof body[field] !== 'boolean') {
       throw new RequestError(400, `${field} 无效`)
     }
