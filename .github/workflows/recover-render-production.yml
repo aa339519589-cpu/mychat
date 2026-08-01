@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  statuses: write
 
 concurrency:
   group: recover-render-production
@@ -30,6 +31,16 @@ jobs:
 
       - name: Confirm immutable revision
         run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Mark recovery pending
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          jq -nc --arg context "Render Recovery" --arg description "Deploying exact main revision to Render" '{
+            state: "pending",
+            context: $context,
+            description: $description
+          }' | gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" --input - >/dev/null
 
       - name: Configure Render for direct recovery
         env:
@@ -127,3 +138,20 @@ jobs:
           curl --fail-with-body --silent --show-error \
             --connect-timeout 10 --max-time 30 \
             "$PRODUCTION_URL/api/ready"
+
+      - name: Record recovery result
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          if [[ "$JOB_STATUS" == "success" ]]; then
+            state="success"
+            description="Exact main revision is live on Render"
+          else
+            state="failure"
+            description="Render recovery deployment failed"
+          fi
+          jq -nc --arg state "$state" --arg context "Render Recovery" --arg description "$description" \
+            '{state: $state, context: $context, description: $description}' \
+            | gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" --input - >/dev/null
