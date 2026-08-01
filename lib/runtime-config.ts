@@ -146,7 +146,6 @@ function validateProductionWeb(environment: RuntimeEnvironment): void {
   requireValue(environment, 'NEXT_PUBLIC_SUPABASE_ANON_KEY', 'web')
   requireSecret(environment, 'SUPABASE_SERVICE_ROLE_KEY', 'web')
   requireSecret(environment, 'STREAM_ADMISSION_HASH_KEY', 'web')
-  requireValue(environment, 'OPENROUTER_API_KEY', 'web')
   if (!streamAdmissionHashKey(environment)) {
     throw new Error('STREAM_ADMISSION_HASH_KEY must contain at least 32 bytes')
   }
@@ -165,7 +164,6 @@ function validateProductionWorker(environment: RuntimeEnvironment): void {
   )
   requireSecret(environment, 'SUPABASE_SERVICE_ROLE_KEY', 'worker')
   requireValue(environment, 'DEEPSEEK_API_KEY', 'worker')
-  requireValue(environment, 'OPENROUTER_API_KEY', 'worker')
   requireSecret(environment, 'AGENT_CREDENTIAL_KEY', 'worker')
   assertProductionAgentSandbox(environment)
 }
