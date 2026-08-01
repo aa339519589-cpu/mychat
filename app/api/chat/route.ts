@@ -61,7 +61,7 @@ function modelSelectionResponse(request: Request, error: ChatModelSelectionError
 async function resolveAdmissionPolicy(request: Request, auth: AuthCtx, body: DurableChatRequestBody): Promise<AdmissionPolicy> {
   let selection: ChatModelSelection
   try {
-    selection = await resolveChatModelSelection({ tier: body.tier ?? '绝句', endpointId: body.endpointId, modelId: body.modelId, reasoningEffort: body.reasoningEffort, supabase: auth.supabase, userId: auth.userId, allowPremium: auth.isOwner === true })
+    selection = await resolveChatModelSelection({ tier: body.tier ?? '绝句', endpointId: body.endpointId, modelId: body.modelId, reasoningEffort: body.reasoningEffort, supabase: auth.supabase, userId: auth.userId, allowPremium: true })
   } catch (error) {
     if (error instanceof ChatModelSelectionError) return { response: modelSelectionResponse(request, error) }
     return { response: configurationError(request, '模型策略暂时不可用') }
@@ -100,21 +100,21 @@ export async function POST(request: NextRequest) {
   if (!selection || policy.usingBalance === undefined) return configurationError(request, '聊天准入策略暂时不可用')
   let trialReserved = false
   let trialRemaining: number | null = null
-  if (body.modelId && selection.accessClass === 'trial' && auth.isOwner !== true) {
+  if (body.modelId && selection.accessClass !== 'quota' && auth.isOwner !== true) {
     try {
       const trial = await reserveTrialCall(auth.supabase, auth.userId, body.generationId, selection.model)
       trialRemaining = trial.remaining
       if (!trial.allowed) return apiErrorResponseV1(request, {
         status: 403,
         code: 'QUOTA_EXCEEDED',
-        message: '其他可试用模型共享的 3 次额度已用完，当前剩余 0 次。请切换到上方 3 个基础模型继续使用。',
+        message: '其他模型共享的 3 次额度已用完，当前剩余 0 次。请切换到上方 3 个基础模型继续使用。',
         retryable: false,
         details: { trialLimit: 3, trialRemaining: 0 },
       })
       trialReserved = !trial.duplicate
       body = clampTrialInput(body)
     } catch (error) {
-      return configurationError(request, error instanceof Error ? error.message : '可试用模型额度服务暂时不可用')
+      return configurationError(request, error instanceof Error ? error.message : '其他模型额度服务暂时不可用')
     }
   }
   const policyResolvedAt = Date.now()
