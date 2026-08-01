@@ -2164,6 +2164,27 @@ export type Database = {
 },
         ]
       },
+      "medium_model_trial_calls": {
+        Row: {
+          "principal_id": string
+          "generation_id": string
+          "model_id": string
+          "created_at": string
+        }
+        Insert: {
+          "principal_id": string
+          "generation_id": string
+          "model_id": string
+          "created_at"?: string
+        }
+        Update: {
+          "principal_id"?: string
+          "generation_id"?: string
+          "model_id"?: string
+          "created_at"?: string
+        }
+        Relationships: []
+      },
       "memories": {
         Row: {
           "id": string
@@ -2633,11 +2654,13 @@ export type Database = {
       "release_agent_run": { Args: { "input_task_id": string | null; "input_run_id": string | null }; Returns: undefined }
       "release_job_admission_reservation": { Args: { "input_job_id": string | null; "input_reason"?: string | null }; Returns: Json }
       "release_job_event_stream": { Args: { "input_stream_id": string | null }; Returns: Json }
+      "release_medium_model_trial": { Args: { "input_principal_id": string | null; "input_generation_id": string | null }; Returns: boolean }
       "renew_agent_run": { Args: { "input_task_id": string | null; "input_run_id": string | null; "lease_seconds"?: number | null }; Returns: boolean }
       "renew_chat_generation_lease": { Args: { "input_generation_id": string | null; "input_user_id": string | null; "input_runner_id": string | null; "input_lease_version": number | null; "lease_seconds"?: number | null }; Returns: boolean }
       "renew_job_event_stream": { Args: { "input_stream_id": string | null; "input_lease_seconds"?: number | null }; Returns: Json }
       "renew_job_lease": { Args: { "input_job_id": string | null; "input_worker_id": string | null; "input_lease_version": number | null; "input_lease_seconds"?: number | null }; Returns: Json }
       "renew_job_outbox": { Args: { "input_outbox_id": string | null; "input_worker_id": string | null; "input_lock_version": number | null; "input_lock_seconds"?: number | null }; Returns: Json }
+      "reserve_medium_model_trial": { Args: { "input_principal_id": string | null; "input_generation_id": string | null; "input_model_id": string | null }; Returns: Json }
       "resolve_agent_confirmation_gate": { Args: { "input_user_id": string | null; "input_task_id": string | null; "input_confirmation_id": string | null; "input_operation": string | null; "input_token_sha256": string | null; "input_action": string | null; "input_reason"?: string | null }; Returns: Json }
       "resume_awaiting_job": { Args: { "input_job_id": string | null; "input_principal_id": string | null; "input_expected_checkpoint_version": number | null; "input_idempotency_key": string | null; "input_resume_input": Json | null }; Returns: Json }
       "retry_job": { Args: { "input_job_id": string | null; "input_worker_id": string | null; "input_lease_version": number | null; "input_error_class": string | null; "input_error_code": string | null; "input_delay_seconds"?: number | null }; Returns: Json }

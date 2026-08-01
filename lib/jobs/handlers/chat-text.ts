@@ -5,7 +5,6 @@ import {
   appendUserSystemPrompt,
   latestBeijingDateFromMessages,
   prependDeepResearchInstruction,
-  resolveReasoningEffort,
 } from '@/lib/chat/request-context'
 import { log } from '@/lib/logger'
 import { runAgentLoop, type AgentLoopOpts, type ExecuteTool } from '@/lib/llm/agent-loop'
@@ -13,6 +12,7 @@ import { buildModelContext } from '@/lib/llm/context'
 import type { ChatEvent } from '@/lib/llm/events'
 import { ensureImageSummaries } from '@/lib/llm/image-context'
 import { chatCompletionsUrl, injectAttachmentsOpenAI } from '@/lib/llm/openai'
+import type { ReasoningEffort } from '@/lib/llm/provider-adapters'
 import { buildSystem } from '@/lib/llm/system'
 import { activeTools, execTool, toOpenAITools, type ToolContext } from '@/lib/tools'
 import { isJobIdentifier } from '../contracts'
@@ -38,6 +38,7 @@ import {
 
 const SAFETY_ROUNDS = 16
 const MAX_OUTPUT_TOKENS = 40_000
+const TRIAL_MAX_OUTPUT_TOKENS = 10_000
 const INSTANT_MAX_OUTPUT_TOKENS = 96
 const REPLAY_SAFE_TOOLS = new Set(['web_search', 'fetch_url'])
 
@@ -328,26 +329,23 @@ async function runPreparedChat(
   prepared: PreparedChat,
   dependencies: ChatTextDependencies,
 ): Promise<void> {
-  const { selection, command } = input
+  const { selection } = input
   const isDeepTierProxy = selection.capability.provider.id === 'deep-tier'
+  const trial = selection.accessClass === 'trial'
   await dependencies.runAgentLoop({
     url: chatCompletionsUrl(selection.capability.provider.baseUrl),
     apiKey: selection.apiKey,
     model: selection.model,
     adapter: selection.capability.provider.adapter,
     thinking: prepared.instant ? false : selection.thinking,
-    reasoningEffort: prepared.instant ? null : resolveReasoningEffort({
-      isDeepTierProxy,
-      deepResearch: command.deepResearch,
-      modelId: selection.model,
-    }),
+    reasoningEffort: prepared.instant ? null : selection.reasoningEffort as ReasoningEffort | null,
     messages: prepared.modelMessages,
     tools: toOpenAITools(prepared.tools),
     emit: runtime.emit,
     executeTool: createToolExecutor(context, input, runtime, prepared, dependencies),
     maxRounds: prepared.instant ? 1 : SAFETY_ROUNDS,
     leakedRetry: !prepared.instant,
-    autoContinue: prepared.instant ? undefined : { maxContinuations: 4 },
+    autoContinue: prepared.instant || trial ? undefined : { maxContinuations: 4 },
     onUsage: usageHandler(context, input, runtime),
     onCheckpoint: checkpointHandler(runtime, prepared.baseLength),
     turnOptions: {
@@ -355,7 +353,9 @@ async function runPreparedChat(
       timeoutMs: prepared.instant ? 20_000 : 120_000,
       authType: selection.authType,
       logTiming: prepared.instant || isDeepTierProxy || process.env.DEBUG_LLM_TIMING === '1',
-      maxOutputTokens: prepared.instant ? INSTANT_MAX_OUTPUT_TOKENS : MAX_OUTPUT_TOKENS,
+      maxOutputTokens: prepared.instant
+        ? INSTANT_MAX_OUTPUT_TOKENS
+        : trial ? TRIAL_MAX_OUTPUT_TOKENS : MAX_OUTPUT_TOKENS,
       idempotencyNamespace: context.job.id,
     },
     onTurn: logTurn(context.job.id),

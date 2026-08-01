@@ -13,9 +13,13 @@ const MAX_ATTACHMENT_TEXT_CHARS = 80_000
 const MAX_TOTAL_ATTACHMENT_TEXT_CHARS = 160_000
 const MAX_SCAN_PAGES = 18
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const MODEL_ID = /^[a-z0-9._-]+\/[a-z0-9._:-]+$/i
+const REASONING_EFFORT = /^(none|minimal|low|medium|high|xhigh|max)$/
 
 export type ChatRequestBody = {
   tier?: string
+  modelId?: string
+  reasoningEffort?: string
   messages: RawMsg[]
   memories?: Memory[]
   attachments?: Attachment[]
@@ -267,6 +271,14 @@ function validateScalarFields(body: Record<string, unknown>): void {
     if (body[field] !== undefined && typeof body[field] !== 'boolean') {
       throw new RequestError(400, `${field} 无效`)
     }
+  }
+  if (body.modelId !== undefined
+    && (typeof body.modelId !== 'string' || body.modelId.length > 160 || !MODEL_ID.test(body.modelId))) {
+    throw new RequestError(400, 'modelId 无效')
+  }
+  if (body.reasoningEffort !== undefined
+    && (typeof body.reasoningEffort !== 'string' || !REASONING_EFFORT.test(body.reasoningEffort))) {
+    throw new RequestError(400, 'reasoningEffort 无效')
   }
   if (body.tier !== undefined
     && (typeof body.tier !== 'string' || !['绝句', '正构', '鸿篇', '观照', '绘影', '录像'].includes(body.tier))) {

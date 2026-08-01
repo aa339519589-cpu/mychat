@@ -41,13 +41,7 @@ export type SidebarRootContentProps = DragProps & {
 export function SidebarRootContent(props: SidebarRootContentProps) {
   const reducedMotion = useReducedMotion()
   return (
-    <motion.div
-      initial={false}
-      animate={rootAnimation(props.stackDepth, reducedMotion)}
-      transition={transitionFor(reducedMotion, PANEL_SPRING)}
-      inert={props.stackDepth > 0}
-      className="relative flex h-full min-h-0 flex-col origin-left"
-    >
+    <motion.div initial={false} animate={rootAnimation(props.stackDepth, reducedMotion)} transition={transitionFor(reducedMotion, PANEL_SPRING)} inert={props.stackDepth > 0} className="relative flex h-full min-h-0 flex-col origin-left">
       <SidebarHeader {...props} />
       <SidebarNavigation onNew={props.onNew} onOpenProjects={props.onOpenProjects} onOpenArtifacts={props.onOpenArtifacts} onOpenCode={props.onOpenCode} />
       <SidebarConversationList {...props} />
@@ -64,7 +58,7 @@ function rootAnimation(depth: number, reducedMotion: boolean | null) {
 
 function SidebarHeader({ onClose, onDragStart, onDragMove, onDragEnd, onDragCancel }: DragProps) {
   return (
-    <div data-testid="sidebar-drag-handle" onPointerDown={onDragStart} onPointerMove={onDragMove} onPointerUp={onDragEnd} onPointerCancel={onDragCancel} className="flex touch-none items-center px-5 pb-5 pt-[max(1.15rem,env(safe-area-inset-top))] md:touch-auto">
+    <div data-testid="sidebar-drag-handle" onPointerDown={onDragStart} onPointerMove={onDragMove} onPointerUp={onDragEnd} onPointerCancel={onDragCancel} className="z-20 flex shrink-0 touch-none items-center bg-sidebar px-4 pb-3 pt-[max(0.7rem,env(safe-area-inset-top))] md:touch-auto">
       <span className="font-heading text-[27px] font-semibold leading-none tracking-[-0.025em]">MyChat</span>
       <span aria-hidden="true" className="sr-only">My Chat</span>
       {onClose && <button onPointerDown={event => event.stopPropagation()} onClick={onClose} aria-label="收起侧栏" className="fluid-press fluid-icon-press fluid-touch-target ml-auto flex size-11 items-center justify-center rounded-full text-muted-foreground hover:bg-[var(--sidebar-selection)] hover:text-foreground md:hidden"><PanelLeft className="size-5" /></button>}
@@ -74,7 +68,7 @@ function SidebarHeader({ onClose, onDragStart, onDragMove, onDragEnd, onDragCanc
 
 function SidebarNavigation({ onNew, onOpenProjects, onOpenArtifacts, onOpenCode }: { onNew: () => void; onOpenProjects: () => void; onOpenArtifacts: () => void; onOpenCode: () => void }) {
   return (
-    <nav className="mx-5 grid gap-1 pb-3">
+    <nav className="mx-4 grid gap-0 pb-2">
       <NavRow icon={<Plus className="size-5" />} label="新对话" onClick={onNew} emphasis />
       <NavRow icon={<Folder className="size-5" />} label="项目" onClick={onOpenProjects} />
       <NavRow icon={<Shapes className="size-5" />} label="作品" onClick={onOpenArtifacts} />
@@ -84,15 +78,7 @@ function SidebarNavigation({ onNew, onOpenProjects, onOpenArtifacts, onOpenCode 
 }
 
 function SidebarConversationList({ activeId, rootConversations, renamingId, onSelect, onOpenMenu, onCommitRename, onCancelRename }: Pick<SidebarRootContentProps, "activeId" | "rootConversations" | "renamingId" | "onSelect" | "onOpenMenu" | "onCommitRename" | "onCancelRename">) {
-  return (
-    <>
-      <div className="mx-6 mb-3 mt-1 border-t border-sidebar-border/70" />
-      <p className="px-6 pb-1.5 text-[11px] tracking-[0.12em] text-muted-foreground/72">近期</p>
-      <div className="fluid-scroll min-h-0 flex-1 space-y-0.5 overflow-y-auto px-3 pb-3">
-        {rootConversations.length === 0 ? <p className="px-4 py-6 text-center text-[12px] text-muted-foreground/60">还没有对谈</p> : rootConversations.map(c => <ConversationRow key={c.id} c={c} isActive={c.id === activeId} renaming={renamingId === c.id} onSelect={onSelect} onOpenMenu={onOpenMenu} onCommitRename={onCommitRename} onCancelRename={onCancelRename} />)}
-      </div>
-    </>
-  )
+  return <><div className="mx-5 mb-2 mt-1 border-t border-sidebar-border/70" /><p className="px-5 pb-1.5 text-[11px] tracking-[0.12em] text-muted-foreground/72">近期</p><div className="fluid-scroll min-h-0 flex-1 space-y-0.5 overflow-y-auto px-3 pb-3">{rootConversations.length === 0 ? <p className="px-4 py-6 text-center text-[12px] text-muted-foreground/60">还没有对谈</p> : rootConversations.map(c => <ConversationRow key={c.id} c={c} isActive={c.id === activeId} renaming={renamingId === c.id} onSelect={onSelect} onOpenMenu={onOpenMenu} onCommitRename={onCommitRename} onCancelRename={onCancelRename} />)}</div></>
 }
 
 function SidebarFooter({ email, userMenuOpen, onToggle }: { email: string; userMenuOpen: boolean; onToggle: () => void }) {
@@ -101,7 +87,5 @@ function SidebarFooter({ email, userMenuOpen, onToggle }: { email: string; userM
 }
 
 function SidebarUserMenu({ open, reducedMotion, onClose, onOpenSettings, onLogout }: { open: boolean; reducedMotion: boolean | null; onClose: () => void; onOpenSettings: () => void; onLogout: () => void }) {
-  return (
-    <AnimatePresence initial={false}>{open && <motion.div key="user-menu" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={transitionFor(reducedMotion)} className="absolute inset-0 z-30"><button className="absolute inset-0 cursor-default" aria-label="关闭菜单" onClick={onClose} /><motion.div initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 12, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 8, scale: 0.98 }} transition={transitionFor(reducedMotion)} className="fluid-material-strong absolute bottom-[calc(4rem+env(safe-area-inset-bottom,0px))] left-3 right-3 overflow-hidden rounded-2xl border border-sidebar-border"><button onClick={onOpenSettings} className="fluid-press flex min-h-11 w-full items-center gap-3 px-4 py-3 text-sm text-foreground hover:bg-sidebar-accent/60"><Settings className="size-4 text-muted-foreground" />设置</button><div className="border-t border-sidebar-border/50" /><button onClick={onLogout} className="fluid-press flex min-h-11 w-full items-center gap-3 px-4 py-3 text-sm text-muted-foreground hover:bg-sidebar-accent/40 hover:text-destructive"><LogOut className="size-4" />退出登录</button></motion.div></motion.div>}</AnimatePresence>
-  )
+  return <AnimatePresence initial={false}>{open && <motion.div key="user-menu" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={transitionFor(reducedMotion)} className="absolute inset-0 z-30"><button className="absolute inset-0 cursor-default" aria-label="关闭菜单" onClick={onClose} /><motion.div initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 12, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 8, scale: 0.98 }} transition={transitionFor(reducedMotion)} className="fluid-material-strong absolute bottom-[calc(4rem+env(safe-area-inset-bottom,0px))] left-3 right-3 overflow-hidden rounded-2xl border border-sidebar-border"><button onClick={onOpenSettings} className="fluid-press flex min-h-11 w-full items-center gap-3 px-4 py-3 text-sm text-foreground hover:bg-sidebar-accent/60"><Settings className="size-4 text-muted-foreground" />设置</button><div className="border-t border-sidebar-border/50" /><button onClick={onLogout} className="fluid-press flex min-h-11 w-full items-center gap-3 px-4 py-3 text-sm text-muted-foreground hover:bg-sidebar-accent/40 hover:text-destructive"><LogOut className="size-4" />退出登录</button></motion.div></motion.div>}</AnimatePresence>
 }

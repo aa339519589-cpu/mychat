@@ -25,6 +25,7 @@ export type RuntimeEnvironment = Record<string, string | undefined> & {
   METRICS_BEARER_TOKEN?: string
   E2B_API_KEY?: string
   DEEPSEEK_API_KEY?: string
+  OPENROUTER_API_KEY?: string
   AGENT_CREDENTIAL_KEY?: string
   AGENT_CREDENTIAL_KEY_PREVIOUS?: string
   AGENT_PUBLIC_URL?: string
@@ -152,7 +153,6 @@ function validateProductionWeb(environment: RuntimeEnvironment): void {
     throw new Error('METRICS_BEARER_TOKEN must be an encoded secret containing at least 32 bytes')
   }
   productionHttpsUrl(requireValue(environment, 'AGENT_PUBLIC_URL', 'web'), 'AGENT_PUBLIC_URL')
-  // GitHub OAuth is optional as a complete integration; its routes fail closed.
   requireSecret(environment, 'AGENT_CREDENTIAL_KEY', 'web')
 }
 

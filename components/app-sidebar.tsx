@@ -4,6 +4,7 @@ import { useEffect, useState, type PointerEvent as ReactPointerEvent } from "rea
 import type { Conversation } from "@/lib/chat-data"
 import type { Memory } from "@/lib/memory-data"
 import type { Project, ProjectFile } from "@/lib/project-data"
+import type { ModelCatalogItem } from "@/lib/model-catalog"
 import type { ModelEndpointSummary } from "@/lib/model-endpoints"
 import { sortConversations, type SidebarAnchor, type SidebarScreen } from "@/components/sidebar/shared"
 import { SidebarRootContent } from "@/components/sidebar/app-sidebar-content"
@@ -31,6 +32,7 @@ export type AppSidebarProps = {
     editMemory: (id: string, content: string) => void; deleteMemory: (id: string) => void
   }
   model: {
+    catalog: ModelCatalogItem[]; activeModelId: string | null; selectModel: (model: ModelCatalogItem) => void
     endpoints: ModelEndpointSummary[]; activeId: string | null; select: (id: string) => void
     created: (endpoint: ModelEndpointSummary) => void; updated: (endpoint: ModelEndpointSummary) => void
     deleted: (id: string) => void
@@ -38,10 +40,7 @@ export type AppSidebarProps = {
   session: { email: string; logout: () => void; openCode: () => void; openArtifacts: () => void }
 }
 
-// 单一响应式实例：移动端根面板占 82vw，桌面端常驻于 20rem 容器。
-export function AppSidebar({
-  visible = false, onClose, onDragStart, onDragMove, onDragEnd, onDragCancel, ...props
-}: AppSidebarProps & {
+export function AppSidebar({ visible = false, onClose, onDragStart, onDragMove, onDragEnd, onDragCancel, ...props }: AppSidebarProps & {
   visible?: boolean
   onClose?: () => void
   onDragStart?: (event: ReactPointerEvent<HTMLDivElement>) => void
@@ -60,15 +59,7 @@ export function AppSidebar({
   const [projectRenaming, setProjectRenaming] = useState(false)
 
   useEffect(() => {
-    const reset = () => {
-      setStack([])
-      setUserMenuOpen(false)
-      setSelectedProjectId(null)
-      setActionConvId(null)
-      setRenamingId(null)
-      setProjectMenuAnchor(null)
-      setProjectRenaming(false)
-    }
+    const reset = () => { setStack([]); setUserMenuOpen(false); setSelectedProjectId(null); setActionConvId(null); setRenamingId(null); setProjectMenuAnchor(null); setProjectRenaming(false) }
     if (!visible) reset()
     const media = window.matchMedia("(max-width: 767px)")
     const onViewportChange = (event: MediaQueryListEvent) => { if (event.matches && !visible) reset() }
@@ -89,64 +80,10 @@ export function AppSidebar({
   return (
     <aside className="relative h-full w-full overflow-hidden bg-sidebar text-sidebar-foreground">
       <div className="absolute inset-0 z-10 h-full w-full overflow-hidden bg-sidebar">
-        <SidebarRootContent
-          onClose={onClose}
-          onDragStart={onDragStart}
-          onDragMove={onDragMove}
-          onDragEnd={onDragEnd}
-          onDragCancel={onDragCancel}
-          stackDepth={stack.length}
-          activeId={activeId}
-          rootConversations={rootConversations}
-          renamingId={renamingId}
-          email={props.session.email}
-          userMenuOpen={userMenuOpen}
-          onNew={handleNew}
-          onOpenProjects={() => push("projects")}
-          onOpenArtifacts={() => { setStack([]); setUserMenuOpen(false); props.session.openArtifacts() }}
-          onOpenCode={() => { setStack([]); setUserMenuOpen(false); props.session.openCode() }}
-          onSelect={handleSelect}
-          onOpenMenu={openConvMenu}
-          onCommitRename={(id, title) => { props.conversation.rename(id, title); setRenamingId(null) }}
-          onCancelRename={() => setRenamingId(null)}
-          onToggleUserMenu={() => setUserMenuOpen(value => !value)}
-          onCloseUserMenu={() => setUserMenuOpen(false)}
-          onOpenSettings={() => push("settings")}
-          onLogout={props.session.logout}
-        />
+        <SidebarRootContent onClose={onClose} onDragStart={onDragStart} onDragMove={onDragMove} onDragEnd={onDragEnd} onDragCancel={onDragCancel} stackDepth={stack.length} activeId={activeId} rootConversations={rootConversations} renamingId={renamingId} email={props.session.email} userMenuOpen={userMenuOpen} onNew={handleNew} onOpenProjects={() => push("projects")} onOpenArtifacts={() => { setStack([]); setUserMenuOpen(false); props.session.openArtifacts() }} onOpenCode={() => { setStack([]); setUserMenuOpen(false); props.session.openCode() }} onSelect={handleSelect} onOpenMenu={openConvMenu} onCommitRename={(id, title) => { props.conversation.rename(id, title); setRenamingId(null) }} onCancelRename={() => setRenamingId(null)} onToggleUserMenu={() => setUserMenuOpen(value => !value)} onCloseUserMenu={() => setUserMenuOpen(false)} onOpenSettings={() => push("settings")} onLogout={props.session.logout} />
       </div>
-      <SidebarScreens
-        {...props}
-        stack={stack}
-        conversations={conversations}
-        selectedProject={selectedProject}
-        projectRenaming={projectRenaming}
-        renamingId={renamingId}
-        projectMenuAnchor={projectMenuAnchor}
-        onBack={pop}
-        onOpenProject={openProject}
-        onSelectConversation={handleSelect}
-        onOpenConversationMenu={openConvMenu}
-        onProjectMenuAnchor={setProjectMenuAnchor}
-        onProjectRename={setProjectRenaming}
-        onStopRename={() => setRenamingId(null)}
-      />
-      <SidebarOverlays
-        actionConv={actionConv}
-        actionAnchor={actionAnchor}
-        selectedProject={selectedProject}
-        projectMenuAnchor={projectMenuAnchor}
-        projects={props.project.items}
-        onCloseConversation={closeConvMenu}
-        onToggleStar={() => { if (actionConv) props.conversation.toggleStar(actionConv.id); closeConvMenu() }}
-        onTogglePin={() => { if (actionConv) props.conversation.togglePin(actionConv.id); closeConvMenu() }}
-        onRenameConversation={() => { if (actionConv) setRenamingId(actionConv.id); closeConvMenu() }}
-        onMoveConversation={projectId => { if (actionConv) props.conversation.move(actionConv.id, projectId); closeConvMenu() }}
-        onDeleteConversation={() => { if (actionConv) props.conversation.delete(actionConv.id); closeConvMenu() }}
-        onCloseProject={() => setProjectMenuAnchor(null)}
-        onRenameProject={() => { setProjectRenaming(true); setProjectMenuAnchor(null) }}
-        onDeleteProject={() => { if (selectedProject) props.project.delete(selectedProject.id); setProjectMenuAnchor(null); pop() }}
-      />
+      <SidebarScreens {...props} stack={stack} conversations={conversations} selectedProject={selectedProject} projectRenaming={projectRenaming} renamingId={renamingId} projectMenuAnchor={projectMenuAnchor} onBack={pop} onOpenProject={openProject} onSelectConversation={handleSelect} onOpenConversationMenu={openConvMenu} onProjectMenuAnchor={setProjectMenuAnchor} onProjectRename={setProjectRenaming} onStopRename={() => setRenamingId(null)} />
+      <SidebarOverlays actionConv={actionConv} actionAnchor={actionAnchor} selectedProject={selectedProject} projectMenuAnchor={projectMenuAnchor} projects={props.project.items} onCloseConversation={closeConvMenu} onToggleStar={() => { if (actionConv) props.conversation.toggleStar(actionConv.id); closeConvMenu() }} onTogglePin={() => { if (actionConv) props.conversation.togglePin(actionConv.id); closeConvMenu() }} onRenameConversation={() => { if (actionConv) setRenamingId(actionConv.id); closeConvMenu() }} onMoveConversation={projectId => { if (actionConv) props.conversation.move(actionConv.id, projectId); closeConvMenu() }} onDeleteConversation={() => { if (actionConv) props.conversation.delete(actionConv.id); closeConvMenu() }} onCloseProject={() => setProjectMenuAnchor(null)} onRenameProject={() => { setProjectRenaming(true); setProjectMenuAnchor(null) }} onDeleteProject={() => { if (selectedProject) props.project.delete(selectedProject.id); setProjectMenuAnchor(null); pop() }} />
     </aside>
   )
 }

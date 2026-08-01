@@ -28,38 +28,20 @@ export type SidebarScreensProps = ScreenData & {
 }
 
 export function SidebarScreens(props: SidebarScreensProps) {
-  return (
-    <>
-      <SettingsPanel {...props} />
-      <ProjectsPanel {...props} />
-      <ProjectDetailPanel {...props} />
-    </>
-  )
+  return <><SettingsPanel {...props} /><ProjectsPanel {...props} /><ProjectDetailPanel {...props} /></>
 }
 
 function SettingsPanel({ stack, memory, model, conversation, onBack }: SidebarScreensProps) {
-  return (
-    <ScreenPanel open={stack.includes("settings")} style={sidebarScreenStyle(stack, "settings")} title="设置" onBack={onBack}>
-      <SettingsScreen memories={memory.items} memoryEnabled={memory.enabled} onMemoryEnabledChange={memory.setEnabled} onMemoryAdd={memory.add} onMemoryEdit={memory.edit} onMemoryDelete={memory.delete} onDeleteAllConversations={conversation.deleteAll} modelEndpoints={model.endpoints} activeEndpointId={model.activeId} onEndpointSelect={model.select} onEndpointCreated={model.created} onEndpointUpdated={model.updated} onEndpointDeleted={model.deleted} />
-    </ScreenPanel>
-  )
+  return <ScreenPanel open={stack.includes("settings")} style={sidebarScreenStyle(stack, "settings")} title="设置" onBack={onBack}><SettingsScreen memories={memory.items} memoryEnabled={memory.enabled} onMemoryEnabledChange={memory.setEnabled} onMemoryAdd={memory.add} onMemoryEdit={memory.edit} onMemoryDelete={memory.delete} onDeleteAllConversations={conversation.deleteAll} models={model.catalog} activeModelId={model.activeModelId} onModelSelect={model.selectModel} /></ScreenPanel>
 }
 
 function ProjectsPanel({ stack, project, conversations, onBack, onOpenProject }: SidebarScreensProps) {
-  return (
-    <ScreenPanel open={stack.includes("projects")} style={sidebarScreenStyle(stack, "projects")} title="项目" onBack={onBack}>
-      <ProjectsScreen projects={project.items} conversations={conversations} onCreate={project.create} onOpen={onOpenProject} onDelete={project.delete} />
-    </ScreenPanel>
-  )
+  return <ScreenPanel open={stack.includes("projects")} style={sidebarScreenStyle(stack, "projects")} title="项目" onBack={onBack}><ProjectsScreen projects={project.items} conversations={conversations} onCreate={project.create} onOpen={onOpenProject} onDelete={project.delete} /></ScreenPanel>
 }
 
 function ProjectDetailPanel(props: SidebarScreensProps) {
   const { stack, selectedProject, projectRenaming, project, conversation, conversations, renamingId, onBack, onSelectConversation, onOpenConversationMenu, onProjectMenuAnchor, onStopRename } = props
-  return (
-    <ScreenPanel open={stack.includes("project-detail")} style={sidebarScreenStyle(stack, "project-detail")} onBack={onBack} title={<ProjectTitle {...props} />} action={<ProjectAction project={selectedProject} editing={projectRenaming} onAnchor={onProjectMenuAnchor} />}>
-      {selectedProject && <ProjectDetailScreen key={selectedProject.id} project={selectedProject} conversations={conversations} onOpenChat={onSelectConversation} onNewChat={project.createConversation} onInstructions={project.setInstructions} onLoadFiles={project.loadFiles} onAddFile={project.addFile} onDeleteFile={project.deleteFile} onLoadProjectMemories={project.loadMemories} onAddProjectMemory={content => project.addMemory(selectedProject.id, content)} onEditProjectMemory={project.editMemory} onDeleteProjectMemory={project.deleteMemory} renamingId={renamingId} onOpenConvMenu={onOpenConversationMenu} onRenameConversation={conversation.rename} onStopRename={onStopRename} />}
-    </ScreenPanel>
-  )
+  return <ScreenPanel open={stack.includes("project-detail")} style={sidebarScreenStyle(stack, "project-detail")} onBack={onBack} title={<ProjectTitle {...props} />} action={<ProjectAction project={selectedProject} editing={projectRenaming} onAnchor={onProjectMenuAnchor} />}>{selectedProject && <ProjectDetailScreen key={selectedProject.id} project={selectedProject} conversations={conversations} onOpenChat={onSelectConversation} onNewChat={project.createConversation} onInstructions={project.setInstructions} onLoadFiles={project.loadFiles} onAddFile={project.addFile} onDeleteFile={project.deleteFile} onLoadProjectMemories={project.loadMemories} onAddProjectMemory={content => project.addMemory(selectedProject.id, content)} onEditProjectMemory={project.editMemory} onDeleteProjectMemory={project.deleteMemory} renamingId={renamingId} onOpenConvMenu={onOpenConversationMenu} onRenameConversation={conversation.rename} onStopRename={onStopRename} />}</ScreenPanel>
 }
 
 function ProjectTitle({ selectedProject, projectRenaming, project, onProjectRename }: SidebarScreensProps) {
