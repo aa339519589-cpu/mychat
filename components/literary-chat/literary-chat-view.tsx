@@ -53,7 +53,7 @@ export type LiteraryChatViewController = {
 
 export function LiteraryChatView({ controller }: { controller: LiteraryChatViewController }) {
   const { session, conversation, sidebar, layout, chat } = controller
-  const { active, projects, actions } = conversation
+  const { active } = conversation
   const mobile = useMediaQuery("(max-width: 767px)")
   const [artifactPanelWidth, setArtifactPanelWidth] = useState(520)
 
@@ -82,7 +82,7 @@ export function LiteraryChatView({ controller }: { controller: LiteraryChatViewC
           messageProps={chat.messages}
           inputProps={chat.input}
         />
-        <ViewOverlays sessionUserId={session.user.id} layout={layout} active={active} projects={projects} actions={actions} mobile={mobile} artifact={artifact} artifactPanelWidth={artifactPanelWidth} codeConsole={LazyCodeConsole} artifactLibrary={LazyArtifactLibrary} />
+        <ViewOverlays sessionUserId={session.user.id} layout={layout} mobile={mobile} artifact={artifact} artifactPanelWidth={artifactPanelWidth} codeConsole={LazyCodeConsole} artifactLibrary={LazyArtifactLibrary} />
       </div>
     </>
   )
