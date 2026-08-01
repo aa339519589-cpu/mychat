@@ -1,0 +1,129 @@
+name: Recover Render Production
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/recover-render-production.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recover-render-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy current main directly to Render
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      PRODUCTION_URL: https://mychat-nm6x.onrender.com
+    steps:
+      - name: Checkout current main
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Confirm immutable revision
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Configure Render for direct recovery
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          if [[ -z "$RENDER_API_KEY" ]] || [[ ! "$RENDER_SERVICE_ID" =~ ^srv-[a-z0-9]+$ ]]; then
+            echo "RENDER_API_KEY and RENDER_SERVICE_ID must be configured" >&2
+            exit 1
+          fi
+          render_api() {
+            curl --fail-with-body --silent --show-error \
+              --retry 4 --retry-all-errors --connect-timeout 10 --max-time 60 \
+              --header "Authorization: Bearer $RENDER_API_KEY" \
+              --header 'Content-Type: application/json' \
+              "$@"
+          }
+          render_api --request PATCH \
+            --data '{"autoDeploy":"no","serviceDetails":{"healthCheckPath":"/api/live"}}' \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID" >/dev/null
+          render_api --request PUT --data '{"value":"off"}' \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/MYCHAT_MAINTENANCE_MODE" >/dev/null
+          render_api \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/MYCHAT_MAINTENANCE_MODE" \
+            | jq --exit-status '.value == "off"' >/dev/null
+
+      - name: Deploy exact current revision
+        id: render
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          response="$(curl --fail-with-body --silent --show-error \
+            --connect-timeout 10 --max-time 60 \
+            --header "Authorization: Bearer $RENDER_API_KEY" \
+            --header 'Content-Type: application/json' \
+            --request POST \
+            --data "$(jq -nc --arg commitId "$GITHUB_SHA" '{commitId: $commitId}')" \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys")"
+          deploy_id="$(jq -er '.id' <<<"$response")"
+          if [[ ! "$deploy_id" =~ ^dep-[a-z0-9]+$ ]]; then
+            echo "Render did not return a valid deploy ID" >&2
+            exit 1
+          fi
+          echo "deploy_id=$deploy_id" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for Render deployment
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_DEPLOY_ID: ${{ steps.render.outputs.deploy_id }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          for attempt in {1..180}; do
+            response="$(curl --fail-with-body --silent --show-error \
+              --retry 4 --retry-all-errors --connect-timeout 10 --max-time 60 \
+              --header "Authorization: Bearer $RENDER_API_KEY" \
+              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys/$RENDER_DEPLOY_ID")"
+            status="$(jq -er '.status' <<<"$response")"
+            commit="$(jq -r '.commit.id // empty' <<<"$response")"
+            if [[ -n "$commit" && "$commit" != "$GITHUB_SHA" ]]; then
+              echo "Render resolved a different commit: $commit" >&2
+              exit 1
+            fi
+            case "$status" in
+              live)
+                test "$commit" = "$GITHUB_SHA"
+                exit 0
+                ;;
+              build_failed|update_failed|pre_deploy_failed|canceled|deactivated)
+                echo "Render deploy failed with status $status" >&2
+                exit 1
+                ;;
+            esac
+            sleep 10
+          done
+          echo "Render deploy did not become live before the deadline" >&2
+          exit 1
+
+      - name: Confirm production liveness
+        run: |
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error \
+              --connect-timeout 10 --max-time 30 \
+              "$PRODUCTION_URL/api/live" >/dev/null; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Production liveness did not recover" >&2
+          exit 1
+
+      - name: Report production readiness
+        continue-on-error: true
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --connect-timeout 10 --max-time 30 \
+            "$PRODUCTION_URL/api/ready"
