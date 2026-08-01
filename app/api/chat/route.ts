@@ -61,7 +61,7 @@ function modelSelectionResponse(request: Request, error: ChatModelSelectionError
 async function resolveAdmissionPolicy(request: Request, auth: AuthCtx, body: DurableChatRequestBody): Promise<AdmissionPolicy> {
   let selection: ChatModelSelection
   try {
-    selection = await resolveChatModelSelection({ tier: body.tier ?? '绝句', deepResearch: body.deepResearch === true, endpointId: body.endpointId, modelId: body.modelId, reasoningEffort: body.reasoningEffort, supabase: auth.supabase, userId: auth.userId, allowPremium: auth.isOwner === true })
+    selection = await resolveChatModelSelection({ tier: body.tier ?? '绝句', endpointId: body.endpointId, modelId: body.modelId, reasoningEffort: body.reasoningEffort, supabase: auth.supabase, userId: auth.userId, allowPremium: auth.isOwner === true })
   } catch (error) {
     if (error instanceof ChatModelSelectionError) return { response: modelSelectionResponse(request, error) }
     return { response: configurationError(request, '模型策略暂时不可用') }
