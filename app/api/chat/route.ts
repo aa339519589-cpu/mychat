@@ -51,7 +51,7 @@ function modelSelectionResponse(request: Request, error: ChatModelSelectionError
 async function resolveAdmissionPolicy(request: Request, auth: AuthCtx, body: DurableChatRequestBody): Promise<AdmissionPolicy> {
   let selection: ChatModelSelection
   try {
-    selection = await resolveChatModelSelection({ tier: body.tier ?? '绝句', deepResearch: body.deepResearch === true, endpointId: body.endpointId, modelId: body.modelId, reasoningEffort: body.reasoningEffort, supabase: auth.supabase, userId: auth.userId })
+    selection = await resolveChatModelSelection({ tier: body.tier ?? '绝句', deepResearch: body.deepResearch === true, endpointId: body.endpointId, modelId: body.modelId, reasoningEffort: body.reasoningEffort, supabase: auth.supabase, userId: auth.userId, allowPremium: auth.isOwner === true })
   } catch (error) {
     if (error instanceof ChatModelSelectionError) return { response: modelSelectionResponse(request, error) }
     return { response: configurationError(request, '模型策略暂时不可用') }
@@ -89,7 +89,7 @@ export async function POST(request: NextRequest) {
   const selection = policy.selection
   if (!selection || policy.usingBalance === undefined) return configurationError(request, '聊天准入策略暂时不可用')
   let trialReserved = false
-  if (selection.accessClass === 'trial') {
+  if (selection.accessClass === 'trial' && auth.isOwner !== true) {
     try {
       const trial = await reserveTrialCall(auth.supabase, auth.userId, body.generationId, selection.model)
       if (!trial.allowed) return apiErrorResponseV1(request, { status: 429, code: 'QUOTA_EXCEEDED', message: '中档模型的 3 次免费额度已用完', retryable: false })
