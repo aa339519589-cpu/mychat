@@ -28,7 +28,7 @@ export function ComposerBar({ mobile, value, onValueChange, textareaRef, onResiz
   return (
     <>
       <textarea ref={textareaRef} rows={1} value={value} disabled={disabled} onChange={event => { onValueChange(event.target.value); onResize() }} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !disabled && !isLoading && !sendPending) { event.preventDefault(); onSubmit() } }} placeholder={placeholder} className={cn("order-1 block min-h-[3.25rem] w-full basis-full resize-none bg-transparent px-2.5 pb-1 pt-1.5 text-[16px] font-normal leading-6 tracking-[-0.01em] text-foreground outline-none placeholder:font-normal placeholder:text-[#8F8F8F] disabled:cursor-wait dark:text-white dark:placeholder:text-white/45", mobile ? "max-h-[120px]" : "max-h-[180px]")} />
-      <button type="button" onClick={onOpenModel} aria-label={`选择模型，当前为${activeModelLabel}`} title={activeModelLabel} className={cn("fluid-press order-3 flex h-10 shrink-0 items-center justify-center gap-1 rounded-full text-[#9A9A9A] hover:bg-secondary/70 hover:text-foreground dark:text-white/55 dark:hover:bg-white/10 dark:hover:text-white", mobile ? "w-10" : "min-w-0 max-w-[11rem] px-2.5")}>
+      <button type="button" onClick={onOpenModel} aria-label="选择模型" title={activeModelLabel} className={cn("fluid-press order-3 flex h-11 shrink-0 items-center justify-center gap-1 rounded-full text-[#9A9A9A] hover:bg-secondary/70 hover:text-foreground dark:text-white/55 dark:hover:bg-white/10 dark:hover:text-white", mobile ? "w-11" : "min-w-11 max-w-[11rem] px-2.5")}>
         {modelIcon}
         <span className={cn("min-w-0 truncate text-xs", mobile && "sr-only")}>{activeModelLabel}</span>
         {!mobile && <ChevronDown className="size-3 shrink-0" />}
