@@ -8,8 +8,8 @@ import type { SearchMode } from "@/lib/search-mode"
 
 type UseModelSelectionOptions = {
   setSearchMode: Dispatch<SetStateAction<SearchMode>>
-  setDeepResearch: Dispatch<SetStateAction<boolean>>
   setHistoryRetrieval: Dispatch<SetStateAction<boolean>>
+  setRenderEnabled: Dispatch<SetStateAction<boolean>>
 }
 
 type CatalogPayload = {
@@ -46,7 +46,7 @@ function preferredEffort(model: ModelCatalogItem, saved?: string | null): string
 }
 
 export function useModelSelection(options: UseModelSelectionOptions) {
-  const { setSearchMode, setDeepResearch, setHistoryRetrieval } = options
+  const { setSearchMode, setHistoryRetrieval, setRenderEnabled } = options
   const [activeTier, setActiveTier] = useState<Tier>("绝句")
   const [modelEndpoints, setModelEndpoints] = useState<ModelEndpointSummary[]>([])
   const [activeEndpointId, setActiveEndpointId] = useState<string | null>(null)
@@ -112,8 +112,8 @@ export function useModelSelection(options: UseModelSelectionOptions) {
     setActiveModelId(model.id)
     setActiveEndpointId(null)
     setSearchMode("off")
-    setDeepResearch(false)
     setHistoryRetrieval(false)
+    setRenderEnabled(false)
     const nextEffort = preferredEffort(model)
     setReasoningEffortState(nextEffort)
     try {
