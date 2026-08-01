@@ -6,7 +6,7 @@ import { isRecord } from '@/lib/unknown-value'
 
 type SearchHit = { title: string; url: string; content?: string }
 
-async function tavilySearchOnce(query: string, maxResults: number, searchDepth: 'basic' | 'advanced', parentSignal?: AbortSignal): Promise<{ answer: string; results: SearchHit[] }> {
+async function tavilySearchOnce(query: string, maxResults: number, parentSignal?: AbortSignal): Promise<{ answer: string; results: SearchHit[] }> {
   const apiKey = process.env.TAVILY_API_KEY
   if (!apiKey || !query) return { answer: '', results: [] }
   try {
@@ -14,7 +14,7 @@ async function tavilySearchOnce(query: string, maxResults: number, searchDepth: 
     const res = await fetch('https://api.tavily.com/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ api_key: apiKey, query, search_depth: searchDepth, max_results: maxResults, include_answer: true }),
+      body: JSON.stringify({ api_key: apiKey, query, search_depth: 'basic', max_results: maxResults, include_answer: true }),
       signal: signals.length === 1 ? signals[0] : AbortSignal.any(signals),
     })
     if (!res.ok) return { answer: '', results: [] }
@@ -73,24 +73,18 @@ function formatSearchResultText(modeLabel: string, dateLabel: string | null, ans
 }
 
 // 调用 Tavily 联网搜索，返回给模型的文字 + 给前端展示的来源列表
-async function tavilySearch(query: string, mode: 'web' | 'deep', latestBeijingDate: string | null, signal?: AbortSignal): Promise<{ text: string; results: { title: string; url: string }[] }> {
-  const budget = searchSourceBudget(mode)
-  const queries = buildSearchQueries(query, mode, latestBeijingDate)
+async function tavilySearch(query: string, latestBeijingDate: string | null, signal?: AbortSignal): Promise<{ text: string; results: { title: string; url: string }[] }> {
+  const budget = searchSourceBudget('web')
+  const queries = buildSearchQueries(query, latestBeijingDate)
   if (!queries.length) return { text: '联网搜索当前不可用。', results: [] }
 
   const batched = await Promise.all(
-    queries.map(q => tavilySearchOnce(q, Math.min(10, budget.max), mode === 'deep' ? 'advanced' : 'basic', signal)),
+    queries.map(q => tavilySearchOnce(q, Math.min(10, budget.max), signal)),
   )
   const merged = mergeUniqueResults(batched.flatMap(batch => batch.results), budget.max).slice(0, budget.target)
   const answers = batched.map(batch => batch.answer)
-  const text = formatSearchResultText(mode === 'deep' ? '深度联网' : '联网', latestBeijingDate, answers, merged)
+  const text = formatSearchResultText('联网', latestBeijingDate, answers, merged)
   if (merged.length === 0) return { text: '没有找到相关结果。', results: [] }
-  if (mode === 'deep' && merged.length < budget.min) {
-    return {
-      text: `${text}\n\n注意：本次深度联网仅拿到 ${merged.length} 个可用来源，低于目标下限 ${budget.min} 个。请继续搜索补足后再下结论。`,
-      results: merged.map(r => ({ title: r.title, url: r.url })),
-    }
-  }
   return { text, results: merged.map(r => ({ title: r.title, url: r.url })) }
 }
 
@@ -102,8 +96,7 @@ export const webSearchTool: ToolDef = {
   execute: async (input, ctx): Promise<ToolOutcome> => {
     const params = isRecord(input) ? input : {}
     const query = typeof params.query === 'string' ? params.query : ''
-    const mode = ctx.searchMode === 'deep' ? 'deep' : 'web'
-    const { text, results } = await tavilySearch(query, mode, ctx.latestBeijingDate ?? null, ctx.signal)
+    const { text, results } = await tavilySearch(query, ctx.latestBeijingDate ?? null, ctx.signal)
     return { result: text, event: { search: { query, results } } }
   },
 }

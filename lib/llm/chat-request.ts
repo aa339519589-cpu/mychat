@@ -21,7 +21,6 @@ export type ChatRequestBody = {
   attachments?: Attachment[]
   searchMode?: unknown
   webSearch?: unknown
-  deepWebSearch?: unknown
   deepResearch?: boolean
   project?: ProjectContext
   conversationId?: string
@@ -273,7 +272,7 @@ function validateScalarFields(body: Record<string, unknown>): void {
     throw new RequestError(400, 'tier 无效')
   }
   if (body.searchMode !== undefined
-    && (typeof body.searchMode !== 'string' || !['off', 'web', 'deep'].includes(body.searchMode))) {
+    && (typeof body.searchMode !== 'string' || !['off', 'web'].includes(body.searchMode))) {
     throw new RequestError(400, 'searchMode 无效')
   }
 }

@@ -196,9 +196,9 @@ export async function POST(request: NextRequest) {
     return configurationError(request, '平台视频服务尚未配置')
   }
 
-  const searchMode = body.searchMode === 'web' || body.searchMode === 'deep'
+  const searchMode = body.searchMode === 'web'
     ? body.searchMode
-    : normalizeSearchMode(body.webSearch, body.deepWebSearch)
+    : normalizeSearchMode(body.webSearch)
   try {
     const enqueued = await enqueueChatJob({
       body,

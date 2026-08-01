@@ -121,11 +121,10 @@ test("web search validates and deduplicates untrusted provider results", { concu
     })
   }
   const outcome = await webSearchTool.execute({ query: "current topic" }, {
-    supabase: null, userId: null, searchMode: "deep", latestBeijingDate: "2026-07-13",
+    supabase: null, userId: null, searchMode: "web", latestBeijingDate: "2026-07-13",
   })
-  assert.ok(calls > 1)
-  assert.match(outcome.result, /深度联网/)
-  assert.match(outcome.result, /低于目标下限/)
+  assert.equal(calls, 1)
+  assert.match(outcome.result, /搜索模式：联网/)
   assert.deepEqual(outcome.event, { search: {
     query: "current topic",
     results: [
