@@ -17,6 +17,10 @@ export type ModelCatalogItem = {
   defaultReasoningEffort: string | null
   reasoningMandatory: boolean
   ownerUnlocked?: boolean
+  trialSelectable?: boolean
+  trialUnlimited?: boolean
+  trialLimit?: number
+  trialRemaining?: number
 }
 
 type CuratedModel = Pick<ModelCatalogItem, 'id' | 'name' | 'provider' | 'access' | 'flagship'>
@@ -85,4 +89,8 @@ export function isModelCatalogItem(value: unknown): value is ModelCatalogItem {
     && (item.defaultReasoningEffort === null || typeof item.defaultReasoningEffort === 'string')
     && typeof item.reasoningMandatory === 'boolean'
     && (item.ownerUnlocked === undefined || typeof item.ownerUnlocked === 'boolean')
+    && (item.trialSelectable === undefined || typeof item.trialSelectable === 'boolean')
+    && (item.trialUnlimited === undefined || typeof item.trialUnlimited === 'boolean')
+    && (item.trialLimit === undefined || (typeof item.trialLimit === 'number' && Number.isInteger(item.trialLimit) && item.trialLimit >= 0))
+    && (item.trialRemaining === undefined || (typeof item.trialRemaining === 'number' && Number.isInteger(item.trialRemaining) && item.trialRemaining >= 0))
 }
