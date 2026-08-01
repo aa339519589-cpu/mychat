@@ -1,27 +1,12 @@
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import { headers } from 'next/headers'
-import { Noto_Serif_SC, Source_Serif_4 } from 'next/font/google'
 import './globals.css'
 import './theme-palette.css'
 import './dark-background.css'
 import './thinking-flow.css'
 import './mobile-performance.css'
 import 'katex/dist/katex.min.css'
-
-const notoSerifSc = Noto_Serif_SC({
-  variable: '--font-noto-serif-sc',
-  weight: 'variable',
-  subsets: ['latin'],
-  display: 'swap',
-})
-
-const sourceSerif = Source_Serif_4({
-  variable: '--font-source-serif',
-  weight: 'variable',
-  subsets: ['latin'],
-  display: 'swap',
-})
 
 export const metadata: Metadata = {
   metadataBase: new URL('https://mychat-nm6x.onrender.com'),
@@ -59,7 +44,7 @@ export const viewport: Viewport = {
   viewportFit: 'cover',
   colorScheme: 'light dark',
   themeColor: [
-    { media: '(prefers-color-scheme: light)', color: '#FCF7F1' },
+    { media: '(prefers-color-scheme: light)', color: '#FFFDF8' },
     { media: '(prefers-color-scheme: dark)', color: '#222221' },
   ],
 }
@@ -72,7 +57,7 @@ export default async function RootLayout({
   // Keep HTML request-bound so Next applies Proxy's nonce to framework scripts.
   await headers()
   return (
-    <html lang="zh-CN" className={`${notoSerifSc.variable} ${sourceSerif.variable} bg-background`}>
+    <html lang="zh-CN" className="bg-background">
       <body className="font-sans antialiased">
         {children}
         {process.env.NODE_ENV === 'production' && <Analytics />}
