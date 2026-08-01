@@ -1,7 +1,8 @@
 "use client"
 
-import { useMemo, useState, type Dispatch, type SetStateAction } from "react"
-import { TIERS, type Tier } from "@/lib/chat-data"
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react"
+import type { Tier } from "@/lib/chat-data"
+import type { ModelCatalogItem } from "@/lib/model-catalog"
 import type { ModelEndpointSummary } from "@/lib/model-endpoints"
 import type { SearchMode } from "@/lib/search-mode"
 
@@ -11,95 +12,129 @@ type UseModelSelectionOptions = {
   setHistoryRetrieval: Dispatch<SetStateAction<boolean>>
 }
 
+type CatalogPayload = {
+  models?: unknown
+}
+
+function modelList(value: unknown): ModelCatalogItem[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(item => item && typeof item === "object" && !Array.isArray(item)) as ModelCatalogItem[]
+}
+
+function preferredEffort(model: ModelCatalogItem, saved?: string | null): string | null {
+  if (saved && model.reasoningEfforts.includes(saved)) return saved
+  if (model.defaultReasoningEffort && model.reasoningEfforts.includes(model.defaultReasoningEffort)) {
+    return model.defaultReasoningEffort
+  }
+  return model.reasoningEfforts[0] ?? null
+}
+
 export function useModelSelection(options: UseModelSelectionOptions) {
   const { setSearchMode, setDeepResearch, setHistoryRetrieval } = options
   const [activeTier, setActiveTier] = useState<Tier>("绝句")
   const [modelEndpoints, setModelEndpoints] = useState<ModelEndpointSummary[]>([])
   const [activeEndpointId, setActiveEndpointId] = useState<string | null>(null)
+  const [catalog, setCatalog] = useState<ModelCatalogItem[]>([])
+  const [activeModelId, setActiveModelId] = useState<string | null>(null)
+  const [reasoningEffort, setReasoningEffortState] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    void fetch("/api/models", { headers: { Accept: "application/json" } })
+      .then(async response => {
+        if (!response.ok) throw new Error(`catalog ${response.status}`)
+        return response.json() as Promise<CatalogPayload>
+      })
+      .then(payload => {
+        if (cancelled) return
+        const models = modelList(payload.models)
+        setCatalog(models)
+        const savedId = localStorage.getItem("chat_active_model")
+        const selected = models.find(model => model.id === savedId && model.access !== "premium")
+          ?? models.find(model => model.access === "quota")
+          ?? models.find(model => model.access !== "premium")
+          ?? null
+        setActiveModelId(selected?.id ?? null)
+        const savedEffort = localStorage.getItem("chat_reasoning_effort")
+        setReasoningEffortState(selected ? preferredEffort(selected, savedEffort) : null)
+      })
+      .catch(() => {
+        if (!cancelled) setCatalog([])
+      })
+    return () => { cancelled = true }
+  }, [])
 
   function restoreModelSelection(endpoints: ModelEndpointSummary[]) {
     setModelEndpoints(endpoints)
-    try {
-      const selection = JSON.parse(localStorage.getItem("chat_model_selection") ?? "null") as {
-        kind?: string
-        id?: string
-        tier?: Tier
-      } | null
-      if (selection?.kind === "custom" && endpoints.some(endpoint => endpoint.id === selection.id && !endpoint.needsReconnect)) {
-        setActiveEndpointId(selection.id ?? null)
-      } else {
-        setActiveEndpointId(null)
-      }
-      const savedTier = localStorage.getItem("chat_active_tier") as Tier | null
-      const selectedTier = selection?.kind === "builtin" ? selection.tier : savedTier
-      if (selectedTier && TIERS.some(tier => tier.id === selectedTier)) setActiveTier(selectedTier)
-    } catch {}
+    setActiveEndpointId(null)
   }
 
   function resetModelEndpoints() {
     setModelEndpoints([])
     setActiveEndpointId(null)
+    setCatalog([])
+    setActiveModelId(null)
+    setReasoningEffortState(null)
   }
 
   function handleTierChange(tier: Tier) {
     setActiveTier(tier)
     setActiveEndpointId(null)
-    if (tier === "绘影" || tier === "录像") {
-      setSearchMode("off")
-      setDeepResearch(false)
-      setHistoryRetrieval(false)
-    }
-    try {
-      localStorage.setItem("chat_active_tier", tier)
-      localStorage.setItem("chat_model_selection", JSON.stringify({ kind: "builtin", tier }))
-    } catch {}
   }
 
-  function activateEndpoint(endpoint: ModelEndpointSummary) {
-    setActiveEndpointId(endpoint.id)
+  function handleModelSelect(model: ModelCatalogItem) {
+    if (model.access === "premium") return
+    setActiveModelId(model.id)
+    setActiveEndpointId(null)
     setSearchMode("off")
-    if (endpoint.outputKind !== "chat") {
-      setDeepResearch(false)
-      setHistoryRetrieval(false)
-    }
+    setDeepResearch(false)
+    setHistoryRetrieval(false)
+    const nextEffort = preferredEffort(model)
+    setReasoningEffortState(nextEffort)
     try {
-      localStorage.setItem("chat_model_selection", JSON.stringify({ kind: "custom", id: endpoint.id }))
+      localStorage.setItem("chat_active_model", model.id)
+      if (nextEffort) localStorage.setItem("chat_reasoning_effort", nextEffort)
+      else localStorage.removeItem("chat_reasoning_effort")
     } catch {}
   }
 
-  function handleEndpointSelect(id: string) {
-    const endpoint = modelEndpoints.find(item => item.id === id && !item.needsReconnect)
-    if (endpoint) activateEndpoint(endpoint)
+  function setReasoningEffort(value: string) {
+    const model = catalog.find(item => item.id === activeModelId)
+    if (!model || !model.reasoningEfforts.includes(value)) return
+    setReasoningEffortState(value)
+    try { localStorage.setItem("chat_reasoning_effort", value) } catch {}
   }
 
+  function handleEndpointSelect(_id: string) {}
   function handleEndpointCreated(endpoint: ModelEndpointSummary) {
     setModelEndpoints(previous => [endpoint, ...previous.filter(item => item.id !== endpoint.id)])
-    activateEndpoint(endpoint)
   }
-
   function handleEndpointUpdated(endpoint: ModelEndpointSummary) {
     setModelEndpoints(previous => previous.map(item => item.id === endpoint.id ? endpoint : item))
-    activateEndpoint(endpoint)
   }
-
   function handleEndpointDeleted(id: string) {
     setModelEndpoints(previous => previous.filter(item => item.id !== id))
-    if (activeEndpointId === id) handleTierChange(activeTier)
   }
 
-  const activeEndpoint = useMemo(
-    () => modelEndpoints.find(endpoint => endpoint.id === activeEndpointId && !endpoint.needsReconnect) ?? null,
-    [modelEndpoints, activeEndpointId],
+  const activeModel = useMemo(
+    () => catalog.find(model => model.id === activeModelId) ?? null,
+    [activeModelId, catalog],
   )
 
   return {
     activeTier,
     modelEndpoints,
     activeEndpointId,
-    activeEndpoint,
+    activeEndpoint: null,
+    catalog,
+    activeModelId,
+    activeModel,
+    reasoningEffort,
     restoreModelSelection,
     resetModelEndpoints,
     handleTierChange,
+    handleModelSelect,
+    setReasoningEffort,
     handleEndpointSelect,
     handleEndpointCreated,
     handleEndpointUpdated,
