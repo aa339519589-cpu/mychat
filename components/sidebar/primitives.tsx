@@ -7,7 +7,6 @@ import { ChevronLeft, Folder, MoreHorizontal, Pencil, Pin, Star, Trash2 } from "
 
 import { ConversationRename } from "@/components/conversation-menu"
 import type { Conversation } from "@/lib/chat-data"
-import { conversationExcerpt } from "@/lib/data"
 import { cn } from "@/lib/utils"
 import type { SidebarAnchor } from "./shared"
 import { MOMENTUM_SPRING, PANEL_SPRING, POPOVER_SPRING, shouldDismissGesture, transitionFor } from "@/components/motion/fluid"
@@ -66,10 +65,10 @@ export function ScreenPanel({ open, style, title, onBack, action, children }: {
   )
 }
 
-export function NavRow({ icon, label, onClick }: { icon: ReactNode; label: string; onClick: () => void }) {
+export function NavRow({ icon, label, onClick, emphasis = false }: { icon: ReactNode; label: string; onClick: () => void; emphasis?: boolean }) {
   return (
-    <button onClick={onClick} className="fluid-press grid min-h-12 w-full grid-cols-[1.5rem_minmax(0,1fr)] items-center gap-3 rounded-2xl px-3 py-3 text-left text-[15px] font-medium text-sidebar-foreground hover:bg-sidebar-accent">
-      <span className="flex size-6 items-center justify-center text-sidebar-primary">{icon}</span>
+    <button onClick={onClick} className={cn("fluid-press grid min-h-12 w-full grid-cols-[1.5rem_minmax(0,1fr)] items-center gap-3 rounded-2xl px-3 py-3 text-left text-[15px] font-medium hover:bg-[var(--sidebar-selection)]", emphasis ? "text-[var(--sidebar-selection-foreground)]" : "text-sidebar-foreground")}>
+      <span className={cn("flex size-6 items-center justify-center", emphasis ? "text-[var(--sidebar-selection-foreground)]" : "text-sidebar-foreground/72")}>{icon}</span>
       <span>{label}</span>
     </button>
   )
@@ -105,7 +104,6 @@ export function Switch({ checked, onChange }: { checked: boolean; onChange: (v: 
   )
 }
 
-
 export function ConversationRow({ c, isActive, renaming, onSelect, onOpenMenu, onCommitRename, onCancelRename }: {
   c: Conversation
   isActive: boolean
@@ -128,37 +126,34 @@ export function ConversationRow({ c, isActive, renaming, onSelect, onOpenMenu, o
     )
   }
 
-  const excerpt = conversationExcerpt(c.excerpt)
-
   return (
     <div className="group relative">
       <button
         onClick={() => onSelect(c.id)}
         className={cn(
-          "fluid-press block min-h-11 w-full rounded-2xl px-4 py-3 pr-12 text-left",
+          "fluid-press block min-h-11 w-full rounded-2xl px-4 py-2.5 pr-12 text-left",
           isActive
-            ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-[0_8px_22px_rgb(4_21_47/0.16)]"
-            : "hover:bg-sidebar-primary/[0.07]",
+            ? "bg-[var(--sidebar-selection)] text-[var(--sidebar-selection-foreground)]"
+            : "hover:bg-[var(--sidebar-selection)]",
         )}
       >
-        <div className="flex items-baseline justify-between gap-3">
+        <div className="flex min-h-6 items-center justify-between gap-3">
           <span className="flex min-w-0 items-center gap-1.5">
-            {c.pinned && <Pin className={cn("size-3 shrink-0 rotate-45 fill-current", isActive ? "text-sidebar-primary-foreground/75" : "text-sidebar-primary/70")} />}
-            {c.projectId && <Folder className={cn("size-3 shrink-0", isActive ? "text-sidebar-primary-foreground/70" : "text-sidebar-primary/60")} />}
-            <span className={cn("truncate text-[13px] font-medium leading-snug", isActive ? "text-sidebar-primary-foreground" : "text-sidebar-foreground")}>{c.title}</span>
-            {c.starred && <Star className={cn("size-3 shrink-0 fill-current", isActive ? "text-sidebar-primary-foreground/75" : "text-sidebar-primary/70")} />}
+            {c.pinned && <Pin className={cn("size-3 shrink-0 rotate-45 fill-current", isActive ? "text-[var(--sidebar-selection-foreground)]/70" : "text-muted-foreground")} />}
+            {c.projectId && <Folder className={cn("size-3 shrink-0", isActive ? "text-[var(--sidebar-selection-foreground)]/70" : "text-muted-foreground")} />}
+            <span className={cn("truncate text-[14px] font-medium leading-snug", isActive ? "text-[var(--sidebar-selection-foreground)]" : "text-sidebar-foreground")}>{c.title}</span>
+            {c.starred && <Star className={cn("size-3 shrink-0 fill-current", isActive ? "text-[var(--sidebar-selection-foreground)]/70" : "text-muted-foreground")} />}
           </span>
-          <span className={cn("shrink-0 text-[10px] tracking-wider", isActive ? "text-sidebar-primary-foreground/65" : "text-muted-foreground")}>{c.date}</span>
+          <span className={cn("shrink-0 text-[10px] tracking-wide", isActive ? "text-[var(--sidebar-selection-foreground)]/58" : "text-muted-foreground")}>{c.date}</span>
         </div>
-        {excerpt && <p className={cn("mt-1.5 line-clamp-2 text-[12px] leading-relaxed", isActive ? "text-sidebar-primary-foreground/72" : "text-muted-foreground")}>{excerpt}</p>}
       </button>
       <button
         onClick={e => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); onOpenMenu(c.id, { top: r.top, bottom: r.bottom, right: r.right }) }}
         className={cn(
           "fluid-press fluid-icon-press absolute right-0 top-1/2 flex size-11 -translate-y-1/2 items-center justify-center rounded-full",
           isActive
-            ? "text-sidebar-primary-foreground/65 hover:bg-white/10 hover:text-sidebar-primary-foreground"
-            : "text-muted-foreground/50 hover:bg-sidebar-primary/[0.08] hover:text-foreground",
+            ? "text-[var(--sidebar-selection-foreground)]/58 hover:bg-black/5 hover:text-[var(--sidebar-selection-foreground)] dark:hover:bg-white/8"
+            : "text-muted-foreground/50 hover:bg-[var(--sidebar-selection)] hover:text-foreground",
         )}
         aria-label="更多"
       >
