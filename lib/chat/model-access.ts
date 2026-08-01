@@ -4,6 +4,13 @@ import type { DurableChatRequestBody } from '@/lib/llm/chat-request'
 const TRIAL_INPUT_TOKEN_LIMIT = 20_000
 const APPROX_CHARS_PER_TOKEN = 3
 
+type RpcResult = { data: unknown; error: unknown }
+type RpcClient = { rpc: (name: string, args: Record<string, unknown>) => PromiseLike<RpcResult> }
+
+function rpcClient(supabase: SupabaseServer): RpcClient {
+  return supabase as unknown as RpcClient
+}
+
 function messageChars(message: DurableChatRequestBody['messages'][number]): number {
   const content = message.content
   if (typeof content === 'string') return content.length
@@ -40,7 +47,7 @@ export function clampTrialInput(body: DurableChatRequestBody): DurableChatReques
 type TrialReservation = { allowed?: unknown; remaining?: unknown; duplicate?: unknown }
 
 export async function reserveTrialCall(supabase: SupabaseServer, userId: string, generationId: string, modelId: string): Promise<{ allowed: boolean; remaining: number; duplicate: boolean }> {
-  const { data, error } = await supabase.rpc('reserve_medium_model_trial', {
+  const { data, error } = await rpcClient(supabase).rpc('reserve_medium_model_trial', {
     input_principal_id: userId,
     input_generation_id: generationId,
     input_model_id: modelId,
@@ -55,7 +62,7 @@ export async function reserveTrialCall(supabase: SupabaseServer, userId: string,
 }
 
 export async function releaseTrialCall(supabase: SupabaseServer, userId: string, generationId: string): Promise<void> {
-  await supabase.rpc('release_medium_model_trial', {
+  await rpcClient(supabase).rpc('release_medium_model_trial', {
     input_principal_id: userId,
     input_generation_id: generationId,
   })
