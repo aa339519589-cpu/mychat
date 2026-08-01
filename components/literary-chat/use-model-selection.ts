@@ -21,6 +21,10 @@ function modelList(value: unknown): ModelCatalogItem[] {
   return value.filter(item => item && typeof item === "object" && !Array.isArray(item)) as ModelCatalogItem[]
 }
 
+function isSelectable(model: ModelCatalogItem): boolean {
+  return model.access !== "premium" || model.ownerUnlocked === true
+}
+
 function preferredEffort(model: ModelCatalogItem, saved?: string | null): string | null {
   if (saved && model.reasoningEfforts.includes(saved)) return saved
   if (model.defaultReasoningEffort && model.reasoningEfforts.includes(model.defaultReasoningEffort)) {
@@ -50,9 +54,9 @@ export function useModelSelection(options: UseModelSelectionOptions) {
         const models = modelList(payload.models)
         setCatalog(models)
         const savedId = localStorage.getItem("chat_active_model")
-        const selected = models.find(model => model.id === savedId && model.access !== "premium")
+        const selected = models.find(model => model.id === savedId && isSelectable(model))
           ?? models.find(model => model.access === "quota")
-          ?? models.find(model => model.access !== "premium")
+          ?? models.find(isSelectable)
           ?? null
         setActiveModelId(selected?.id ?? null)
         const savedEffort = localStorage.getItem("chat_reasoning_effort")
@@ -83,7 +87,7 @@ export function useModelSelection(options: UseModelSelectionOptions) {
   }
 
   function handleModelSelect(model: ModelCatalogItem) {
-    if (model.access === "premium") return
+    if (!isSelectable(model)) return
     setActiveModelId(model.id)
     setActiveEndpointId(null)
     setSearchMode("off")
