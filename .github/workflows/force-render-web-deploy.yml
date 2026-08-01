@@ -9,24 +9,33 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
   statuses: write
 
 env:
   PRODUCTION_URL: https://mychat-nm6x.onrender.com
+  SUPABASE_PROJECT_REF: usibkqqksgwgvdiqwpyo
 
 jobs:
   deploy:
-    name: Deploy exact Matrix web revision
+    name: Migrate and deploy exact Matrix revision
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       REVISION: ${{ github.sha }}
       GH_TOKEN: ${{ github.token }}
       RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
       RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
     steps:
-      - name: Deploy, wait, and verify production
+      - name: Checkout exact revision
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify, migrate, deploy, and prove production
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -45,15 +54,20 @@ jobs:
           fail() {
             local code=$?
             trap - ERR
-            report failure "Render Failure: $stage" "Exact production deploy failed at $stage"
-            report failure "Render Production" "Render failed at $stage for ${REVISION:0:12}"
+            report failure "Production Closure: $stage" "Production closure failed at $stage"
+            case "$stage" in
+              verify-gates) report failure "Main Verification" "Verify or Security did not pass" ;;
+              supabase-credentials) report failure "Supabase Migration" "SUPABASE_ACCESS_TOKEN is missing" ;;
+              supabase-*) report failure "Supabase Migration" "Database migration failed at $stage" ;;
+              *) report failure "Render Production" "Render failed at $stage for ${REVISION:0:12}" ;;
+            esac
             exit "$code"
           }
           trap fail ERR
 
           matches_revision() {
             local candidate="$1"
-            [[ -z "$candidate" || "${REVISION:0:${#candidate}}" == "$candidate" || "${candidate:0:${#REVISION}}" == "$REVISION" ]]
+            [[ -n "$candidate" ]] && { [[ "${REVISION:0:${#candidate}}" == "$candidate" ]] || [[ "${candidate:0:${#REVISION}}" == "$REVISION" ]]; }
           }
 
           render_get() {
@@ -62,17 +76,79 @@ jobs:
               --header "Authorization: Bearer $RENDER_API_KEY" "$1"
           }
 
-          report pending "Render Production" "Deploying exact Matrix web revision"
+          supabase_query() {
+            local query="$1"
+            curl --fail-with-body --silent --show-error \
+              --retry 3 --retry-all-errors --connect-timeout 10 --max-time 120 \
+              --request POST \
+              --header "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+              --header 'Content-Type: application/json' \
+              --data "$(jq -nc --arg query "$query" '{query:$query,read_only:false}')" \
+              "https://api.supabase.com/v1/projects/$SUPABASE_PROJECT_REF/database/query"
+          }
 
-          stage="credentials"
-          report pending "Render Stage: credentials" "Validating Render credentials"
-          test -n "$RENDER_API_KEY"
-          test -n "$RENDER_SERVICE_ID"
+          json_boolean() {
+            local key="$1"
+            jq -r --arg key "$key" '.. | objects | select(has($key)) | .[$key]' \
+              | head -n 1
+          }
+
+          stage="identity"
           [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]
-          report success "Render Stage: credentials" "Render credentials validated"
+          test "$(git rev-parse HEAD)" = "$REVISION"
 
-          stage="start-request"
-          report pending "Render Stage: start" "Starting exact Render deploy"
+          stage="verify-gates"
+          report pending "Main Verification" "Waiting for Verify and Security on exact main"
+          for workflow in verify.yml security.yml; do
+            state="missing:"
+            for attempt in {1..180}; do
+              state="$(gh run list --workflow "$workflow" --commit "$REVISION" \
+                --event push --limit 10 --json status,conclusion \
+                --jq 'if length == 0 then "missing:" else .[0].status + ":" + (.[0].conclusion // "") end')"
+              case "$state" in
+                completed:success) break ;;
+                completed:*) echo "$workflow failed for $REVISION: $state" >&2; false ;;
+              esac
+              sleep 10
+            done
+            [[ "$state" == "completed:success" ]]
+          done
+          report success "Main Verification" "Verify and Security passed for ${REVISION:0:12}"
+
+          stage="supabase-credentials"
+          report pending "Supabase Migration" "Validating production migration authority"
+          test -n "$SUPABASE_ACCESS_TOKEN"
+          [[ "$SUPABASE_PROJECT_REF" =~ ^[a-z0-9]{20}$ ]]
+
+          stage="supabase-probe"
+          probe="$(supabase_query "select (to_regclass('public.medium_model_trial_calls') is not null) as quota_installed, (to_regprocedure('public.verify_schema_contract_v4(integer,text,integer)') is not null) as v4_installed;")"
+          quota_installed="$(printf '%s' "$probe" | json_boolean quota_installed)"
+          v4_installed="$(printf '%s' "$probe" | json_boolean v4_installed)"
+          [[ "$quota_installed" == "true" || "$quota_installed" == "false" ]]
+          [[ "$v4_installed" == "true" || "$v4_installed" == "false" ]]
+
+          if [[ "$quota_installed" != "true" ]]; then
+            stage="supabase-quota"
+            supabase_query "$(cat supabase/migrations/20260801010000_medium_model_trial_quota.sql)" >/dev/null
+          fi
+
+          if [[ "$v4_installed" != "true" ]]; then
+            stage="supabase-contract"
+            supabase_query "$(cat supabase/migrations/20260801020000_schema_contract_attestation_v4.sql)" >/dev/null
+          fi
+
+          stage="supabase-verify"
+          verification="$(supabase_query "select (to_regclass('public.medium_model_trial_calls') is not null) as quota_installed, public.verify_schema_contract_v4(4, '68fd46dfeac7cebc79f5b9ba4858a416c71188982d48cc5b9a3428bdea0af32e', 49) as contract_verified;")"
+          [[ "$(printf '%s' "$verification" | json_boolean quota_installed)" == "true" ]]
+          [[ "$(printf '%s' "$verification" | json_boolean contract_verified)" == "true" ]]
+          report success "Supabase Migration" "Schema contract v4 and shared trial quota verified"
+
+          stage="render-credentials"
+          report pending "Render Production" "Deploying exact verified revision"
+          test -n "$RENDER_API_KEY"
+          [[ "$RENDER_SERVICE_ID" =~ ^srv-[a-z0-9]+$ ]]
+
+          stage="render-start"
           http_code=000
           curl_status=1
           for attempt in {1..20}; do
@@ -82,7 +158,7 @@ jobs:
               --request POST \
               --header "Authorization: Bearer $RENDER_API_KEY" \
               --header 'Content-Type: application/json' \
-              --data "$(jq -nc --arg commitId "$REVISION" '{commitId: $commitId}')" \
+              --data "$(jq -nc --arg commitId "$REVISION" '{commitId:$commitId}')" \
               --output /tmp/render-start.json \
               --write-out '%{http_code}' \
               "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys")"; then
@@ -91,13 +167,10 @@ jobs:
               curl_status=$?
             fi
             if [[ $curl_status -eq 0 && "$http_code" =~ ^2[0-9][0-9]$ ]]; then break; fi
-            echo "Render start attempt $attempt returned HTTP $http_code (curl $curl_status)" >&2
-            cat /tmp/render-start.json >&2 2>/dev/null || true
             sleep 15
           done
           [[ $curl_status -eq 0 && "$http_code" =~ ^2[0-9][0-9]$ ]]
 
-          stage="start-resolve"
           response="$(cat /tmp/render-start.json 2>/dev/null || true)"
           deploy_id=""
           commit_id=""
@@ -107,61 +180,49 @@ jobs:
           fi
 
           if [[ -z "$deploy_id" ]]; then
-            report pending "Render Stage: resolve" "Resolving accepted deploy from Render history"
+            stage="render-resolve"
             for attempt in {1..60}; do
               list="$(render_get "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys?limit=50")"
               deploy_id="$(jq -r --arg rev "$REVISION" '
-                def rows:
-                  if type == "array" then .[]
-                  elif type == "object" and (.deploys | type) == "array" then .deploys[]
-                  else empty end;
-                [rows | (.deploy // .) |
-                  (.commit.id // .commitId // "") as $commit |
+                def rows: if type == "array" then .[] elif type == "object" and (.deploys | type) == "array" then .deploys[] else empty end;
+                [rows | (.deploy // .) | (.commit.id // .commitId // "") as $commit |
                   select($commit != "" and (($commit == $rev) or ($rev | startswith($commit)) or ($commit | startswith($rev))))
                 ] | first | .id // empty
               ' <<<"$list")"
-              if [[ -n "$deploy_id" ]]; then break; fi
+              [[ -n "$deploy_id" ]] && break
               sleep 5
             done
           fi
           test -n "$deploy_id"
-          matches_revision "$commit_id"
-          report success "Render Stage: start" "Render deploy $deploy_id started"
+          [[ -z "$commit_id" ]] || matches_revision "$commit_id"
 
-          stage="wait-live"
-          report pending "Render Stage: wait-live" "Waiting for Render to become live"
+          stage="render-wait-live"
           status=""
           for attempt in {1..180}; do
             response="$(render_get "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys/$deploy_id")"
             status="$(jq -r '.status // .deploy.status // .[0].status // .[0].deploy.status // empty' <<<"$response")"
             commit_id="$(jq -r '.commit.id // .deploy.commit.id // .commitId // .[0].commit.id // .[0].deploy.commit.id // empty' <<<"$response")"
             test -n "$status"
-            matches_revision "$commit_id"
+            [[ -z "$commit_id" ]] || matches_revision "$commit_id"
             case "$status" in
               live) break ;;
-              build_failed|update_failed|pre_deploy_failed|canceled|deactivated)
-                echo "Render deploy failed: $status" >&2
-                false
-                ;;
+              build_failed|update_failed|pre_deploy_failed|canceled|deactivated) false ;;
             esac
             sleep 10
           done
           [[ "$status" == "live" ]]
-          report success "Render Stage: wait-live" "Render deploy $deploy_id is live"
 
-          stage="verify-revision"
-          report pending "Render Stage: verify-revision" "Checking production revision"
+          stage="render-verify-revision"
           runtime_revision=""
-          for attempt in {1..30}; do
+          for attempt in {1..40}; do
             payload="$(curl --fail-with-body --silent --show-error \
               --retry 2 --retry-all-errors --connect-timeout 10 --max-time 60 \
               --header 'Accept: application/json' "$PRODUCTION_URL/api/ready" || true)"
             runtime_revision="$(jq -r '.revision // empty' <<<"$payload" 2>/dev/null || true)"
-            if [[ -n "$runtime_revision" ]] && matches_revision "$runtime_revision"; then break; fi
+            if matches_revision "$runtime_revision"; then break; fi
             sleep 5
           done
-          test -n "$runtime_revision"
           matches_revision "$runtime_revision"
-          report success "Render Stage: verify-revision" "Production serves $runtime_revision"
-          report success "Render Production" "Render live; exact revision ${REVISION:0:12} verified"
+          report success "Render Production" "Live exact revision ${REVISION:0:12}; database v4 verified"
+          report success "Production Closure" "Production is live and exact revision verified"
           echo "Render deploy $deploy_id is live; production revision $runtime_revision"
