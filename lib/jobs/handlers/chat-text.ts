@@ -4,7 +4,6 @@ import { prepareChatHistory, RECENT_CONTEXT_MESSAGES } from '@/lib/chat/history'
 import {
   appendUserSystemPrompt,
   latestBeijingDateFromMessages,
-  prependDeepResearchInstruction,
 } from '@/lib/chat/request-context'
 import { log } from '@/lib/logger'
 import { runAgentLoop, type AgentLoopOpts, type ExecuteTool } from '@/lib/llm/agent-loop'
@@ -235,7 +234,6 @@ async function prepareChat(
     { role: 'system', content: chatSystem(input, latestBeijingDate, history.renderedContext) },
     ...buildModelContext(preparedMessages, selection.capability),
   ]
-  if (command.deepResearch) prependDeepResearchInstruction(modelMessages)
   await appendAttachments(context, input, runtime, dependencies, modelMessages)
   const baseLength = await restoreChatTrajectory(context, runtime.writer, modelMessages)
   return { ...configuredTools, modelMessages, baseLength, instant: false }
