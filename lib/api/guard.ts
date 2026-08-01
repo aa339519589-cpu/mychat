@@ -12,8 +12,8 @@ export type SupabaseServer = Awaited<ReturnType<typeof createClient>>
 export type AuthCtx = {
   supabase: SupabaseServer | null
   userId: string | null
-  email: string | null
-  isOwner: boolean
+  email?: string | null
+  isOwner?: boolean
   isAnonymous: boolean
   authUnavailable?: boolean
 }
