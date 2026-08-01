@@ -8,7 +8,6 @@ function candidate(content: string, overrides: Partial<Parameters<typeof isInsta
   return isInstantReplyCandidate({
     messages,
     searchMode: 'off',
-    deepResearch: false,
     inProject: false,
     ...overrides,
   })
@@ -24,7 +23,6 @@ test('accepts only strict greeting and connectivity prompts', () => {
 test('rejects prompts that need normal context or tools', () => {
   assert.equal(candidate('你好，帮我分析这个项目'), false)
   assert.equal(candidate('你好', { searchMode: 'web' }), false)
-  assert.equal(candidate('你好', { deepResearch: true }), false)
   assert.equal(candidate('你好', { attachments: [{}] }), false)
   assert.equal(candidate('你好', { inProject: true }), false)
 })
@@ -34,7 +32,6 @@ test('rejects visual user turns', () => {
   assert.equal(isInstantReplyCandidate({
     messages,
     searchMode: 'off',
-    deepResearch: false,
     inProject: false,
   }), false)
 })
