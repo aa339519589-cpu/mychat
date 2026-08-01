@@ -33,9 +33,10 @@ export async function GET(request: Request) {
       trialRemaining,
       models: models.map(model => {
         const baseModel = model.access === 'quota'
+        const activeSharedTrial = !owner && trialRemaining !== null && trialRemaining > 0
         return {
           ...model,
-          ...(model.access === 'premium' && owner ? { ownerUnlocked: true } : {}),
+          ...(model.access === 'premium' && (owner || activeSharedTrial) ? { ownerUnlocked: true } : {}),
           ...(!baseModel && owner ? { trialUnlimited: true } : {}),
           ...(!baseModel && !owner && trialRemaining !== null
             ? {
