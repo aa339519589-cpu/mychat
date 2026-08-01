@@ -6,11 +6,14 @@ import { checkQuotaExceeded } from '@/lib/quota'
 import { log } from '@/lib/logger'
 import { clientAddress, requestId } from '@/lib/api/request'
 import { isAuthDependencyUnavailable } from '@/lib/api/auth-error'
+import { isOwnerEmail, normalizeOwnerEmail } from '@/lib/owner-access'
 
 export type SupabaseServer = Awaited<ReturnType<typeof createClient>>
 export type AuthCtx = {
   supabase: SupabaseServer | null
   userId: string | null
+  email: string | null
+  isOwner: boolean
   isAnonymous: boolean
   authUnavailable?: boolean
 }
@@ -34,16 +37,19 @@ export async function resolveAuth(request?: Request): Promise<AuthCtx> {
         name: error?.name ?? 'unknown',
         status: error?.status,
       })
-      return { supabase: null, userId: null, isAnonymous: true, authUnavailable: true }
+      return { supabase: null, userId: null, email: null, isOwner: false, isAnonymous: true, authUnavailable: true }
     }
+    const email = normalizeOwnerEmail(data.user?.email) || null
     return {
       supabase,
       userId: data.user?.id ?? null,
+      email,
+      isOwner: isOwnerEmail(email),
       isAnonymous: data.user?.is_anonymous === true,
     }
   } catch (error) {
     log.error('auth', 'Authentication dependency unavailable', error)
-    return { supabase: null, userId: null, isAnonymous: true, authUnavailable: true }
+    return { supabase: null, userId: null, email: null, isOwner: false, isAnonymous: true, authUnavailable: true }
   }
 }
 
@@ -92,6 +98,7 @@ export async function enforceRequestRateLimit(
     response.headers.set('Retry-After', '5')
     return { response }
   }
+  if (auth.isOwner) return {}
   const rateKey = userId
     ? `${isAnonymous ? 'anonymous-user' : 'user'}:${userId}`
     : `anonymous-address:${address}`
@@ -133,6 +140,7 @@ export async function enforceQuotaLimit(
     response.headers.set('Retry-After', '5')
     return { response }
   }
+  if (auth.isOwner) return { usingBalance: false }
   let usingBalance = false
   if (options.quota !== false && userId && supabase) {
     const q = await (dependencyOverrides.quotaCheck ?? DEFAULT_GUARD_DEPENDENCIES.quotaCheck)(
