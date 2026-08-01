@@ -4,7 +4,7 @@
 export type RawMsg = {
   id?: string
   role: string
-  content: unknown
+  content: string | ModelContentPart[]
   images?: string[]
   imageSummary?: string
   ts?: string
