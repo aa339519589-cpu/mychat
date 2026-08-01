@@ -124,7 +124,7 @@ function command(value: JsonObject): LoadedChatJob['command'] {
   const searchMode = value.searchMode
   if (typeof value.tier !== 'string'
     || (outputKind !== 'text' && outputKind !== 'image' && outputKind !== 'video')
-    || (searchMode !== 'off' && searchMode !== 'web')
+    || (searchMode !== 'off' && searchMode !== 'web' && searchMode !== 'deep')
     || typeof value.deepResearch !== 'boolean'
     || typeof value.historyRetrieval !== 'boolean'
     || typeof value.usingBalance !== 'boolean'
