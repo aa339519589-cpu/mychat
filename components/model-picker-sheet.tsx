@@ -24,7 +24,7 @@ function ModelGroupDivider({ models }: { models: ModelCatalogItem[] }) {
     <div className="px-3 py-3.5">
       <div className="flex items-center gap-2.5">
         <span className="h-px flex-1 bg-border/70 dark:bg-white/10" />
-        <span className="shrink-0 text-[11px] font-medium tracking-[0.04em] text-foreground/80">以上 3 个为基础模型 · 不限次数</span>
+        <span className="shrink-0 text-[11px] font-medium tracking-[0.04em] text-foreground/80">以上 3 个为基础模型</span>
         <span className="h-px flex-1 bg-border/70 dark:bg-white/10" />
       </div>
       <p className={cn("mt-2 text-center text-[11px]", remaining === 0 ? "font-medium text-destructive" : "text-muted-foreground")}>
