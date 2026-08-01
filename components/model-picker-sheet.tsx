@@ -9,14 +9,8 @@ import { MOMENTUM_SPRING, shouldDismissGesture, transitionFor } from "@/componen
 import type { ModelCatalogItem } from "@/lib/model-catalog"
 import { cn } from "@/lib/utils"
 
-type TrialDecoratedModel = ModelCatalogItem & {
-  trialLimit?: number
-  trialRemaining?: number
-  trialUnlimited?: boolean
-}
-
 function ModelGroupDivider({ models }: { models: ModelCatalogItem[] }) {
-  const sample = models[0] as TrialDecoratedModel | undefined
+  const sample = models.find(model => model.access === "trial")
   const limit = typeof sample?.trialLimit === "number" ? sample.trialLimit : 3
   const remaining = typeof sample?.trialRemaining === "number" ? sample.trialRemaining : null
   const unlimited = sample?.trialUnlimited === true
@@ -29,12 +23,12 @@ function ModelGroupDivider({ models }: { models: ModelCatalogItem[] }) {
       </div>
       <p className={cn("mt-2 text-center text-[11px]", remaining === 0 ? "font-medium text-destructive" : "text-muted-foreground")}>
         {unlimited
-          ? "会员账户：其余模型不限次数"
+          ? "会员账户：其他模型不限次数"
           : remaining === null
-            ? `其余模型共享 ${limit} 次试用额度`
+            ? `其他可试用模型共享 ${limit} 次额度`
             : remaining === 0
-              ? "其余模型共享试用已用完 · 剩余 0 次"
-              : `其余模型共享试用 · 剩余 ${remaining} / ${limit} 次`}
+              ? "其他可试用模型额度已用完 · 剩余 0 次"
+              : `其他可试用模型共享额度 · 剩余 ${remaining} / ${limit} 次`}
       </p>
     </div>
   )
