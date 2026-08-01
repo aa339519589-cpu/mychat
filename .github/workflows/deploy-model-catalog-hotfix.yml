@@ -64,7 +64,7 @@ jobs:
             exit "$code"
           }
           trap fail ERR
-          report pending "Model Catalog Hotfix" "Deploying provider icons and Claude 5 catalog"
+          report pending "Model Catalog Hotfix" "Deploying provider icons, Claude 5 catalog, and opening position"
 
           stage="credentials"
           test -n "$RENDER_API_KEY"
@@ -132,5 +132,5 @@ jobs:
           done
           [[ -n "$runtime_revision" ]]
           [[ "$REVISION" == "$runtime_revision"* || "$runtime_revision" == "$REVISION"* ]]
-          report success "Model Catalog Hotfix" "Provider icons and Claude 5 catalog are live"
+          report success "Model Catalog Hotfix" "Provider icons, Claude 5 catalog, and opening position are live"
           echo "Render deploy $deploy_id is live at revision $runtime_revision"
