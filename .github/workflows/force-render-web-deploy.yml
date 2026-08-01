@@ -27,6 +27,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          echo "DEPLOY_STAGE=initializing" >> "$GITHUB_ENV"
           curl --fail-with-body --silent --show-error \
             --request POST \
             --header "Authorization: Bearer $GH_TOKEN" \
@@ -40,6 +41,7 @@ jobs:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
         run: |
+          echo "DEPLOY_STAGE=validating credentials" >> "$GITHUB_ENV"
           test -n "$RENDER_API_KEY"
           [[ "$RENDER_SERVICE_ID" =~ ^srv-[a-z0-9]+$ ]]
           [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]
@@ -50,13 +52,30 @@ jobs:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
         run: |
-          response="$(curl --fail-with-body --silent --show-error \
-            --retry 4 --retry-all-errors --connect-timeout 10 --max-time 60 \
-            --request POST \
-            --header "Authorization: Bearer $RENDER_API_KEY" \
-            --header 'Content-Type: application/json' \
-            --data "$(jq -nc --arg commitId "$REVISION" '{commitId: $commitId}')" \
-            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys")"
+          echo "DEPLOY_STAGE=starting Render deploy" >> "$GITHUB_ENV"
+          http_code=000
+          for attempt in {1..20}; do
+            set +e
+            http_code="$(curl --silent --show-error \
+              --connect-timeout 10 --max-time 60 \
+              --request POST \
+              --header "Authorization: Bearer $RENDER_API_KEY" \
+              --header 'Content-Type: application/json' \
+              --data "$(jq -nc --arg commitId "$REVISION" '{commitId: $commitId}')" \
+              --output /tmp/render-start.json \
+              --write-out '%{http_code}' \
+              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys")"
+            curl_status=$?
+            set -e
+            if [[ $curl_status -eq 0 && "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+              break
+            fi
+            echo "Render deploy start attempt $attempt returned HTTP $http_code" >&2
+            cat /tmp/render-start.json >&2 2>/dev/null || true
+            sleep 15
+          done
+          [[ "$http_code" =~ ^2[0-9][0-9]$ ]]
+          response="$(cat /tmp/render-start.json)"
           deploy_id="$(jq -er '.id' <<<"$response")"
           commit_id="$(jq -r '.commit.id // empty' <<<"$response")"
           [[ "$deploy_id" =~ ^dep-[a-z0-9]+$ ]]
@@ -72,6 +91,7 @@ jobs:
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
           DEPLOY_ID: ${{ steps.render.outputs.deploy_id }}
         run: |
+          echo "DEPLOY_STAGE=waiting for Render live" >> "$GITHUB_ENV"
           for attempt in {1..180}; do
             response="$(curl --fail-with-body --silent --show-error \
               --retry 3 --retry-all-errors --connect-timeout 10 --max-time 60 \
@@ -94,6 +114,7 @@ jobs:
 
       - name: Confirm production revision
         run: |
+          echo "DEPLOY_STAGE=verifying production revision" >> "$GITHUB_ENV"
           for attempt in {1..30}; do
             payload="$(curl --fail-with-body --silent --show-error \
               --retry 2 --retry-all-errors --connect-timeout 10 --max-time 60 \
@@ -117,10 +138,10 @@ jobs:
         run: |
           if [[ "$JOB_STATUS" == "success" ]]; then
             state=success
-            description="Render is live and serving ${REVISION:0:12}"
+            description="Render live; exact revision ${REVISION:0:12} verified"
           else
             state=failure
-            description="Render deployment failed for ${REVISION:0:12}"
+            description="Render failed at ${DEPLOY_STAGE:-unknown} for ${REVISION:0:12}"
           fi
           curl --fail-with-body --silent --show-error \
             --request POST \
