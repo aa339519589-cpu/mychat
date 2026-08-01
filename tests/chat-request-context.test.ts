@@ -2,11 +2,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { hasScannedPdfAttachment } from '../lib/chat/attachments'
 import {
-  DEEP_RESEARCH_PREFIX,
   historyRetrievalModeForTier,
   latestUserPrompt,
   latestUserSourceImages,
-  prependDeepResearchInstruction,
   resolveReasoningEffort,
 } from '../lib/chat/request-context'
 import type { RawMsg } from '../lib/llm/types'
@@ -40,26 +38,12 @@ test('latestUserSourceImages accepts safe images from the latest user turn only'
 })
 
 test('reasoning effort and history modes encode product policy', () => {
-  assert.equal(resolveReasoningEffort({ isDeepTierProxy: false, deepResearch: false, modelId: 'deepseek' }), null)
-  assert.equal(resolveReasoningEffort({ isDeepTierProxy: false, deepResearch: false, modelId: 'grok-4.5', configuredEffort: 'medium' }), 'medium')
-  assert.equal(resolveReasoningEffort({ isDeepTierProxy: true, deepResearch: false, modelId: 'proxy', configuredEffort: 'none' }), 'low')
-  assert.equal(resolveReasoningEffort({ isDeepTierProxy: true, deepResearch: true, modelId: 'proxy', configuredEffort: 'low' }), 'high')
+  assert.equal(resolveReasoningEffort({ isDeepTierProxy: false, modelId: 'deepseek' }), null)
+  assert.equal(resolveReasoningEffort({ isDeepTierProxy: false, modelId: 'grok-4.5', configuredEffort: 'medium' }), 'medium')
+  assert.equal(resolveReasoningEffort({ isDeepTierProxy: true, modelId: 'proxy', configuredEffort: 'none' }), 'low')
   assert.equal(historyRetrievalModeForTier('鸿篇'), 'deep')
   assert.equal(historyRetrievalModeForTier('绝句'), 'light')
   assert.equal(historyRetrievalModeForTier('正构'), 'balanced')
-})
-
-test('deep research prefix is added to the latest user model message', () => {
-  const messages = [
-    { role: 'user', content: 'older' },
-    { role: 'assistant', content: 'answer' },
-    { role: 'user', content: [{ type: 'text', text: 'current' }] },
-  ]
-  prependDeepResearchInstruction(messages)
-  assert.equal(messages[0].content, 'older')
-  const latestContent = messages[2].content
-  assert.ok(Array.isArray(latestContent))
-  assert.equal(latestContent[0]?.text, DEEP_RESEARCH_PREFIX + 'current')
 })
 
 test('scanned attachment detection is independent from OCR transport', () => {
