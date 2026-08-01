@@ -47,6 +47,8 @@ export type RunChatStreamOptions = {
 
 export type RunChatStreamResult = { content: string; status: ClientGenerationState['status']; accepted: boolean }
 
+const MODEL_QUOTA_CHANGED_EVENT = 'mychat:model-quota-changed'
+
 function latestUserMessageId(messages: HistoryMessage[]): string | undefined {
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index]
@@ -79,6 +81,11 @@ function requestBody(options: RunChatStreamOptions): Record<string, unknown> {
   }
 }
 
+function notifyModelQuotaChanged(): void {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new Event(MODEL_QUOTA_CHANGED_EVENT))
+}
+
 async function enqueueChatStream(options: RunChatStreamOptions, state: ChatStreamState, renderer: ChatStreamRenderer): Promise<AcceptedJob> {
   const body = requestBody(options)
   const generationId = options.generationId
@@ -91,6 +98,7 @@ async function enqueueChatStream(options: RunChatStreamOptions, state: ChatStrea
     throw error
   }
   if (generationId) await removePendingChatSubmission(options.conversationId, generationId)
+  notifyModelQuotaChanged()
   state.acceptedByServer = true
   options.onAccepted?.()
   state.terminalProtocolExpected = true
