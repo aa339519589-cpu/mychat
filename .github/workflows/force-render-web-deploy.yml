@@ -1,0 +1,98 @@
+name: Force Render Web Deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/force-render-web-deploy.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PRODUCTION_URL: https://mychat-nm6x.onrender.com
+
+jobs:
+  deploy:
+    name: Deploy exact Matrix web revision
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Validate Render credentials
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          test -n "$RENDER_API_KEY"
+          [[ "$RENDER_SERVICE_ID" =~ ^srv-[a-z0-9]+$ ]]
+
+      - name: Start exact revision deploy
+        id: render
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+          REVISION: ${{ github.sha }}
+        run: |
+          response="$(curl --fail-with-body --silent --show-error \
+            --retry 4 --retry-all-errors --connect-timeout 10 --max-time 60 \
+            --request POST \
+            --header "Authorization: Bearer $RENDER_API_KEY" \
+            --header 'Content-Type: application/json' \
+            --data "$(jq -nc --arg commitId "$REVISION" '{commitId: $commitId}')" \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys")"
+          deploy_id="$(jq -er '.id' <<<"$response")"
+          commit_id="$(jq -r '.commit.id // empty' <<<"$response")"
+          [[ "$deploy_id" =~ ^dep-[a-z0-9]+$ ]]
+          if [[ -n "$commit_id" && "$commit_id" != "$REVISION" ]]; then
+            echo "Render selected $commit_id instead of $REVISION" >&2
+            exit 1
+          fi
+          echo "deploy_id=$deploy_id" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for Render deploy
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+          DEPLOY_ID: ${{ steps.render.outputs.deploy_id }}
+          REVISION: ${{ github.sha }}
+        run: |
+          for attempt in {1..180}; do
+            response="$(curl --fail-with-body --silent --show-error \
+              --retry 3 --retry-all-errors --connect-timeout 10 --max-time 60 \
+              --header "Authorization: Bearer $RENDER_API_KEY" \
+              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys/$DEPLOY_ID")"
+            status="$(jq -er '.status' <<<"$response")"
+            commit_id="$(jq -r '.commit.id // empty' <<<"$response")"
+            if [[ -n "$commit_id" && "$commit_id" != "$REVISION" ]]; then
+              echo "Render deploy changed revision to $commit_id" >&2
+              exit 1
+            fi
+            case "$status" in
+              live) exit 0 ;;
+              build_failed|update_failed|canceled|deactivated) echo "Render deploy failed: $status" >&2; exit 1 ;;
+            esac
+            sleep 10
+          done
+          echo "Render deploy timed out" >&2
+          exit 1
+
+      - name: Confirm production revision
+        env:
+          REVISION: ${{ github.sha }}
+        run: |
+          for attempt in {1..30}; do
+            payload="$(curl --fail-with-body --silent --show-error \
+              --retry 2 --retry-all-errors --connect-timeout 10 --max-time 60 \
+              --header 'Accept: application/json' \
+              "$PRODUCTION_URL/api/ready" || true)"
+            runtime_revision="$(jq -r '.revision // empty' <<<"$payload" 2>/dev/null || true)"
+            if [[ -n "$runtime_revision" && "${REVISION:0:${#runtime_revision}}" == "$runtime_revision" ]]; then
+              echo "Production is serving revision $runtime_revision"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Production did not report the requested revision" >&2
+          exit 1
