@@ -1,5 +1,5 @@
 name: Recover Render Production
-# Recovery trigger: deploy bounded dynamic Code context and model identity.
+# Recovery trigger: retry bounded dynamic Code context deployment.
 
 on:
   workflow_dispatch:
