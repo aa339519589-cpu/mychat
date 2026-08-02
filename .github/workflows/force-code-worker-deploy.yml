@@ -57,11 +57,42 @@ jobs:
         run: |
           set -euo pipefail
           endpoint="https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys"
-          response="$(curl --fail-with-body --silent --show-error \
-            -H "Authorization: Bearer $RENDER_API_KEY" -H 'Content-Type: application/json' \
-            -X POST --data "$(jq -nc --arg commitId "$GITHUB_SHA" '{commitId:$commitId}')" "$endpoint")"
-          deploy_id="$(jq -r '.id // .deploy.id // empty' <<<"$response")"
-          test -n "$deploy_id"
+          auth=(-H "Authorization: Bearer $RENDER_API_KEY" -H 'Content-Type: application/json')
+          body="$(mktemp)"
+          http_status="$(curl --silent --show-error --connect-timeout 10 --max-time 60 \
+            "${auth[@]}" --output "$body" --write-out '%{http_code}' -X POST \
+            --data "$(jq -nc --arg commitId "$GITHUB_SHA" '{commitId:$commitId}')" "$endpoint")"
+          response="$(cat "$body")"
+          rm -f "$body"
+          case "$http_status" in
+            200|201|202|409) ;;
+            *)
+              echo "Render deploy request failed with HTTP $http_status" >&2
+              jq -r '.message // .error // empty' <<<"$response" >&2 || true
+              exit 1
+              ;;
+          esac
+
+          deploy_id="$(jq -r '.id // .deploy.id // empty' <<<"$response" 2>/dev/null || true)"
+          if [[ -z "$deploy_id" ]]; then
+            for attempt in {1..120}; do
+              listing="$(curl --fail-with-body --silent --show-error --retry 4 --retry-all-errors \
+                --connect-timeout 10 --max-time 60 "${auth[@]}" "$endpoint?limit=20")"
+              deploy_id="$(jq -r --arg commit "$GITHUB_SHA" '
+                (if type == "array" then . elif (.deploys | type) == "array" then .deploys else [] end)
+                | map(.deploy // .)
+                | map(select((.commit.id // .commitId // "") == $commit))
+                | first
+                | .id // empty
+              ' <<<"$listing")"
+              [[ -n "$deploy_id" ]] && break
+              sleep 5
+            done
+          fi
+          if [[ ! "$deploy_id" =~ ^dep-[a-z0-9]+$ ]]; then
+            echo "Render did not expose a deploy id for commit $GITHUB_SHA" >&2
+            exit 1
+          fi
           echo "deploy_id=$deploy_id" >> "$GITHUB_OUTPUT"
 
       - name: Wait for Render live
@@ -76,7 +107,7 @@ jobs:
               -H "Authorization: Bearer $RENDER_API_KEY" \
               "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys/$RENDER_DEPLOY_ID")"
             status="$(jq -r '.status' <<<"$response")"
-            commit="$(jq -r '.commit.id // empty' <<<"$response")"
+            commit="$(jq -r '.commit.id // .commitId // empty' <<<"$response")"
             case "$status" in
               live) test "$commit" = "$GITHUB_SHA"; exit 0;;
               build_failed|update_failed|pre_deploy_failed|canceled|deactivated) exit 1;;
