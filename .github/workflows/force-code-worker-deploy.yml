@@ -1,0 +1,123 @@
+name: Force Code Worker Deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/force-code-worker-deploy.yml
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: force-code-worker-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PRODUCTION_URL: https://mychat-nm6x.onrender.com
+      SUPABASE_URL: https://usibkqqksgwgvdiqwpyo.supabase.co
+    steps:
+      - name: Configure Render supervisor and runtime role
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+          service="https://api.render.com/v1/services/$RENDER_SERVICE_ID"
+          env_base="$service/env-vars"
+          auth=(-H "Authorization: Bearer $RENDER_API_KEY" -H 'Content-Type: application/json')
+          curl --fail-with-body --silent --show-error "${auth[@]}" -X PATCH \
+            --data '{"autoDeploy":"no","serviceDetails":{"healthCheckPath":"/api/live","startCommand":"npm start"}}' \
+            "$service" >/dev/null
+          curl --fail-with-body --silent --show-error "${auth[@]}" -X PUT \
+            --data '{"value":"all"}' "$env_base/MYCHAT_RUNTIME_ROLE" >/dev/null
+          curl --fail-with-body --silent --show-error "${auth[@]}" -X PUT \
+            --data '{"value":"off"}' "$env_base/MYCHAT_MAINTENANCE_MODE" >/dev/null
+
+      - name: Deploy exact current revision
+        id: render
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+          endpoint="https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys"
+          response="$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $RENDER_API_KEY" -H 'Content-Type: application/json' \
+            -X POST --data "$(jq -nc --arg commitId "$GITHUB_SHA" '{commitId:$commitId}')" "$endpoint")"
+          deploy_id="$(jq -r '.id // .deploy.id // empty' <<<"$response")"
+          test -n "$deploy_id"
+          echo "deploy_id=$deploy_id" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for Render live
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+          RENDER_DEPLOY_ID: ${{ steps.render.outputs.deploy_id }}
+        run: |
+          set -euo pipefail
+          for attempt in {1..150}; do
+            response="$(curl --fail-with-body --silent --show-error \
+              -H "Authorization: Bearer $RENDER_API_KEY" \
+              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys/$RENDER_DEPLOY_ID")"
+            status="$(jq -r '.status' <<<"$response")"
+            commit="$(jq -r '.commit.id // empty' <<<"$response")"
+            case "$status" in
+              live) test "$commit" = "$GITHUB_SHA"; exit 0;;
+              build_failed|update_failed|pre_deploy_failed|canceled|deactivated) exit 1;;
+            esac
+            sleep 10
+          done
+          exit 1
+
+      - name: Verify web and Code worker heartbeat
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+          test "$(curl --silent --show-error -o /dev/null -w '%{http_code}' "$PRODUCTION_URL/api/live")" = "200"
+          env_base="https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars"
+          service_role="$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $RENDER_API_KEY" "$env_base/SUPABASE_SERVICE_ROLE_KEY" | jq -r '.value // empty')"
+          test -n "$service_role"
+          auth=(-H "apikey: $service_role" -H "Authorization: Bearer $service_role")
+          for attempt in {1..30}; do
+            heartbeat="$(curl --fail-with-body --silent --show-error "${auth[@]}" \
+              "$SUPABASE_URL/rest/v1/job_worker_heartbeats?select=revision,queues,draining,heartbeat_at&order=heartbeat_at.desc&limit=1")"
+            revision="$(jq -r '.[0].revision // empty' <<<"$heartbeat")"
+            queues="$(jq -r '.[0].queues // [] | join(",")' <<<"$heartbeat")"
+            draining="$(jq -r '.[0].draining // true' <<<"$heartbeat")"
+            heartbeat_at="$(jq -r '.[0].heartbeat_at // empty' <<<"$heartbeat")"
+            if [[ "$revision" == "${GITHUB_SHA:0:12}" && "$queues" == *agent* && "$draining" == "false" && -n "$heartbeat_at" ]]; then
+              echo "CODE_WORKER_HEARTBEAT revision=$revision queues=$queues heartbeat_at=$heartbeat_at"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo 'Code worker heartbeat did not appear' >&2
+          exit 1
+
+      - name: Publish result
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          JOB_STATUS: ${{ job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [[ "$JOB_STATUS" == "success" ]]; then
+            state=success
+            description="Render web and Code worker are live on ${GITHUB_SHA:0:12}"
+          else
+            state=failure
+            description="Code worker deploy or heartbeat verification failed"
+          fi
+          jq -nc --arg state "$state" --arg context "Code Worker Deploy" --arg description "$description" --arg target_url "$RUN_URL" \
+            '{state:$state,context:$context,description:$description,target_url:$target_url}' \
+            | gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" --input - >/dev/null
