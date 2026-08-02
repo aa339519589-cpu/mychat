@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react"
 
-import { CODE_TIERS, type Tier } from "@/lib/chat-data"
 import {
   fetchCodeMessages,
   fetchCodeSessions,
@@ -11,6 +10,7 @@ import {
   type PlanAction,
 } from "@/lib/code-data"
 import { createCodeApplyActions } from "./apply"
+import { useCodeModelSelection } from "./model-selection"
 import { executeCodeSend } from "./send"
 import { type Overlay, type RepoItem } from "./shared"
 import {
@@ -34,7 +34,6 @@ export function CodeConsole({ userId, onExit }: CodeConsoleProps) {
   const [messages, setMessages] = useState<CodeMessage[]>([])
   const [input, setInput] = useState("")
   const [streaming, setStreaming] = useState(false)
-  const [tier, setTier] = useState<Tier>("正构")
   const [auto, setAuto] = useState(false)
   const [pendingPlan, setPendingPlan] = useState<PlanAction[]>([])
   const [applying, setApplying] = useState(false)
@@ -47,6 +46,7 @@ export function CodeConsole({ userId, onExit }: CodeConsoleProps) {
   const [ghMenu, setGhMenu] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const model = useCodeModelSelection()
 
   const { restoreTask, syncWorkspaceState } = useTaskRecovery({
     messages,
@@ -88,8 +88,6 @@ export function CodeConsole({ userId, onExit }: CodeConsoleProps) {
       })
       .catch(() => setConnected(false))
     try {
-      const savedTier = localStorage.getItem("code_tier") as Tier | null
-      if (savedTier && CODE_TIERS.some(option => option.id === savedTier)) setTier(savedTier)
       setAuto(localStorage.getItem("code_auto") === "1")
     } catch {
       // Browser storage is optional.
@@ -106,6 +104,10 @@ export function CodeConsole({ userId, onExit }: CodeConsoleProps) {
   }, [])
 
   async function runSend(text: string, options?: RunCodeSendOptions): Promise<void> {
+    if (!model.activeModelId) {
+      setApplyError("模型目录尚未载入，请稍后重试")
+      return
+    }
     await executeCodeSend(text, options, {
       userId,
       repo,
@@ -113,7 +115,8 @@ export function CodeConsole({ userId, onExit }: CodeConsoleProps) {
       streaming,
       currentTaskId,
       sessionId,
-      tier,
+      modelId: model.activeModelId,
+      reasoningEffort: model.reasoningEffort,
       auto,
       abortRef,
       setMessages,
@@ -204,16 +207,6 @@ export function CodeConsole({ userId, onExit }: CodeConsoleProps) {
     })
   }
 
-  function changeTier(nextTier: Tier) {
-    setTier(nextTier)
-    try {
-      localStorage.setItem("code_tier", nextTier)
-    } catch {
-      // Browser storage is optional.
-    }
-    setOverlay(null)
-  }
-
   async function disconnect() {
     try {
       const response = await fetch("/api/auth/github/disconnect", { method: "POST" })
@@ -250,7 +243,10 @@ export function CodeConsole({ userId, onExit }: CodeConsoleProps) {
   function runCommand(command: string) {
     setInput("")
     if (command === "/new") startNewSession()
-    else setOverlay(command.slice(1) as Overlay)
+    else {
+      if (command === "/model") void model.refreshModels()
+      setOverlay(command.slice(1) as Overlay)
+    }
   }
 
   function submit() {
@@ -322,8 +318,9 @@ export function CodeConsole({ userId, onExit }: CodeConsoleProps) {
       onCommand={runCommand}
       overlay={overlay}
       onCloseOverlay={() => setOverlay(null)}
-      tier={tier}
-      onChangeTier={changeTier}
+      models={model.models}
+      activeModelId={model.activeModelId}
+      onChangeModel={model.selectModel}
       onLoadSession={session => { void loadSession(session) }}
     />
   )
