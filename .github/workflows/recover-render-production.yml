@@ -1,5 +1,5 @@
 name: Recover Render Production
-# Recovery trigger: deploy Code effort control, compact composer, and timeout fix.
+# Recovery trigger: deploy bounded dynamic Code context and model identity.
 
 on:
   workflow_dispatch:
