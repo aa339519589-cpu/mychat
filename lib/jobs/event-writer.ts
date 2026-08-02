@@ -135,7 +135,9 @@ export class JobEventWriter {
 
   async append(kind: string, payload: JsonObject, idempotencyKey?: string): Promise<void> {
     this.queue.push({ kind, payload, ...(idempotencyKey ? { idempotencyKey } : {}) })
-    await this.flush()
+    const persistence = this.flush()
+    if (kind === 'job.started') return
+    await persistence
   }
 
   async checkpoint(input: {

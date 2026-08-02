@@ -3,7 +3,7 @@ import type { SupabaseClient } from '@/lib/supabase/types'
 import { isJsonValue, type JsonObject } from './contracts'
 
 export const LIVE_JOB_BROADCAST_EVENT = 'job.event'
-const MAX_COALESCED_DELTA_CHARS = 256
+const MAX_IN_FLIGHT_BROADCASTS = 8
 
 type RealtimeChannel = ReturnType<SupabaseClient['channel']>
 type ParsedOffset = { valid: boolean; value?: number }
@@ -77,118 +77,86 @@ export function applyOffsetDelta(current: string, offset: number, value: string)
   return { next: current + appended, appended, gap: false }
 }
 
-function deltaText(event: LiveJobEvent): { field: 'text' | 'thinking'; value: string } | null {
-  if (event.kind === 'text.delta' && typeof event.payload.text === 'string') {
-    return { field: 'text', value: event.payload.text }
-  }
-  if (event.kind === 'thinking.delta' && typeof event.payload.thinking === 'string') {
-    return { field: 'thinking', value: event.payload.thinking }
-  }
-  return null
-}
-
-function canCoalesce(previous: LiveJobEvent, current: LiveJobEvent): boolean {
-  const left = deltaText(previous)
-  const right = deltaText(current)
-  if (!left || !right || left.field !== right.field) return false
-  if (previous.offset === undefined || current.offset === undefined) return false
-  const contiguous = previous.offset + left.value.length === current.offset
-  const withinLimit = left.value.length + right.value.length <= MAX_COALESCED_DELTA_CHARS
-  return contiguous && withinLimit
-}
-
-function coalesced(previous: LiveJobEvent, current: LiveJobEvent): LiveJobEvent {
-  const left = deltaText(previous)
-  const right = deltaText(current)
-  if (!left || !right) return current
-  return {
-    ...previous,
-    revision: current.revision,
-    payload: { [left.field]: `${left.value}${right.value}` },
-  }
-}
-
 /**
- * Best-effort low-latency relay. Durable job events remain the recovery source;
- * this channel removes the database read loop from the visible token path.
+ * Sends every provider delta immediately through Realtime's HTTP broadcast
+ * endpoint. It deliberately does not wait for a WebSocket subscription and it
+ * never merges adjacent deltas into a large visible block.
  */
 export class LiveJobPublisher {
   private readonly client: SupabaseClient
   private readonly channel: RealtimeChannel | null
-  private queue: LiveJobEvent[] = []
+  private readonly inFlight = new Set<Promise<void>>()
+  private readonly queue: LiveJobEvent[] = []
+  private readonly drainWaiters: Array<() => void> = []
   private revision = 0
-  private ready = false
-  private started = false
-  private sending = false
-  private closed = false
+  private closing = false
 
-  constructor(client: SupabaseClient, jobId: string) {
+  constructor(
+    client: SupabaseClient,
+    jobId: string,
+    channelSecret = process.env.AGENT_CREDENTIAL_KEY,
+  ) {
     this.client = client
-    const channelName = liveJobChannelName(jobId)
-    this.channel = channelName
-      ? client.channel(channelName, { config: { broadcast: { ack: false, self: false } } })
-      : null
+    const channelName = liveJobChannelName(jobId, channelSecret)
+    this.channel = channelName ? client.channel(channelName) : null
   }
 
   start(): void {
-    if (!this.channel || this.started || this.closed) return
-    this.started = true
-    this.channel.subscribe(status => {
-      this.ready = status === 'SUBSCRIBED'
-      if (this.ready) void this.flush()
-    })
+    // HTTP broadcast needs no channel subscription handshake.
   }
 
   publish(input: LiveJobEventInput): void {
-    if (!this.channel || this.closed) return
-    const event: LiveJobEvent = { ...input, revision: ++this.revision }
-    const previous = this.queue.at(-1)
-    if (previous && canCoalesce(previous, event)) {
-      this.queue[this.queue.length - 1] = coalesced(previous, event)
-    } else {
-      this.queue.push(event)
-    }
-    void this.flush()
+    if (!this.channel || this.closing) return
+    this.queue.push({ ...input, revision: ++this.revision })
+    this.pump()
   }
 
   async close(): Promise<void> {
-    if (this.closed) return
-    if (this.ready) await this.flush()
-    this.closed = true
-    this.queue = []
+    if (this.closing) return this.waitForDrain()
+    this.closing = true
+    this.pump()
+    await this.waitForDrain()
     if (!this.channel) return
     try { await this.client.removeChannel(this.channel) } catch {}
   }
 
-  private canFlush(): boolean {
-    return Boolean(this.channel && this.ready && !this.sending && !this.closed)
+  private pump(): void {
+    while (this.channel
+      && this.queue.length > 0
+      && this.inFlight.size < MAX_IN_FLIGHT_BROADCASTS) {
+      const event = this.queue.shift()
+      if (!event) break
+      this.launch(event)
+    }
+    this.resolveDrainWaiters()
+  }
+
+  private launch(event: LiveJobEvent): void {
+    const task = this.send(event)
+    this.inFlight.add(task)
+    void task.finally(() => {
+      this.inFlight.delete(task)
+      this.pump()
+      this.resolveDrainWaiters()
+    })
   }
 
   private async send(event: LiveJobEvent): Promise<void> {
     if (!this.channel) return
     try {
-      await this.channel.send({
-        type: 'broadcast',
-        event: LIVE_JOB_BROADCAST_EVENT,
-        payload: event,
-      })
+      await this.channel.httpSend(LIVE_JOB_BROADCAST_EVENT, event)
     } catch {
-      // Durable events provide loss recovery; live relay failures never fail the job.
+      // Durable events remain the recovery source when a live broadcast fails.
     }
   }
 
-  private async flush(): Promise<void> {
-    if (!this.canFlush()) return
-    this.sending = true
-    try {
-      while (this.ready && !this.closed) {
-        const event = this.queue.shift()
-        if (!event) break
-        await this.send(event)
-      }
-    } finally {
-      this.sending = false
-      if (this.canFlush() && this.queue.length > 0) void this.flush()
-    }
+  private waitForDrain(): Promise<void> {
+    if (this.queue.length === 0 && this.inFlight.size === 0) return Promise.resolve()
+    return new Promise(resolve => this.drainWaiters.push(resolve))
+  }
+
+  private resolveDrainWaiters(): void {
+    if (this.queue.length > 0 || this.inFlight.size > 0) return
+    for (const resolve of this.drainWaiters.splice(0)) resolve()
   }
 }
