@@ -1,4 +1,4 @@
-import { codeContinuationPrompt, codeTurnContentPolicy } from '@/lib/agent/continuation'
+import { codeContinuationPrompt } from '@/lib/agent/continuation'
 import { saveAgentRunState } from '@/lib/agent/run-state'
 import { finalCodeTaskStatus } from '@/lib/code-agent/runtime'
 import { buildCodeSystem } from '@/lib/code-agent/system-prompt'
@@ -182,8 +182,7 @@ function agentLoopOptions(input: {
     },
     ...callbacks,
     turnOptions: {
-      deferTextUntilTurnEnd: true,
-      contentPolicy: codeTurnContentPolicy,
+      deferTextUntilTurnEnd: false,
       signal: context.signal,
       timeoutMs: 120_000,
       authType: selection.authType,
@@ -259,7 +258,6 @@ export async function runAgentTaskJob(
     await dependencies.runLoop(agentLoopOptions({
       context, job: input, runtime, prepared, callbacks,
     }))
-    runtime.events.flushLeadText()
     await writer.drain()
     return await completeAgentRun({
       context, job: input, runtime, writer, attemptTokens: callbacks.tracking.attemptTokens,
