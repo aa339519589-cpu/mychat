@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  statuses: write
 
 jobs:
   inspect:
@@ -17,8 +18,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Print relevant SQL and callers
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
+          jq -nc --arg context "Agent SQL Inspection" --arg description "Inspecting enqueue authority SQL" --arg target_url "$RUN_URL" \
+            '{state:"pending",context:$context,description:$description,target_url:$target_url}' \
+            | gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" --input - >/dev/null
           echo '=== MATCHES ==='
           grep -RIn -E 'enqueue_agent_task_job|confirmation_actor|confirmation_actor_missing' . \
             --exclude-dir=.git --exclude='*.map' | head -n 200
@@ -30,3 +37,6 @@ jobs:
             sed -n "${start},${end}p" "$file"
           done < <(grep -RIn -E 'create or replace function public\.enqueue_agent_task_job|confirmation_actor_missing' supabase . \
             --exclude-dir=.git --exclude='*.map' | head -n 20)
+          jq -nc --arg context "Agent SQL Inspection" --arg description "Agent enqueue SQL inspection complete" --arg target_url "$RUN_URL" \
+            '{state:"success",context:$context,description:$description,target_url:$target_url}' \
+            | gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" --input - >/dev/null
