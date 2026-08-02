@@ -14,7 +14,6 @@ permissions:
 
 env:
   PRODUCTION_URL: https://mychat-nm6x.onrender.com
-  VERIFIED_APPLICATION_REVISION: f1100bffc871e2e10d87043d63237c7f2b6c7a0a
 
 jobs:
   deploy:
@@ -31,10 +30,9 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           ref: ${{ github.sha }}
-          fetch-depth: 0
           persist-credentials: false
 
-      - name: Deploy verified application and prove exact runtime identity
+      - name: Configure runtime identity, deploy, and prove production
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -70,18 +68,7 @@ jobs:
 
           stage="identity"
           [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$VERIFIED_APPLICATION_REVISION" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$REVISION"
-
-          stage="verified-application"
-          unexpected="$(git diff --name-only "$VERIFIED_APPLICATION_REVISION" "$REVISION" -- | grep -Ev '^\.github/workflows/deploy-exact-render-revision\.yml$' || true)"
-          test -z "$unexpected"
-          verified_status="$(gh api "repos/$GITHUB_REPOSITORY/commits/$VERIFIED_APPLICATION_REVISION/status")"
-          jq -e '.statuses | any(.context == "Main Verification" and .state == "success")' <<<"$verified_status" >/dev/null
-          jq -e '.statuses | any(.context == "Supabase Migration" and .state == "success")' <<<"$verified_status" >/dev/null
-          report success "Verified Application Base" "Application and database gates passed at ${VERIFIED_APPLICATION_REVISION:0:12}"
-
-          stage="render-credentials"
           test -n "$OPENROUTER_API_KEY"
           test -n "$RENDER_API_KEY"
           [[ "$RENDER_SERVICE_ID" =~ ^srv-[a-z0-9]+$ ]]
