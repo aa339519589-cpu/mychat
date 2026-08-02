@@ -31,10 +31,12 @@ type CuratedModel = Pick<ModelCatalogItem, 'id' | 'name' | 'provider' | 'access'
  * frontend entries or backend routes.
  */
 export const CURATED_OPENROUTER_MODELS: readonly CuratedModel[] = [
+  { id: 'openai/gpt-5.6-luna-pro', name: 'GPT-5.6 Luna Pro', provider: 'OpenAI', access: 'quota', flagship: true },
   { id: 'deepseek/deepseek-v4-flash-0731', name: 'DeepSeek V4 Flash', provider: 'DeepSeek', access: 'quota', flagship: false },
   { id: 'deepseek/deepseek-v4-pro', name: 'DeepSeek V4 Pro', provider: 'DeepSeek', access: 'quota', flagship: true },
   { id: 'openai/gpt-5.6-luna', name: 'GPT-5.6 Luna', provider: 'OpenAI', access: 'quota', flagship: false },
   { id: 'openai/gpt-5.6-sol', name: 'GPT-5.6 Sol', provider: 'OpenAI', access: 'premium', flagship: true },
+  { id: 'openai/gpt-5.6-sol-pro', name: 'GPT-5.6 Sol Pro', provider: 'OpenAI', access: 'premium', flagship: true },
   { id: 'openai/gpt-5.6-terra', name: 'GPT-5.6 Terra', provider: 'OpenAI', access: 'trial', flagship: false },
   { id: 'openai/gpt-5.5', name: 'GPT-5.5', provider: 'OpenAI', access: 'premium', flagship: true },
   { id: 'openai/gpt-5.5-instant', name: 'GPT-5.5 Instant', provider: 'OpenAI', access: 'trial', flagship: false },
@@ -53,6 +55,8 @@ export const CURATED_OPENROUTER_MODELS: readonly CuratedModel[] = [
   { id: 'google/gemini-3.1-pro', name: 'Gemini 3.1 Pro', provider: 'Google', access: 'premium', flagship: true },
   { id: 'google/gemini-3.6-flash', name: 'Gemini 3.6 Flash', provider: 'Google', access: 'trial', flagship: false },
   { id: 'google/gemini-3.6-flash-lite', name: 'Gemini 3.6 Flash Lite', provider: 'Google', access: 'trial', flagship: false },
+  { id: 'google/gemini-3.5-flash-lite', name: 'Gemini 3.5 Flash Lite', provider: 'Google', access: 'trial', flagship: false },
+  { id: 'x-ai/grok-4.5', name: 'Grok 4.5', provider: 'xAI', access: 'premium', flagship: true },
   { id: 'minimax/minimax-m3', name: 'MiniMax M3', provider: 'MiniMax', access: 'premium', flagship: true },
   { id: 'minimax/minimax-m2.7', name: 'MiniMax M2.7', provider: 'MiniMax', access: 'trial', flagship: false },
   { id: 'moonshotai/kimi-k3', name: 'Kimi K3', provider: 'Moonshot', access: 'premium', flagship: true },

@@ -7,6 +7,7 @@ import './dark-background.css'
 import './thinking-flow.css'
 import './mobile-performance.css'
 import 'katex/dist/katex.min.css'
+import './math-rendering.css'
 
 export const metadata: Metadata = {
   metadataBase: new URL('https://mychat-nm6x.onrender.com'),
