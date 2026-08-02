@@ -9,7 +9,8 @@ export type CodeChatMessage = {
 
 export type CodeChatRequest = {
   repo: string | null
-  tier: string
+  modelId: string
+  reasoningEffort?: string
   messages: CodeChatMessage[]
   taskId: string | null
   responseId: string | null
@@ -22,12 +23,21 @@ function optionalUuid(value: unknown, field: string): string | null {
   return value as string
 }
 
-function tierOf(value: unknown): string {
-  const tier = value ?? '正构'
-  if (typeof tier !== 'string' || !tier.trim() || tier.length > 64 || /[\u0000-\u001f\u007f]/.test(tier)) {
-    throw new Error('模型档位无效')
+function requiredModelId(value: unknown): string {
+  if (typeof value !== 'string' || !value.trim() || value.length > 200
+    || /[\u0000-\u001f\u007f]/.test(value)) {
+    throw new Error('模型标识无效')
   }
-  return tier.trim()
+  return value.trim()
+}
+
+function optionalReasoningEffort(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined
+  if (typeof value !== 'string' || !value.trim() || value.length > 32
+    || /[\u0000-\u001f\u007f]/.test(value)) {
+    throw new Error('思考深度无效')
+  }
+  return value.trim().toLowerCase()
 }
 
 function repositoryOf(value: unknown, sessionId: string | null): string | null {
@@ -66,10 +76,12 @@ export function parseCodeChatRequest(input: unknown): CodeChatRequest {
   const taskId = optionalUuid(body.taskId, 'taskId')
   const responseId = optionalUuid(body.responseId, 'responseId')
   const sessionId = optionalUuid(body.sessionId, 'sessionId')
+  const reasoningEffort = optionalReasoningEffort(body.reasoningEffort)
 
   return {
     repo: repositoryOf(body.repo, sessionId),
-    tier: tierOf(body.tier),
+    modelId: requiredModelId(body.modelId),
+    ...(reasoningEffort ? { reasoningEffort } : {}),
     messages: messagesOf(body.messages),
     taskId,
     responseId,
