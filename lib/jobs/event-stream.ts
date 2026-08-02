@@ -112,6 +112,17 @@ export function createJobEventStream(input: {
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
+      /*
+       * Active Chat delivery remains intentionally low latency.
+       * Durable event polling starts at thirty-five milliseconds.
+       * Idle polling is capped at eighty milliseconds.
+       * New events reset the cadence immediately.
+       * Text chunks stay bounded before database append.
+       * The first visible text remains available without delay.
+       * Backpressure still protects slow consumers.
+       * Terminal events retain ordered sequence delivery.
+       * Reconnection continues from the last sequence number.
+       */
       const send = async (value: string): Promise<boolean> => {
         if (closed || signal.aborted) return false
         if (!await waitForCapacity(controller, signal, dependencies)) return false
