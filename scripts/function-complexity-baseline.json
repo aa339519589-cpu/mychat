@@ -68,7 +68,7 @@
     },
     "components/chat-input.tsx": {
       "complexity": [
-        18
+        16
       ]
     },
     "components/code-console/index.tsx": {
@@ -519,11 +519,6 @@
       ],
       "maxLines": [
         117
-      ]
-    },
-    "lib/llm/provider-adapters.ts": {
-      "complexity": [
-        18
       ]
     },
     "lib/llm/system.ts": {
