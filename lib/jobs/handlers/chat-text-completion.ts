@@ -39,6 +39,7 @@ export async function completeChatTextRun(
       irreversibleCommitted: Boolean(media.length),
       model: input.selection.model,
       totalTokens: runtime.totalTokens,
+      ...(runtime.tokenUsage ? { tokenUsage: runtime.tokenUsage } : {}),
     }),
     ledgerEntries: chatTokenAccounting(input, context.job.id, runtime.attemptTokens),
   }
