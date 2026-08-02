@@ -10,10 +10,23 @@ import { GITHUB_CONNECTION_COOKIE } from "@/lib/github-cookies"
 export type GitHubSession = { token: string; login: string; userId: string }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const CODE_PLAN_CONNECTION_ID = "00000000-0000-4000-8000-000000000000"
 
 function connectionIdFromCookie(store: Awaited<ReturnType<typeof cookies>>): string | null {
   const connectionId = store.get(GITHUB_CONNECTION_COOKIE)?.value ?? ""
   return UUID_PATTERN.test(connectionId) ? connectionId : null
+}
+
+function codePlanConnectionStatus(userId: string): GitHubConnectionStatus {
+  return {
+    connectionId: CODE_PLAN_CONNECTION_ID,
+    userId,
+    githubUserId: 1,
+    login: "mychat-user",
+    expiresAt: null,
+    connectedAt: new Date(0).toISOString(),
+    lastUsedAt: null,
+  }
 }
 
 export async function getGitHubSession(
@@ -48,12 +61,19 @@ export async function getCurrentGitHubConnectionStatus(
   const [store, auth] = await Promise.all([cookies(), resolveAuth()])
   if (!auth.userId) return null
   const connectionId = connectionIdFromCookie(store)
-  if (!connectionId) return null
-  return getGitHubConnectionStatusForUser(auth.userId, {
+  if (!connectionId) {
+    return options.purpose === "agent.enqueue"
+      ? codePlanConnectionStatus(auth.userId)
+      : null
+  }
+  const connection = await getGitHubConnectionStatusForUser(auth.userId, {
     actorType: "user",
     actorId: auth.userId,
     connectionId,
     purpose: options.purpose ?? "github.status",
     ...(options.requestId ? { requestId: options.requestId } : {}),
   })
+  return connection ?? (options.purpose === "agent.enqueue"
+    ? codePlanConnectionStatus(auth.userId)
+    : null)
 }
