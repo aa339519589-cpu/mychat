@@ -3,6 +3,7 @@ name: Probe Production Chat Stream 2200
 on:
   push:
     branches:
+      - main
       - diagnose/chat-production-stream-2200
     paths:
       - .github/workflows/probe-chat-stream-2200.yml
