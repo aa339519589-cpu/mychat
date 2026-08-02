@@ -1,5 +1,6 @@
 import type { ChatEvent } from '@/lib/llm/events'
 import type { JobEventDraft, JsonObject, JsonValue } from './contracts'
+import type { LiveJobEventInput } from './live-events'
 import type { JobExecutionContext } from './worker'
 
 const FLUSH_INTERVAL_MS = 12
@@ -56,12 +57,13 @@ function materializedText(
 }
 
 /**
- * Bridges synchronous model deltas to the durable, fenced event log. The first
- * visible text delta flushes immediately; later deltas flush once per display
- * frame so clients receive real streaming without a second artificial queue.
+ * Bridges synchronous model deltas to both the live relay and the durable,
+ * fenced event log. The relay runs first, so database persistence is no longer
+ * on the visible token-delivery path.
  */
 export class JobEventWriter {
   private readonly context: JobExecutionContext
+  private readonly onLiveEvent?: (event: LiveJobEventInput) => void
   private queue: JobEventDraft[] = []
   private chain: Promise<void> = Promise.resolve()
   private failure: unknown = null
@@ -70,8 +72,12 @@ export class JobEventWriter {
   private fullThinking = ''
   private firstTextFlushed = false
 
-  constructor(context: JobExecutionContext) {
+  constructor(
+    context: JobExecutionContext,
+    onLiveEvent?: (event: LiveJobEventInput) => void,
+  ) {
     this.context = context
+    this.onLiveEvent = onLiveEvent
     const progress = context.job.checkpoint?.progress
     this.fullText = materializedText(progress, 'content', 'contentParts')
     this.fullThinking = materializedText(progress, 'thinking', 'thinkingParts')
@@ -79,11 +85,21 @@ export class JobEventWriter {
   }
 
   emit = (event: ChatEvent): void => {
+    const textOffset = this.fullText.length
+    const thinkingOffset = this.fullThinking.length
     const isText = 'text' in event && event.text.length > 0
     if ('text' in event) this.fullText += event.text
     if ('thinking' in event) this.fullThinking += event.thinking
     const draft = eventDraft(event)
     if (!draft) return
+    const liveOffset = draft.kind === 'text.delta'
+      ? textOffset
+      : draft.kind === 'thinking.delta' ? thinkingOffset : undefined
+    this.publishLive({
+      kind: draft.kind,
+      payload: draft.payload,
+      ...(liveOffset === undefined ? {} : { offset: liveOffset }),
+    })
     const current = deltaValue(draft)
     const previous = this.queue.at(-1)
     const previousDelta = previous ? deltaValue(previous) : null
@@ -122,7 +138,9 @@ export class JobEventWriter {
   }
 
   async append(kind: string, payload: JsonObject, idempotencyKey?: string): Promise<void> {
-    this.queue.push({ kind, payload, ...(idempotencyKey ? { idempotencyKey } : {}) })
+    const draft = { kind, payload, ...(idempotencyKey ? { idempotencyKey } : {}) }
+    this.publishLive({ kind, payload })
+    this.queue.push(draft)
     await this.flush()
   }
 
@@ -147,6 +165,10 @@ export class JobEventWriter {
     await this.drainEvents()
     if (this.failure) throw this.failure
     this.context.assertAuthority()
+  }
+
+  private publishLive(event: LiveJobEventInput): void {
+    try { this.onLiveEvent?.(event) } catch {}
   }
 
   private scheduleFlush(milliseconds: number): void {
