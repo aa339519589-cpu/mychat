@@ -70,9 +70,12 @@ export async function GET(
     })
     return degradedGenerationStatus(result.kind)
   }
+  const streamUrl = result.value
+    ? `/api/v1/jobs/${result.value.id}/${result.value.queue === 'chat' ? 'live' : 'events'}?from_seq=0`
+    : null
   return Response.json({
     job: result.value,
-    streamUrl: result.value ? `/api/v1/jobs/${result.value.id}/events?from_seq=0` : null,
+    streamUrl,
     degraded: false,
   }, {
     headers: {
