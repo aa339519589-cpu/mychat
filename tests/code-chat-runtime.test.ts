@@ -8,50 +8,59 @@ import {
   finalCodeTaskStatus,
 } from '../lib/code-agent/runtime'
 
-test('code chat request applies stable defaults', () => {
-  const parsed = parseCodeChatRequest({
+const MODEL_ID = 'openai/gpt-5.6-sol'
+
+function requestBody(extra: Record<string, unknown> = {}) {
+  return {
+    modelId: MODEL_ID,
     messages: [{ role: 'user', content: '修复测试' }],
-  })
+    ...extra,
+  }
+}
+
+test('code chat request preserves the selected model', () => {
+  const parsed = parseCodeChatRequest(requestBody())
 
   assert.equal(parsed.repo, null)
-  assert.equal(parsed.tier, '正构')
+  assert.equal(parsed.modelId, MODEL_ID)
+  assert.equal(parsed.reasoningEffort, undefined)
   assert.equal(parsed.taskId, null)
 })
 
 test('code chat request rejects invalid repositories and message roles', () => {
   assert.throws(
-    () => parseCodeChatRequest({ repo: 'owner/repo/extra', messages: [{ role: 'user', content: 'x' }] }),
+    () => parseCodeChatRequest(requestBody({ repo: 'owner/repo/extra' })),
     /仓库参数无效/,
   )
   const sessionId = '60000000-0000-4000-8000-000000000001'
-  assert.equal(parseCodeChatRequest({
+  assert.equal(parseCodeChatRequest(requestBody({
     repo: provisionalRepositoryForSession(sessionId),
     sessionId,
     messages: [{ role: 'user', content: 'new project' }],
-  }).repo, provisionalRepositoryForSession(sessionId))
+  })).repo, provisionalRepositoryForSession(sessionId))
   assert.throws(
-    () => parseCodeChatRequest({
+    () => parseCodeChatRequest(requestBody({
       repo: '__mychat_new__/60000000-0000-4000-8000-000000000002',
       sessionId,
       messages: [{ role: 'user', content: 'x' }],
-    }),
+    })),
     /仓库参数无效/,
   )
   assert.throws(
-    () => parseCodeChatRequest({ messages: [{ role: 'system', content: 'x' }] }),
+    () => parseCodeChatRequest(requestBody({ messages: [{ role: 'system', content: 'x' }] })),
     /消息格式或角色无效/,
   )
 })
 
 test('code chat request enforces per-message and aggregate context limits', () => {
   assert.throws(
-    () => parseCodeChatRequest({ messages: [{ role: 'user', content: 'x'.repeat(100_001) }] }),
+    () => parseCodeChatRequest(requestBody({ messages: [{ role: 'user', content: 'x'.repeat(100_001) }] })),
     /单条消息过长/,
   )
   assert.throws(
-    () => parseCodeChatRequest({
+    () => parseCodeChatRequest(requestBody({
       messages: Array.from({ length: 21 }, () => ({ role: 'user', content: 'x'.repeat(100_000) })),
-    }),
+    })),
     /消息上下文过大/,
   )
 })
