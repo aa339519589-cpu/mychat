@@ -1,5 +1,5 @@
 name: Recover Render Production
-# Recovery trigger: deploy the deep-research cleanup and opt-in render prompt revision.
+# Recovery trigger: deploy the unified Code /model selector and dynamic model routing.
 
 on:
   workflow_dispatch:
