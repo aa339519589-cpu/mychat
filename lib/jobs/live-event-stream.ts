@@ -14,13 +14,21 @@ import {
   type PublicJobSnapshot,
 } from './read-model'
 
-const DATABASE_RECOVERY_INTERVAL_MS = 500
+const DATABASE_RECOVERY_INTERVAL_MS = 125
 const HEARTBEAT_INTERVAL_MS = 10_000
 const ADMISSION_RENEW_INTERVAL_MS = 15_000
 const EVENT_BATCH_SIZE = 200
+const MAX_PENDING_LIVE_DELTAS = 512
 const encoder = new TextEncoder()
 
 type RealtimeChannel = ReturnType<SupabaseClient['channel']>
+type DeltaField = 'content' | 'thinking'
+type DeltaPayloadField = 'text' | 'thinking'
+type ParsedLiveDelta = {
+  field: DeltaField
+  payloadField: DeltaPayloadField
+  value: string
+}
 
 type LiveStreamState = {
   sequence: number
@@ -65,6 +73,16 @@ function terminal(status: string): boolean {
 function resetEvent(kind: string, payload: JsonObject): boolean {
   return kind === 'job.retry_scheduled'
     || (kind === 'job.leased' && typeof payload.attempt === 'number' && payload.attempt > 1)
+}
+
+function liveDelta(event: LiveJobEvent): ParsedLiveDelta | null {
+  if (event.kind === 'text.delta' && typeof event.payload.text === 'string') {
+    return { field: 'content', payloadField: 'text', value: event.payload.text }
+  }
+  if (event.kind === 'thinking.delta' && typeof event.payload.thinking === 'string') {
+    return { field: 'thinking', payloadField: 'thinking', value: event.payload.thinking }
+  }
+  return null
 }
 
 function frame(jobId: string, sequence: number, kind: string, payload: JsonObject): Uint8Array {
@@ -121,6 +139,7 @@ class LiveJobEventStreamSession {
   private readonly signal: AbortSignal
   private readonly state: LiveStreamState
   private readonly channel: RealtimeChannel | null
+  private readonly pendingLiveDeltas: LiveJobEvent[] = []
   private controller: ReadableStreamDefaultController<Uint8Array> | null = null
   private processing: Promise<void> = Promise.resolve()
   private closed = false
@@ -185,16 +204,54 @@ class LiveJobEventStreamSession {
     this.state.thinking = ''
     this.state.databaseContentLength = 0
     this.state.databaseThinkingLength = 0
+    this.pendingLiveDeltas.splice(0)
   }
 
   private applyText(
-    field: 'content' | 'thinking',
+    field: DeltaField,
     offset: number,
     value: string,
   ): { appended: string; gap: boolean } {
     const applied = applyOffsetDelta(this.state[field], offset, value)
     this.state[field] = applied.next
     return { appended: applied.appended, gap: applied.gap }
+  }
+
+  private emitAppliedDelta(event: LiveJobEvent, delta: ParsedLiveDelta): boolean {
+    if (event.offset === undefined) return false
+    const applied = this.applyText(delta.field, event.offset, delta.value)
+    if (applied.gap) return false
+    if (applied.appended) this.emit(event.kind, { [delta.payloadField]: applied.appended })
+    return true
+  }
+
+  private rememberPendingDelta(event: LiveJobEvent): void {
+    if (this.pendingLiveDeltas.some(candidate => candidate.revision === event.revision)) return
+    this.pendingLiveDeltas.push(event)
+    if (this.pendingLiveDeltas.length > MAX_PENDING_LIVE_DELTAS) {
+      this.pendingLiveDeltas.splice(0, this.pendingLiveDeltas.length - MAX_PENDING_LIVE_DELTAS)
+    }
+  }
+
+  private drainPendingDeltas(field: DeltaField): void {
+    let progressed = true
+    while (progressed) {
+      progressed = false
+      this.pendingLiveDeltas.sort((left, right) =>
+        (left.offset ?? Number.MAX_SAFE_INTEGER) - (right.offset ?? Number.MAX_SAFE_INTEGER)
+          || left.revision - right.revision)
+      const index = this.pendingLiveDeltas.findIndex(event => {
+        const delta = liveDelta(event)
+        return delta?.field === field
+          && event.offset !== undefined
+          && event.offset <= this.state[field].length
+      })
+      if (index < 0) return
+      const [event] = this.pendingLiveDeltas.splice(index, 1)
+      const delta = liveDelta(event)
+      if (!delta) continue
+      progressed = this.emitAppliedDelta(event, delta)
+    }
   }
 
   private applyPersistedEvent(event: PublicJobEvent, emitMissing: boolean): void {
@@ -208,6 +265,7 @@ class LiveJobEventStreamSession {
       this.state.databaseContentLength += event.payload.text.length
       const applied = this.applyText('content', offset, event.payload.text)
       if (emitMissing && applied.appended) this.emit('text.delta', { text: applied.appended })
+      this.drainPendingDeltas('content')
       return
     }
     if (event.kind === 'thinking.delta' && typeof event.payload.thinking === 'string') {
@@ -215,6 +273,7 @@ class LiveJobEventStreamSession {
       this.state.databaseThinkingLength += event.payload.thinking.length
       const applied = this.applyText('thinking', offset, event.payload.thinking)
       if (emitMissing && applied.appended) this.emit('thinking.delta', { thinking: applied.appended })
+      this.drainPendingDeltas('thinking')
       return
     }
     if (emitMissing && event.kind !== 'job.terminal') this.emit(event.kind, event.payload)
@@ -245,21 +304,16 @@ class LiveJobEventStreamSession {
       this.emit(event.kind, event.payload)
       return
     }
-    const delta = event.kind === 'text.delta' && typeof event.payload.text === 'string'
-      ? { field: 'content' as const, payloadField: 'text' as const, value: event.payload.text }
-      : event.kind === 'thinking.delta' && typeof event.payload.thinking === 'string'
-        ? { field: 'thinking' as const, payloadField: 'thinking' as const, value: event.payload.thinking }
-        : null
+    const delta = liveDelta(event)
     if (!delta || event.offset === undefined) {
       this.emit(event.kind, event.payload)
       return
     }
-    let applied = this.applyText(delta.field, event.offset, delta.value)
-    if (applied.gap) {
-      await this.catchUpDatabase(true)
-      applied = this.applyText(delta.field, event.offset, delta.value)
+    if (!this.emitAppliedDelta(event, delta)) {
+      this.rememberPendingDelta(event)
+      return
     }
-    if (applied.appended) this.emit(event.kind, { [delta.payloadField]: applied.appended })
+    this.drainPendingDeltas(delta.field)
   }
 
   private emitSnapshot(job: PublicJobSnapshot): void {
