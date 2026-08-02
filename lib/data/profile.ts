@@ -31,7 +31,8 @@ async function systemPromptResponse(response: Response, fallback: string): Promi
 // 读取当前登录用户的档案；没有行就返回默认值
 export async function fetchProfile(): Promise<Profile> {
   const supabase = createClient()
-  const { data } = await supabase.from("profiles").select("memory_enabled").maybeSingle()
+  const { data, error } = await supabase.from("profiles").select("memory_enabled").maybeSingle()
+  if (error) throw error
   return {
     memoryEnabled: data?.memory_enabled ?? true,
   }
@@ -93,14 +94,14 @@ export async function ensureProfile(userId: string): Promise<void> {
   const { error } = await supabase
     .from("profiles")
     .upsert({ user_id: userId }, { onConflict: "user_id", ignoreDuplicates: true })
-  if (error) console.error("ensureProfile", error)
+  if (error) throw error
 }
 
-// 切换记忆总开关
+// 切换记忆总开关。写入失败必须向上抛出，禁止静默伪装成功。
 export async function setMemoryEnabled(userId: string, enabled: boolean): Promise<void> {
   const supabase = createClient()
   const { error } = await supabase
     .from("profiles")
     .upsert({ user_id: userId, memory_enabled: enabled }, { onConflict: "user_id" })
-  if (error) console.error("setMemoryEnabled", error)
+  if (error) throw error
 }
