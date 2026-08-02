@@ -192,6 +192,38 @@ function acceptedResponse(taskId: string, responseId: string, job: { jobId: stri
     ...(trialRemaining !== null ? { trialRemaining, trialLimit: 3 } : {}),
   }, { status: 202, headers: { 'Cache-Control': 'no-store', Location: `/api/v1/jobs/${job.jobId}` } })
 }
+async function completeEnqueue(request: NextRequest, input: {
+  client: SupabaseClient
+  userId: string
+  isAnonymous: boolean
+  body: BoundCodeChatRequest
+  selection: ChatModelSelection
+  usingBalance: boolean
+  trial: TrialPolicy
+}): Promise<Response> {
+  const taskId = input.body.taskId ?? crypto.randomUUID()
+  try {
+    const context = await loadContext(input.client, input.userId, taskId, input.body)
+    const job = await enqueueAgentTask({
+      userId: input.userId,
+      isAnonymous: input.isAnonymous,
+      usingBalance: input.usingBalance,
+      taskId,
+      body: input.body,
+      selection: input.selection,
+      userMessageId: context.userMessageId,
+    })
+    return acceptedResponse(taskId, input.body.responseId, job, input.trial.remaining)
+  } catch (error) {
+    if (input.trial.reserved) {
+      await releaseTrialCall(input.client, input.userId, input.body.responseId).catch(() => undefined)
+    }
+    if (error instanceof CodeAgentEnqueueContextError) return contextFailure(request, error)
+    return apiFailure(request, {
+      status: 503, code: 'DEPENDENCY_UNAVAILABLE', message: 'Agent 作业暂时无法入队', retryable: true,
+    })
+  }
+}
 
 export async function POST(request: NextRequest): Promise<Response> {
   const maintenance = expensiveWriteMaintenanceResponse(request)
@@ -216,24 +248,13 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (connectionFailure) return connectionFailure
   const trial = await reserveModelTrial(request, auth, body, policy.selection)
   if (trial.response) return trial.response
-  const taskId = body.taskId ?? crypto.randomUUID()
-  try {
-    const context = await loadContext(auth.supabase, auth.userId, taskId, body)
-    const job = await enqueueAgentTask({
-      userId: auth.userId,
-      isAnonymous: auth.isAnonymous,
-      usingBalance: policy.usingBalance,
-      taskId,
-      body,
-      selection: policy.selection,
-      userMessageId: context.userMessageId,
-    })
-    return acceptedResponse(taskId, body.responseId, job, trial.remaining)
-  } catch (error) {
-    if (trial.reserved) await releaseTrialCall(auth.supabase, auth.userId, body.responseId).catch(() => undefined)
-    if (error instanceof CodeAgentEnqueueContextError) return contextFailure(request, error)
-    return apiFailure(request, {
-      status: 503, code: 'DEPENDENCY_UNAVAILABLE', message: 'Agent 作业暂时无法入队', retryable: true,
-    })
-  }
+  return completeEnqueue(request, {
+    client: auth.supabase,
+    userId: auth.userId,
+    isAnonymous: auth.isAnonymous,
+    body,
+    selection: policy.selection,
+    usingBalance: policy.usingBalance,
+    trial,
+  })
 }
