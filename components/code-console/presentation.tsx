@@ -4,7 +4,6 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode 
 import { createPortal } from "react-dom"
 import { AnimatePresence, motion, useReducedMotion } from "motion/react"
 import {
-  Check,
   ChevronDown,
   ChevronLeft,
   ExternalLink,
@@ -16,7 +15,6 @@ import {
 } from "lucide-react"
 
 import { AgentTasksPanel } from "@/components/agent-tasks-panel"
-import { CODE_TIERS, type Tier } from "@/lib/chat-data"
 import {
   deleteCodeMemory,
   fetchCodeMemories,
@@ -234,18 +232,6 @@ function OverlayShell({ title, onClose, children }: { title: string; onClose: ()
 
 export function SimpleOverlay({ title, text, onClose }: { title: string; text: string; onClose: () => void }) {
   return <OverlayShell title={title} onClose={onClose}><p className="text-[11px] text-muted-foreground">{text}</p></OverlayShell>
-}
-
-export function ModelOverlay({ tier, onPick, onClose }: { tier: Tier; onPick: (tier: Tier) => void; onClose: () => void }) {
-  return (
-    <OverlayShell title="切换模型" onClose={onClose}>
-      <div className="space-y-1.5">
-        {CODE_TIERS.map(option => <button type="button" key={option.id} onClick={() => onPick(option.id)} aria-pressed={tier === option.id}
-          className={cn("flex min-h-11 w-full items-center gap-3 rounded-lg border px-4 text-left transition-colors hover:bg-secondary/60", CONTROL_FOCUS)}
-          style={{ borderColor: tier === option.id ? ACCENT : "var(--border)" }}><span className="flex-1 text-[12px] text-foreground" style={{ fontFamily: MONO }}>{option.label}</span>{tier === option.id && <Check className="size-4" style={{ color: ACCENT }} aria-hidden="true" />}</button>)}
-      </div>
-    </OverlayShell>
-  )
 }
 
 export function MemoryOverlay({ repo, userId, onClose }: { repo: string; userId: string; onClose: () => void }) {
