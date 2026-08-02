@@ -5,13 +5,13 @@ import type { Memory } from '@/lib/memory-data'
 import type { ModelEndpointSummary } from '@/lib/model-endpoints'
 import type { ProjectContext } from '@/lib/project-data'
 import type { SearchMode } from '@/lib/search-mode'
-import { errorMessage } from '@/lib/unknown-value'
+import { errorMessage, isRecord } from '@/lib/unknown-value'
 import type { ClientGenerationPatch, ClientGenerationState } from '@/lib/generation-client'
 import type { ChatTurnAuthority } from '@/lib/llm/chat-request'
 import { takeAcknowledgedGenerationTerminal } from './generation-terminal-registry'
 import { finalizeChatStream } from './chat-stream-finalizer'
 import { enqueueJobUntilAccepted } from './durable-job-enqueue'
-import { streamJobEvents, type AcceptedJob } from './job-stream-client'
+import { streamJobEvents, type AcceptedJob, type JobStreamEnvelope } from './job-stream-client'
 import { removePermanentlyRejectedSubmission, removePendingChatSubmission, savePendingChatSubmission } from './pending-chat-submission'
 import { processChatStreamEvent } from './chat-stream-events'
 import { createChatStreamRenderer, createChatStreamState, type ChatStreamRenderer, type ChatStreamState } from './chat-stream-state'
@@ -49,6 +49,7 @@ export type RunChatStreamOptions = {
 export type RunChatStreamResult = { content: string; status: ClientGenerationState['status']; accepted: boolean }
 
 const MODEL_QUOTA_CHANGED_EVENT = 'mychat:model-quota-changed'
+const TERMINAL_RECONCILE_INTERVAL_MS = 1_000
 
 function latestUserMessageId(messages: HistoryMessage[]): string | undefined {
   for (let index = messages.length - 1; index >= 0; index--) {
@@ -108,9 +109,84 @@ async function enqueueChatStream(options: RunChatStreamOptions, state: ChatStrea
   return accepted
 }
 
+function terminalStatus(value: unknown): value is 'completed' | 'failed' | 'cancelled' {
+  return value === 'completed' || value === 'failed' || value === 'cancelled'
+}
+
+function terminalEnvelope(value: unknown, accepted: AcceptedJob): JobStreamEnvelope | null {
+  if (!isRecord(value) || !isRecord(value.job)) return null
+  const job = value.job
+  if (job.id !== accepted.jobId || !terminalStatus(job.status) || !Number.isSafeInteger(job.eventSequence)) return null
+  return {
+    jobId: accepted.jobId,
+    seq: Number(job.eventSequence),
+    kind: 'job.terminal',
+    payload: {
+      status: job.status,
+      result: job.result,
+      errorCode: typeof job.errorCode === 'string' ? job.errorCode : null,
+    },
+  }
+}
+
+function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(signal.reason)
+    const timer = window.setTimeout(resolve, milliseconds)
+    signal.addEventListener('abort', () => {
+      window.clearTimeout(timer)
+      reject(signal.reason)
+    }, { once: true })
+  })
+}
+
+async function reconcileTerminal(
+  conversationId: string,
+  accepted: AcceptedJob,
+  signal: AbortSignal,
+): Promise<JobStreamEnvelope> {
+  while (!signal.aborted) {
+    await delay(TERMINAL_RECONCILE_INTERVAL_MS, signal)
+    try {
+      const response = await fetch(`/api/v1/conversations/${encodeURIComponent(conversationId)}/generation`, {
+        signal,
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: { Accept: 'application/json' },
+      })
+      if (!response.ok) continue
+      const envelope = terminalEnvelope(await response.json(), accepted)
+      if (envelope) return envelope
+    } catch (error) {
+      if (signal.aborted) throw signal.reason ?? error
+    }
+  }
+  throw signal.reason ?? new DOMException('Aborted', 'AbortError')
+}
+
 async function consumeChatStream(options: RunChatStreamOptions, state: ChatStreamState, renderer: ChatStreamRenderer, accepted: AcceptedJob): Promise<void> {
   const context = { state, renderer, conversationId: options.conversationId, assistantMessageId: options.assistantMessageId, projectContext: options.projectContext, setConversations: options.setConversations, setMemories: options.setMemories }
-  for await (const event of streamJobEvents(accepted, options.controller.signal)) { if (!processChatStreamEvent(context, event)) break }
+  const streamController = new AbortController()
+  const abortStream = () => streamController.abort(options.controller.signal.reason)
+  options.controller.signal.addEventListener('abort', abortStream, { once: true })
+  const stream = (async () => {
+    for await (const event of streamJobEvents(accepted, streamController.signal)) {
+      if (!processChatStreamEvent(context, event)) return
+    }
+  })()
+  const reconciliation = reconcileTerminal(options.conversationId, accepted, streamController.signal)
+  try {
+    const winner = await Promise.race([
+      stream.then(() => null),
+      reconciliation,
+    ])
+    if (winner) processChatStreamEvent(context, winner)
+  } finally {
+    options.controller.signal.removeEventListener('abort', abortStream)
+    if (!streamController.signal.aborted) streamController.abort()
+    await stream.catch(() => undefined)
+    await reconciliation.catch(() => undefined)
+  }
 }
 
 function captureStreamFailure(options: RunChatStreamOptions, state: ChatStreamState, error: unknown): void {
