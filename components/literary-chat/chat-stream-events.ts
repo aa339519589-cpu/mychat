@@ -186,6 +186,44 @@ function applyMediaEvent(context: ChatStreamEventContext, value: unknown): void 
   context.renderer.schedule()
 }
 
+/**
+ * Live streams emit job.snapshot after catch-up. That payload already includes
+ * any text produced before the browser subscribed. Ignoring it leaves the UI
+ * empty until a later delta, which is the dominant first-token delay.
+ */
+function applySnapshotEvent(context: ChatStreamEventContext, data: Record<string, unknown>): boolean {
+  if (typeof data.content !== 'string' && typeof data.thinking !== 'string'
+    && !Array.isArray(data.media)) return false
+
+  let changed = false
+  if (typeof data.content === 'string' && data.content.length >= context.state.fullReply.length) {
+    if (data.content !== context.state.fullReply) {
+      context.state.fullReply = data.content
+      changed = true
+    }
+  }
+  if (typeof data.thinking === 'string'
+    && data.thinking.length >= context.state.fullThinking.length) {
+    if (data.thinking !== context.state.fullThinking) {
+      context.state.fullThinking = data.thinking
+      changed = true
+    }
+  }
+  if (Array.isArray(data.media)) {
+    for (const item of data.media) {
+      const media = normalizeGeneratedMedia(item)
+      if (!media
+        || context.state.fullMedia.length >= MAX_GENERATED_MEDIA_ITEMS
+        || context.state.fullMedia.some(existing => existing.type === media.type
+          && existing.url === media.url)) continue
+      context.state.fullMedia.push(media)
+      changed = true
+    }
+  }
+  if (changed) context.renderer.schedule()
+  return true
+}
+
 function applyTextDeltas(context: ChatStreamEventContext, data: Record<string, unknown>): void {
   if (typeof data.text === 'string' && data.text) {
     if (typeof window !== 'undefined' && window.localStorage?.getItem('mychat_debug_md') === '1') {
@@ -211,6 +249,10 @@ export function processChatStreamEvent(
     return true
   }
   if (event.kind === 'job.terminal') return applyTerminalEvent(context, event)
+  if (event.kind === 'job.snapshot') {
+    applySnapshotEvent(context, data)
+    return true
+  }
   if (applyMemoryEvent(context, data.memory)) return true
   if (applySearchEvent(context, data.search)) return true
   if (applyImageSummary(context, data.imageSummary)) return true

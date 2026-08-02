@@ -103,6 +103,25 @@ test('chat stream reducer accumulates deltas, deduplicates media, and resets ret
   assert.equal(fixture.calls.flush, 1)
 })
 
+test('chat stream reducer surfaces job.snapshot content for first-token catch-up', () => {
+  const fixture = harness()
+  assert.equal(processChatStreamEvent(fixture.context, event('job.snapshot', {
+    content: '首字已经出来了',
+    thinking: '先想一步',
+  })), true)
+  assert.equal(fixture.context.state.fullReply, '首字已经出来了')
+  assert.equal(fixture.context.state.fullThinking, '先想一步')
+  assert.equal(fixture.calls.schedule, 1)
+
+  // Shorter/equal snapshots must not wipe fresher live deltas.
+  processChatStreamEvent(fixture.context, event('text.delta', { text: '继续' }, 2))
+  assert.equal(processChatStreamEvent(fixture.context, event('job.snapshot', {
+    content: '首字已经出来了',
+    thinking: '先想一步',
+  }, 3)), true)
+  assert.equal(fixture.context.state.fullReply, '首字已经出来了继续')
+})
+
 test('chat stream reducer accepts only canonical terminal snapshots and stops on errors', () => {
   const valid = harness()
   valid.context.state.fullReply = 'partial'
