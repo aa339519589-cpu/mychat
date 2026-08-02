@@ -122,15 +122,19 @@ export class LiveJobPublisher {
       && this.inFlight.size < MAX_IN_FLIGHT_BROADCASTS) {
       const event = this.queue.shift()
       if (!event) break
-      let task: Promise<void>
-      task = this.send(event).finally(() => {
-        this.inFlight.delete(task)
-        this.pump()
-        this.resolveDrainWaiters()
-      })
-      this.inFlight.add(task)
+      this.launch(event)
     }
     this.resolveDrainWaiters()
+  }
+
+  private launch(event: LiveJobEvent): void {
+    const task = this.send(event)
+    this.inFlight.add(task)
+    void task.finally(() => {
+      this.inFlight.delete(task)
+      this.pump()
+      this.resolveDrainWaiters()
+    })
   }
 
   private async send(event: LiveJobEvent): Promise<void> {
