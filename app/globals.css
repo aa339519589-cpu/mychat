@@ -366,6 +366,19 @@
   display: none;
 }
 
+/* 单色厂商图标：系统深色 / .dark 都反成白，.light 保持黑。 */
+.dark .provider-logo-mono {
+  filter: brightness(0) invert(1);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) .provider-logo-mono {
+    filter: brightness(0) invert(1);
+  }
+}
+.light .provider-logo-mono {
+  filter: none;
+}
+
 /* KaTeX 公式保护：防止 Tailwind reset 破坏数学字体和布局 */
 .katex {
   font-size: 1.1em !important;
