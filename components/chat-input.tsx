@@ -53,7 +53,7 @@ export function ChatInput({
   }, [plusOpen, state.plusMenuRef])
 
   const activeModelLabel = activeModel?.name ?? "模型"
-  const hasActiveTools = searchMode !== "off" || historyRetrieval || renderEnabled || Boolean(reasoningEffort && reasoningEffort !== "none")
+  const hasActiveTools = searchMode !== "off" || historyRetrieval || renderEnabled
   const canSend = !disabled && !isLoading && !state.sendPending && Boolean(activeModel) && (!!state.value.trim() || state.images.length > 0 || state.files.length > 0)
 
   return (
