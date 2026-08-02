@@ -8,11 +8,11 @@ import {
 } from '../lib/jobs/live-events'
 
 const JOB_ID = '00000000-0000-4000-8000-000000000001'
-const SECRET = '0123456789abcdef0123456789abcdef'
+const CHANNEL_HASH_INPUT = 'test key for channel hashing only'
 
 test('live job channel names are stable and do not expose job ids', () => {
-  const first = liveJobChannelName(JOB_ID, SECRET)
-  const second = liveJobChannelName(JOB_ID, SECRET)
+  const first = liveJobChannelName(JOB_ID, CHANNEL_HASH_INPUT)
+  const second = liveJobChannelName(JOB_ID, CHANNEL_HASH_INPUT)
   assert.equal(first, second)
   assert.ok(first?.startsWith('job-live:'))
   assert.equal(first?.includes(JOB_ID), false)
