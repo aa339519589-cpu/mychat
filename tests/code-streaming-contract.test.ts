@@ -3,7 +3,7 @@ import test from "node:test"
 
 import { createCodeEventCollector } from "../lib/code-agent/runtime"
 
-test("Code forwards the first model text delta immediately", () => {
+test("Code forwards the first upstream text delta without waiting for completion", () => {
   const sent: object[] = []
   const collector = createCodeEventCollector({ send: event => sent.push(event) })
 
@@ -14,7 +14,7 @@ test("Code forwards the first model text delta immediately", () => {
   assert.equal(collector.getFinalText(), "首Token")
 })
 
-test("Code still suppresses hidden reasoning while streaming visible text", () => {
+test("Code suppresses hidden reasoning while streaming visible text", () => {
   const sent: object[] = []
   const collector = createCodeEventCollector({ send: event => sent.push(event) })
 
