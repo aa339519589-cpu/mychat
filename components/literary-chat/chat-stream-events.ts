@@ -140,8 +140,7 @@ function resetForRetry(context: ChatStreamEventContext): void {
   context.state.fullReply = ''
   context.state.fullThinking = ''
   context.state.fullMedia.splice(0, context.state.fullMedia.length)
-  context.renderer.cancel()
-  context.renderer.flush()
+  context.renderer.reset()
 }
 
 function terminalSnapshot(
@@ -173,7 +172,7 @@ function applyTerminalEvent(context: ChatStreamEventContext, event: JobStreamEnv
   context.state.fullReply = terminal.content
   context.state.fullThinking = terminal.thinking
   context.state.fullMedia.splice(0, context.state.fullMedia.length, ...terminal.media)
-  context.renderer.cancel()
+  context.renderer.schedule()
   return true
 }
 
