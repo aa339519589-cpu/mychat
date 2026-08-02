@@ -4,6 +4,7 @@ import {
   generationTerminalWarning,
   normalizeMessageGeneration,
 } from "@/lib/generation-message"
+import { normalizeTokenUsage } from '@/lib/token-usage'
 import { isRecord } from "@/lib/unknown-value"
 
 export type MessageRow = {
@@ -31,6 +32,9 @@ export function normalizeMessageRow(row: MessageRow): Message {
   const generation = storedRecord
     ? normalizeMessageGeneration(storedRecord.generation)
     : undefined
+  const tokenUsage = storedRecord
+    ? normalizeTokenUsage(storedRecord.token_usage)
+    : null
   const images = Array.isArray(stored)
     ? stored.filter((value): value is string => typeof value === "string")
     : Array.isArray(storedRecord?.refs)
@@ -49,6 +53,7 @@ export function normalizeMessageRow(row: MessageRow): Message {
     images: images?.length ? images : undefined,
     imageSummary,
     media: media.length ? media : undefined,
+    tokenUsage: tokenUsage ?? undefined,
     isError: generation?.status === "failed" ? true : undefined,
     outputWarning: generationTerminalWarning(generation),
     generation,
