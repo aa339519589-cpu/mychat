@@ -72,6 +72,12 @@ type SessionResult =
 
 type StreamAccumulator = { state: CodeStreamState }
 
+const CODE_ENQUEUE_TIMEOUTS = {
+  requestTimeoutMs: 45_000,
+  reconcileTimeoutMs: 5_000,
+  totalTimeoutMs: 90_000,
+} as const
+
 const DEFAULT_DEPENDENCIES: CodeSendDependencies = {
   createSession: createCodeSession,
   insertMessage: insertCodeMessage,
@@ -189,7 +195,7 @@ async function consumeStream(
     taskId: request.initialTaskId,
     responseId: request.assistantId,
     sessionId,
-  }, controller.signal)
+  }, controller.signal, CODE_ENQUEUE_TIMEOUTS)
   for await (const envelope of dependencies.stream(accepted, controller.signal)) {
     const previous = accumulator.state
     accumulator.state = applyCodeJobEnvelope(accumulator.state, envelope)
