@@ -8,7 +8,7 @@ import type { JobExecutionContext } from '../lib/jobs/worker'
 function writerHarness(appendDelayMs = 2) {
   const batches: JobEventDraft[][] = []
   const context = {
-    job: { id: 'stream-test', checkpoint: null },
+    job: { id: 'stream-test', type: 'chat.generation', checkpoint: null },
     fence: { jobId: 'stream-test', workerId: 'worker', leaseVersion: 1 },
     signal: new AbortController().signal,
     assertAuthority() {},
