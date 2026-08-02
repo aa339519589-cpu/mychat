@@ -13,8 +13,14 @@ const BACKPRESSURE_POLL_MS = 25
 function wait(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) return reject(signal.reason)
-    const abort = () => { clearTimeout(timer); reject(signal.reason) }
-    const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve() }, milliseconds)
+    const abort = () => {
+      clearTimeout(timer)
+      reject(signal.reason)
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', abort)
+      resolve()
+    }, milliseconds)
     signal.addEventListener('abort', abort, { once: true })
   })
 }
@@ -50,8 +56,8 @@ const DEFAULT_DEPENDENCIES: JobEventStreamDependencies = {
 export function nextActivePollInterval(
   current: number,
   receivedEvents: boolean,
-  initial = INITIAL_POLL_INTERVAL_MS,
-  maximum = MAX_ACTIVE_POLL_INTERVAL_MS,
+  initial: number = INITIAL_POLL_INTERVAL_MS,
+  maximum: number = MAX_ACTIVE_POLL_INTERVAL_MS,
 ): number {
   return receivedEvents ? initial : Math.min(maximum, Math.max(initial, Math.ceil(current * 1.35)))
 }
@@ -70,7 +76,12 @@ async function waitForCapacity(
 }
 
 function eventFrame(event: {
-  seq: number; kind: string; schemaVersion: number; jobId: string; payload: object; createdAt: string
+  seq: number
+  kind: string
+  schemaVersion: number
+  jobId: string
+  payload: object
+  createdAt: string
 }): string {
   return `id: ${event.seq}\nevent: ${event.kind}\ndata: ${JSON.stringify(event)}\n\n`
 }
@@ -115,17 +126,30 @@ export function createJobEventStream(input: {
       let lastAdmissionRenewal = dependencies.now()
       try {
         while (!signal.aborted) {
-          if (input.renewAdmission && dependencies.now() - lastAdmissionRenewal >= dependencies.admissionRenewIntervalMs) {
+          if (sequence < 0) break
+          if (input.renewAdmission
+            && dependencies.now() - lastAdmissionRenewal >= dependencies.admissionRenewIntervalMs) {
             if (!await input.renewAdmission(signal)) break
             lastAdmissionRenewal = dependencies.now()
           }
-          const result = await dependencies.readEvents(input.client, input.principalId, input.jobId, sequence, 200, signal)
+          const result = await dependencies.readEvents(
+            input.client,
+            input.principalId,
+            input.jobId,
+            sequence,
+            200,
+            signal,
+          )
           if (!result.ok) {
-            await send(`event: stream.error\ndata: ${JSON.stringify({ schemaVersion: 1, jobId: input.jobId, code: 'DEPENDENCY_UNAVAILABLE', retryable: true })}\n\n`)
+            await send(`event: stream.error\ndata: ${JSON.stringify({ schemaVersion: 1,
+              jobId: input.jobId, code: 'DEPENDENCY_UNAVAILABLE', retryable: true })}\n\n`)
             break
           }
           for (const event of result.value) {
-            if (!await send(eventFrame(event))) { stop.abort(new Error('slow_consumer')); break }
+            if (!await send(eventFrame(event))) {
+              stop.abort(new Error('slow_consumer'))
+              break
+            }
             sequence = event.seq
             const terminalStatus = event.kind === 'job.terminal' ? event.payload.status : null
             if (typeof terminalStatus === 'string' && isTerminalJobStatus(terminalStatus)) status = terminalStatus
@@ -140,11 +164,15 @@ export function createJobEventStream(input: {
             lastStatusRefresh = now
           }
           if (now - lastHeartbeat >= dependencies.heartbeatIntervalMs) {
-            if (!await send(`: heartbeat ${sequence}\n\n`)) { stop.abort(new Error('slow_consumer')); break }
+            if (!await send(`: heartbeat ${sequence}\n\n`)) {
+              stop.abort(new Error('slow_consumer'))
+              break
+            }
             lastHeartbeat = dependencies.now()
           }
           if (!isTerminalJobStatus(status)) {
-            pollIntervalMs = nextActivePollInterval(pollIntervalMs, result.value.length > 0, dependencies.initialPollIntervalMs, dependencies.maxPollIntervalMs)
+            pollIntervalMs = nextActivePollInterval(pollIntervalMs, result.value.length > 0,
+              dependencies.initialPollIntervalMs, dependencies.maxPollIntervalMs)
             await dependencies.wait(pollIntervalMs, signal)
           }
         }
@@ -156,6 +184,10 @@ export function createJobEventStream(input: {
         try { controller.close() } catch {}
       }
     },
-    cancel(reason) { closed = true; stop.abort(reason); return releaseAdmission() },
+    cancel(reason) {
+      closed = true
+      stop.abort(reason)
+      return releaseAdmission()
+    },
   })
 }
