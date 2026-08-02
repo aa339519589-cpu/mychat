@@ -18,7 +18,7 @@ function planInstructions(): string {
 - 新项目使用 create_repo；write_files、edit_file、delete_files 会生成待用户确认的改动计划。
 - 修改前先用 list_files、read_file 获取真实内容。
 - 不得声称已经修改、验证、发布或部署尚未执行的内容。
-- 计划完整后停止继续扩写，交由平台展示确认；只有真实外部阻塞才调用 ask_user。`
+- 计划完整后调用 complete，交由平台展示确认；只有真实外部阻塞才调用 ask_user。`
 }
 
 export function buildCodeSystem(
