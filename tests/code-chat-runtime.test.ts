@@ -73,7 +73,7 @@ test('code event collector forwards plain final text immediately', () => {
   collector.emit({ thinking: '隐藏推理' })
 
   assert.deepEqual(sent, [{ text: '最终答复' }])
-  assert.equal(collector.flushLeadText(), '最终答复')
+  assert.equal(collector.getFinalText(), '最终答复')
 })
 
 test('code event collector preserves visible text and SSE ordering around progress', () => {
@@ -88,7 +88,7 @@ test('code event collector preserves visible text and SSE ordering around progre
   collector.emit({ step: { kind: 'read', label: '读取 route.ts' } })
   collector.emit({ text: '修改完成' })
 
-  assert.equal(collector.flushLeadText(), '让我先看看。修改完成')
+  assert.equal(collector.getFinalText(), '让我先看看。修改完成')
   assert.deepEqual(sent, [
     { text: '让我先看看。' },
     { step: { kind: 'read', label: '读取 route.ts' } },
