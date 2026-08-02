@@ -84,12 +84,19 @@ function resultTimestamp(hit: SearchHit): number {
   return Number.isFinite(timestamp) ? timestamp : -Infinity
 }
 
+function compareFreshness(left: SearchHit, right: SearchHit): number {
+  const leftTimestamp = resultTimestamp(left)
+  const rightTimestamp = resultTimestamp(right)
+  if (leftTimestamp === rightTimestamp) return 0
+  if (leftTimestamp === -Infinity) return 1
+  if (rightTimestamp === -Infinity) return -1
+  return rightTimestamp - leftTimestamp
+}
+
 function rankResults(results: SearchHit[], preferRecent: boolean): SearchHit[] {
   return [...results].sort((left, right) => {
-    if (preferRecent) {
-      const dateDifference = resultTimestamp(right) - resultTimestamp(left)
-      if (Number.isFinite(dateDifference) && dateDifference !== 0) return dateDifference
-    }
+    const freshness = preferRecent ? compareFreshness(left, right) : 0
+    if (freshness !== 0) return freshness
     return (right.score ?? -1) - (left.score ?? -1)
   })
 }
