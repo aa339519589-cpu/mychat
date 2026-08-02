@@ -2,8 +2,8 @@ import type { SupabaseClient } from '@/lib/supabase/types'
 import { isTerminalJobStatus, type JobStatus } from './contracts'
 import { readOwnedJob, readOwnedJobEvents } from './read-model'
 
-const INITIAL_POLL_INTERVAL_MS = 250
-const MAX_POLL_INTERVAL_MS = 2_000
+const INITIAL_POLL_INTERVAL_MS = 40
+const MAX_POLL_INTERVAL_MS = 120
 const HEARTBEAT_INTERVAL_MS = 10_000
 const STATUS_REFRESH_INTERVAL_MS = 5_000
 const ADMISSION_RENEW_INTERVAL_MS = 15_000
@@ -75,6 +75,18 @@ function eventFrame(event: {
   createdAt: string
 }): string {
   return `id: ${event.seq}\nevent: ${event.kind}\ndata: ${JSON.stringify(event)}\n\n`
+}
+
+function nextPollInterval(
+  current: number,
+  hadEvents: boolean,
+  dependencies: JobEventStreamDependencies,
+): number {
+  if (hadEvents) return dependencies.initialPollIntervalMs
+  return Math.min(
+    dependencies.maxPollIntervalMs,
+    current + dependencies.initialPollIntervalMs,
+  )
 }
 
 export function createJobEventStream(input: {
@@ -173,8 +185,11 @@ export function createJobEventStream(input: {
             lastHeartbeat = dependencies.now()
           }
           if (!isTerminalJobStatus(status)) {
-            if (result.value.length > 0) pollIntervalMs = dependencies.initialPollIntervalMs
-            else pollIntervalMs = Math.min(dependencies.maxPollIntervalMs, pollIntervalMs * 2)
+            pollIntervalMs = nextPollInterval(
+              pollIntervalMs,
+              result.value.length > 0,
+              dependencies,
+            )
             await dependencies.wait(pollIntervalMs, signal)
           }
         }
