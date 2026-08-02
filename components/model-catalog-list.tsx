@@ -118,6 +118,9 @@ function ProviderLogo({ provider }: { provider: string }) {
       alt=""
       width={28}
       height={28}
+      priority
+      loading="eager"
+      fetchPriority="high"
       unoptimized
       aria-hidden="true"
       className={cn("size-7 object-contain", logo.monochrome && "dark:invert")}
