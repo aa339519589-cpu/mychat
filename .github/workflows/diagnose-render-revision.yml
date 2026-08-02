@@ -12,6 +12,7 @@ on:
       - edited
 
 permissions:
+  actions: read
   contents: read
   statuses: write
 
@@ -20,7 +21,7 @@ jobs:
     if: github.event_name == 'push' || github.event.issue.title == 'Render revision probe'
     runs-on: ubuntu-latest
     steps:
-      - name: Report production runtime and Render service identity
+      - name: Report production, Render, and release identity
         env:
           GH_TOKEN: ${{ github.token }}
           REVISION: ${{ github.sha }}
@@ -35,7 +36,7 @@ jobs:
               --header "Authorization: Bearer $GH_TOKEN" \
               --header "Accept: application/vnd.github+json" \
               --header "X-GitHub-Api-Version: 2022-11-28" \
-              --data "$(jq -nc --arg state success --arg context "$1" --arg description "$2" --arg target_url "$PRODUCTION_URL" '{state:$state,context:$context,description:$description,target_url:$target_url}')" \
+              --data "$(jq -nc --arg state "$1" --arg context "$2" --arg description "$3" --arg target_url "$PRODUCTION_URL" '{state:$state,context:$context,description:$description,target_url:$target_url}')" \
               "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$REVISION" >/dev/null
           }
 
@@ -47,22 +48,37 @@ jobs:
           payload="$(curl --silent --show-error --max-time 60 --header 'Accept: application/json' "$PRODUCTION_URL/api/ready" || true)"
           runtime_revision="$(jq -r '.revision // "none"' <<<"$payload" 2>/dev/null || printf none)"
           ready_status="$(jq -r '.status // "unknown"' <<<"$payload" 2>/dev/null || printf unknown)"
-          post_status "Observed Render Revision: ${runtime_revision:0:12}" "Ready status $ready_status; observed runtime revision ${runtime_revision:0:12}"
+          post_status success "Observed Render Revision: ${runtime_revision:0:12}" "Ready status $ready_status; observed runtime revision ${runtime_revision:0:12}"
 
           services="$(render_get 'https://api.render.com/v1/services?limit=100')"
           production_id="$(jq -r --arg host 'mychat-nm6x.onrender.com' '[.[]? | (.service // .) as $s | select((($s.serviceDetails.url // $s.url // "") | tostring | contains($host))) | $s.id] | first // "none"' <<<"$services")"
           production_name="$(jq -r --arg id "$production_id" '[.[]? | (.service // .) as $s | select($s.id == $id) | $s.name] | first // "unknown"' <<<"$services")"
           configured_url="$(jq -r --arg id "$CONFIGURED_SERVICE_ID" '[.[]? | (.service // .) as $s | select($s.id == $id) | ($s.serviceDetails.url // $s.url // "unknown")] | first // "unknown"' <<<"$services")"
-          post_status "Production Service: ${production_id:0:32}" "Production service $production_name; id $production_id"
-          post_status "Configured Service: ${CONFIGURED_SERVICE_ID:0:32}" "Configured service URL $configured_url"
+          post_status success "Production Service: ${production_id:0:32}" "Production service $production_name; id $production_id"
+          post_status success "Configured Service: ${CONFIGURED_SERVICE_ID:0:32}" "Configured service URL $configured_url"
 
           env_payload="$(render_get "https://api.render.com/v1/services/$production_id/env-vars/MYCHAT_BUILD_REVISION")"
           env_revision="$(jq -r '.value // .envVar.value // .[0].value // .[0].envVar.value // "none"' <<<"$env_payload")"
-          post_status "Render Env Revision: ${env_revision:0:12}" "MYCHAT_BUILD_REVISION is ${env_revision:0:12}"
+          post_status success "Render Env Revision: ${env_revision:0:12}" "MYCHAT_BUILD_REVISION is ${env_revision:0:12}"
 
           deploys="$(render_get "https://api.render.com/v1/services/$production_id/deploys?limit=20")"
           latest_commit="$(jq -r 'def rows: if type == "array" then .[] elif type == "object" and (.deploys | type) == "array" then .deploys[] else empty end; [rows | (.deploy // .) | (.commit.id // .commitId // "none")] | first // "none"' <<<"$deploys")"
           latest_state="$(jq -r 'def rows: if type == "array" then .[] elif type == "object" and (.deploys | type) == "array" then .deploys[] else empty end; [rows | (.deploy // .) | (.status // "unknown")] | first // "unknown"' <<<"$deploys")"
           live_commit="$(jq -r 'def rows: if type == "array" then .[] elif type == "object" and (.deploys | type) == "array" then .deploys[] else empty end; [rows | (.deploy // .) | select(.status == "live") | (.commit.id // .commitId // "none")] | first // "none"' <<<"$deploys")"
-          post_status "Latest Deploy: ${latest_commit:0:12} $latest_state" "Latest Render deploy commit ${latest_commit:0:12}; status $latest_state"
-          post_status "Live Deploy Revision: ${live_commit:0:12}" "First live Render deployment revision ${live_commit:0:12}"
+          post_status success "Latest Deploy: ${latest_commit:0:12} $latest_state" "Latest Render deploy commit ${latest_commit:0:12}; status $latest_state"
+          post_status success "Live Deploy Revision: ${live_commit:0:12}" "First live Render deployment revision ${live_commit:0:12}"
+
+          for spec in 'Verify:verify.yml' 'Security:security.yml' 'Release Image:release-image.yml'; do
+            label="${spec%%:*}"
+            workflow="${spec#*:}"
+            runs="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "$workflow" --limit 30 --json status,conclusion,headSha,event)"
+            record="$(jq -c --arg revision "$REVISION" '[.[] | select(.headSha == $revision)] | first // {}' <<<"$runs")"
+            run_status="$(jq -r '.status // "missing"' <<<"$record")"
+            conclusion="$(jq -r '.conclusion // ""' <<<"$record")"
+            case "$run_status:$conclusion" in
+              completed:success) commit_state=success ;;
+              completed:*) commit_state=failure ;;
+              *) commit_state=pending ;;
+            esac
+            post_status "$commit_state" "Actions $label" "$label workflow is $run_status${conclusion:+/$conclusion} for ${REVISION:0:12}"
+          done
