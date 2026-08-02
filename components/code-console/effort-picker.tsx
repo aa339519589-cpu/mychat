@@ -8,18 +8,10 @@ import type { ModelCatalogItem } from "@/lib/model-catalog"
 import { cn } from "@/lib/utils"
 import { ACCENT, CONTROL_FOCUS, MONO } from "./shared"
 
-const EFFORT_LABELS: Record<string, string> = {
-  none: "关闭",
-  minimal: "最低",
-  low: "低",
-  medium: "中",
-  high: "高",
-  xhigh: "极高",
-  max: "最高",
-}
-
-function effortLabel(effort: string): string {
-  return EFFORT_LABELS[effort] ?? effort
+function effortLabel(value: string): string {
+  if (value === "none") return "Off"
+  if (value === "xhigh") return "XHigh"
+  return value.slice(0, 1).toUpperCase() + value.slice(1)
 }
 
 export function EffortPickerSheet({
@@ -55,6 +47,7 @@ export function EffortPickerSheet({
   if (!open || typeof document === "undefined") return null
 
   const efforts = model?.reasoningEfforts ?? []
+  const ordered = [...efforts.filter(effort => effort !== "none"), ...efforts.filter(effort => effort === "none")]
   return createPortal(
     <div
       className="fixed inset-0 z-[75] flex items-end justify-center bg-black/50 sm:items-center"
@@ -68,8 +61,8 @@ export function EffortPickerSheet({
       >
         <div className="mb-2 flex min-h-11 items-center justify-between gap-3">
           <div className="min-w-0">
-            <h2 id={titleId} className="truncate text-[12px] font-medium text-foreground" style={{ fontFamily: MONO }}>思考深度</h2>
-            <p className="mt-0.5 truncate text-[10px] text-muted-foreground">{model?.name ?? "尚未选择模型"}</p>
+            <h2 id={titleId} className="truncate text-[12px] font-medium text-foreground" style={{ fontFamily: MONO }}>Thinking depth</h2>
+            <p className="mt-0.5 truncate text-[10px] text-muted-foreground">{model?.name ?? "No model selected"}</p>
           </div>
           <button
             ref={closeRef}
@@ -82,11 +75,11 @@ export function EffortPickerSheet({
           </button>
         </div>
 
-        {efforts.length === 0 ? (
+        {ordered.length === 0 ? (
           <p className="py-5 text-center text-[11px] text-muted-foreground">当前模型没有可调节的思考深度。</p>
         ) : (
           <div className="space-y-1.5" role="listbox" aria-label="可用思考深度">
-            {efforts.map(effort => {
+            {ordered.map(effort => {
               const active = effort === activeEffort
               return (
                 <button
@@ -96,15 +89,12 @@ export function EffortPickerSheet({
                   aria-selected={active}
                   onClick={() => { onSelect(effort); onClose() }}
                   className={cn(
-                    "fluid-press flex min-h-12 w-full items-center gap-3 rounded-lg border px-3 text-left hover:bg-secondary/60",
+                    "fluid-press flex min-h-11 w-full items-center gap-3 rounded-lg border px-3 text-left hover:bg-secondary/60",
                     CONTROL_FOCUS,
                     active ? "border-[var(--code-accent)] bg-secondary/50" : "border-border",
                   )}
                 >
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-[12px] font-medium text-foreground" style={{ fontFamily: MONO }}>{effortLabel(effort)}</span>
-                    <span className="block text-[10px] text-muted-foreground" style={{ fontFamily: MONO }}>{effort}</span>
-                  </span>
+                  <span className="min-w-0 flex-1 text-[12px] text-foreground" style={{ fontFamily: MONO }}>{effortLabel(effort)}</span>
                   {active && <Check className="size-4 shrink-0" style={{ color: ACCENT }} aria-hidden="true" />}
                 </button>
               )
@@ -112,7 +102,7 @@ export function EffortPickerSheet({
           </div>
         )}
 
-        <p className="mt-3 text-[10px] leading-relaxed text-muted-foreground">选择结果会随下一次 Code 请求传到后端，并作为当前模型的真实推理参数。</p>
+        <p className="mt-3 text-[10px] leading-relaxed text-muted-foreground">该值会随下一次 Code 请求传给后端，并映射为当前模型真实的 reasoning effort。</p>
       </div>
     </div>,
     document.body,
