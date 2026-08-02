@@ -1,0 +1,53 @@
+name: Smoke Code Production V3
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [.github/workflows/smoke-code-production-v3.yml]
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      SUPABASE_URL: https://usibkqqksgwgvdiqwpyo.supabase.co
+    steps:
+      - name: Run isolated Code job
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          post_status(){ jq -nc --arg state "$1" --arg context "Code Production Smoke V3" --arg description "${2:0:140}" --arg target_url "$RUN_URL" '{state:$state,context:$context,description:$description,target_url:$target_url}' | gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" --input - >/dev/null; }
+          post_status pending "Creating production Code job"
+          envs="$(curl --fail-with-body -sS --retry 10 --retry-all-errors -H "Authorization: Bearer $RENDER_API_KEY" "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars?limit=100")"
+          normalized="$(jq -c 'if type=="array" then map(.envVar//.) elif (.envVars|type)=="array" then (.envVars|map(.envVar//.)) else [] end' <<<"$envs")"
+          service_role="$(jq -r 'map(select(.key=="SUPABASE_SERVICE_ROLE_KEY"))[0].value//empty' <<<"$normalized")"
+          test -n "$service_role"
+          auth=(-H "apikey: $service_role" -H "Authorization: Bearer $service_role" -H 'Content-Type: application/json')
+          prefer=(-H 'Prefer: return=representation')
+          sessions="$(curl --fail-with-body -sS --retry 5 --retry-all-errors "${auth[@]}" "$SUPABASE_URL/rest/v1/code_sessions?select=user_id,updated_at&order=updated_at.desc&limit=20")"
+          user_id="$(jq -r 'map(select(.user_id != null))[0].user_id // empty' <<<"$sessions")"
+          test -n "$user_id"
+          session_id="$(uuidgen)"; message_id="$(uuidgen)"; response_id="$(uuidgen)"; task_id="$(uuidgen)"; job_id="$(uuidgen)"; repo="__mychat_new__/$session_id"; prompt='只回复“CODE_SMOKE_OK”，不要调用任何工具。'
+          cleanup(){ set +e; curl -sS -X DELETE "${auth[@]}" "$SUPABASE_URL/rest/v1/jobs?id=eq.$job_id" >/dev/null; curl -sS -X DELETE "${auth[@]}" "$SUPABASE_URL/rest/v1/agent_tasks?id=eq.$task_id" >/dev/null; curl -sS -X DELETE "${auth[@]}" "$SUPABASE_URL/rest/v1/code_messages?session_id=eq.$session_id" >/dev/null; curl -sS -X DELETE "${auth[@]}" "$SUPABASE_URL/rest/v1/code_sessions?id=eq.$session_id" >/dev/null; }; trap cleanup EXIT
+          curl --fail-with-body -sS -X POST "${auth[@]}" "${prefer[@]}" --data "$(jq -nc --arg id "$session_id" --arg user "$user_id" --arg repo "$repo" '{id:$id,user_id:$user,repo:$repo,title:"[system] Code smoke V3"}')" "$SUPABASE_URL/rest/v1/code_sessions" >/dev/null
+          curl --fail-with-body -sS -X POST "${auth[@]}" "${prefer[@]}" --data "$(jq -nc --arg id "$message_id" --arg session "$session_id" --arg user "$user_id" --arg content "$prompt" '{id:$id,session_id:$session,user_id:$user,role:"user",content:$content,meta:null}')" "$SUPABASE_URL/rest/v1/code_messages" >/dev/null
+          payload="$(jq -nc --arg repo "$repo" --arg session "$session_id" --arg response "$response_id" --arg message "$message_id" '{schemaVersion:1,repo:$repo,modelId:"deepseek-v4-flash",accessClass:"quota",reasoningEffort:"none",sessionId:$session,responseId:$response,userMessageId:$message,usingBalance:false}')"
+          hash="$(printf %s "$payload"|sha256sum|cut -d' ' -f1)"
+          body="$(jq -nc --arg user "$user_id" --arg task "$task_id" --arg goal "$prompt" --arg repo "$repo" --arg session "$session_id" --arg response "$response_id" --arg message "$message_id" --arg job "$job_id" --arg hash "$hash" --argjson payload "$payload" '{input_user_id:$user,input_task_id:$task,input_goal:$goal,input_repo:$repo,input_session_id:$session,input_response_id:$response,input_user_message_id:$message,input_job_id:$job,input_auth_class:"registered",input_idempotency_key:("smoke-v3:"+$task+":"+$response),input_input_hash:$hash,input_payload:$payload}')"
+          enqueue="$(curl --fail-with-body -sS -X POST "${auth[@]}" "${prefer[@]}" --data "$body" "$SUPABASE_URL/rest/v1/rpc/enqueue_agent_task_job")"
+          echo "SMOKE_ENQUEUE $(jq -c '.' <<<"$enqueue"|cut -c1-400)"
+          final=''
+          for i in {1..100}; do rows="$(curl --fail-with-body -sS "${auth[@]}" "$SUPABASE_URL/rest/v1/jobs?id=eq.$job_id&select=*")"; status="$(jq -r '.[0].status//"missing"' <<<"$rows")"; if [[ "$status" =~ ^(completed|failed|cancelled)$ ]]; then final="$rows"; break; fi; sleep 3; done
+          test -n "$final"
+          status="$(jq -r '.[0].status' <<<"$final")"; error_code="$(jq -r '.[0].error_code//"none"' <<<"$final")"
+          events="$(curl --fail-with-body -sS "${auth[@]}" "$SUPABASE_URL/rest/v1/job_events?job_id=eq.$job_id&select=kind,payload&order=seq.asc")"
+          text="$(jq -r 'map(select(.kind=="text.delta")|.payload.text//"")|join("")' <<<"$events")"; compact="$(printf %s "$text"|tr '\r\n' ' '|cut -c1-100)"
+          echo "SMOKE_RESULT status=$status error=$error_code text=$compact"
+          if [[ "$status" == completed && "$text" == *CODE_SMOKE_OK* ]]; then post_status success "Queue, worker, model and stream completed"; exit 0; fi
+          post_status failure "status=$status error=$error_code text=${compact:-empty}"; exit 1
