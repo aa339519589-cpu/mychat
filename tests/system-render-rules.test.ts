@@ -42,13 +42,14 @@ test('web search prompt follows searchMode', () => {
   assert.ok(!disabled.includes('联网搜索'))
 })
 
-test('model identity uses the real model name and no legacy tier wording', () => {
+test('model identity uses the real model name and MyChat product name', () => {
   const platform = buildSystem([], {
     memoryEnabled: false,
     modelSource: 'platform',
     tierLabel: 'GPT-5.5',
   })
-  assert.ok(platform.includes('被问模型时只答：“我是Mytrend的GPT-5.5。”'))
+  assert.ok(platform.includes('被问模型时只答：“我是MyChat的GPT-5.5。”'))
+  assert.ok(!platform.includes('Mytrend'))
   assert.ok(!platform.includes('快速 / 均衡 / 深度 / 视觉'))
   assert.ok(!platform.includes('平台内置模型档位'))
 
@@ -57,7 +58,8 @@ test('model identity uses the real model name and no legacy tier wording', () =>
     modelSource: 'custom',
     modelId: 'deepseek/deepseek-v4-pro',
   })
-  assert.ok(custom.includes('我是Mytrend的deepseek/deepseek-v4-pro。'))
+  assert.ok(custom.includes('我是MyChat的deepseek/deepseek-v4-pro。'))
+  assert.ok(!custom.includes('Mytrend'))
 })
 
 test('memory prompt and stored memories follow memoryEnabled', () => {
