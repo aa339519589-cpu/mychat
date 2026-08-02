@@ -6,6 +6,7 @@ export const LIVE_JOB_BROADCAST_EVENT = 'job.event'
 const MAX_COALESCED_DELTA_CHARS = 256
 
 type RealtimeChannel = ReturnType<SupabaseClient['channel']>
+type ParsedOffset = { valid: boolean; value?: number }
 
 export type LiveJobEventInput = {
   kind: string
@@ -29,6 +30,21 @@ function record(value: unknown): Record<string, unknown> | null {
     : null
 }
 
+function jsonObject(value: unknown): JsonObject | null {
+  if (!isJsonValue(value) || value === null || typeof value !== 'object' || Array.isArray(value)) return null
+  return value as JsonObject
+}
+
+function positiveInteger(value: unknown): number | null {
+  return Number.isSafeInteger(value) && Number(value) > 0 ? Number(value) : null
+}
+
+function parsedOffset(value: unknown): ParsedOffset {
+  if (value === undefined) return { valid: true }
+  if (!Number.isSafeInteger(value) || Number(value) < 0) return { valid: false }
+  return { valid: true, value: Number(value) }
+}
+
 export function liveJobChannelName(jobId: string, secret = process.env.AGENT_CREDENTIAL_KEY): string | null {
   const key = secret?.trim()
   if (!key) return null
@@ -38,24 +54,16 @@ export function liveJobChannelName(jobId: string, secret = process.env.AGENT_CRE
 
 export function parseLiveJobEvent(value: unknown): LiveJobEvent | null {
   const source = record(value)
-  const payload = source && isJsonValue(source.payload)
-    && source.payload !== null && typeof source.payload === 'object' && !Array.isArray(source.payload)
-    ? source.payload as JsonObject
-    : null
-  const revision = source && Number.isSafeInteger(source.revision) && Number(source.revision) > 0
-    ? Number(source.revision)
-    : null
-  const offset = source?.offset === undefined
-    ? undefined
-    : Number.isSafeInteger(source.offset) && Number(source.offset) >= 0
-      ? Number(source.offset)
-      : null
-  if (!source || revision === null || typeof source.kind !== 'string' || !payload || offset === null) return null
+  if (!source || typeof source.kind !== 'string') return null
+  const payload = jsonObject(source.payload)
+  const revision = positiveInteger(source.revision)
+  const offset = parsedOffset(source.offset)
+  if (!payload || revision === null || !offset.valid) return null
   return {
     revision,
     kind: source.kind,
     payload,
-    ...(offset === undefined ? {} : { offset }),
+    ...(offset.value === undefined ? {} : { offset: offset.value }),
   }
 }
 
@@ -82,10 +90,11 @@ function deltaText(event: LiveJobEvent): { field: 'text' | 'thinking'; value: st
 function canCoalesce(previous: LiveJobEvent, current: LiveJobEvent): boolean {
   const left = deltaText(previous)
   const right = deltaText(current)
-  if (!left || !right || left.field !== right.field
-    || previous.offset === undefined || current.offset === undefined) return false
-  return previous.offset + left.value.length === current.offset
-    && left.value.length + right.value.length <= MAX_COALESCED_DELTA_CHARS
+  if (!left || !right || left.field !== right.field) return false
+  if (previous.offset === undefined || current.offset === undefined) return false
+  const contiguous = previous.offset + left.value.length === current.offset
+  const withinLimit = left.value.length + right.value.length <= MAX_COALESCED_DELTA_CHARS
+  return contiguous && withinLimit
 }
 
 function coalesced(previous: LiveJobEvent, current: LiveJobEvent): LiveJobEvent {
@@ -134,8 +143,11 @@ export class LiveJobPublisher {
     if (!this.channel || this.closed) return
     const event: LiveJobEvent = { ...input, revision: ++this.revision }
     const previous = this.queue.at(-1)
-    if (previous && canCoalesce(previous, event)) this.queue[this.queue.length - 1] = coalesced(previous, event)
-    else this.queue.push(event)
+    if (previous && canCoalesce(previous, event)) {
+      this.queue[this.queue.length - 1] = coalesced(previous, event)
+    } else {
+      this.queue.push(event)
+    }
     void this.flush()
   }
 
@@ -144,31 +156,39 @@ export class LiveJobPublisher {
     if (this.ready) await this.flush()
     this.closed = true
     this.queue = []
-    if (this.channel) {
-      try { await this.client.removeChannel(this.channel) } catch {}
+    if (!this.channel) return
+    try { await this.client.removeChannel(this.channel) } catch {}
+  }
+
+  private canFlush(): boolean {
+    return Boolean(this.channel && this.ready && !this.sending && !this.closed)
+  }
+
+  private async send(event: LiveJobEvent): Promise<void> {
+    if (!this.channel) return
+    try {
+      await this.channel.send({
+        type: 'broadcast',
+        event: LIVE_JOB_BROADCAST_EVENT,
+        payload: event,
+      })
+    } catch {
+      // Durable events provide loss recovery; live relay failures never fail the job.
     }
   }
 
   private async flush(): Promise<void> {
-    if (!this.channel || !this.ready || this.sending || this.closed) return
+    if (!this.canFlush()) return
     this.sending = true
     try {
-      while (this.ready && !this.closed && this.queue.length > 0) {
+      while (this.ready && !this.closed) {
         const event = this.queue.shift()
         if (!event) break
-        try {
-          await this.channel.send({
-            type: 'broadcast',
-            event: LIVE_JOB_BROADCAST_EVENT,
-            payload: event,
-          })
-        } catch {
-          // Durable events provide loss recovery; live relay failures never fail the job.
-        }
+        await this.send(event)
       }
     } finally {
       this.sending = false
-      if (this.ready && !this.closed && this.queue.length > 0) void this.flush()
+      if (this.canFlush() && this.queue.length > 0) void this.flush()
     }
   }
 }
