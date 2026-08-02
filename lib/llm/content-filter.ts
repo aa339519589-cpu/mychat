@@ -89,7 +89,7 @@ export function makeContentFilter(options: { lowLatency?: boolean } = {}) {
         }
       }
       if (bestIdx === -1) {
-        const safeLen = options.lowLatency
+        const safeLen = options.lowLatency !== false
           ? lowLatencySafeLength(buf)
           : buf.length - MAX_MARKER
         if (safeLen > 0) {
