@@ -1,6 +1,7 @@
 import type { ChatEvent } from '@/lib/llm/events'
+import { createAdminClient } from '@/lib/supabase/admin'
 import type { JobEventDraft, JsonObject, JsonValue } from './contracts'
-import type { LiveJobEventInput } from './live-events'
+import { LiveJobPublisher, type LiveJobEventInput } from './live-events'
 import type { JobExecutionContext } from './worker'
 
 const FLUSH_INTERVAL_MS = 12
@@ -56,6 +57,21 @@ function materializedText(
   return text.join('')
 }
 
+function defaultLiveRelay(context: JobExecutionContext): {
+  publisher: LiveJobPublisher | null
+  emit?: (event: LiveJobEventInput) => void
+} {
+  try {
+    const client = createAdminClient()
+    if (!client) return { publisher: null }
+    const publisher = new LiveJobPublisher(client, context.job.id)
+    publisher.start()
+    return { publisher, emit: event => publisher.publish(event) }
+  } catch {
+    return { publisher: null }
+  }
+}
+
 /**
  * Bridges synchronous model deltas to both the live relay and the durable,
  * fenced event log. The relay runs first, so database persistence is no longer
@@ -63,6 +79,7 @@ function materializedText(
  */
 export class JobEventWriter {
   private readonly context: JobExecutionContext
+  private readonly livePublisher: LiveJobPublisher | null
   private readonly onLiveEvent?: (event: LiveJobEventInput) => void
   private queue: JobEventDraft[] = []
   private chain: Promise<void> = Promise.resolve()
@@ -77,7 +94,9 @@ export class JobEventWriter {
     onLiveEvent?: (event: LiveJobEventInput) => void,
   ) {
     this.context = context
-    this.onLiveEvent = onLiveEvent
+    const relay = onLiveEvent ? { publisher: null, emit: onLiveEvent } : defaultLiveRelay(context)
+    this.livePublisher = relay.publisher
+    this.onLiveEvent = relay.emit
     const progress = context.job.checkpoint?.progress
     this.fullText = materializedText(progress, 'content', 'contentParts')
     this.fullThinking = materializedText(progress, 'thinking', 'thinkingParts')
@@ -163,8 +182,13 @@ export class JobEventWriter {
     if (this.timer) clearTimeout(this.timer)
     this.timer = null
     await this.drainEvents()
+    await this.closeLive()
     if (this.failure) throw this.failure
     this.context.assertAuthority()
+  }
+
+  async closeLive(): Promise<void> {
+    await this.livePublisher?.close()
   }
 
   private publishLive(event: LiveJobEventInput): void {
