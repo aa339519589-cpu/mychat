@@ -1,5 +1,5 @@
 name: Check Code Worker Live
-# Retry post-deploy worker verification.
+# Inspect the actual Render startup configuration and worker prerequisites.
 
 on:
   workflow_dispatch:
@@ -19,7 +19,7 @@ jobs:
     env:
       SUPABASE_URL: https://usibkqqksgwgvdiqwpyo.supabase.co
     steps:
-      - name: Read live worker state
+      - name: Read live Render and worker state
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
@@ -32,40 +32,48 @@ jobs:
               '{state:$state,context:$context,description:$description,target_url:$target_url}' \
               | gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" --input - >/dev/null
           }
-          post_status pending "Reading live Code worker heartbeat"
-          env_base="https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars"
-          service_role=''
-          for attempt in {1..12}; do
-            response="$(curl --silent --show-error --retry 3 --retry-all-errors \
-              -H "Authorization: Bearer $RENDER_API_KEY" "$env_base/SUPABASE_SERVICE_ROLE_KEY" 2>/dev/null)" || response='{}'
-            service_role="$(jq -r '.value // empty' <<<"$response" 2>/dev/null || true)"
-            [[ -n "$service_role" ]] && break
-            sleep 3
-          done
-          if [[ -z "$service_role" ]]; then
-            echo 'LIVE_CODE_WORKER verification-key-unavailable'
-            post_status failure "Render environment verification key unavailable"
-            exit 0
-          fi
-          auth=(-H "apikey: $service_role" -H "Authorization: Bearer $service_role")
-          heartbeats='[]'
-          jobs='[]'
-          for attempt in {1..12}; do
-            heartbeats="$(curl --silent --show-error --retry 3 --retry-all-errors "${auth[@]}" \
+          post_status pending "Reading Render startup configuration and worker heartbeat"
+          render_auth=(-H "Authorization: Bearer $RENDER_API_KEY")
+          service="$(curl --fail-with-body --silent --show-error --retry 4 --retry-all-errors \
+            "${render_auth[@]}" "https://api.render.com/v1/services/$RENDER_SERVICE_ID")"
+          envs="$(curl --fail-with-body --silent --show-error --retry 4 --retry-all-errors \
+            "${render_auth[@]}" "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars")"
+          normalized="$(jq -c '
+            if type == "array" then map(.envVar // .)
+            elif (.envVars | type) == "array" then (.envVars | map(.envVar // .))
+            else [] end
+          ' <<<"$envs")"
+          start_command="$(jq -r '.serviceDetails.startCommand // .service.serviceDetails.startCommand // "missing"' <<<"$service")"
+          role="$(jq -r 'map(select(.key == "MYCHAT_RUNTIME_ROLE"))[0].value // "missing"' <<<"$normalized")"
+          maintenance="$(jq -r 'map(select(.key == "MYCHAT_MAINTENANCE_MODE"))[0].value // "missing"' <<<"$normalized")"
+          has_key() { jq -r --arg key "$1" 'any(.[]; .key == $key and ((.value // "") | length) > 0)' <<<"$normalized"; }
+          has_supabase="$(has_key SUPABASE_SERVICE_ROLE_KEY)"
+          has_deepseek="$(has_key DEEPSEEK_API_KEY)"
+          has_agent_key="$(has_key AGENT_CREDENTIAL_KEY)"
+          has_e2b="$(has_key E2B_API_KEY)"
+          service_role="$(jq -r 'map(select(.key == "SUPABASE_SERVICE_ROLE_KEY"))[0].value // empty' <<<"$normalized")"
+          echo "RENDER_CONFIG start=$start_command role=$role maintenance=$maintenance supabase=$has_supabase deepseek=$has_deepseek agent_key=$has_agent_key e2b=$has_e2b"
+
+          revision=none
+          queues=''
+          draining=true
+          heartbeat_at=none
+          if [[ -n "$service_role" ]]; then
+            auth=(-H "apikey: $service_role" -H "Authorization: Bearer $service_role")
+            heartbeats="$(curl --silent --show-error --retry 4 --retry-all-errors "${auth[@]}" \
               "$SUPABASE_URL/rest/v1/job_worker_heartbeats?select=revision,queues,draining,heartbeat_at&order=heartbeat_at.desc&limit=5" 2>/dev/null)" || heartbeats='[]'
-            if jq -e 'type == "array"' <<<"$heartbeats" >/dev/null 2>&1; then break; fi
-            heartbeats='[]'
-            sleep 3
-          done
-          jobs="$(curl --silent --show-error --retry 3 --retry-all-errors "${auth[@]}" \
-            "$SUPABASE_URL/rest/v1/jobs?type=eq.agent.task&select=status,error_code,attempt,payload,created_at&order=created_at.desc&limit=5" 2>/dev/null)" || jobs='[]'
-          revision="$(jq -r '.[0].revision // "none"' <<<"$heartbeats" 2>/dev/null || echo invalid)"
-          queues="$(jq -r '.[0].queues // [] | join(",")' <<<"$heartbeats" 2>/dev/null || echo invalid)"
-          draining="$(jq -r '.[0].draining // true' <<<"$heartbeats" 2>/dev/null || echo true)"
-          heartbeat_at="$(jq -r '.[0].heartbeat_at // "none"' <<<"$heartbeats" 2>/dev/null || echo invalid)"
-          job="$(jq -r '.[0] | if . then "status=\(.status) model=\(.payload.modelId // \"none\") error=\(.error_code // \"none\") attempt=\(.attempt)" else "none" end' <<<"$jobs" 2>/dev/null || echo invalid)"
+            if jq -e 'type == "array"' <<<"$heartbeats" >/dev/null 2>&1; then
+              revision="$(jq -r '.[0].revision // "none"' <<<"$heartbeats")"
+              queues="$(jq -r '.[0].queues // [] | join(",")' <<<"$heartbeats")"
+              draining="$(jq -r '.[0].draining // true' <<<"$heartbeats")"
+              heartbeat_at="$(jq -r '.[0].heartbeat_at // "none"' <<<"$heartbeats")"
+            fi
+          fi
           echo "LIVE_CODE_WORKER revision=$revision queues=$queues draining=$draining heartbeat=$heartbeat_at"
-          echo "LIVE_CODE_JOB $job"
           state=failure
-          if [[ "$revision" != "none" && "$revision" != "invalid" && "$queues" == *agent* && "$draining" == "false" ]]; then state=success; fi
-          post_status "$state" "revision=$revision queues=${queues:-none} draining=$draining heartbeat=$heartbeat_at"
+          if [[ "$start_command" == "npm start" && "$role" == "all" && "$maintenance" == "off" \
+            && "$has_supabase" == "true" && "$has_deepseek" == "true" && "$has_agent_key" == "true" \
+            && "$has_e2b" == "true" && "$revision" != "none" && "$queues" == *agent* && "$draining" == "false" ]]; then
+            state=success
+          fi
+          post_status "$state" "start=$start_command role=$role e2b=$has_e2b heartbeat=$heartbeat_at queues=${queues:-none}"
