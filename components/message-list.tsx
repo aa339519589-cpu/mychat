@@ -12,6 +12,7 @@ const RENDER_STEP = 50
 
 export type MessageListProps = {
   conversation: Conversation
+  showTokenUsage?: boolean
   onRegenerate?: () => void
   onEditUserMessage?: (messageId: string, content: string) => void
   onRegenerateFromUser?: (messageId: string) => void
@@ -58,6 +59,7 @@ export function MessageList(props: MessageListProps) {
           messages={visibleMessages}
           lastAssistantId={lastAssistantId}
           isLoading={!!isLoading}
+          showTokenUsage={!!props.showTokenUsage}
           openArtifactId={openArtifactId}
           canOpenArtifact={!!props.onOpenArtifact}
           canRegenerateAssistant={!!props.onRegenerate}
@@ -81,6 +83,7 @@ function MessageRows({
   messages,
   lastAssistantId,
   isLoading,
+  showTokenUsage,
   openArtifactId,
   canOpenArtifact,
   canRegenerateAssistant,
@@ -89,6 +92,7 @@ function MessageRows({
   messages: Message[]
   lastAssistantId: string | null
   isLoading: boolean
+  showTokenUsage: boolean
   openArtifactId?: string | null
   canOpenArtifact: boolean
   canRegenerateAssistant: boolean
@@ -103,6 +107,7 @@ function MessageRows({
       editing={controller.editingUserId === message.id}
       editDraft={controller.editingUserId === message.id ? controller.editDraft : ""}
       isLoading={isLoading}
+      showTokenUsage={showTokenUsage}
       onToggleActive={controller.toggleActive}
       onStartEdit={controller.startEdit}
       onEditDraft={controller.updateEditDraft}
@@ -123,6 +128,7 @@ type MessageEntryProps = {
   editing: boolean
   editDraft: string
   isLoading: boolean
+  showTokenUsage: boolean
   onToggleActive: (messageId: string) => void
   onStartEdit: (message: Message) => void
   onEditDraft: (value: string) => void
@@ -141,6 +147,7 @@ const MessageEntry = memo(function MessageEntry({
   editing,
   editDraft,
   isLoading,
+  showTokenUsage,
   onToggleActive,
   onStartEdit,
   onEditDraft,
@@ -172,6 +179,7 @@ const MessageEntry = memo(function MessageEntry({
           message={message}
           isLast={isLastAssistant}
           isLoading={isLoading}
+          showTokenUsage={showTokenUsage}
           openArtifactId={openArtifactId}
           onOpenArtifact={onOpenArtifact}
           onRegenerate={onRegenerateAssistant}
@@ -184,11 +192,11 @@ const MessageEntry = memo(function MessageEntry({
 const MESSAGE_COMPARE_KEYS = [
   "id", "role", "content", "time", "ts", "isError", "outputWarning",
   "thinking", "images", "imageSummary", "media", "memoryNotes", "files",
-  "searchNotes", "generation",
+  "searchNotes", "tokenUsage", "generation",
 ] as const satisfies readonly (keyof Message)[]
 
 const ENTRY_COMPARE_KEYS = [
-  "isLastAssistant", "active", "editing", "editDraft", "isLoading",
+  "isLastAssistant", "active", "editing", "editDraft", "isLoading", "showTokenUsage",
   "onToggleActive", "onStartEdit", "onEditDraft", "onCancelEdit",
   "onCommitEdit", "onRegenerateUser", "openArtifactId", "onOpenArtifact",
   "onRegenerateAssistant",
