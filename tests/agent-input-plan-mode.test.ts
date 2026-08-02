@@ -114,6 +114,7 @@ test('provisional Agent input loads only durable chat and GitHub identity metada
   assert.equal(input.workspaceReady, false)
   assert.equal(input.defaultBranch, null)
   assert.equal(input.selection.model, 'deepseek-v4-flash')
+  assert.equal(input.selection.platformTierLabel, 'DeepSeek V4 Flash')
   assert.equal(input.selection.capability.provider.id, 'deepseek')
   assert.deepEqual(input.memories, [])
   assert.deepEqual(input.messages, [{ role: 'user', content: 'build it' }])
