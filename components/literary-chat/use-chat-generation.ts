@@ -33,6 +33,7 @@ type UseChatGenerationOptions = {
   searchMode: SearchMode
   historyRetrieval: boolean
   renderEnabled: boolean
+  showTokenUsage: boolean
   authorityReady: boolean
   setActiveId: Dispatch<SetStateAction<string>>
   setConversations: Dispatch<SetStateAction<Conversation[]>>
@@ -59,7 +60,7 @@ async function resumeKnownGeneration(conversationId: string, resume: (conversati
 }
 
 export function useChatGeneration(options: UseChatGenerationOptions) {
-  const { user, active, activeId, activeTier, activeEndpoint, activeEndpointId, activeModelId, reasoningEffort, memories, memoryEnabled, searchMode, historyRetrieval, renderEnabled, authorityReady, setConversations, setMemories, setOpenArtifactId, loadedRef, draftIdRef, getProjectContext, onConversationCreated } = options
+  const { user, active, activeId, activeTier, activeEndpoint, activeEndpointId, activeModelId, reasoningEffort, memories, memoryEnabled, searchMode, historyRetrieval, renderEnabled, showTokenUsage, authorityReady, setConversations, setMemories, setOpenArtifactId, loadedRef, draftIdRef, getProjectContext, onConversationCreated } = options
   const [generationByConversation, setGenerationByConversation] = useState<Record<string, ClientGenerationState>>({})
   const generationRef = useRef(generationByConversation)
   generationRef.current = generationByConversation
@@ -77,7 +78,7 @@ export function useChatGeneration(options: UseChatGenerationOptions) {
     if (existing) return existing.reconciled
     let resolveReconciled!: (available: boolean) => void
     const reconciled = new Promise<boolean>(resolve => { resolveReconciled = resolve })
-    const operation = resumeConversationGeneration({ conversationId, setConversations, markGeneration, registerAbort: (id, controller) => abortByConversationRef.current.set(id, controller), clearAbort, onReconciled: resolveReconciled })
+    const operation = resumeConversationGeneration({ conversationId, showTokenUsage, setConversations, markGeneration, registerAbort: (id, controller) => abortByConversationRef.current.set(id, controller), clearAbort, onReconciled: resolveReconciled })
     const entry = { operation, reconciled }
     resumeByConversationRef.current.set(conversationId, entry)
     const cleanup = () => { if (resumeByConversationRef.current.get(conversationId) === entry) resumeByConversationRef.current.delete(conversationId) }
@@ -91,7 +92,7 @@ export function useChatGeneration(options: UseChatGenerationOptions) {
 
   async function startStream(history: HistoryMessage[], assistantMessageId: string, conversationId: string, controller: AbortController, attachments?: AttachedFile[], projectContext?: ProjectContext, generationId?: string, turn?: ChatTurnAuthority, onAccepted?: () => void) {
     if (!user) { markGeneration(conversationId, { status: "error", generationId, assistantMessageId }); return { content: "", status: "error", accepted: false } satisfies RunChatStreamResult }
-    return runChatStream({ userId: user.id, messages: history, assistantMessageId, conversationId, controller, attachments, projectContext, generationId, tier: activeTier, endpoint: activeEndpoint, endpointId: activeEndpointId, modelId: activeModelId, reasoningEffort, memories, memoryEnabled, searchMode, historyRetrieval, renderEnabled, turn, onAccepted, setConversations, setMemories, markGeneration, clearAbort })
+    return runChatStream({ userId: user.id, messages: history, assistantMessageId, conversationId, controller, attachments, projectContext, generationId, tier: activeTier, endpoint: activeEndpoint, endpointId: activeEndpointId, modelId: activeModelId, reasoningEffort, memories, memoryEnabled, searchMode, historyRetrieval, renderEnabled, showTokenUsage, turn, onAccepted, setConversations, setMemories, markGeneration, clearAbort })
   }
 
   async function handleStop() {
