@@ -79,8 +79,5 @@ export function createCodeEventCollector(options: {
     options.send(event)
   }
 
-  return {
-    emit,
-    getFinalText: () => finalText,
-  }
+  return { emit, getFinalText: () => finalText }
 }
