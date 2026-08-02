@@ -24,6 +24,14 @@ export type ChatStreamRenderer = {
   schedule: () => void
 }
 
+type ChatStreamRendererOptions = {
+  state: ChatStreamState
+  conversationId: string
+  assistantMessageId: string
+  generationId?: string
+  setConversations: Dispatch<SetStateAction<Conversation[]>>
+}
+
 const FINISH_DRAIN_TIMEOUT_MS = 400
 
 export function createChatStreamState(): ChatStreamState {
@@ -88,137 +96,151 @@ export function advanceVisibleText(
   return visible + remaining.slice(0, count).join('')
 }
 
-export function createChatStreamRenderer(options: {
-  state: ChatStreamState
-  conversationId: string
-  assistantMessageId: string
-  generationId?: string
-  setConversations: Dispatch<SetStateAction<Conversation[]>>
-}): ChatStreamRenderer {
-  let renderScheduled = false
-  let frameId: number | null = null
-  let cacheTimer: ReturnType<typeof setTimeout> | null = null
-  let finishTimer: ReturnType<typeof setTimeout> | null = null
-  let latestMessages: Message[] | null = null
-  let visibleReply = ''
-  let visibleThinking = ''
-  let finishing = false
-  let finishResolvers: Array<() => void> = []
+class ChatStreamRenderController implements ChatStreamRenderer {
+  private renderScheduled = false
+  private frameId: number | null = null
+  private cacheTimer: ReturnType<typeof setTimeout> | null = null
+  private finishTimer: ReturnType<typeof setTimeout> | null = null
+  private latestMessages: Message[] | null = null
+  private visibleReply = ''
+  private visibleThinking = ''
+  private finishing = false
+  private finishResolvers: Array<() => void> = []
 
-  const persistSnapshot = (messages: Message[], immediate = false) => {
-    latestMessages = messages
+  constructor(private readonly options: ChatStreamRendererOptions) {}
+
+  flush = (outputWarning?: string): void => {
+    this.renderScheduled = false
+    this.frameId = null
+    this.options.setConversations(previous => previous.map(conversation => {
+      if (conversation.id !== this.options.conversationId) return conversation
+      const messages = conversation.messages.map(message => streamingMessage(
+        message,
+        this.options.state,
+        this.visibleReply,
+        this.visibleThinking,
+        this.options.assistantMessageId,
+        this.options.generationId,
+        outputWarning,
+      ))
+      this.persistSnapshot(messages, outputWarning !== undefined)
+      return { ...conversation, messages }
+    }))
+    this.resolveFinishes()
+  }
+
+  schedule = (): void => {
+    if (this.options.state.terminalError || this.options.state.aborted) return
+    if (!this.visibleReply && this.options.state.fullReply) {
+      this.visibleReply = advanceVisibleText('', this.options.state.fullReply, false)
+      this.visibleThinking = this.options.state.fullThinking
+      this.flush()
+    }
+    this.scheduleFrame()
+  }
+
+  reset = (): void => {
+    this.cancelFrame()
+    this.finishing = false
+    this.visibleReply = this.options.state.fullReply
+    this.visibleThinking = this.options.state.fullThinking
+    this.flush()
+  }
+
+  cancel = (): void => {
+    this.cancelFrame()
+    if (this.finishTimer) clearTimeout(this.finishTimer)
+    this.finishTimer = null
+    this.releaseFinishResolvers()
+  }
+
+  finish = (): Promise<void> => {
+    this.finishing = true
+    if (this.caughtUp()) return Promise.resolve()
+    if (this.options.state.terminalError || this.options.state.aborted) {
+      this.forceTarget()
+      return Promise.resolve()
+    }
+    this.schedule()
+    return new Promise(resolve => {
+      this.finishResolvers.push(resolve)
+      this.finishTimer ??= setTimeout(() => this.forceTarget(), FINISH_DRAIN_TIMEOUT_MS)
+    })
+  }
+
+  private persistSnapshot(messages: Message[], immediate: boolean): void {
+    this.latestMessages = messages
     if (immediate) {
-      if (cacheTimer) clearTimeout(cacheTimer)
-      cacheTimer = null
-      const snapshot = latestMessages
-      latestMessages = null
-      cacheConversationMessages(options.conversationId, snapshot)
+      if (this.cacheTimer) clearTimeout(this.cacheTimer)
+      this.cacheTimer = null
+      this.persistLatest()
       return
     }
-    if (cacheTimer) return
-    cacheTimer = setTimeout(() => {
-      cacheTimer = null
-      const snapshot = latestMessages
-      latestMessages = null
-      if (snapshot) cacheConversationMessages(options.conversationId, snapshot)
+    this.cacheTimer ??= setTimeout(() => {
+      this.cacheTimer = null
+      this.persistLatest()
     }, 300)
   }
 
-  const caughtUp = () => visibleReply === options.state.fullReply
-    && visibleThinking === options.state.fullThinking
+  private persistLatest(): void {
+    const snapshot = this.latestMessages
+    this.latestMessages = null
+    if (snapshot) cacheConversationMessages(this.options.conversationId, snapshot)
+  }
 
-  const resolveFinishes = () => {
-    if (!caughtUp()) return
-    if (finishTimer) clearTimeout(finishTimer)
-    finishTimer = null
-    const resolvers = finishResolvers
-    finishResolvers = []
+  private caughtUp(): boolean {
+    return this.visibleReply === this.options.state.fullReply
+      && this.visibleThinking === this.options.state.fullThinking
+  }
+
+  private resolveFinishes(): void {
+    if (!this.caughtUp()) return
+    if (this.finishTimer) clearTimeout(this.finishTimer)
+    this.finishTimer = null
+    this.releaseFinishResolvers()
+  }
+
+  private releaseFinishResolvers(): void {
+    const resolvers = this.finishResolvers
+    this.finishResolvers = []
     for (const resolve of resolvers) resolve()
   }
 
-  const flush = (outputWarning?: string) => {
-    renderScheduled = false
-    frameId = null
-    options.setConversations(previous => previous.map(conversation => {
-      if (conversation.id !== options.conversationId) return conversation
-      const messages = conversation.messages.map(message => streamingMessage(
-        message,
-        options.state,
-        visibleReply,
-        visibleThinking,
-        options.assistantMessageId,
-        options.generationId,
-        outputWarning,
-      ))
-      persistSnapshot(messages, outputWarning !== undefined)
-      return { ...conversation, messages }
-    }))
-    resolveFinishes()
+  private cancelFrame(): void {
+    if (this.frameId !== null) cancelAnimationFrame(this.frameId)
+    this.renderScheduled = false
+    this.frameId = null
   }
 
-  const cancelFrame = () => {
-    if (frameId !== null) cancelAnimationFrame(frameId)
-    renderScheduled = false
-    frameId = null
-  }
-
-  const scheduleFrame = () => {
-    if (renderScheduled || caughtUp()) return
-    renderScheduled = true
-    frameId = requestAnimationFrame(() => {
-      visibleReply = advanceVisibleText(visibleReply, options.state.fullReply, finishing)
-      visibleThinking = options.state.fullThinking
-      flush()
-      scheduleFrame()
+  private scheduleFrame(): void {
+    if (this.renderScheduled || this.caughtUp()) return
+    this.renderScheduled = true
+    this.frameId = requestAnimationFrame(() => {
+      this.visibleReply = advanceVisibleText(
+        this.visibleReply,
+        this.options.state.fullReply,
+        this.finishing,
+      )
+      this.visibleThinking = this.options.state.fullThinking
+      this.flush()
+      this.scheduleFrame()
     })
   }
 
-  const schedule = () => {
-    if (options.state.terminalError || options.state.aborted) return
-    if (!visibleReply && options.state.fullReply) {
-      visibleReply = advanceVisibleText('', options.state.fullReply, false)
-      visibleThinking = options.state.fullThinking
-      flush()
-    }
-    scheduleFrame()
+  private forceTarget(): void {
+    if (this.finishTimer) clearTimeout(this.finishTimer)
+    this.finishTimer = null
+    this.cancelFrame()
+    this.visibleReply = this.options.state.fullReply
+    this.visibleThinking = this.options.state.fullThinking
+    this.flush()
   }
+}
 
-  const reset = () => {
-    cancelFrame()
-    finishing = false
-    visibleReply = options.state.fullReply
-    visibleThinking = options.state.fullThinking
-    flush()
-  }
-
-  const cancel = () => {
-    cancelFrame()
-    if (finishTimer) clearTimeout(finishTimer)
-    finishTimer = null
-    const resolvers = finishResolvers
-    finishResolvers = []
-    for (const resolve of resolvers) resolve()
-  }
-
-  const finish = (): Promise<void> => {
-    finishing = true
-    if (caughtUp()) return Promise.resolve()
-    schedule()
-    return new Promise(resolve => {
-      finishResolvers.push(resolve)
-      if (!finishTimer) {
-        finishTimer = setTimeout(() => {
-          finishTimer = null
-          cancelFrame()
-          visibleReply = options.state.fullReply
-          visibleThinking = options.state.fullThinking
-          flush()
-        }, FINISH_DRAIN_TIMEOUT_MS)
-      }
-    })
-  }
-
-  return { cancel, reset, finish, flush, schedule }
+export function createChatStreamRenderer(
+  options: ChatStreamRendererOptions,
+): ChatStreamRenderer {
+  return new ChatStreamRenderController(options)
 }
 
 export type FinalChatStreamResult = {
