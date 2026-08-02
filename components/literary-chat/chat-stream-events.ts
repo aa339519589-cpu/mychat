@@ -11,6 +11,7 @@ import {
   normalizeGeneratedMedia,
 } from '@/lib/generated-media'
 import { normalizeSearchNotes } from '@/lib/search-notes'
+import { normalizeTokenUsage } from '@/lib/token-usage'
 import { isRecord } from '@/lib/unknown-value'
 import type { JobStreamEnvelope } from './job-stream-client'
 import type { ChatStreamRenderer, ChatStreamState } from './chat-stream-state'
@@ -132,8 +133,7 @@ function applyImageSummary(context: ChatStreamEventContext, value: unknown): boo
 function isRetryEvent(event: JobStreamEnvelope): boolean {
   return event.kind === 'job.retry_scheduled'
     || (event.kind === 'job.leased'
-      && typeof event.payload.attempt === 'number'
-      && event.payload.attempt > 1)
+      && typeof event.payload.attempt === 'number' && event.payload.attempt > 1)
 }
 
 function resetForRetry(context: ChatStreamEventContext): void {
@@ -149,6 +149,7 @@ function terminalSnapshot(
   state: ChatStreamState,
 ): GenerationTerminalSnapshot | null {
   const result = isRecord(event.payload.result) ? event.payload.result : {}
+  const tokenUsage = normalizeTokenUsage(result.tokenUsage)
   const terminal = {
     status: event.payload.status,
     content: typeof result.content === 'string' ? result.content : state.fullReply,
@@ -156,6 +157,7 @@ function terminalSnapshot(
     sequence: event.seq,
     error: typeof event.payload.errorCode === 'string' ? event.payload.errorCode : null,
     media: Array.isArray(result.media) ? result.media : [],
+    ...(tokenUsage ? { tokenUsage } : {}),
   }
   return isGenerationTerminalSnapshot(terminal) ? terminal : null
 }
