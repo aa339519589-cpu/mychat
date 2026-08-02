@@ -38,6 +38,7 @@ export const CURATED_OPENROUTER_MODELS: readonly CuratedModel[] = [
   { id: 'openai/gpt-5.6-sol', name: 'GPT-5.6 Sol', provider: 'OpenAI', access: 'premium', flagship: true },
   { id: 'openai/gpt-5.6-sol-pro', name: 'GPT-5.6 Sol Pro', provider: 'OpenAI', access: 'premium', flagship: true },
   { id: 'openai/gpt-5.6-terra', name: 'GPT-5.6 Terra', provider: 'OpenAI', access: 'trial', flagship: false },
+  { id: 'openai/gpt-5.6-terra-pro', name: 'GPT-5.6 Terra Pro', provider: 'OpenAI', access: 'trial', flagship: true },
   { id: 'openai/gpt-5.5', name: 'GPT-5.5', provider: 'OpenAI', access: 'premium', flagship: true },
   { id: 'openai/gpt-5.5-instant', name: 'GPT-5.5 Instant', provider: 'OpenAI', access: 'trial', flagship: false },
   { id: 'openai/gpt-5.4', name: 'GPT-5.4', provider: 'OpenAI', access: 'trial', flagship: false },
