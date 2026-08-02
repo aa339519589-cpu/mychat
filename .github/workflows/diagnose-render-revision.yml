@@ -15,21 +15,33 @@ jobs:
   diagnose:
     runs-on: ubuntu-latest
     steps:
-      - name: Report production runtime revision
+      - name: Report production runtime and Render service identity
         env:
           GH_TOKEN: ${{ github.token }}
           REVISION: ${{ github.sha }}
           PRODUCTION_URL: https://mychat-nm6x.onrender.com
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          CONFIGURED_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
         run: |
           set -Eeuo pipefail
+
+          post_status() {
+            curl --fail-with-body --silent --show-error --request POST \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              --data "$(jq -nc --arg state success --arg context "$1" --arg description "$2" --arg target_url "$PRODUCTION_URL" '{state:$state,context:$context,description:$description,target_url:$target_url}')" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$REVISION" >/dev/null
+          }
+
           payload="$(curl --silent --show-error --max-time 60 --header 'Accept: application/json' "$PRODUCTION_URL/api/ready" || true)"
           runtime_revision="$(jq -r '.revision // "none"' <<<"$payload" 2>/dev/null || printf none)"
-          status="$(jq -r '.status // "unknown"' <<<"$payload" 2>/dev/null || printf unknown)"
-          context="Observed Render Revision: ${runtime_revision:0:12}"
-          description="Ready status $status; observed runtime revision ${runtime_revision:0:12}"
-          curl --fail-with-body --silent --show-error --request POST \
-            --header "Authorization: Bearer $GH_TOKEN" \
-            --header "Accept: application/vnd.github+json" \
-            --header "X-GitHub-Api-Version: 2022-11-28" \
-            --data "$(jq -nc --arg state success --arg context "$context" --arg description "$description" --arg target_url "$PRODUCTION_URL" '{state:$state,context:$context,description:$description,target_url:$target_url}')" \
-            "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$REVISION" >/dev/null
+          ready_status="$(jq -r '.status // "unknown"' <<<"$payload" 2>/dev/null || printf unknown)"
+          post_status "Observed Render Revision: ${runtime_revision:0:12}" "Ready status $ready_status; observed runtime revision ${runtime_revision:0:12}"
+
+          services="$(curl --fail-with-body --silent --show-error --retry 4 --retry-all-errors --connect-timeout 10 --max-time 60 --header "Authorization: Bearer $RENDER_API_KEY" 'https://api.render.com/v1/services?limit=100')"
+          production_id="$(jq -r --arg host 'mychat-nm6x.onrender.com' '[.[]? | (.service // .) as $s | select((($s.serviceDetails.url // $s.url // "") | tostring | contains($host))) | $s.id] | first // "none"' <<<"$services")"
+          production_name="$(jq -r --arg id "$production_id" '[.[]? | (.service // .) as $s | select($s.id == $id) | $s.name] | first // "unknown"' <<<"$services")"
+          configured_url="$(jq -r --arg id "$CONFIGURED_SERVICE_ID" '[.[]? | (.service // .) as $s | select($s.id == $id) | ($s.serviceDetails.url // $s.url // "unknown")] | first // "unknown"' <<<"$services")"
+          post_status "Production Service: ${production_id:0:32}" "Production service $production_name; id $production_id"
+          post_status "Configured Service: ${CONFIGURED_SERVICE_ID:0:32}" "Configured service URL $configured_url"
