@@ -103,3 +103,38 @@ test('consumer cancellation releases admission exactly once even while stream st
   await new Promise(resolve => setTimeout(resolve, 5))
   assert.equal(releases, 1)
 })
+
+test('active event polling never backs off into multi-second Chat gaps', async () => {
+  let reads = 0
+  const waits: number[] = []
+  const stream = createJobEventStream({
+    client,
+    principalId,
+    jobId,
+    fromSequence: 0,
+    initialStatus: 'running',
+    requestSignal: new AbortController().signal,
+  }, {
+    readEvents: async () => {
+      reads += 1
+      if (reads <= 5) return { ok: true, value: [] }
+      if (reads === 6) return {
+        ok: true,
+        value: [event(1, 'text.delta', { text: '首个字符' })],
+      }
+      return {
+        ok: true,
+        value: [event(2, 'job.terminal', { status: 'completed' })],
+      }
+    },
+    wait: async milliseconds => { waits.push(milliseconds) },
+    initialPollIntervalMs: 40,
+    maxPollIntervalMs: 120,
+  })
+
+  const body = await new Response(stream).text()
+  assert.match(body, /首个字符/)
+  assert.ok(waits.length >= 5)
+  assert.ok(Math.max(...waits) <= 120)
+  assert.deepEqual(waits.slice(0, 5), [80, 120, 120, 120, 120])
+})
