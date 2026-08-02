@@ -3,7 +3,7 @@
 import { useRef, useState } from "react"
 import type { User } from "@supabase/supabase-js"
 import type { Memory } from "@/lib/memory-data"
-import { deleteMemoryRow, insertMemory, setMemoryEnabled, updateMemory } from "@/lib/data"
+import { deleteMemoryRow, insertMemory, updateMemory } from "@/lib/data"
 
 const MEMORY_SETTING_PREFIX = "mychat:memory-enabled:"
 
@@ -28,19 +28,32 @@ function clearLocalSetting(userId: string) {
   try { window.localStorage.removeItem(settingKey(userId)) } catch {}
 }
 
+async function persistMemoryEnabled(enabled: boolean): Promise<void> {
+  const response = await fetch('/api/profile/memory', {
+    method: 'PUT',
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  })
+  const body = await response.json().catch(() => ({})) as { enabled?: unknown; error?: unknown }
+  if (!response.ok || body.enabled !== enabled) {
+    throw new Error(typeof body.error === 'string' ? body.error : '记忆设置保存失败')
+  }
+}
+
 export function useMemories(user: User | null) {
   const [memories, setMemories] = useState<Memory[]>([])
   const [memoryEnabled, setMemoryEnabledState] = useState(true)
   const writeVersionRef = useRef(0)
 
   function persistMemorySetting(userId: string, enabled: boolean, version: number) {
-    void setMemoryEnabled(userId, enabled)
+    void persistMemoryEnabled(enabled)
       .then(() => {
         if (writeVersionRef.current === version) clearLocalSetting(userId)
       })
       .catch(error => {
         console.error("setMemoryEnabled", error)
-        // 本地值继续保留。刷新、退出页面或短暂断网后仍以用户最后一次选择为准，下一次启动会重试。
       })
   }
 
