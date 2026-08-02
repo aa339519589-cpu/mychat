@@ -14,6 +14,7 @@ import {
   type CodeMessage,
   type PlanAction,
 } from "@/lib/code-data"
+import { codeAgentMode, trimCodeContextMessages } from "@/lib/code-agent/context"
 import { provisionalRepositoryForSession } from "@/lib/code-agent/provisional-repository"
 import { errorMessage, isRecord } from "@/lib/unknown-value"
 import { applyCodeJobEnvelope } from "./job-events"
@@ -187,11 +188,16 @@ async function consumeStream(
   sessionId: string,
   accumulator: StreamAccumulator,
 ): Promise<void> {
+  const mode = codeAgentMode(request.activeRepo !== null)
+  const messages = trimCodeContextMessages(
+    toCodeModelMessages([...request.baseMessages, request.userMessage]),
+    mode,
+  )
   const accepted = await dependencies.enqueue("/api/code/chat", {
     repo: request.activeRepo ?? provisionalRepositoryForSession(sessionId),
     modelId: context.modelId,
     ...(context.reasoningEffort ? { reasoningEffort: context.reasoningEffort } : {}),
-    messages: toCodeModelMessages([...request.baseMessages, request.userMessage]),
+    messages,
     taskId: request.initialTaskId,
     responseId: request.assistantId,
     sessionId,
