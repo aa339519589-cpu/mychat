@@ -91,9 +91,13 @@ export class LiveJobPublisher {
   private revision = 0
   private closing = false
 
-  constructor(client: SupabaseClient, jobId: string) {
+  constructor(
+    client: SupabaseClient,
+    jobId: string,
+    channelSecret = process.env.AGENT_CREDENTIAL_KEY,
+  ) {
     this.client = client
-    const channelName = liveJobChannelName(jobId)
+    const channelName = liveJobChannelName(jobId, channelSecret)
     this.channel = channelName ? client.channel(channelName) : null
   }
 
