@@ -52,6 +52,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ job
     client: auth.supabase,
     principalId: auth.userId,
     jobId,
+    jobType: result.value.type,
     fromSequence,
     initialStatus: result.value.status,
     requestSignal: request.signal,

@@ -163,6 +163,15 @@ function ArtifactOutputs({
   ))
 }
 
+function AssistantText({ text, streaming }: { text: string; streaming: boolean }) {
+  if (!streaming) return <MessageMarkdown text={text} />
+  return (
+    <p className="break-words whitespace-pre-wrap leading-[26px] tracking-[0.001em] [overflow-wrap:anywhere]">
+      {text}
+    </p>
+  )
+}
+
 export function AssistantMessage({
   message,
   isLast,
@@ -180,7 +189,12 @@ export function AssistantMessage({
   onOpenArtifact?: (messageId: string) => void
   onRegenerate?: () => void
 }) {
-  const { display, blocks } = parseArtifact(stripToolMarkup(message.content ?? ""))
+  const streaming = isLast && isLoading && !message.isError
+  const safeContent = stripToolMarkup(message.content ?? "")
+  const parsed = streaming && !safeContent.includes("<artifact")
+    ? { display: safeContent, blocks: [] as ArtifactBlock[] }
+    : parseArtifact(safeContent)
+  const { display, blocks } = parsed
   const hasArtifactOutput = blocks.length > 0
 
   return (
@@ -213,7 +227,7 @@ export function AssistantMessage({
             <>
               {display && (
                 <div className="text-[16px] font-[500] text-foreground md:text-[17px]">
-                  <MessageMarkdown text={display} />
+                  <AssistantText text={display} streaming={streaming} />
                 </div>
               )}
               {message.media && message.media.length > 0 && (
