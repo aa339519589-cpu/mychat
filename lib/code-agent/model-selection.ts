@@ -7,6 +7,16 @@ import {
 import { getDirectDeepSeekCatalogRoute } from '@/lib/llm/models'
 import { getOpenRouterModel } from '@/lib/openrouter-catalog'
 
+const DIRECT_DEEPSEEK_RUNTIME_MODELS: Readonly<Record<string, string>> = {
+  'deepseek-v4-flash': 'deepseek/deepseek-v4-flash-0731',
+  'deepseek-v4-pro': 'deepseek/deepseek-v4-pro',
+}
+
+/** Accept both the public catalog ID and the persisted provider runtime ID. */
+export function codeCatalogModelId(modelId: string): string {
+  return DIRECT_DEEPSEEK_RUNTIME_MODELS[modelId] ?? modelId
+}
+
 export async function resolveCodeModelSelection(options: {
   modelId: string
   reasoningEffort?: string
@@ -14,9 +24,10 @@ export async function resolveCodeModelSelection(options: {
   userId: string | null
   allowPremium?: boolean
 }): Promise<ChatModelSelection> {
-  const directDeepSeek = getDirectDeepSeekCatalogRoute(options.modelId)
+  const modelId = codeCatalogModelId(options.modelId)
+  const directDeepSeek = getDirectDeepSeekCatalogRoute(modelId)
   if (!directDeepSeek) {
-    const catalogModel = await getOpenRouterModel(options.modelId)
+    const catalogModel = await getOpenRouterModel(modelId)
     if (!catalogModel) {
       throw new ChatModelSelectionError(404, { error: '该模型当前未在 OpenRouter 提供' })
     }
@@ -29,7 +40,7 @@ export async function resolveCodeModelSelection(options: {
   }
   return resolveChatModelSelection({
     tier: '绝句',
-    modelId: options.modelId,
+    modelId,
     reasoningEffort: options.reasoningEffort,
     supabase: options.supabase,
     userId: options.userId,
