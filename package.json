@@ -26,7 +26,7 @@
     "database:types:check": "bash scripts/verify-database-types-pg16.sh --check",
     "test": "node scripts/run-tests.mjs",
     "test:coverage": "node scripts/run-tests.mjs --coverage",
-    "test:migrations": "bash scripts/verify-generation-migrations-pg16.sh",
+    "test:migrations": "bash scripts/verify-generation-migrations-current-pg16.sh",
     "test:e2e": "playwright test",
     "audit:prod": "npm audit --omit=dev --audit-level=high",
     "quality": "npm run architecture && npm run complexity && npm run migration:contract && npm run check && npm run lint:backend && npm run lint && npm run test:coverage",
