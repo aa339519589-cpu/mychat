@@ -73,7 +73,7 @@
     },
     "components/code-console/index.tsx": {
       "maxLines": [
-        276
+        254
       ]
     },
     "components/code-console/job-events.ts": {
