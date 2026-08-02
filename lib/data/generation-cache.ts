@@ -1,5 +1,6 @@
 import type { Message, MessageGenerationTerminal } from '@/lib/chat-data'
 import { generationTerminalWarning } from '@/lib/generation-message'
+import type { TokenUsage } from '@/lib/token-usage'
 import { readCachedMessages, writeCachedMessages } from './message-cache'
 
 export type TerminalCacheSnapshot = {
@@ -7,6 +8,7 @@ export type TerminalCacheSnapshot = {
   content: string
   thinking: string
   media: Message['media']
+  tokenUsage?: TokenUsage
   sequence: number
   error: string | null
   generationId: string
@@ -30,6 +32,7 @@ export function upsertGenerationTerminalMessage(
     content: terminal.content,
     thinking: terminal.thinking || undefined,
     media: terminal.status === 'completed' && terminal.media?.length ? terminal.media : undefined,
+    tokenUsage: terminal.tokenUsage,
     isError: terminal.status === 'failed' ? true : undefined,
     outputWarning: generationTerminalWarning(generation),
     generation,
@@ -39,7 +42,7 @@ export function upsertGenerationTerminalMessage(
     if (message.id !== messageId) return message
     found = true
     return {
-    ...message,
+      ...message,
       ...canonical,
       time: message.time,
       ts: message.ts,
