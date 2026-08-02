@@ -6,7 +6,6 @@ import {
   type AcceptedJob,
   type JobStreamEnvelope,
 } from "@/components/literary-chat/job-stream-client"
-import { type Tier } from "@/lib/chat-data"
 import {
   createCodeSession,
   insertCodeMessage,
@@ -28,7 +27,8 @@ export type CodeSendContext = {
   streaming: boolean
   currentTaskId: string | null
   sessionId: string | null
-  tier: Tier
+  modelId: string
+  reasoningEffort: string | null
   auto: boolean
   abortRef: MutableRefObject<AbortController | null>
   setMessages: Dispatch<SetStateAction<CodeMessage[]>>
@@ -135,7 +135,7 @@ async function persistSendStart(
   dependencies: CodeSendDependencies,
 ): Promise<SessionResult> {
   try {
-  const sessionId = request.initialSessionId
+    const sessionId = request.initialSessionId
       ?? await createSessionWithHistory(request, context, dependencies)
     if (!request.internal) {
       await dependencies.insertMessage(context.userId, sessionId, request.userMessage)
@@ -183,7 +183,8 @@ async function consumeStream(
 ): Promise<void> {
   const accepted = await dependencies.enqueue("/api/code/chat", {
     repo: request.activeRepo ?? provisionalRepositoryForSession(sessionId),
-    tier: context.tier,
+    modelId: context.modelId,
+    ...(context.reasoningEffort ? { reasoningEffort: context.reasoningEffort } : {}),
     messages: toCodeModelMessages([...request.baseMessages, request.userMessage]),
     taskId: request.initialTaskId,
     responseId: request.assistantId,
