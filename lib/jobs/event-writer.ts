@@ -5,6 +5,8 @@ import type { JobExecutionContext } from './worker'
 const DEFAULT_FLUSH_INTERVAL_MS = 16
 const DEFAULT_FLUSH_BATCH_SIZE = 32
 const DEFAULT_MAX_COALESCED_DELTA_CHARS = 512
+const CHAT_FLUSH_BATCH_SIZE = 12
+const CHAT_TEXT_DELTA_CHARS = 24
 
 export type JobEventWriterOptions = {
   flushIntervalMs?: number
@@ -98,12 +100,17 @@ export class JobEventWriter {
 
   constructor(context: JobExecutionContext, options: JobEventWriterOptions = {}) {
     this.context = context
+    const chatGeneration = context.job.type === 'chat.generation'
     this.flushIntervalMs = options.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS
-    this.flushBatchSize = options.flushBatchSize ?? DEFAULT_FLUSH_BATCH_SIZE
+    this.flushBatchSize = options.flushBatchSize
+      ?? (chatGeneration ? CHAT_FLUSH_BATCH_SIZE : DEFAULT_FLUSH_BATCH_SIZE)
     this.textChunkChars = options.textChunkChars
-    this.maxTextDeltaChars = options.maxTextDeltaChars ?? DEFAULT_MAX_COALESCED_DELTA_CHARS
-    this.maxThinkingDeltaChars = options.maxThinkingDeltaChars ?? DEFAULT_MAX_COALESCED_DELTA_CHARS
-    this.singleFlight = options.singleFlight === true
+      ?? (chatGeneration ? CHAT_TEXT_DELTA_CHARS : undefined)
+    this.maxTextDeltaChars = options.maxTextDeltaChars
+      ?? (chatGeneration ? CHAT_TEXT_DELTA_CHARS : DEFAULT_MAX_COALESCED_DELTA_CHARS)
+    this.maxThinkingDeltaChars = options.maxThinkingDeltaChars
+      ?? DEFAULT_MAX_COALESCED_DELTA_CHARS
+    this.singleFlight = options.singleFlight ?? chatGeneration
     const progress = context.job.checkpoint?.progress
     this.fullText = materializedText(progress, 'content', 'contentParts')
     this.fullThinking = materializedText(progress, 'thinking', 'thinkingParts')
