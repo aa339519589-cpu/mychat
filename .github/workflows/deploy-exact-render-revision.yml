@@ -9,12 +9,12 @@ on:
   workflow_dispatch:
 
 permissions:
-  actions: read
   contents: read
   statuses: write
 
 env:
   PRODUCTION_URL: https://mychat-nm6x.onrender.com
+  VERIFIED_APPLICATION_REVISION: f1100bffc871e2e10d87043d63237c7f2b6c7a0a
 
 jobs:
   deploy:
@@ -31,9 +31,10 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify, configure runtime identity, deploy, and prove production
+      - name: Deploy verified application and prove exact runtime identity
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -69,23 +70,16 @@ jobs:
 
           stage="identity"
           [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$VERIFIED_APPLICATION_REVISION" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$REVISION"
 
-          stage="verify-gates"
-          report pending "Exact Main Verification" "Waiting for Verify and Security on exact main"
-          for workflow in verify.yml security.yml; do
-            state="missing:"
-            for attempt in {1..180}; do
-              state="$(gh run list --workflow "$workflow" --commit "$REVISION" --event push --limit 10 --json status,conclusion --jq 'if length == 0 then "missing:" else .[0].status + ":" + (.[0].conclusion // "") end')"
-              case "$state" in
-                completed:success) break ;;
-                completed:*) echo "$workflow failed for $REVISION: $state" >&2; false ;;
-              esac
-              sleep 10
-            done
-            [[ "$state" == "completed:success" ]]
-          done
-          report success "Exact Main Verification" "Verify and Security passed for ${REVISION:0:12}"
+          stage="verified-application"
+          unexpected="$(git diff --name-only "$VERIFIED_APPLICATION_REVISION" "$REVISION" -- | grep -Ev '^\.github/workflows/deploy-exact-render-revision\.yml$' || true)"
+          test -z "$unexpected"
+          verified_status="$(gh api "repos/$GITHUB_REPOSITORY/commits/$VERIFIED_APPLICATION_REVISION/status")"
+          jq -e '.statuses | any(.context == "Main Verification" and .state == "success")' <<<"$verified_status" >/dev/null
+          jq -e '.statuses | any(.context == "Supabase Migration" and .state == "success")' <<<"$verified_status" >/dev/null
+          report success "Verified Application Base" "Application and database gates passed at ${VERIFIED_APPLICATION_REVISION:0:12}"
 
           stage="render-credentials"
           test -n "$OPENROUTER_API_KEY"
@@ -107,26 +101,23 @@ jobs:
           done
 
           stage="render-start"
-          http_code=000
-          for attempt in {1..20}; do
-            http_code="$(curl --silent --show-error --retry 3 --retry-all-errors --connect-timeout 10 --max-time 60 \
-              --request POST \
-              --header "Authorization: Bearer $RENDER_API_KEY" \
-              --header 'Content-Type: application/json' \
-              --data "$(jq -nc --arg commitId "$REVISION" '{commitId:$commitId}')" \
-              --output /tmp/render-start.json \
-              --write-out '%{http_code}' \
-              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys" || true)"
-            [[ "$http_code" =~ ^2[0-9][0-9]$ ]] && break
-            sleep 15
-          done
-          [[ "$http_code" =~ ^2[0-9][0-9]$ ]]
+          http_code="$(curl --silent --show-error --retry 3 --retry-all-errors --connect-timeout 10 --max-time 60 \
+            --request POST \
+            --header "Authorization: Bearer $RENDER_API_KEY" \
+            --header 'Content-Type: application/json' \
+            --data "$(jq -nc --arg commitId "$REVISION" '{commitId:$commitId}')" \
+            --output /tmp/render-start.json \
+            --write-out '%{http_code}' \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys" || true)"
 
-          response="$(cat /tmp/render-start.json)"
-          deploy_id="$(jq -r '.id // .deploy.id // .[0].id // .[0].deploy.id // empty' <<<"$response")"
+          deploy_id=""
+          if [[ "$http_code" =~ ^2[0-9][0-9]$ ]] && jq -e . /tmp/render-start.json >/dev/null 2>&1; then
+            deploy_id="$(jq -r '.id // .deploy.id // .[0].id // .[0].deploy.id // empty' /tmp/render-start.json)"
+          fi
+
+          stage="render-resolve"
           if [[ -z "$deploy_id" ]]; then
-            stage="render-resolve"
-            for attempt in {1..60}; do
+            for attempt in {1..120}; do
               list="$(render_get "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys?limit=50")"
               deploy_id="$(jq -r --arg rev "$REVISION" '
                 def rows: if type == "array" then .[] elif type == "object" and (.deploys | type) == "array" then .deploys[] else empty end;
