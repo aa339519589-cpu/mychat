@@ -1,5 +1,5 @@
 name: Recover Render Production
-# Recovery trigger: deploy Code model ID repair.
+# Recovery trigger: deploy Chat streaming cadence fix.
 
 on:
   workflow_dispatch:
