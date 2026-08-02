@@ -2,7 +2,7 @@ import {
   normalizeConversationGenerationSnapshot,
   type ConversationGenerationSnapshot,
 } from '@/lib/generation-client'
-import { normalizeGeneratedMedia, normalizeGeneratedMediaList, type GeneratedMedia } from '@/lib/generated-media'
+import { normalizeGeneratedMediaList } from '@/lib/generated-media'
 import { normalizeTokenUsage } from '@/lib/token-usage'
 import { isRecord } from '@/lib/unknown-value'
 import { enqueueJobUntilAccepted } from './durable-job-enqueue'
@@ -13,7 +13,12 @@ import {
   type ConversationSetter,
   type MarkGeneration,
 } from './generation-terminal-client'
-import { streamJobEvents, type AcceptedJob } from './job-stream-client'
+import {
+  applyGenerationStreamEvent,
+  createGenerationStreamState,
+  type GenerationStreamState,
+} from './generation-stream-state'
+import { streamJobEvents, type AcceptedJob, type JobStreamEnvelope } from './job-stream-client'
 import { fetchJsonWithTimeout } from './timed-json-fetch'
 import {
   pendingGenerationId,
@@ -127,6 +132,29 @@ function initialPendingSnapshot(
   }
 }
 
+function terminalSnapshot(
+  event: JobStreamEnvelope,
+  accepted: AcceptedJob,
+  initial: ConversationGenerationSnapshot,
+  state: GenerationStreamState,
+): ConversationGenerationSnapshot | null {
+  if (event.kind !== 'job.terminal') return null
+  const result = isRecord(event.payload.result) ? event.payload.result : {}
+  const tokenUsage = normalizeTokenUsage(result.tokenUsage)
+  return normalizeConversationGenerationSnapshot({
+    id: accepted.jobId,
+    conversationId: initial.conversationId,
+    assistantMessageId: initial.assistantMessageId,
+    status: event.payload.status,
+    content: typeof result.content === 'string' ? result.content : state.content,
+    thinking: typeof result.thinking === 'string' ? result.thinking : state.thinking,
+    media: Array.isArray(result.media) ? normalizeGeneratedMediaList(result.media) : state.media,
+    ...(tokenUsage ? { tokenUsage } : {}),
+    sequence: event.seq,
+    error: typeof event.payload.errorCode === 'string' ? event.payload.errorCode : null,
+  })
+}
+
 async function consumeGenerationStream(options: {
   accepted: AcceptedJob
   initial: ConversationGenerationSnapshot
@@ -136,55 +164,27 @@ async function consumeGenerationStream(options: {
   markGeneration: MarkGeneration
 }) {
   const { accepted, initial, controller, setConversations, markGeneration } = options
-  let content = ''
-  let thinking = ''
-  const media: GeneratedMedia[] = []
+  const state = createGenerationStreamState()
   for await (const event of streamJobEvents(accepted, controller.signal)) {
-    if (event.kind === 'job.retry_scheduled'
-      || (event.kind === 'job.leased'
-        && typeof event.payload.attempt === 'number' && event.payload.attempt > 1)) {
-      content = ''
-      thinking = ''
-      media.splice(0, media.length)
-    }
-    if (event.kind === 'text.delta' && typeof event.payload.text === 'string') {
-      content += event.payload.text
-    } else if (event.kind === 'thinking.delta' && typeof event.payload.thinking === 'string') {
-      thinking += event.payload.thinking
-    } else if (event.kind === 'media.uploaded') {
-      const item = normalizeGeneratedMedia(event.payload.media)
-      if (item && !media.some(existing => existing.type === item.type && existing.url === item.url)) media.push(item)
-    }
+    applyGenerationStreamEvent(event, state)
     if (event.kind === 'job.terminal') {
-      const result = isRecord(event.payload.result) ? event.payload.result : {}
-      const tokenUsage = normalizeTokenUsage(result.tokenUsage)
-      const snapshot = normalizeConversationGenerationSnapshot({
-        id: accepted.jobId,
-        conversationId: initial.conversationId,
-        assistantMessageId: initial.assistantMessageId,
-        status: event.payload.status,
-        content: typeof result.content === 'string' ? result.content : content,
-        thinking: typeof result.thinking === 'string' ? result.thinking : thinking,
-        media: Array.isArray(result.media) ? normalizeGeneratedMediaList(result.media) : media,
-        ...(tokenUsage ? { tokenUsage } : {}),
-        sequence: event.seq,
-        error: typeof event.payload.errorCode === 'string' ? event.payload.errorCode : null,
-      })
-      if (!snapshot || !(await applyGenerationTerminal({
+      const snapshot = terminalSnapshot(event, accepted, initial, state)
+      const applied = snapshot && await applyGenerationTerminal({
         conversationId: initial.conversationId,
         snapshot,
         showTokenUsage: options.showTokenUsage,
         setConversations,
         markGeneration,
-      }))) throw new Error('generation_terminal_invalid')
+      })
+      if (!applied) throw new Error('generation_terminal_invalid')
       return
     }
     applyGenerationSnapshot(setConversations, initial.conversationId, {
       ...initial,
       status: 'running',
-      content,
-      thinking,
-      media: [...media],
+      content: state.content,
+      thinking: state.thinking,
+      media: [...state.media],
       sequence: event.seq,
       error: null,
     })

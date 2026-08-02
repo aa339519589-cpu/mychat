@@ -52,6 +52,7 @@ export async function rethrowChatTextFailure(
   runtime: ChatTextRuntime,
   dependencies: ChatTextDependencies,
 ): Promise<never> {
+  await runtime.writer.closeLive().catch(() => undefined)
   if (runtime.persistedMedia) {
     await cleanupChatInlineMedia(
       context,
