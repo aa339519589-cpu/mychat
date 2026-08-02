@@ -1,18 +1,19 @@
-import type { Dispatch, SetStateAction } from 'react'
 import type { Conversation } from '@/lib/chat-data'
 import {
-  applyConversationGenerationSnapshot,
   normalizeConversationGenerationSnapshot,
-  toClientGenerationStatus,
-  toGenerationTerminalSnapshot,
-  type ClientGenerationPatch,
   type ConversationGenerationSnapshot,
 } from '@/lib/generation-client'
-import { cacheGenerationTerminal, persistOwnerTokenUsage } from '@/lib/data'
 import { normalizeGeneratedMedia, normalizeGeneratedMediaList, type GeneratedMedia } from '@/lib/generated-media'
 import { normalizeTokenUsage } from '@/lib/token-usage'
 import { isRecord } from '@/lib/unknown-value'
 import { enqueueJobUntilAccepted } from './durable-job-enqueue'
+import {
+  applyGenerationSnapshot,
+  applyGenerationTerminal,
+  markGenerationWarning,
+  type ConversationSetter,
+  type MarkGeneration,
+} from './generation-terminal-client'
 import { streamJobEvents, type AcceptedJob } from './job-stream-client'
 import { fetchJsonWithTimeout } from './timed-json-fetch'
 import {
@@ -23,9 +24,6 @@ import {
   removePermanentlyRejectedSubmission,
   type PendingChatSubmission,
 } from './pending-chat-submission'
-
-type ConversationSetter = Dispatch<SetStateAction<Conversation[]>>
-type MarkGeneration = (conversationId: string, patch: ClientGenerationPatch) => void
 
 type ResumeJob = {
   id: string
@@ -75,8 +73,6 @@ export async function hasActiveConversationGeneration(
     const job = parseJob(body.job)
     return job !== null && !terminal(job.status)
   } catch {
-    // This is only a duplicate-submission guard. Do not turn a read outage
-    // into an admission outage; the fenced enqueue RPC remains authoritative.
     return false
   }
 }
@@ -113,62 +109,6 @@ function snapshotFromJob(job: ResumeJob, conversationId: string): ConversationGe
     sequence: job.eventSequence,
     error: job.errorCode,
   })
-}
-
-function applySnapshot(
-  setConversations: ConversationSetter,
-  conversationId: string,
-  snapshot: ConversationGenerationSnapshot,
-) {
-  setConversations(previous => applyConversationGenerationSnapshot(previous, conversationId, snapshot))
-}
-
-async function applyTerminal(options: {
-  conversationId: string
-  snapshot: ConversationGenerationSnapshot
-  showTokenUsage: boolean
-  setConversations: ConversationSetter
-  markGeneration: MarkGeneration
-}) {
-  const terminalSnapshot = toGenerationTerminalSnapshot(options.snapshot)
-  if (!terminalSnapshot) return false
-  applySnapshot(options.setConversations, options.conversationId, options.snapshot)
-  await cacheGenerationTerminal(options.conversationId, options.snapshot.assistantMessageId, {
-    ...terminalSnapshot,
-    generationId: options.snapshot.id,
-  }).catch(() => undefined)
-  if (options.showTokenUsage
-    && terminalSnapshot.status === 'completed'
-    && terminalSnapshot.tokenUsage) {
-    await persistOwnerTokenUsage(
-      options.conversationId,
-      options.snapshot.assistantMessageId,
-      options.snapshot.id,
-    ).catch(() => null)
-  }
-  options.markGeneration(options.conversationId, {
-    status: toClientGenerationStatus(options.snapshot.status),
-    generationId: options.snapshot.id,
-    assistantMessageId: options.snapshot.assistantMessageId,
-    authoritativeTerminal: true,
-  })
-  return true
-}
-
-function markWarning(
-  setConversations: ConversationSetter,
-  conversationId: string,
-  assistantMessageId: string,
-  warning = '生成状态连接已中断；当前内容已保留，重新打开会话可再次同步。',
-) {
-  setConversations(previous => previous.map(conversation => conversation.id !== conversationId
-    ? conversation
-    : {
-      ...conversation,
-      messages: conversation.messages.map(message => message.id !== assistantMessageId
-        ? message
-        : { ...message, outputWarning: warning }),
-    }))
 }
 
 function initialPendingSnapshot(
@@ -231,7 +171,7 @@ async function consumeGenerationStream(options: {
         sequence: event.seq,
         error: typeof event.payload.errorCode === 'string' ? event.payload.errorCode : null,
       })
-      if (!snapshot || !(await applyTerminal({
+      if (!snapshot || !(await applyGenerationTerminal({
         conversationId: initial.conversationId,
         snapshot,
         showTokenUsage: options.showTokenUsage,
@@ -240,7 +180,7 @@ async function consumeGenerationStream(options: {
       }))) throw new Error('generation_terminal_invalid')
       return
     }
-    applySnapshot(setConversations, initial.conversationId, {
+    applyGenerationSnapshot(setConversations, initial.conversationId, {
       ...initial,
       status: 'running',
       content,
@@ -263,7 +203,8 @@ export async function resumeConversationGeneration(options: {
   onReconciled?: (available: boolean) => void
 }) {
   const { conversationId, setConversations, markGeneration, registerAbort, clearAbort } = options
-  let controller: AbortController | null = null; let activeIdentity: { id: string; assistantMessageId: string } | null = null
+  let controller: AbortController | null = null
+  let activeIdentity: { id: string; assistantMessageId: string } | null = null
   let reconciled = false
   const report = (available: boolean) => {
     if (reconciled) return
@@ -296,7 +237,7 @@ export async function resumeConversationGeneration(options: {
         pending.path,
         pendingBody,
         controller.signal,
-        () => markWarning(
+        () => markGenerationWarning(
           setConversations,
           conversationId,
           pending.assistantMessageId,
@@ -305,7 +246,7 @@ export async function resumeConversationGeneration(options: {
       )
       await removePendingChatSubmission(conversationId, pending.generationId)
       const initial = initialPendingSnapshot(pending, accepted)
-      applySnapshot(setConversations, conversationId, initial)
+      applyGenerationSnapshot(setConversations, conversationId, initial)
       setConversations(previous => previous.map(conversation => conversation.id === conversationId
         ? { ...conversation, draft: false }
         : conversation))
@@ -326,7 +267,7 @@ export async function resumeConversationGeneration(options: {
     activeIdentity = { id: job.id, assistantMessageId: initial.assistantMessageId }
     await removePendingChatSubmission(conversationId, pendingGenerationId(pendingBeforeQuery, job.id))
     if (terminal(job.status)) {
-      await applyTerminal({
+      await applyGenerationTerminal({
         conversationId,
         snapshot: initial,
         showTokenUsage: options.showTokenUsage,
@@ -347,11 +288,7 @@ export async function resumeConversationGeneration(options: {
     controller = new AbortController()
     registerAbort(conversationId, controller)
     await consumeGenerationStream({
-      accepted: {
-        jobId: job.id,
-        status: job.status,
-        streamUrl: body.streamUrl,
-      },
+      accepted: { jobId: job.id, status: job.status, streamUrl: body.streamUrl },
       initial,
       controller,
       showTokenUsage: options.showTokenUsage,
@@ -361,18 +298,15 @@ export async function resumeConversationGeneration(options: {
   } catch (error) {
     if (controller?.signal.aborted || (error instanceof Error && error.name === 'AbortError')) return
     await removePermanentlyRejectedSubmission(conversationId, activeIdentity, error)
-    const response = error instanceof Error ? error.message : 'unknown'
-    console.warn('resumeConversationGeneration', response)
+    console.warn('resumeConversationGeneration', error instanceof Error ? error.message : 'unknown')
     if (activeIdentity) {
       markGeneration(conversationId, {
         status: 'error',
         generationId: activeIdentity.id,
         assistantMessageId: activeIdentity.assistantMessageId,
       })
-      markWarning(setConversations, conversationId, activeIdentity.assistantMessageId)
+      markGenerationWarning(setConversations, conversationId, activeIdentity.assistantMessageId)
     }
-    // A status endpoint outage is not a reason to keep the whole composer locked.
-    // Fresh history remains usable and the next activation will attempt reconciliation again.
     report(true)
   } finally {
     if (controller) clearAbort(conversationId, controller)
