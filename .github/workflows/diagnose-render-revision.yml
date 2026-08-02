@@ -1,0 +1,35 @@
+name: Diagnose Render Revision
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/diagnose-render-revision.yml
+
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report production runtime revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVISION: ${{ github.sha }}
+          PRODUCTION_URL: https://mychat-nm6x.onrender.com
+        run: |
+          set -Eeuo pipefail
+          payload="$(curl --silent --show-error --max-time 60 --header 'Accept: application/json' "$PRODUCTION_URL/api/ready" || true)"
+          runtime_revision="$(jq -r '.revision // "none"' <<<"$payload" 2>/dev/null || printf none)"
+          status="$(jq -r '.status // "unknown"' <<<"$payload" 2>/dev/null || printf unknown)"
+          context="Observed Render Revision: ${runtime_revision:0:12}"
+          description="Ready status $status; observed runtime revision ${runtime_revision:0:12}"
+          curl --fail-with-body --silent --show-error --request POST \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            --data "$(jq -nc --arg state success --arg context "$context" --arg description "$description" --arg target_url "$PRODUCTION_URL" '{state:$state,context:$context,description:$description,target_url:$target_url}')" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$REVISION" >/dev/null
