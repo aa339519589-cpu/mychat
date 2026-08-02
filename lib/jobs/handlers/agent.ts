@@ -258,7 +258,6 @@ export async function runAgentTaskJob(
     await dependencies.runLoop(agentLoopOptions({
       context, job: input, runtime, prepared, callbacks,
     }))
-    runtime.events.flushLeadText()
     await writer.drain()
     return await completeAgentRun({
       context, job: input, runtime, writer, attemptTokens: callbacks.tracking.attemptTokens,
