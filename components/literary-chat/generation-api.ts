@@ -147,7 +147,13 @@ async function consumeGenerationStream(options: {
       thinking = ''
       media.splice(0, media.length)
     }
-    if (event.kind === 'text.delta' && typeof event.payload.text === 'string') {
+    if (event.kind === 'job.snapshot') {
+      if (typeof event.payload.content === 'string') content = event.payload.content
+      if (typeof event.payload.thinking === 'string') thinking = event.payload.thinking
+      if (Array.isArray(event.payload.media)) {
+        media.splice(0, media.length, ...normalizeGeneratedMediaList(event.payload.media))
+      }
+    } else if (event.kind === 'text.delta' && typeof event.payload.text === 'string') {
       content += event.payload.text
     } else if (event.kind === 'thinking.delta' && typeof event.payload.thinking === 'string') {
       thinking += event.payload.thinking
