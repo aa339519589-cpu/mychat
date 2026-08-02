@@ -2,9 +2,9 @@ import type { ChatEvent } from '@/lib/llm/events'
 import type { JobEventDraft, JsonObject, JsonValue } from './contracts'
 import type { JobExecutionContext } from './worker'
 
-const FLUSH_INTERVAL_MS = 100
+const FLUSH_INTERVAL_MS = 16
 const FLUSH_BATCH_SIZE = 32
-const MAX_COALESCED_DELTA_CHARS = 4_096
+const MAX_COALESCED_DELTA_CHARS = 512
 
 function jsonObject(value: object): JsonObject {
   const parsed: unknown = JSON.parse(JSON.stringify(value))
@@ -56,9 +56,9 @@ function materializedText(
 }
 
 /**
- * Bridges synchronous model deltas to the durable, fenced event log. Adjacent
- * deltas are coalesced, writes are serialized, and drain propagates any lost
- * fence or storage failure before the handler can finalize.
+ * Bridges synchronous model deltas to the durable, fenced event log. The first
+ * visible text delta flushes immediately; later deltas flush once per display
+ * frame so clients receive real streaming without a second artificial queue.
  */
 export class JobEventWriter {
   private readonly context: JobExecutionContext
@@ -68,15 +68,18 @@ export class JobEventWriter {
   private timer: ReturnType<typeof setTimeout> | null = null
   private fullText = ''
   private fullThinking = ''
+  private firstTextFlushed = false
 
   constructor(context: JobExecutionContext) {
     this.context = context
     const progress = context.job.checkpoint?.progress
     this.fullText = materializedText(progress, 'content', 'contentParts')
     this.fullThinking = materializedText(progress, 'thinking', 'thinkingParts')
+    this.firstTextFlushed = this.fullText.length > 0
   }
 
   emit = (event: ChatEvent): void => {
+    const isText = 'text' in event && event.text.length > 0
     if ('text' in event) this.fullText += event.text
     if ('thinking' in event) this.fullThinking += event.thinking
     const draft = eventDraft(event)
@@ -90,8 +93,14 @@ export class JobEventWriter {
     } else {
       this.queue.push(draft)
     }
-    if (this.queue.length >= FLUSH_BATCH_SIZE) this.scheduleFlush(0)
-    else if (!this.timer) this.scheduleFlush(FLUSH_INTERVAL_MS)
+    if (isText && !this.firstTextFlushed) {
+      this.firstTextFlushed = true
+      this.scheduleFlush(0)
+    } else if (this.queue.length >= FLUSH_BATCH_SIZE) {
+      this.scheduleFlush(0)
+    } else if (!this.timer) {
+      this.scheduleFlush(FLUSH_INTERVAL_MS)
+    }
   }
 
   snapshot(extra: JsonObject = {}): JsonObject {
