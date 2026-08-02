@@ -111,6 +111,7 @@ test('active event polling never backs off into multi-second Chat gaps', async (
     client,
     principalId,
     jobId,
+    jobType: 'chat.generation',
     fromSequence: 0,
     initialStatus: 'running',
     requestSignal: new AbortController().signal,
@@ -128,8 +129,6 @@ test('active event polling never backs off into multi-second Chat gaps', async (
       }
     },
     wait: async milliseconds => { waits.push(milliseconds) },
-    initialPollIntervalMs: 40,
-    maxPollIntervalMs: 120,
   })
 
   const body = await new Response(stream).text()
@@ -137,4 +136,31 @@ test('active event polling never backs off into multi-second Chat gaps', async (
   assert.ok(waits.length >= 5)
   assert.ok(Math.max(...waits) <= 120)
   assert.deepEqual(waits.slice(0, 5), [80, 120, 120, 120, 120])
+})
+
+test('non-Chat jobs retain their existing exponential polling policy', async () => {
+  let reads = 0
+  const waits: number[] = []
+  const stream = createJobEventStream({
+    client,
+    principalId,
+    jobId,
+    jobType: 'agent.task',
+    fromSequence: 0,
+    initialStatus: 'running',
+    requestSignal: new AbortController().signal,
+  }, {
+    readEvents: async () => {
+      reads += 1
+      if (reads <= 4) return { ok: true, value: [] }
+      return {
+        ok: true,
+        value: [event(1, 'job.terminal', { status: 'completed' })],
+      }
+    },
+    wait: async milliseconds => { waits.push(milliseconds) },
+  })
+
+  await new Response(stream).text()
+  assert.deepEqual(waits.slice(0, 4), [500, 1_000, 2_000, 2_000])
 })
