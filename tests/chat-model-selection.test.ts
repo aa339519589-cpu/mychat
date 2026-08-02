@@ -4,6 +4,7 @@ import {
   ChatModelSelectionError,
   resolveChatModelSelection,
 } from '../lib/chat/model-selection'
+import { resolveCodeModelSelection } from '../lib/code-agent/model-selection'
 import type { ModelEndpointRow } from '../lib/model-endpoint-server'
 
 const endpoint: ModelEndpointRow = {
@@ -16,6 +17,11 @@ const endpoint: ModelEndpointRow = {
   model: 'image-model',
   output_kind: 'image',
   auth_type: 'x-api-key',
+}
+
+function restoreEnvironment(name: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[name]
+  else process.env[name] = value
 }
 
 test('custom endpoints require an authenticated owner', async () => {
@@ -83,3 +89,52 @@ test('platform media tiers do not depend on the chat model API key', async () =>
   assert.equal(result.platformTierLabel, '视频')
 })
 
+test('curated DeepSeek chat models use the official DeepSeek transport', async () => {
+  const previousDeepSeekKey = process.env.DEEPSEEK_API_KEY
+  const previousOpenRouterKey = process.env.OPENROUTER_API_KEY
+  process.env.DEEPSEEK_API_KEY = 'deepseek-direct-key'
+  delete process.env.OPENROUTER_API_KEY
+  try {
+    const result = await resolveChatModelSelection({
+      tier: '绝句',
+      modelId: 'deepseek/deepseek-v4-flash-0731',
+      reasoningEffort: 'medium',
+      supabase: null,
+      userId: null,
+    })
+    assert.equal(result.model, 'deepseek-v4-flash')
+    assert.equal(result.apiKey, 'deepseek-direct-key')
+    assert.equal(result.capability.provider.id, 'deepseek')
+    assert.equal(result.capability.provider.adapter, 'deepseek-openai')
+    assert.equal(result.capability.provider.baseUrl, 'https://api.deepseek.com')
+    assert.equal(result.capability.provider.apiKeyEnv, 'DEEPSEEK_API_KEY')
+    assert.equal(result.thinking, true)
+  } finally {
+    restoreEnvironment('DEEPSEEK_API_KEY', previousDeepSeekKey)
+    restoreEnvironment('OPENROUTER_API_KEY', previousOpenRouterKey)
+  }
+})
+
+test('DeepSeek Code selection bypasses OpenRouter and keeps official credentials', async () => {
+  const previousDeepSeekKey = process.env.DEEPSEEK_API_KEY
+  const previousOpenRouterKey = process.env.OPENROUTER_API_KEY
+  process.env.DEEPSEEK_API_KEY = 'deepseek-code-key'
+  delete process.env.OPENROUTER_API_KEY
+  try {
+    const result = await resolveCodeModelSelection({
+      modelId: 'deepseek/deepseek-v4-pro',
+      reasoningEffort: 'high',
+      supabase: null,
+      userId: null,
+      allowPremium: true,
+    })
+    assert.equal(result.model, 'deepseek-v4-pro')
+    assert.equal(result.apiKey, 'deepseek-code-key')
+    assert.equal(result.capability.provider.id, 'deepseek')
+    assert.equal(result.capability.provider.baseUrl, 'https://api.deepseek.com')
+    assert.notEqual(result.capability.provider.id, 'openrouter')
+  } finally {
+    restoreEnvironment('DEEPSEEK_API_KEY', previousDeepSeekKey)
+    restoreEnvironment('OPENROUTER_API_KEY', previousOpenRouterKey)
+  }
+})
