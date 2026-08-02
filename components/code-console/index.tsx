@@ -47,6 +47,7 @@ export function CodeConsole({ userId, onExit }: CodeConsoleProps) {
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const model = useCodeModelSelection()
+  const modelReady = Boolean(model.activeModelId)
 
   const { restoreTask, syncWorkspaceState } = useTaskRecovery({
     messages,
@@ -104,7 +105,7 @@ export function CodeConsole({ userId, onExit }: CodeConsoleProps) {
   }, [])
 
   async function runSend(text: string, options?: RunCodeSendOptions): Promise<void> {
-    if (!model.activeModelId) {
+    if (!modelReady) {
       setApplyError("模型目录尚未载入，请稍后重试")
       return
     }
@@ -115,7 +116,7 @@ export function CodeConsole({ userId, onExit }: CodeConsoleProps) {
       streaming,
       currentTaskId,
       sessionId,
-      modelId: model.activeModelId,
+      modelId: model.activeModelId!,
       reasoningEffort: model.reasoningEffort,
       auto,
       abortRef,
