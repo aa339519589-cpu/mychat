@@ -42,12 +42,15 @@ jobs:
           env_base="$service/env-vars"
           auth=(-H "Authorization: Bearer $RENDER_API_KEY" -H 'Content-Type: application/json')
           curl --fail-with-body --silent --show-error "${auth[@]}" -X PATCH \
-            --data '{"autoDeploy":"no","serviceDetails":{"healthCheckPath":"/api/live","startCommand":"npm start"}}' \
+            --data '{"autoDeploy":"no","serviceDetails":{"healthCheckPath":"/api/live","envSpecificDetails":{"startCommand":"npm start"}}}' \
             "$service" >/dev/null
           curl --fail-with-body --silent --show-error "${auth[@]}" -X PUT \
             --data '{"value":"all"}' "$env_base/MYCHAT_RUNTIME_ROLE" >/dev/null
           curl --fail-with-body --silent --show-error "${auth[@]}" -X PUT \
             --data '{"value":"off"}' "$env_base/MYCHAT_MAINTENANCE_MODE" >/dev/null
+          configured="$(curl --fail-with-body --silent --show-error -H "Authorization: Bearer $RENDER_API_KEY" "$service")"
+          actual="$(jq -r '.serviceDetails.envSpecificDetails.startCommand // "missing"' <<<"$configured")"
+          test "$actual" = "npm start"
 
       - name: Deploy exact current revision
         id: render
@@ -72,7 +75,6 @@ jobs:
               exit 1
               ;;
           esac
-
           deploy_id="$(jq -r '.id // .deploy.id // empty' <<<"$response" 2>/dev/null || true)"
           if [[ -z "$deploy_id" ]]; then
             for attempt in {1..120}; do
@@ -123,18 +125,20 @@ jobs:
         run: |
           set -euo pipefail
           test "$(curl --silent --show-error -o /dev/null -w '%{http_code}' "$PRODUCTION_URL/api/live")" = "200"
-          env_base="https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars"
-          service_role="$(curl --fail-with-body --silent --show-error \
-            -H "Authorization: Bearer $RENDER_API_KEY" "$env_base/SUPABASE_SERVICE_ROLE_KEY" | jq -r '.value // empty')"
+          envs="$(curl --fail-with-body --silent --show-error --retry 4 --retry-all-errors \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars?limit=100")"
+          normalized="$(jq -c 'if type == "array" then map(.envVar // .) elif (.envVars | type) == "array" then (.envVars | map(.envVar // .)) else [] end' <<<"$envs")"
+          service_role="$(jq -r 'map(select(.key == "SUPABASE_SERVICE_ROLE_KEY"))[0].value // empty' <<<"$normalized")"
           test -n "$service_role"
           auth=(-H "apikey: $service_role" -H "Authorization: Bearer $service_role")
           for attempt in {1..30}; do
-            heartbeat="$(curl --fail-with-body --silent --show-error "${auth[@]}" \
-              "$SUPABASE_URL/rest/v1/job_worker_heartbeats?select=revision,queues,draining,heartbeat_at&order=heartbeat_at.desc&limit=1")"
-            revision="$(jq -r '.[0].revision // empty' <<<"$heartbeat")"
-            queues="$(jq -r '.[0].queues // [] | join(",")' <<<"$heartbeat")"
-            draining="$(jq -r '.[0].draining // true' <<<"$heartbeat")"
-            heartbeat_at="$(jq -r '.[0].heartbeat_at // empty' <<<"$heartbeat")"
+            heartbeat="$(curl --silent --show-error --retry 3 --retry-all-errors "${auth[@]}" \
+              "$SUPABASE_URL/rest/v1/job_worker_heartbeats?select=revision,queues,draining,heartbeat_at&order=heartbeat_at.desc&limit=1" 2>/dev/null)" || heartbeat='[]'
+            revision="$(jq -r '.[0].revision // empty' <<<"$heartbeat" 2>/dev/null || true)"
+            queues="$(jq -r '.[0].queues // [] | join(",")' <<<"$heartbeat" 2>/dev/null || true)"
+            draining="$(jq -r '.[0].draining // true' <<<"$heartbeat" 2>/dev/null || echo true)"
+            heartbeat_at="$(jq -r '.[0].heartbeat_at // empty' <<<"$heartbeat" 2>/dev/null || true)"
             if [[ "$revision" == "${GITHUB_SHA:0:12}" && "$queues" == *agent* && "$draining" == "false" && -n "$heartbeat_at" ]]; then
               echo "CODE_WORKER_HEARTBEAT revision=$revision queues=$queues heartbeat_at=$heartbeat_at"
               exit 0
