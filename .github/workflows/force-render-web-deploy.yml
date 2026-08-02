@@ -1,5 +1,6 @@
 name: Force Render Web Deploy
 
+# Production closure trigger: model picker, formulas, provider icons, and scroll bubble.
 on:
   push:
     branches:
