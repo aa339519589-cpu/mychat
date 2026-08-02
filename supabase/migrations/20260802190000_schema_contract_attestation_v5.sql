@@ -80,4 +80,34 @@ grant execute on function public.verify_schema_contract_v5(integer,text,integer)
 comment on function public.verify_schema_contract_v5(integer,text,integer) is
   'Fails closed unless runtime v16 and the exact v5 migration contract are installed.';
 
+-- The application readiness client uses a stable RPC name. Advance that stable
+-- entry point to the newest sealed contract without exposing version-specific
+-- RPCs to browser roles.
+create or replace function public.verify_schema_contract_v3(
+  input_contract_version integer,
+  input_manifest_sha256 text,
+  input_migration_count integer
+)
+returns boolean
+language sql
+stable
+strict
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $$
+  select public.verify_schema_contract_v5(
+    input_contract_version,
+    input_manifest_sha256,
+    input_migration_count
+  );
+$$;
+
+revoke all on function public.verify_schema_contract_v3(integer,text,integer)
+  from public, anon, authenticated, service_role;
+grant execute on function public.verify_schema_contract_v3(integer,text,integer)
+  to service_role;
+
+comment on function public.verify_schema_contract_v3(integer,text,integer) is
+  'Stable readiness entry point delegated to the exact current schema contract.';
+
 commit;
