@@ -8,8 +8,9 @@ import {
   type ClientGenerationPatch,
   type ConversationGenerationSnapshot,
 } from '@/lib/generation-client'
-import { cacheGenerationTerminal } from '@/lib/data'
+import { cacheGenerationTerminal, persistOwnerTokenUsage } from '@/lib/data'
 import { normalizeGeneratedMedia, normalizeGeneratedMediaList, type GeneratedMedia } from '@/lib/generated-media'
+import { normalizeTokenUsage } from '@/lib/token-usage'
 import { isRecord } from '@/lib/unknown-value'
 import { enqueueJobUntilAccepted } from './durable-job-enqueue'
 import { streamJobEvents, type AcceptedJob } from './job-stream-client'
@@ -99,6 +100,7 @@ async function queryConversationGeneration(conversationId: string): Promise<Reco
 function snapshotFromJob(job: ResumeJob, conversationId: string): ConversationGenerationSnapshot | null {
   const result = isRecord(job.result) ? job.result : {}
   const source = { ...job.progress, ...result }
+  const tokenUsage = normalizeTokenUsage(source.tokenUsage)
   return normalizeConversationGenerationSnapshot({
     id: job.id,
     conversationId,
@@ -107,6 +109,7 @@ function snapshotFromJob(job: ResumeJob, conversationId: string): ConversationGe
     content: typeof source.content === 'string' ? source.content : '',
     thinking: typeof source.thinking === 'string' ? source.thinking : '',
     media: Array.isArray(source.media) ? source.media : [],
+    ...(tokenUsage ? { tokenUsage } : {}),
     sequence: job.eventSequence,
     error: job.errorCode,
   })
@@ -123,6 +126,7 @@ function applySnapshot(
 async function applyTerminal(options: {
   conversationId: string
   snapshot: ConversationGenerationSnapshot
+  showTokenUsage: boolean
   setConversations: ConversationSetter
   markGeneration: MarkGeneration
 }) {
@@ -133,6 +137,15 @@ async function applyTerminal(options: {
     ...terminalSnapshot,
     generationId: options.snapshot.id,
   }).catch(() => undefined)
+  if (options.showTokenUsage
+    && terminalSnapshot.status === 'completed'
+    && terminalSnapshot.tokenUsage) {
+    await persistOwnerTokenUsage(
+      options.conversationId,
+      options.snapshot.assistantMessageId,
+      options.snapshot.id,
+    ).catch(() => null)
+  }
   options.markGeneration(options.conversationId, {
     status: toClientGenerationStatus(options.snapshot.status),
     generationId: options.snapshot.id,
@@ -179,6 +192,7 @@ async function consumeGenerationStream(options: {
   accepted: AcceptedJob
   initial: ConversationGenerationSnapshot
   controller: AbortController
+  showTokenUsage: boolean
   setConversations: ConversationSetter
   markGeneration: MarkGeneration
 }) {
@@ -204,6 +218,7 @@ async function consumeGenerationStream(options: {
     }
     if (event.kind === 'job.terminal') {
       const result = isRecord(event.payload.result) ? event.payload.result : {}
+      const tokenUsage = normalizeTokenUsage(result.tokenUsage)
       const snapshot = normalizeConversationGenerationSnapshot({
         id: accepted.jobId,
         conversationId: initial.conversationId,
@@ -212,12 +227,14 @@ async function consumeGenerationStream(options: {
         content: typeof result.content === 'string' ? result.content : content,
         thinking: typeof result.thinking === 'string' ? result.thinking : thinking,
         media: Array.isArray(result.media) ? normalizeGeneratedMediaList(result.media) : media,
+        ...(tokenUsage ? { tokenUsage } : {}),
         sequence: event.seq,
         error: typeof event.payload.errorCode === 'string' ? event.payload.errorCode : null,
       })
       if (!snapshot || !(await applyTerminal({
         conversationId: initial.conversationId,
         snapshot,
+        showTokenUsage: options.showTokenUsage,
         setConversations,
         markGeneration,
       }))) throw new Error('generation_terminal_invalid')
@@ -238,6 +255,7 @@ async function consumeGenerationStream(options: {
 
 export async function resumeConversationGeneration(options: {
   conversationId: string
+  showTokenUsage: boolean
   setConversations: ConversationSetter
   markGeneration: MarkGeneration
   registerAbort: (conversationId: string, controller: AbortController) => void
@@ -291,7 +309,14 @@ export async function resumeConversationGeneration(options: {
       setConversations(previous => previous.map(conversation => conversation.id === conversationId
         ? { ...conversation, draft: false }
         : conversation))
-      await consumeGenerationStream({ accepted, initial, controller, setConversations, markGeneration })
+      await consumeGenerationStream({
+        accepted,
+        initial,
+        controller,
+        showTokenUsage: options.showTokenUsage,
+        setConversations,
+        markGeneration,
+      })
       return
     }
     const job = parseJob(body.job)
@@ -301,7 +326,13 @@ export async function resumeConversationGeneration(options: {
     activeIdentity = { id: job.id, assistantMessageId: initial.assistantMessageId }
     await removePendingChatSubmission(conversationId, pendingGenerationId(pendingBeforeQuery, job.id))
     if (terminal(job.status)) {
-      await applyTerminal({ conversationId, snapshot: initial, setConversations, markGeneration })
+      await applyTerminal({
+        conversationId,
+        snapshot: initial,
+        showTokenUsage: options.showTokenUsage,
+        setConversations,
+        markGeneration,
+      })
       report(true)
       return
     }
@@ -323,6 +354,7 @@ export async function resumeConversationGeneration(options: {
       },
       initial,
       controller,
+      showTokenUsage: options.showTokenUsage,
       setConversations,
       markGeneration,
     })
