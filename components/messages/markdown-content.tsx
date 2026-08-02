@@ -20,9 +20,9 @@ export function MessageMarkdown({ text }: { text: string }) {
       remarkPlugins={[remarkGfm, remarkMath]}
       rehypePlugins={[rehypeKatex]}
       components={{
-        p: ({ children }) => <p className="mb-2.5 break-words leading-[26px] tracking-[0.001em] [overflow-wrap:anywhere]">{children}</p>,
+        p: ({ children }) => <p className="mb-3 break-words leading-[1.7] tracking-[0.01em] [overflow-wrap:anywhere]">{children}</p>,
         a: ({ children, href }) => <a href={href} className="break-all text-primary underline underline-offset-4 hover:text-primary/80">{children}</a>,
-        strong: ({ children }) => <strong className="font-[750]">{children}</strong>,
+        strong: ({ children }) => <strong className="font-[650]">{children}</strong>,
         em: ({ children }) => <em className="italic">{children}</em>,
         del: ({ children }) => <del className="text-muted-foreground/60 line-through">{children}</del>,
         code: ({ children }) => <code className="break-all rounded bg-muted/40 px-1.5 py-0.5 font-mono text-[0.84em] font-[500]">{children}</code>,
@@ -35,7 +35,7 @@ export function MessageMarkdown({ text }: { text: string }) {
         h6: ({ children }) => <h6 className="mb-1 mt-3 text-[0.92em] font-[500] text-muted-foreground">{children}</h6>,
         ul: ({ children }) => <ul className="mb-3 list-inside list-disc space-y-1.5 pl-2">{children}</ul>,
         ol: ({ children }) => <ol className="mb-3 list-inside list-decimal space-y-1.5 pl-2">{children}</ol>,
-        li: ({ children }) => <li className="break-words [overflow-wrap:anywhere]">{children}</li>,
+        li: ({ children }) => <li className="break-words leading-[1.7] [overflow-wrap:anywhere]">{children}</li>,
         blockquote: ({ children }) => <blockquote className="my-3 rounded-r border-l-4 border-primary/40 bg-muted/15 py-2 pl-4 pr-3 font-[500] italic text-muted-foreground">{children}</blockquote>,
         hr: () => <hr className="my-6 h-px border-0 bg-foreground/25 opacity-85" />,
         table: ({ children }) => <div className="markdown-body my-3 max-w-full overflow-x-auto"><table className="w-full min-w-[28rem] border-collapse rounded-lg border border-border/30">{children}</table></div>,

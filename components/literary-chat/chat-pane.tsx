@@ -28,7 +28,7 @@ export function ChatPane({ mobile, sidebarCollapsed, active, scrollRef, onOpenSi
       <div className={cn("pointer-events-none absolute left-0 top-0 z-20", mobile ? "pl-3 pt-[max(0.65rem,env(safe-area-inset-top))]" : "pl-4 pt-4")}>
         <button onClick={mobile ? onOpenSidebar : onToggleSidebar} className="fluid-press fluid-icon-press pointer-events-auto flex size-11 items-center justify-center rounded-full border border-border/70 bg-background text-muted-foreground shadow-[0_2px_8px_rgba(8,8,8,0.07)] hover:bg-secondary hover:text-foreground dark:border-white/10 dark:bg-[#1D1D1D]" aria-label={mobile ? "打开对话列表" : sidebarCollapsed ? "展开侧栏" : "收起侧栏"}><PanelLeft className="size-5" /></button>
       </div>
-      <div ref={scrollRef} className={cn("fluid-scroll min-h-0 min-w-0 flex-1 overflow-x-clip overflow-y-auto bg-background font-serif", mobile ? "pt-[max(0.5rem,env(safe-area-inset-top))]" : "pt-2")}>
+      <div ref={scrollRef} className={cn("fluid-scroll min-h-0 min-w-0 flex-1 overflow-x-clip overflow-y-auto bg-background font-sans", mobile ? "pt-[max(0.5rem,env(safe-area-inset-top))]" : "pt-2")}>
         {hasMessages ? <MessageList conversation={active!} {...messageProps} /> : <div className="mx-auto flex h-full max-w-[40rem] flex-col items-center justify-center px-8 text-center"><p className="text-[14px] text-muted-foreground/60">说点什么开始对谈</p></div>}
       </div>
       <div className="relative z-20 shrink-0">
