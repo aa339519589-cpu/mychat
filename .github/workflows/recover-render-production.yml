@@ -1,5 +1,5 @@
 name: Recover Render Production
-# Recovery trigger: deploy true low-latency Code streaming.
+# Recovery trigger: deploy immediate Chat streaming.
 
 on:
   workflow_dispatch:
