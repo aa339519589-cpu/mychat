@@ -2,6 +2,7 @@ import {
   MAX_GENERATED_MEDIA_ITEMS,
   type GeneratedMedia,
 } from '@/lib/generated-media'
+import { addTokenUsage, providerTokenUsage, tokenUsageTotal, type TokenUsage } from '@/lib/token-usage'
 import { isRecord } from '@/lib/unknown-value'
 import { makeContentFilter, parseDsmlToolCalls, hasIncompleteDsmlToolCall } from './sanitize'
 import type { Emit } from './events'
@@ -20,6 +21,7 @@ export type TurnAccumulationResult = {
   toolCalls: AccumulatedToolCall[]
   failed: boolean
   totalTokens: number
+  tokenUsage?: TokenUsage
   content: string
   finishReason: string | null
   truncated: boolean
@@ -91,6 +93,7 @@ export class TurnAccumulator {
   private content = ''
   private rawContent = ''
   private totalTokens = 0
+  private tokenUsage: TokenUsage | null = null
   private finishReason: string | null = null
   private reasoningContent = ''
   private streamError: string | null = null
@@ -158,6 +161,13 @@ export class TurnAccumulator {
     for (const item of value) {
       if (isRecord(item)) this.reasoningDetails.push(item)
     }
+  }
+
+  private acceptUsage(value: unknown): void {
+    const usage = providerTokenUsage(value)
+    if (!usage) return
+    this.tokenUsage = this.tokenUsage ? addTokenUsage(this.tokenUsage, usage) : usage
+    this.totalTokens = tokenUsageTotal(this.tokenUsage)
   }
 
   private acceptMedia(value: unknown): boolean {
@@ -244,9 +254,10 @@ export class TurnAccumulator {
     this.recordFirstEvent(value)
     const streamError = streamErrorMessage(value.error)
     if (streamError) this.streamError = streamError
+    this.acceptUsage(value.usage)
     if (this.handleResponsesApiEvent(value)) return
     const usage = isRecord(value.usage) ? value.usage : null
-    if (typeof usage?.total_tokens === 'number') this.totalTokens = usage.total_tokens
+    if (!this.tokenUsage && typeof usage?.total_tokens === 'number') this.totalTokens = usage.total_tokens
     const choices = Array.isArray(value.choices) ? value.choices : []
     const choice = isRecord(choices[0]) ? choices[0] : null
     if (choice) {
@@ -298,6 +309,7 @@ export class TurnAccumulator {
         toolCalls: [],
         failed: true,
         totalTokens: this.totalTokens,
+        ...(this.tokenUsage ? { tokenUsage: this.tokenUsage } : {}),
         content: '',
         finishReason: 'error',
         truncated: false,
@@ -320,6 +332,7 @@ export class TurnAccumulator {
       toolCalls,
       failed: false,
       totalTokens: this.totalTokens,
+      ...(this.tokenUsage ? { tokenUsage: this.tokenUsage } : {}),
       content: visibleContent,
       finishReason: this.finishReason,
       truncated: !this.finishReason && !input.sawDone && this.rawContent.length > 0,
