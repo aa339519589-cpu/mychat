@@ -11,7 +11,7 @@ const SESSION_ID = '74000000-0000-4000-8000-000000000003'
 const RESPONSE_ID = '74000000-0000-4000-8000-000000000004'
 const MESSAGE_ID = '74000000-0000-4000-8000-000000000005'
 const CREATED_AT = '2026-07-17T12:00:00.000Z'
-const MODEL_ID = 'deepseek/deepseek-v4-flash-0731'
+const MODEL_ID = 'deepseek-v4-flash'
 
 function planClient(tables: string[]): SupabaseClient {
   class Query implements PromiseLike<{ data: unknown; error: null }> {
@@ -84,7 +84,7 @@ function context(): JobExecutionContext {
   } as unknown as JobExecutionContext
 }
 
-test('provisional Agent input loads only durable chat and GitHub identity metadata', { concurrency: false }, async t => {
+test('provisional Agent input re-resolves a persisted DeepSeek runtime model id', { concurrency: false }, async t => {
   const previousDeepSeekKey = process.env.DEEPSEEK_API_KEY
   process.env.DEEPSEEK_API_KEY = 'test-deepseek-key'
   t.after(() => {
@@ -113,7 +113,7 @@ test('provisional Agent input loads only durable chat and GitHub identity metada
   assert.equal(input.login, 'architect')
   assert.equal(input.workspaceReady, false)
   assert.equal(input.defaultBranch, null)
-  assert.equal(input.selection.model, 'deepseek-v4-flash')
+  assert.equal(input.selection.model, MODEL_ID)
   assert.equal(input.selection.platformTierLabel, 'DeepSeek V4 Flash')
   assert.equal(input.selection.capability.provider.id, 'deepseek')
   assert.deepEqual(input.memories, [])
