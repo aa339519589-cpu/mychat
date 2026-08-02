@@ -18,6 +18,10 @@ import { codeAgentMode, trimCodeContextMessages } from "@/lib/code-agent/context
 import { provisionalRepositoryForSession } from "@/lib/code-agent/provisional-repository"
 import { errorMessage, isRecord } from "@/lib/unknown-value"
 import { applyCodeJobEnvelope } from "./job-events"
+import {
+  createSmoothCodeStreamRenderer,
+  type SmoothCodeStreamRenderer,
+} from "./smooth-stream"
 import { initialCodeStreamState, type CodeStreamState } from "./stream"
 import type { RunCodeSendOptions } from "./use-task-recovery"
 
@@ -71,7 +75,10 @@ type SessionResult =
   | { ok: true; sessionId: string }
   | { ok: false; error: string }
 
-type StreamAccumulator = { state: CodeStreamState }
+type StreamAccumulator = {
+  state: CodeStreamState
+  renderer: SmoothCodeStreamRenderer
+}
 
 const CODE_ENQUEUE_TIMEOUTS = {
   requestTimeoutMs: 45_000,
@@ -203,9 +210,8 @@ async function consumeStream(
     sessionId,
   }, controller.signal, CODE_ENQUEUE_TIMEOUTS)
   for await (const envelope of dependencies.stream(accepted, controller.signal)) {
-    const previous = accumulator.state
     accumulator.state = applyCodeJobEnvelope(accumulator.state, envelope)
-    renderState(context, request.assistantId, previous, accumulator.state)
+    accumulator.renderer.push(accumulator.state)
   }
   if (!accumulator.state.streamDone) throw new Error("作业事件流在终态前结束")
 }
@@ -298,14 +304,22 @@ export async function executeCodeSend(
 
   const controller = new AbortController()
   context.abortRef.current = controller
-  const stream = { state: initialCodeStreamState(request.initialTaskId) }
+  const initialState = initialCodeStreamState(request.initialTaskId)
+  const stream: StreamAccumulator = {
+    state: initialState,
+    renderer: createSmoothCodeStreamRenderer({
+      initialState,
+      render: (previous, state) => renderState(context, request.assistantId, previous, state),
+    }),
+  }
   try {
     await consumeStream(request, context, dependencies, controller, persisted.sessionId, stream)
   } catch (error) {
-    const previous = stream.state
     stream.state = failedStreamState(stream.state, error)
-    renderState(context, request.assistantId, previous, stream.state)
+    stream.renderer.push(stream.state)
   } finally {
+    await stream.renderer.finish(stream.state)
+    stream.renderer.cancel()
     releaseController(context, controller)
     await finalizeSend(request, context, dependencies, persisted.sessionId, stream.state)
   }
