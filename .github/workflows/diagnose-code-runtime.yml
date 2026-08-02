@@ -40,6 +40,7 @@ jobs:
           post_status pending "Code Worker Diagnostic" "Reading production worker heartbeat"
           post_status pending "Code Job Diagnostic" "Reading recent Code jobs"
           post_status pending "Code Task Diagnostic" "Reading recent Code task failures"
+          post_status pending "Code Owner Diagnostic" "Reading the owner's latest Code response"
 
           SUPABASE_SERVICE_ROLE_KEY="$(render_env SUPABASE_SERVICE_ROLE_KEY)"
           role="$(render_env MYCHAT_RUNTIME_ROLE)"
@@ -48,6 +49,7 @@ jobs:
             post_status failure "Code Worker Diagnostic" "Render SUPABASE_SERVICE_ROLE_KEY is missing"
             post_status failure "Code Job Diagnostic" "Production database diagnostics unavailable"
             post_status failure "Code Task Diagnostic" "Production database diagnostics unavailable"
+            post_status failure "Code Owner Diagnostic" "Production database diagnostics unavailable"
             exit 0
           fi
 
@@ -86,3 +88,28 @@ jobs:
           task_desc="status=$task_status error=$task_error"
           echo "DIAGNOSTIC task=$task_desc"
           post_status "$task_state" "Code Task Diagnostic" "$task_desc"
+
+          auth_users="$(curl --fail-with-body --silent --show-error "${auth[@]}" \
+            "$SUPABASE_URL/auth/v1/admin/users?page=1&per_page=1000" 2>/dev/null)" || auth_users='{}'
+          owner_id="$(jq -r '.users[]? | select(.email == "339519589@qq.com") | .id' <<<"$auth_users" 2>/dev/null | head -n 1)"
+          if [[ -z "$owner_id" ]]; then
+            echo 'DIAGNOSTIC owner=account-not-found'
+            post_status failure "Code Owner Diagnostic" "Owner account was not found in production auth"
+            exit 0
+          fi
+          owner_messages="$(curl --fail-with-body --silent --show-error "${auth[@]}" \
+            "$SUPABASE_URL/rest/v1/code_messages?user_id=eq.$owner_id&role=eq.assistant&select=content,created_at,meta&order=created_at.desc&limit=10" 2>/dev/null)" || owner_messages='[]'
+          owner_jobs="$(curl --fail-with-body --silent --show-error "${auth[@]}" \
+            "$SUPABASE_URL/rest/v1/jobs?principal_id=eq.$owner_id&type=eq.agent.task&select=status,error_code,error_class,attempt,payload,created_at,updated_at&order=created_at.desc&limit=10" 2>/dev/null)" || owner_jobs='[]'
+          connections="$(curl --fail-with-body --silent --show-error "${auth[@]}" \
+            "$SUPABASE_URL/rest/v1/github_connections?user_id=eq.$owner_id&select=login,expires_at,updated_at&limit=5" 2>/dev/null)" || connections='[]'
+          latest_content="$(jq -r '.[0].content // "none" | gsub("[\\r\\n]+";" ") | .[0:220]' <<<"$owner_messages" 2>/dev/null || echo invalid)"
+          latest_at="$(jq -r '.[0].created_at // "none"' <<<"$owner_messages" 2>/dev/null || echo invalid)"
+          owner_job="$(jq -r '.[0] | if . then "status=\(.status) model=\(.payload.modelId // \"none\") error=\(.error_code // \"none\") attempt=\(.attempt // 0)" else "none" end' <<<"$owner_jobs" 2>/dev/null || echo invalid)"
+          connection_count="$(jq -r 'length' <<<"$connections" 2>/dev/null || echo 0)"
+          owner_desc="github=$connection_count at=$latest_at reply=$latest_content"
+          echo "DIAGNOSTIC owner=$owner_desc"
+          echo "DIAGNOSTIC owner-job=$owner_job"
+          owner_state=success
+          if [[ "$latest_content" == none || "$latest_content" == invalid || "$latest_content" == *请求失败* || "$latest_content" == *任务执行失败* || "$owner_job" == *status=failed* ]]; then owner_state=failure; fi
+          post_status "$owner_state" "Code Owner Diagnostic" "$owner_desc"
