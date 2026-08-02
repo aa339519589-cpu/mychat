@@ -1,10 +1,10 @@
 name: Probe Production Chat Stream 2200
+# Trigger: run the authenticated production stream measurement now.
 
 on:
   push:
     branches:
       - main
-      - diagnose/chat-production-stream-2200-v2
     paths:
       - .github/workflows/probe-chat-stream-2200.yml
 
