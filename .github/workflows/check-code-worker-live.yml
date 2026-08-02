@@ -1,5 +1,5 @@
 name: Check Code Worker Live
-# Trigger post-deploy worker verification.
+# Retry post-deploy worker verification.
 
 on:
   workflow_dispatch:
@@ -26,25 +26,46 @@ jobs:
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          set -euo pipefail
+          set -u
+          post_status() {
+            jq -nc --arg state "$1" --arg context "Live Code Worker" --arg description "${2:0:140}" --arg target_url "$RUN_URL" \
+              '{state:$state,context:$context,description:$description,target_url:$target_url}' \
+              | gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" --input - >/dev/null
+          }
+          post_status pending "Reading live Code worker heartbeat"
           env_base="https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars"
-          service_role="$(curl --fail-with-body --silent --show-error \
-            -H "Authorization: Bearer $RENDER_API_KEY" "$env_base/SUPABASE_SERVICE_ROLE_KEY" | jq -r '.value // empty')"
+          service_role=''
+          for attempt in {1..12}; do
+            response="$(curl --silent --show-error --retry 3 --retry-all-errors \
+              -H "Authorization: Bearer $RENDER_API_KEY" "$env_base/SUPABASE_SERVICE_ROLE_KEY" 2>/dev/null)" || response='{}'
+            service_role="$(jq -r '.value // empty' <<<"$response" 2>/dev/null || true)"
+            [[ -n "$service_role" ]] && break
+            sleep 3
+          done
+          if [[ -z "$service_role" ]]; then
+            echo 'LIVE_CODE_WORKER verification-key-unavailable'
+            post_status failure "Render environment verification key unavailable"
+            exit 0
+          fi
           auth=(-H "apikey: $service_role" -H "Authorization: Bearer $service_role")
-          heartbeats="$(curl --fail-with-body --silent --show-error "${auth[@]}" \
-            "$SUPABASE_URL/rest/v1/job_worker_heartbeats?select=revision,queues,draining,heartbeat_at&order=heartbeat_at.desc&limit=5")"
-          jobs="$(curl --fail-with-body --silent --show-error "${auth[@]}" \
-            "$SUPABASE_URL/rest/v1/jobs?type=eq.agent.task&select=status,error_code,attempt,payload,created_at&order=created_at.desc&limit=5")"
-          revision="$(jq -r '.[0].revision // "none"' <<<"$heartbeats")"
-          queues="$(jq -r '.[0].queues // [] | join(",")' <<<"$heartbeats")"
-          draining="$(jq -r '.[0].draining // true' <<<"$heartbeats")"
-          heartbeat_at="$(jq -r '.[0].heartbeat_at // "none"' <<<"$heartbeats")"
-          job="$(jq -r '.[0] | if . then "status=\(.status) model=\(.payload.modelId // \"none\") error=\(.error_code // \"none\") attempt=\(.attempt)" else "none" end' <<<"$jobs")"
+          heartbeats='[]'
+          jobs='[]'
+          for attempt in {1..12}; do
+            heartbeats="$(curl --silent --show-error --retry 3 --retry-all-errors "${auth[@]}" \
+              "$SUPABASE_URL/rest/v1/job_worker_heartbeats?select=revision,queues,draining,heartbeat_at&order=heartbeat_at.desc&limit=5" 2>/dev/null)" || heartbeats='[]'
+            if jq -e 'type == "array"' <<<"$heartbeats" >/dev/null 2>&1; then break; fi
+            heartbeats='[]'
+            sleep 3
+          done
+          jobs="$(curl --silent --show-error --retry 3 --retry-all-errors "${auth[@]}" \
+            "$SUPABASE_URL/rest/v1/jobs?type=eq.agent.task&select=status,error_code,attempt,payload,created_at&order=created_at.desc&limit=5" 2>/dev/null)" || jobs='[]'
+          revision="$(jq -r '.[0].revision // "none"' <<<"$heartbeats" 2>/dev/null || echo invalid)"
+          queues="$(jq -r '.[0].queues // [] | join(",")' <<<"$heartbeats" 2>/dev/null || echo invalid)"
+          draining="$(jq -r '.[0].draining // true' <<<"$heartbeats" 2>/dev/null || echo true)"
+          heartbeat_at="$(jq -r '.[0].heartbeat_at // "none"' <<<"$heartbeats" 2>/dev/null || echo invalid)"
+          job="$(jq -r '.[0] | if . then "status=\(.status) model=\(.payload.modelId // \"none\") error=\(.error_code // \"none\") attempt=\(.attempt)" else "none" end' <<<"$jobs" 2>/dev/null || echo invalid)"
           echo "LIVE_CODE_WORKER revision=$revision queues=$queues draining=$draining heartbeat=$heartbeat_at"
           echo "LIVE_CODE_JOB $job"
           state=failure
-          if [[ "$revision" != "none" && "$queues" == *agent* && "$draining" == "false" ]]; then state=success; fi
-          description="revision=$revision queues=${queues:-none} draining=$draining heartbeat=$heartbeat_at"
-          jq -nc --arg state "$state" --arg context "Live Code Worker" --arg description "${description:0:140}" --arg target_url "$RUN_URL" \
-            '{state:$state,context:$context,description:$description,target_url:$target_url}' \
-            | gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" --input - >/dev/null
+          if [[ "$revision" != "none" && "$revision" != "invalid" && "$queues" == *agent* && "$draining" == "false" ]]; then state=success; fi
+          post_status "$state" "revision=$revision queues=${queues:-none} draining=$draining heartbeat=$heartbeat_at"
