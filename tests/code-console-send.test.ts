@@ -48,7 +48,8 @@ function harness(options: {
     streaming: false,
     currentTaskId: null,
     sessionId: options.sessionId ?? null,
-    tier: '正构',
+    modelId: 'openai/gpt-5.6-sol',
+    reasoningEffort: 'high',
     auto: options.auto ?? false,
     abortRef,
     setMessages: messages.dispatch,
@@ -101,6 +102,8 @@ test('code send persists both visible roles and binds the created session to the
   assert.equal(inserted[1]?.message.content, 'completed')
   assert.equal(inserted[1]?.message.taskId, 'task-1')
   assert.equal((enqueueBody as { sessionId?: string }).sessionId, 'session-1')
+  assert.equal((enqueueBody as { modelId?: string }).modelId, 'openai/gpt-5.6-sol')
+  assert.equal((enqueueBody as { reasoningEffort?: string }).reasoningEffort, 'high')
   assert.equal(fixture.state.sessionId.current(), 'session-1')
   assert.equal(fixture.state.taskId.current(), 'task-1')
   assert.deepEqual(fixture.calls.sync, ['task-1'])
