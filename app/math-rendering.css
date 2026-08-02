@@ -1,0 +1,16 @@
+/* Preserve horizontal scrolling while giving KaTeX borders room on iOS Safari. */
+.katex-display {
+  overflow-x: auto !important;
+  overflow-y: visible !important;
+  padding-block: 0.18em 0.14em;
+}
+
+.katex-display > .katex,
+.katex-display .katex-html,
+.katex .boxpad {
+  overflow: visible !important;
+}
+
+.katex-display > .katex {
+  padding-block: 0.08em;
+}
