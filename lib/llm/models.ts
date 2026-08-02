@@ -47,6 +47,8 @@ export type DirectDeepSeekCatalogRoute = {
   defaultReasoningEffort: string
 }
 
+const DEEPSEEK_REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
+
 const DIRECT_DEEPSEEK_CATALOG_ROUTES: Record<string, DirectDeepSeekCatalogRoute> = {
   'deepseek/deepseek-v4-flash-0731': {
     catalogId: 'deepseek/deepseek-v4-flash-0731',
@@ -55,7 +57,7 @@ const DIRECT_DEEPSEEK_CATALOG_ROUTES: Record<string, DirectDeepSeekCatalogRoute>
     access: 'quota',
     outputKind: 'chat',
     tools: true,
-    reasoningEfforts: ['none', 'high'],
+    reasoningEfforts: DEEPSEEK_REASONING_EFFORTS,
     defaultReasoningEffort: 'high',
   },
   'deepseek/deepseek-v4-pro': {
@@ -65,7 +67,7 @@ const DIRECT_DEEPSEEK_CATALOG_ROUTES: Record<string, DirectDeepSeekCatalogRoute>
     access: 'quota',
     outputKind: 'chat',
     tools: true,
-    reasoningEfforts: ['none', 'high'],
+    reasoningEfforts: DEEPSEEK_REASONING_EFFORTS,
     defaultReasoningEffort: 'high',
   },
 }
