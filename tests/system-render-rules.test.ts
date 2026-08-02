@@ -26,6 +26,40 @@ test('base system carries no rendering capability or format instructions', () =>
   assert.ok(!system.includes('<artifact>'))
 })
 
+test('web search prompt follows searchMode', () => {
+  const enabled = buildSystem([], {
+    searchMode: 'web',
+    latestBeijingDate: '2026-08-02',
+    memoryEnabled: false,
+  })
+  assert.ok(enabled.includes('【联网搜索规则】'))
+  assert.ok(enabled.includes('当前用户已经开启联网。'))
+  assert.ok(enabled.includes('2026-08-02 北京时间'))
+
+  const disabled = buildSystem([], { searchMode: 'off', memoryEnabled: false })
+  assert.ok(!disabled.includes('【联网搜索规则】'))
+  assert.ok(!disabled.includes('当前用户已经开启联网。'))
+  assert.ok(!disabled.includes('联网搜索'))
+})
+
+test('model identity uses the real model name and no legacy tier wording', () => {
+  const platform = buildSystem([], {
+    memoryEnabled: false,
+    modelSource: 'platform',
+    tierLabel: 'GPT-5.5',
+  })
+  assert.ok(platform.includes('被问模型时只答：“我是Mytrend的GPT-5.5。”'))
+  assert.ok(!platform.includes('快速 / 均衡 / 深度 / 视觉'))
+  assert.ok(!platform.includes('平台内置模型档位'))
+
+  const custom = buildSystem([], {
+    memoryEnabled: false,
+    modelSource: 'custom',
+    modelId: 'deepseek/deepseek-v4-pro',
+  })
+  assert.ok(custom.includes('我是Mytrend的deepseek/deepseek-v4-pro。'))
+})
+
 test('memory prompt and stored memories follow memoryEnabled', () => {
   const memories = [{ id: 'memory-1', content: '长期偏好', timestamp: '2026-08-02T00:00:00Z' }]
   const enabled = buildSystem(memories, { memoryEnabled: true })
