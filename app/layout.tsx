@@ -9,6 +9,17 @@ import './mobile-performance.css'
 import 'katex/dist/katex.min.css'
 import './math-rendering.css'
 
+const PROVIDER_ICON_PATHS = [
+  '/provider-icons/openai.svg',
+  '/provider-icons/claude-color.svg',
+  '/provider-icons/gemini-color.svg',
+  '/provider-icons/deepseek-color.svg',
+  '/provider-icons/minimax-color.svg',
+  '/provider-icons/kimi.svg',
+  '/provider-icons/zai.svg',
+  '/provider-icons/grok.svg',
+] as const
+
 export const metadata: Metadata = {
   metadataBase: new URL('https://mychat-nm6x.onrender.com'),
   title: 'MyChat — Build and ship from your phone',
@@ -59,6 +70,11 @@ export default async function RootLayout({
   await headers()
   return (
     <html lang="zh-CN" className="bg-background">
+      <head>
+        {PROVIDER_ICON_PATHS.map(src => (
+          <link key={src} rel="preload" href={src} as="image" type="image/svg+xml" />
+        ))}
+      </head>
       <body className="font-sans antialiased">
         {children}
         {process.env.NODE_ENV === 'production' && <Analytics />}
