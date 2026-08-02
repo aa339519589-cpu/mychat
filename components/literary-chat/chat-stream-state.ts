@@ -35,15 +35,15 @@ export function createChatStreamState(): ChatStreamState {
   }
 }
 
-function streamingMessage(
+export function streamingMessage(
   message: Message,
   state: ChatStreamState,
   assistantMessageId: string,
   generationId: string | undefined,
   outputWarning: string | undefined,
 ): Message {
-  if (message.id !== assistantMessageId
-    || (generationId && message.generation?.id === generationId)) return message
+  if (message.id !== assistantMessageId) return message
+  if (generationId && message.generation?.id && message.generation.id !== generationId) return message
   return {
     ...message,
     content: state.fullReply,
