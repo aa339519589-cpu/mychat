@@ -48,7 +48,10 @@ function props(overrides: Partial<CodeConsoleViewProps> = {}): CodeConsoleViewPr
     onCloseOverlay: () => {},
     models: [],
     activeModelId: null,
+    activeModel: null,
+    reasoningEffort: null,
     onChangeModel: () => {},
+    onChangeReasoningEffort: () => {},
     onLoadSession: () => {},
     ...overrides,
   }
@@ -68,6 +71,13 @@ test('Code Console always announces apply failures outside action panels', () =>
   assert.match(html, /<button[^>]*class="[^"]*size-11/)
   assert.match(html, /focus-visible:ring-2/)
   assert.doesNotMatch(html, /确认发布|确认并执行/)
+})
+
+test('Code Console composer stays compact while preserving 44px controls', () => {
+  const html = renderView()
+  assert.match(html, /min-h-11 max-w-3xl items-center/)
+  assert.match(html, /min-h-8 min-w-0 flex-1/)
+  assert.match(html, /inline-flex size-11/)
 })
 
 test('Code Console action bars use responsive 44px controls', () => {

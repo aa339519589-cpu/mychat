@@ -13,16 +13,10 @@ import { createCodeApplyActions } from "./apply"
 import { useCodeModelSelection } from "./model-selection"
 import { executeCodeSend } from "./send"
 import { type Overlay, type RepoItem } from "./shared"
-import {
-  useTaskRecovery,
-  type RunCodeSendOptions,
-} from "./use-task-recovery"
+import { useTaskRecovery, type RunCodeSendOptions } from "./use-task-recovery"
 import { CodeConsoleView } from "./view"
 
-export type CodeConsoleProps = {
-  userId: string
-  onExit: () => void
-}
+export type CodeConsoleProps = { userId: string; onExit: () => void }
 
 export function CodeConsole({ userId, onExit }: CodeConsoleProps) {
   const [connected, setConnected] = useState<boolean | null>(null)
@@ -254,7 +248,7 @@ export function CodeConsole({ userId, onExit }: CodeConsoleProps) {
     const text = input.trim()
     if (!text) return
     const command = text.split(" ")[0]
-    if (["/new", "/model", "/memory", "/context", "/resume", "/tasks"].includes(command)) {
+    if (["/new", "/model", "/effort", "/memory", "/context", "/resume", "/tasks"].includes(command)) {
       runCommand(command)
       return
     }
@@ -281,47 +275,25 @@ export function CodeConsole({ userId, onExit }: CodeConsoleProps) {
 
   return (
     <CodeConsoleView
-      userId={userId}
-      onExit={onExit}
-      connected={connected}
-      login={login}
-      repos={repos}
-      repo={repo}
-      entered={entered}
-      hiddenRepos={hiddenRepos}
-      onLoadRepos={() => { void loadRepos() }}
-      onEnterRepo={fullName => { void enterRepo(fullName) }}
-      onHideRepo={hideRepo}
-      onResetHiddenRepos={resetHiddenRepos}
-      ghMenu={ghMenu}
-      onOpenGhMenu={() => setGhMenu(true)}
-      onCloseGhMenu={() => setGhMenu(false)}
-      onDisconnect={() => { void disconnect() }}
-      onLeaveRepo={leaveRepo}
-      auto={auto}
-      onToggleAuto={toggleAuto}
-      scrollRef={scrollRef}
-      messages={messages}
-      streaming={streaming}
-      applying={applying}
-      currentTaskId={currentTaskId}
-      workspaceDirty={workspaceDirty}
-      publishPending={publishPending}
+      userId={userId} onExit={onExit} connected={connected} login={login}
+      repos={repos} repo={repo} entered={entered} hiddenRepos={hiddenRepos}
+      onLoadRepos={() => { void loadRepos() }} onEnterRepo={fullName => { void enterRepo(fullName) }}
+      onHideRepo={hideRepo} onResetHiddenRepos={resetHiddenRepos}
+      ghMenu={ghMenu} onOpenGhMenu={() => setGhMenu(true)} onCloseGhMenu={() => setGhMenu(false)}
+      onDisconnect={() => { void disconnect() }} onLeaveRepo={leaveRepo}
+      auto={auto} onToggleAuto={toggleAuto} scrollRef={scrollRef}
+      messages={messages} streaming={streaming} applying={applying}
+      currentTaskId={currentTaskId} workspaceDirty={workspaceDirty} publishPending={publishPending}
       applyError={applyError} onDismissApplyError={() => setApplyError(null)}
-      onPublishWorkspacePR={() => { void publishWorkspacePR() }}
-      pendingPlan={pendingPlan}
+      onPublishWorkspacePR={() => { void publishWorkspacePR() }} pendingPlan={pendingPlan}
       onAbandonPlan={() => { setPendingPlan([]); setApplyError(null) }}
       onApplyPlan={() => { void applyPlan(pendingPlan, latestAssistantId) }}
-      input={input}
-      onInputChange={setInput}
-      onSubmit={submit}
-      onStopAgent={() => { void stopAgent() }}
-      onCommand={runCommand}
-      overlay={overlay}
-      onCloseOverlay={() => setOverlay(null)}
-      models={model.models}
-      activeModelId={model.activeModelId}
-      onChangeModel={model.selectModel}
+      input={input} onInputChange={setInput} onSubmit={submit}
+      onStopAgent={() => { void stopAgent() }} onCommand={runCommand}
+      overlay={overlay} onCloseOverlay={() => setOverlay(null)} models={model.models}
+      activeModelId={model.activeModelId} activeModel={model.activeModel}
+      reasoningEffort={model.reasoningEffort} onChangeModel={model.selectModel}
+      onChangeReasoningEffort={model.selectReasoningEffort}
       onLoadSession={session => { void loadSession(session) }}
     />
   )

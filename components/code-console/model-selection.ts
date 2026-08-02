@@ -17,7 +17,18 @@ function selectable(model: ModelCatalogItem): boolean {
     && (model.access !== "premium" || model.ownerUnlocked === true)
 }
 
+function storedEffort(model: ModelCatalogItem): string | null {
+  try {
+    const saved = localStorage.getItem(`code_reasoning_effort:${model.id}`)
+    return saved && model.reasoningEfforts.includes(saved) ? saved : null
+  } catch {
+    return null
+  }
+}
+
 function preferredEffort(model: ModelCatalogItem): string | null {
+  const saved = storedEffort(model)
+  if (saved) return saved
   if (model.defaultReasoningEffort && model.reasoningEfforts.includes(model.defaultReasoningEffort)) {
     return model.defaultReasoningEffort
   }
@@ -79,12 +90,19 @@ export function useCodeModelSelection() {
     [activeModelId, models],
   )
 
+  function selectReasoningEffort(effort: string) {
+    if (!activeModel || !activeModel.reasoningEfforts.includes(effort)) return
+    setReasoningEffort(effort)
+    try { localStorage.setItem(`code_reasoning_effort:${activeModel.id}`, effort) } catch {}
+  }
+
   return {
     models,
     activeModelId,
     activeModel,
     reasoningEffort,
     selectModel,
+    selectReasoningEffort,
     refreshModels,
   }
 }

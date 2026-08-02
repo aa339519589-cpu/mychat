@@ -5,11 +5,12 @@ export const ACCENT = "var(--code-accent)"
 export const CONTROL_FOCUS = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--code-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background"
 
 export type RepoItem = { name: string; full_name: string; private: boolean; description: string }
-export type Overlay = null | "model" | "memory" | "resume" | "context" | "tasks"
+export type Overlay = null | "model" | "effort" | "memory" | "resume" | "context" | "tasks"
 
 export const COMMANDS = [
   { cmd: "/new", desc: "在当前项目内开启新对话" },
   { cmd: "/model", desc: "打开统一模型列表" },
+  { cmd: "/effort", desc: "选择当前模型的真实思考深度" },
   { cmd: "/memory", desc: "查看 / 编辑本仓库的记忆" },
   { cmd: "/context", desc: "查看当前上下文用量" },
   { cmd: "/resume", desc: "恢复本仓库的历史排查" },
