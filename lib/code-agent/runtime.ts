@@ -52,11 +52,15 @@ export function createCodeRunProgress(workspaceHasChanges: () => boolean) {
 
 export function finalCodeTaskStatus(
   loopFailed: boolean,
-  progress: Pick<CodeProgressSnapshot, 'completed' | 'waitingForUser' | 'published'>,
+  progress: Pick<CodeProgressSnapshot,
+    'completed' | 'waitingForUser' | 'published' | 'workspace' | 'plannedRepo' | 'plannedFiles'>,
 ): AgentTaskStatus {
   if (loopFailed) return 'failed'
   if (progress.completed) return 'completed'
   if (progress.waitingForUser || progress.published) return 'waiting_for_user'
+  if (!progress.workspace && progress.plannedRepo && progress.plannedFiles > 0) {
+    return 'waiting_for_user'
+  }
   return 'running'
 }
 
