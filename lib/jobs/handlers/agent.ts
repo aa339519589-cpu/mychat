@@ -4,6 +4,7 @@ import { finalCodeTaskStatus } from '@/lib/code-agent/runtime'
 import { buildCodeSystem } from '@/lib/code-agent/system-prompt'
 import { runAgentLoop, type AgentLoopOpts } from '@/lib/llm/agent-loop'
 import { chatCompletionsUrl, toOpenAI } from '@/lib/llm/openai'
+import type { ReasoningEffort } from '@/lib/llm/provider-adapters'
 import { weightedTokenUsage } from '@/lib/quota'
 import { log } from '@/lib/logger'
 import type { ModelMessage } from '@/lib/llm/types'
@@ -20,23 +21,32 @@ import {
   trajectoryCheckpoint,
 } from './chat-text-runtime'
 
+const MAX_OUTPUT_TOKENS = 40_000
+const TRIAL_MAX_OUTPUT_TOKENS = 10_000
+
 export function agentTokenAccounting(
-  input: Pick<Awaited<ReturnType<typeof loadAgentJob>>, 'model' | 'thinking' | 'usingBalance'>,
+  input: Pick<LoadedAgentJob, 'selection' | 'usingBalance'>,
   jobId: string,
   attemptTokens: number,
 ): JobAccounting[] {
   if (attemptTokens <= 0) return []
-  const weightedTokens = weightedTokenUsage(attemptTokens, input.model, input.thinking)
+  const selection = input.selection
+  const weightedTokens = weightedTokenUsage(attemptTokens, selection.model, selection.thinking)
   return [{
     idempotencyKey: `${jobId}:model-usage`,
     reason: 'agent_model_usage',
     direction: 'debit',
     weightedTokens,
     rawTokens: attemptTokens,
-    model: input.model,
-    provider: 'deepseek',
+    model: selection.model,
+    provider: selection.capability.provider.id,
     costMicros: platformModelCostMicros(weightedTokens),
-    metadata: { usingBalance: input.usingBalance, priceVersion: BILLING_PRICE_VERSION },
+    metadata: {
+      thinking: selection.thinking,
+      usingBalance: input.usingBalance,
+      accessClass: selection.accessClass,
+      priceVersion: BILLING_PRICE_VERSION,
+    },
   }]
 }
 
@@ -58,14 +68,12 @@ export type AgentTaskDependencies = {
   createRuntime: typeof createAgentRuntime
   runLoop: typeof runAgentLoop
   saveRunState: typeof saveAgentRunState
-  apiKey: () => string | undefined
 }
 
 const DEFAULT_DEPENDENCIES: AgentTaskDependencies = {
   createRuntime: createAgentRuntime,
   runLoop: runAgentLoop,
   saveRunState: saveAgentRunState,
-  apiKey: () => process.env.DEEPSEEK_API_KEY,
 }
 
 function prepareAgentRun(
@@ -136,25 +144,27 @@ function agentLoopOptions(input: {
   job: LoadedAgentJob
   runtime: AgentRuntime
   prepared: PreparedAgentRun
-  apiKey: string
   callbacks: Pick<AgentLoopOpts, 'onUsage' | 'onTurn' | 'onCheckpoint'>
 }): AgentLoopOpts {
-  const { context, job, runtime, prepared, apiKey, callbacks } = input
+  const { context, job, runtime, prepared, callbacks } = input
+  const selection = job.selection
+  const trial = selection.accessClass === 'trial'
   return {
-    url: chatCompletionsUrl('https://api.deepseek.com'),
-    apiKey,
-    model: job.model,
-    adapter: 'deepseek-openai',
-    thinking: job.thinking,
+    url: chatCompletionsUrl(selection.capability.provider.baseUrl),
+    apiKey: selection.apiKey,
+    model: selection.model,
+    adapter: selection.capability.provider.adapter,
+    thinking: selection.thinking,
+    reasoningEffort: selection.reasoningEffort as ReasoningEffort | null,
     messages: prepared.messages,
     tools: runtime.tools,
     emit: runtime.events.emit,
     executeTool: runtime.executeTool,
-    maxRounds: 80,
+    maxRounds: trial ? 24 : 80,
     leakedRetry: true,
-    autoContinue: { maxContinuations: 6 },
+    autoContinue: trial ? undefined : { maxContinuations: 6 },
     idleContinuation: {
-      maxContinuations: 20,
+      maxContinuations: trial ? 6 : 20,
       prompt: () => codeContinuationPrompt(runtime.progress.snapshot(job.workspaceReady)),
     },
     ...callbacks,
@@ -163,7 +173,8 @@ function agentLoopOptions(input: {
       contentPolicy: codeTurnContentPolicy,
       signal: context.signal,
       timeoutMs: 120_000,
-      maxOutputTokens: 40_000,
+      authType: selection.authType,
+      maxOutputTokens: trial ? TRIAL_MAX_OUTPUT_TOKENS : MAX_OUTPUT_TOKENS,
       idempotencyNamespace: context.job.id,
     },
   }
@@ -224,15 +235,16 @@ export async function runAgentTaskJob(
     context, job: input, writer, prepared, saveRunState: dependencies.saveRunState,
   })
   try {
-    const apiKey = dependencies.apiKey()?.trim()
-    if (!apiKey) throw new JobRuntimeError(
-      'JOB_DEPENDENCY_UNAVAILABLE', 'DeepSeek provider is not configured',
+    if (!input.selection.apiKey.trim()) throw new JobRuntimeError(
+      'JOB_DEPENDENCY_UNAVAILABLE', 'Selected model provider is not configured',
       { class: 'policy', retryable: false },
     )
-    await writer.append('job.started', { taskId: input.taskId, model: input.model },
-      `${context.job.id}:started:${context.fence.leaseVersion}`)
+    await writer.append('job.started', {
+      taskId: input.taskId,
+      model: input.selection.model,
+    }, `${context.job.id}:started:${context.fence.leaseVersion}`)
     await dependencies.runLoop(agentLoopOptions({
-      context, job: input, runtime, prepared, apiKey, callbacks,
+      context, job: input, runtime, prepared, callbacks,
     }))
     runtime.events.flushLeadText()
     await writer.drain()
