@@ -1,0 +1,26 @@
+name: Probe Production Code
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/probe-code-production.yml
+
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Discover Code API contract
+        run: |
+          set -euo pipefail
+          echo '=== CODE API ROUTES ==='
+          find app -path '*api*' -type f | grep -Ei 'code|agent|task' | sort || true
+          echo '=== CLIENT CALLS ==='
+          rg -n "(/api/[^\"']*(code|agent|task)|taskId|modelId|sessionId)" app components lib --glob '*.{ts,tsx}' | head -n 300 || true
