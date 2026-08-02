@@ -14,20 +14,18 @@ export type SmoothCodeStreamRenderer = {
   cancel: () => void
 }
 
-const DEFAULT_INTERVAL_MS = 8
+const DEFAULT_INTERVAL_MS = 5
 
 export function visibleCharactersPerTick(backlog: number, finishing: boolean): number {
   if (backlog <= 0) return 0
   if (finishing) {
-    if (backlog > 96) return 12
-    if (backlog > 48) return 6
-    if (backlog > 20) return 3
-    if (backlog > 10) return 2
+    if (backlog > 128) return 8
+    if (backlog > 64) return 4
+    if (backlog > 32) return 2
     return 1
   }
-  if (backlog > 96) return 8
-  if (backlog > 48) return 4
-  if (backlog > 16) return 2
+  if (backlog > 128) return 4
+  if (backlog > 64) return 2
   return 1
 }
 
