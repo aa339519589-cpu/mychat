@@ -1,5 +1,5 @@
 name: Check Code Worker Live
-# Inspect the actual Render startup configuration and worker prerequisites.
+# Read Render application logs for the production supervisor and worker.
 
 on:
   workflow_dispatch:
@@ -16,64 +16,39 @@ jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      SUPABASE_URL: https://usibkqqksgwgvdiqwpyo.supabase.co
     steps:
-      - name: Read live Render and worker state
+      - name: Read production runtime logs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          set -u
+          set -euo pipefail
           post_status() {
             jq -nc --arg state "$1" --arg context "Live Code Worker" --arg description "${2:0:140}" --arg target_url "$RUN_URL" \
               '{state:$state,context:$context,description:$description,target_url:$target_url}' \
               | gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" --input - >/dev/null
           }
-          post_status pending "Reading Render startup configuration and worker heartbeat"
-          render_auth=(-H "Authorization: Bearer $RENDER_API_KEY")
+          post_status pending "Reading Render supervisor and worker logs"
+          auth=(-H "Authorization: Bearer $RENDER_API_KEY")
           service="$(curl --fail-with-body --silent --show-error --retry 4 --retry-all-errors \
-            "${render_auth[@]}" "https://api.render.com/v1/services/$RENDER_SERVICE_ID")"
-          envs="$(curl --fail-with-body --silent --show-error --retry 4 --retry-all-errors \
-            "${render_auth[@]}" "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars")"
-          normalized="$(jq -c '
-            if type == "array" then map(.envVar // .)
-            elif (.envVars | type) == "array" then (.envVars | map(.envVar // .))
-            else [] end
-          ' <<<"$envs")"
-          start_command="$(jq -r '.serviceDetails.startCommand // .service.serviceDetails.startCommand // "missing"' <<<"$service")"
-          role="$(jq -r 'map(select(.key == "MYCHAT_RUNTIME_ROLE"))[0].value // "missing"' <<<"$normalized")"
-          maintenance="$(jq -r 'map(select(.key == "MYCHAT_MAINTENANCE_MODE"))[0].value // "missing"' <<<"$normalized")"
-          has_key() { jq -r --arg key "$1" 'any(.[]; .key == $key and ((.value // "") | length) > 0)' <<<"$normalized"; }
-          has_supabase="$(has_key SUPABASE_SERVICE_ROLE_KEY)"
-          has_deepseek="$(has_key DEEPSEEK_API_KEY)"
-          has_agent_key="$(has_key AGENT_CREDENTIAL_KEY)"
-          has_e2b="$(has_key E2B_API_KEY)"
-          service_role="$(jq -r 'map(select(.key == "SUPABASE_SERVICE_ROLE_KEY"))[0].value // empty' <<<"$normalized")"
-          echo "RENDER_CONFIG start=$start_command role=$role maintenance=$maintenance supabase=$has_supabase deepseek=$has_deepseek agent_key=$has_agent_key e2b=$has_e2b"
-
-          revision=none
-          queues=''
-          draining=true
-          heartbeat_at=none
-          if [[ -n "$service_role" ]]; then
-            auth=(-H "apikey: $service_role" -H "Authorization: Bearer $service_role")
-            heartbeats="$(curl --silent --show-error --retry 4 --retry-all-errors "${auth[@]}" \
-              "$SUPABASE_URL/rest/v1/job_worker_heartbeats?select=revision,queues,draining,heartbeat_at&order=heartbeat_at.desc&limit=5" 2>/dev/null)" || heartbeats='[]'
-            if jq -e 'type == "array"' <<<"$heartbeats" >/dev/null 2>&1; then
-              revision="$(jq -r '.[0].revision // "none"' <<<"$heartbeats")"
-              queues="$(jq -r '.[0].queues // [] | join(",")' <<<"$heartbeats")"
-              draining="$(jq -r '.[0].draining // true' <<<"$heartbeats")"
-              heartbeat_at="$(jq -r '.[0].heartbeat_at // "none"' <<<"$heartbeats")"
-            fi
-          fi
-          echo "LIVE_CODE_WORKER revision=$revision queues=$queues draining=$draining heartbeat=$heartbeat_at"
-          state=failure
-          if [[ "$start_command" == "npm start" && "$role" == "all" && "$maintenance" == "off" \
-            && "$has_supabase" == "true" && "$has_deepseek" == "true" && "$has_agent_key" == "true" \
-            && "$has_e2b" == "true" && "$revision" != "none" && "$queues" == *agent* && "$draining" == "false" ]]; then
-            state=success
-          fi
-          post_status "$state" "start=$start_command role=$role e2b=$has_e2b heartbeat=$heartbeat_at queues=${queues:-none}"
+            "${auth[@]}" "https://api.render.com/v1/services/$RENDER_SERVICE_ID")"
+          owner="$(jq -r '.ownerId // .owner.id // empty' <<<"$service")"
+          start_command="$(jq -r '.serviceDetails.envSpecificDetails.startCommand // "missing"' <<<"$service")"
+          test -n "$owner"
+          logs="$(curl --fail-with-body --silent --show-error --retry 4 --retry-all-errors --get \
+            "${auth[@]}" 'https://api.render.com/v1/logs' \
+            --data-urlencode "ownerId=$owner" \
+            --data-urlencode "resource=$RENDER_SERVICE_ID" \
+            --data-urlencode 'type=app' \
+            --data-urlencode 'direction=backward' \
+            --data-urlencode 'limit=100')"
+          messages="$(jq -r '
+            (.logs // .)[]?
+            | (.message // .text // .log // empty)
+          ' <<<"$logs")"
+          echo "RENDER_START_COMMAND $start_command"
+          echo "$messages" | grep -Ei 'production|worker|jobs|runtime|sandbox|credential|deepseek|supabase|failed|error|invalid' | head -n 80 || true
+          recent="$(echo "$messages" | grep -Ei 'production|worker|jobs|runtime|sandbox|credential|deepseek|supabase|failed|error|invalid' | head -n 1 | tr '\r\n' ' ' | cut -c1-120)"
+          post_status failure "start=$start_command log=${recent:-no worker log found}"
