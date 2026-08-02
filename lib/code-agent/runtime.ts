@@ -81,7 +81,6 @@ export function createCodeEventCollector(options: {
 
   return {
     emit,
-    flushLeadText: () => finalText,
     getFinalText: () => finalText,
   }
 }
