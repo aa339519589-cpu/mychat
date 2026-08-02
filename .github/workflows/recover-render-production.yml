@@ -1,5 +1,5 @@
 name: Recover Render Production
-# Recovery trigger: restore GitHub OAuth and deploy the unified Code model selector.
+# Recovery trigger: deploy Code effort control, compact composer, and timeout fix.
 
 on:
   workflow_dispatch:
