@@ -44,6 +44,7 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY="$(render_env SUPABASE_SERVICE_ROLE_KEY)"
           role="$(render_env MYCHAT_RUNTIME_ROLE)"
           if [[ -z "$SUPABASE_SERVICE_ROLE_KEY" ]]; then
+            echo 'DIAGNOSTIC worker=Render SUPABASE_SERVICE_ROLE_KEY is missing'
             post_status failure "Code Worker Diagnostic" "Render SUPABASE_SERVICE_ROLE_KEY is missing"
             post_status failure "Code Job Diagnostic" "Production database diagnostics unavailable"
             post_status failure "Code Task Diagnostic" "Production database diagnostics unavailable"
@@ -66,16 +67,22 @@ jobs:
           hb_draining="$(jq -r '.[0].draining // true' <<<"$heartbeats" 2>/dev/null || echo true)"
           worker_state=failure
           if [[ "$role" == "all" && "$hb_age" -le 30 && "$hb_queues" == *agent* && "$hb_draining" == "false" ]]; then worker_state=success; fi
-          post_status "$worker_state" "Code Worker Diagnostic" "role=${role:-missing} hb=${hb_age}s queues=${hb_queues:-none} draining=$hb_draining"
+          worker_desc="role=${role:-missing} hb=${hb_age}s queues=${hb_queues:-none} draining=$hb_draining"
+          echo "DIAGNOSTIC worker=$worker_desc"
+          post_status "$worker_state" "Code Worker Diagnostic" "$worker_desc"
 
           job_status="$(jq -r '.[0].status // "none"' <<<"$jobs" 2>/dev/null || echo invalid)"
           job_model="$(jq -r '.[0].payload.modelId // "none"' <<<"$jobs" 2>/dev/null || echo invalid)"
           job_error="$(jq -r '.[0].error_code // "none"' <<<"$jobs" 2>/dev/null || echo invalid)"
           job_attempt="$(jq -r '.[0].attempt // 0' <<<"$jobs" 2>/dev/null || echo 0)"
           case "$job_status" in completed) job_state=success;; failed|cancelled|invalid|none) job_state=failure;; *) job_state=pending;; esac
-          post_status "$job_state" "Code Job Diagnostic" "status=$job_status model=$job_model error=$job_error attempt=$job_attempt"
+          job_desc="status=$job_status model=$job_model error=$job_error attempt=$job_attempt"
+          echo "DIAGNOSTIC job=$job_desc"
+          post_status "$job_state" "Code Job Diagnostic" "$job_desc"
 
           task_status="$(jq -r '.[0].status // "none"' <<<"$tasks" 2>/dev/null || echo invalid)"
           task_error="$(jq -r '.[0].error // "none" | gsub("[\\r\\n]+";" ") | .[0:95]' <<<"$tasks" 2>/dev/null || echo diagnostic-query-failed)"
           case "$task_status" in completed|waiting_for_user|published) task_state=success;; failed|invalid|none) task_state=failure;; *) task_state=pending;; esac
-          post_status "$task_state" "Code Task Diagnostic" "status=$task_status error=$task_error"
+          task_desc="status=$task_status error=$task_error"
+          echo "DIAGNOSTIC task=$task_desc"
+          post_status "$task_state" "Code Task Diagnostic" "$task_desc"
