@@ -14,7 +14,7 @@ permissions:
 
 env:
   PRODUCTION_URL: https://mychat-nm6x.onrender.com
-  # Deployment trigger for latest main with MyChat naming fix.
+  # Deployment trigger for Code model return repair.
 
 jobs:
   deploy:
