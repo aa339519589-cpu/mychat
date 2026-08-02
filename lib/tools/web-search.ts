@@ -19,6 +19,8 @@ type SearchHit = {
 }
 type SearchPlan = { query: string; topic: TavilyTopic; timeRange: SearchTimeRange }
 
+const CROSS_CHECK_FRESHNESS = /最新|今天|今日|刚刚|实时|本周|本月|新闻|发布|上线|更新|进展|latest|today|breaking|news|release|update/i
+
 function parseSearchHit(result: unknown): SearchHit[] {
   if (!isRecord(result) || !isSafeExternalHttpUrl(result.url)) return []
   return [{
@@ -40,6 +42,7 @@ async function tavilySearchOnce(
   try {
     const signals = [parentSignal, AbortSignal.timeout(20_000)].filter(Boolean) as AbortSignal[]
     const body: Record<string, unknown> = {
+      api_key: apiKey,
       query: plan.query,
       search_depth: 'advanced',
       chunks_per_source: 3,
@@ -71,7 +74,9 @@ async function tavilySearchOnce(
 
 function searchPlans(query: string, latestBeijingDate: string | null): SearchPlan[] {
   const timeRange = inferSearchTimeRange(query)
-  return buildSearchQueries(query, latestBeijingDate).map((plannedQuery, index) => ({
+  const queries = buildSearchQueries(query, latestBeijingDate)
+  const selectedQueries = CROSS_CHECK_FRESHNESS.test(query) ? queries : queries.slice(0, 1)
+  return selectedQueries.map((plannedQuery, index) => ({
     query: plannedQuery,
     topic: timeRange && index === 0 ? 'news' : 'general',
     timeRange,
