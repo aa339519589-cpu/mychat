@@ -1,5 +1,5 @@
 name: Recover Render Production
-# Recovery trigger: deploy immediate Chat streaming.
+# Recovery trigger: deploy Code model ID repair.
 
 on:
   workflow_dispatch:
