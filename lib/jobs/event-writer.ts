@@ -2,9 +2,9 @@ import type { ChatEvent } from '@/lib/llm/events'
 import type { JobEventDraft, JsonObject, JsonValue } from './contracts'
 import type { JobExecutionContext } from './worker'
 
-const FLUSH_INTERVAL_MS = 16
-const FLUSH_BATCH_SIZE = 32
-const MAX_COALESCED_DELTA_CHARS = 512
+const FLUSH_INTERVAL_MS = 12
+const FLUSH_BATCH_SIZE = 16
+const MAX_COALESCED_DELTA_CHARS = 64
 
 function jsonObject(value: object): JsonObject {
   const parsed: unknown = JSON.parse(JSON.stringify(value))
@@ -57,8 +57,8 @@ function materializedText(
 
 /**
  * Bridges synchronous model deltas to the durable, fenced event log. The first
- * visible text delta flushes immediately; later deltas flush once per display
- * frame so clients receive real streaming without a second artificial queue.
+ * visible text delta flushes immediately. Later deltas are bounded to small
+ * chunks so a fast provider can never collapse a long reply into one burst.
  */
 export class JobEventWriter {
   private readonly context: JobExecutionContext
