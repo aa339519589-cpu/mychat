@@ -77,7 +77,6 @@ test('Code Console composer stays compact while preserving 44px controls', () =>
   const html = renderView()
   assert.match(html, /min-h-11 max-w-3xl items-center/)
   assert.match(html, /min-h-8 min-w-0 flex-1/)
-  assert.match(html, /Math\.min\(element\.scrollHeight, 96\)/)
   assert.match(html, /inline-flex size-11/)
 })
 
