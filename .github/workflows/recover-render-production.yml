@@ -1,5 +1,5 @@
 name: Recover Render Production
-# Recovery trigger: deploy Chat streaming cadence fix.
+# Recovery trigger: deploy direct Chat SSE.
 
 on:
   workflow_dispatch:
