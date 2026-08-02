@@ -11,6 +11,7 @@ const SESSION_ID = '74000000-0000-4000-8000-000000000003'
 const RESPONSE_ID = '74000000-0000-4000-8000-000000000004'
 const MESSAGE_ID = '74000000-0000-4000-8000-000000000005'
 const CREATED_AT = '2026-07-17T12:00:00.000Z'
+const MODEL_ID = 'deepseek/deepseek-v4-flash-0731'
 
 function planClient(tables: string[]): SupabaseClient {
   class Query implements PromiseLike<{ data: unknown; error: null }> {
@@ -72,7 +73,7 @@ function context(): JobExecutionContext {
         responseId: RESPONSE_ID,
         userMessageId: MESSAGE_ID,
       },
-      input: { tier: '正构' },
+      input: { modelId: MODEL_ID, accessClass: 'quota' },
     },
     fence: {
       jobId: '74000000-0000-4000-8000-000000000006',
@@ -83,7 +84,25 @@ function context(): JobExecutionContext {
   } as unknown as JobExecutionContext
 }
 
-test('provisional Agent input loads only durable chat and GitHub identity metadata', async () => {
+test('provisional Agent input loads only durable chat and GitHub identity metadata', { concurrency: false }, async t => {
+  const previousKey = process.env.OPENROUTER_API_KEY
+  const previousFetch = globalThis.fetch
+  process.env.OPENROUTER_API_KEY = 'test-openrouter-key'
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    data: [{
+      id: MODEL_ID,
+      context_length: 128_000,
+      architecture: { input_modalities: ['text'], output_modalities: ['text'] },
+      pricing: { prompt: '0.0000001', completion: '0.0000006' },
+      supported_parameters: ['tools', 'tool_choice'],
+    }],
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  t.after(() => {
+    globalThis.fetch = previousFetch
+    if (previousKey === undefined) delete process.env.OPENROUTER_API_KEY
+    else process.env.OPENROUTER_API_KEY = previousKey
+  })
+
   const tables: string[] = []
   let credentialCalls = 0
   let workspaceCalls = 0
@@ -105,6 +124,7 @@ test('provisional Agent input loads only durable chat and GitHub identity metada
   assert.equal(input.login, 'architect')
   assert.equal(input.workspaceReady, false)
   assert.equal(input.defaultBranch, null)
+  assert.equal(input.selection.model, MODEL_ID)
   assert.deepEqual(input.memories, [])
   assert.deepEqual(input.messages, [{ role: 'user', content: 'build it' }])
   assert.equal(credentialCalls, 0)
