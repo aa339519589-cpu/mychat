@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import type { SupabaseClient } from '@/lib/supabase/types'
+import type { SupabaseServer } from '@/lib/api/guard'
 import { getTaskDetail } from '@/lib/agent/data'
 import { runGit } from '@/lib/agent/git-publish/git-command'
 import { isValidGitHubRepository } from '@/lib/agent/git-publish/shared'
@@ -11,7 +11,11 @@ import {
   restoreWorkspaceAuthority,
 } from '@/lib/agent/workspace-authority'
 import { workspaceRoot } from '@/lib/agent/workspace-paths'
-import { TIER_MAP, type Tier } from '@/lib/chat-data'
+import {
+  ChatModelSelectionError,
+  type ChatModelSelection,
+} from '@/lib/chat/model-selection'
+import { resolveCodeModelSelection } from '@/lib/code-agent/model-selection'
 import { isProvisionalRepositoryForSession } from '@/lib/code-agent/provisional-repository'
 import type { CodeChatMessage } from '@/lib/code-agent/request'
 import {
@@ -59,8 +63,7 @@ export type LoadedAgentJob = {
   repoIsPrivate: boolean
   memories: string[]
   workspaceReady: boolean
-  model: string
-  thinking: boolean
+  selection: ChatModelSelection
   usingBalance: boolean
 }
 
@@ -107,14 +110,43 @@ function identity(context: JobExecutionContext): AgentIdentity {
   }
 }
 
-function selectedModel(context: JobExecutionContext) {
+async function selectedModel(
+  context: JobExecutionContext,
+  client: SupabaseClient,
+  userId: string,
+): Promise<{ selection: ChatModelSelection; usingBalance: boolean }> {
   const payload = object(context.job.input)
-  const tier = typeof payload.tier === 'string' ? payload.tier : '正构'
-  const selected = tier === '观照' ? TIER_MAP['正构'] : (TIER_MAP[tier as Tier] ?? TIER_MAP['正构'])
+  const modelId = required(payload.modelId, 'modelId')
+  const reasoningEffort = typeof payload.reasoningEffort === 'string'
+    ? payload.reasoningEffort
+    : undefined
+  let selection: ChatModelSelection
+  try {
+    selection = await resolveCodeModelSelection({
+      modelId,
+      reasoningEffort,
+      supabase: client as unknown as SupabaseServer,
+      userId,
+      allowPremium: true,
+    })
+  } catch (error) {
+    if (error instanceof ChatModelSelectionError) {
+      throw new JobRuntimeError(
+        error.status >= 500 ? 'JOB_DEPENDENCY_UNAVAILABLE' : 'JOB_CONFLICT',
+        error.message,
+        { class: 'policy', retryable: error.status >= 500, cause: error },
+      )
+    }
+    throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'Agent model policy is unavailable', {
+      class: 'policy', cause: error,
+    })
+  }
+  if (payload.accessClass !== selection.accessClass) {
+    throw new JobRuntimeError('JOB_CONFLICT', 'Agent model policy changed after enqueue')
+  }
   return {
-    model: selected.model,
-    thinking: selected.thinking,
-    usingBalance: object(payload.admission).funding === 'balance',
+    selection,
+    usingBalance: object(payload.admission).funding === 'balance' || payload.usingBalance === true,
   }
 }
 
@@ -317,7 +349,7 @@ export async function loadAgentJob(
   const dependencies = { ...DEFAULT_DEPENDENCIES, ...overrides }
   const client = dependencies.client()
   const value = identity(context)
-  const model = selectedModel(context)
+  const model = await selectedModel(context, client, value.userId)
   const provisional = isProvisionalRepositoryForSession(value.wireRepo, value.sessionId)
   const { task, source, memories } = await authorityRows(client, value, !provisional)
   const messages = await messageHistory(client, value, source)
