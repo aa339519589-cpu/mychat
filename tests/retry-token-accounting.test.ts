@@ -5,6 +5,7 @@ import {
   chatTokenAccounting,
   restoredHistoricalTokens,
 } from '../lib/jobs/handlers/chat-text-runtime'
+import { getModelCapability } from '../lib/llm/models'
 
 function recoveredUsage(checkpointTokens: number, durableTokens: number) {
   return {
@@ -54,9 +55,19 @@ test('chat attempt two bills only new provider usage and remains settleable', ()
 test('agent attempt two bills only new provider usage and remains settleable', () => {
   const historicalTokens = restoredHistoricalTokens(recoveredUsage(75, 80))
   const attemptTokens = 20
+  const capability = getModelCapability('deepseek-reasoner')
   const entry = agentTokenAccounting({
-    model: 'deepseek-reasoner',
-    thinking: true,
+    selection: {
+      customEndpoint: false,
+      model: capability.id,
+      thinking: true,
+      reasoningEffort: null,
+      accessClass: 'legacy',
+      capability,
+      apiKey: 'test-key',
+      authType: capability.provider.authType,
+      outputKind: 'chat',
+    },
     usingBalance: true,
   }, 'agent-retry-job', attemptTokens)[0]
 
