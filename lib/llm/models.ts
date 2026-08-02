@@ -1,5 +1,5 @@
 import type { EndpointAuthType } from '@/lib/model-endpoints'
-import type { ModelCatalogItem } from '@/lib/model-catalog'
+import type { ModelAccessClass, ModelCatalogItem } from '@/lib/model-catalog'
 import type { ProviderAdapterId } from './provider-adapters'
 
 export type PlatformApiKeyEnv = 'DEEPSEEK_API_KEY' | 'MIMO_API_KEY' | 'DEEP_TIER_API_KEY' | 'OPENROUTER_API_KEY'
@@ -35,6 +35,44 @@ export const MODEL_REGISTRY = {
     provider: { id: 'xiaomi-mimo', adapter: 'mimo-openai', baseUrl: 'https://api.xiaomimimo.com', apiKeyEnv: 'MIMO_API_KEY' },
   },
 } as const satisfies Record<string, ModelCapability>
+
+export type DirectDeepSeekCatalogRoute = {
+  catalogId: string
+  runtimeModel: keyof typeof MODEL_REGISTRY
+  name: string
+  access: ModelAccessClass
+  outputKind: 'chat'
+  tools: true
+  reasoningEfforts: readonly string[]
+  defaultReasoningEffort: string
+}
+
+const DIRECT_DEEPSEEK_CATALOG_ROUTES: Record<string, DirectDeepSeekCatalogRoute> = {
+  'deepseek/deepseek-v4-flash-0731': {
+    catalogId: 'deepseek/deepseek-v4-flash-0731',
+    runtimeModel: 'deepseek-v4-flash',
+    name: 'DeepSeek V4 Flash',
+    access: 'quota',
+    outputKind: 'chat',
+    tools: true,
+    reasoningEfforts: ['none', 'high'],
+    defaultReasoningEffort: 'high',
+  },
+  'deepseek/deepseek-v4-pro': {
+    catalogId: 'deepseek/deepseek-v4-pro',
+    runtimeModel: 'deepseek-v4-pro',
+    name: 'DeepSeek V4 Pro',
+    access: 'quota',
+    outputKind: 'chat',
+    tools: true,
+    reasoningEfforts: ['none', 'high'],
+    defaultReasoningEffort: 'high',
+  },
+}
+
+export function getDirectDeepSeekCatalogRoute(modelId: string): DirectDeepSeekCatalogRoute | null {
+  return DIRECT_DEEPSEEK_CATALOG_ROUTES[modelId] ?? null
+}
 
 function parseEndpointAuthType(raw: string | undefined, fallback: EndpointAuthType = 'bearer'): EndpointAuthType {
   const normalized = (raw ?? fallback).trim().toLowerCase()
