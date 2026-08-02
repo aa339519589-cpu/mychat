@@ -5,11 +5,7 @@ import { expensiveWriteMaintenanceResponse } from '@/lib/api/maintenance'
 import { readJson, requestId } from '@/lib/api/request'
 import { releaseTrialCall, reserveTrialCall } from '@/lib/chat/model-access'
 import { ChatModelSelectionError, type ChatModelSelection } from '@/lib/chat/model-selection'
-import {
-  CodeAgentEnqueueContextError,
-  parseAgentEnqueueResult,
-  resolveCodeAgentEnqueueContext,
-} from '@/lib/code-agent/enqueue-context'
+import { CodeAgentEnqueueContextError, parseAgentEnqueueResult, resolveCodeAgentEnqueueContext } from '@/lib/code-agent/enqueue-context'
 import { resolveCodeModelSelection } from '@/lib/code-agent/model-selection'
 import { parseCodeChatRequest, type CodeChatRequest } from '@/lib/code-agent/request'
 import { getCurrentGitHubConnectionStatus } from '@/lib/github-session'
@@ -19,93 +15,45 @@ import { jobMetrics } from '@/lib/observability/job-metrics'
 import { createAdminClient } from '@/lib/supabase/admin'
 import type { SupabaseClient } from '@/lib/supabase/types'
 
-type BoundCodeChatRequest = CodeChatRequest & {
-  repo: string
-  responseId: string
-  sessionId: string
-}
-
-type AdmissionPolicy = {
-  response?: Response
-  selection?: ChatModelSelection
-  usingBalance?: boolean
-}
+type BoundCodeChatRequest = CodeChatRequest & { repo: string; responseId: string; sessionId: string }
+type AdmissionPolicy = { response?: Response; selection?: ChatModelSelection; usingBalance?: boolean }
 
 function latestGoal(messages: Array<{ role: string; content: string }>): string {
-  return [...messages].reverse().find(message => message.role === 'user')?.content.slice(0, 10_000)
-    || '代码任务'
+  return [...messages].reverse().find(message => message.role === 'user')?.content.slice(0, 10_000) || '代码任务'
 }
-
 function apiFailure(request: NextRequest, input: ApiErrorResponseOptions): Response {
   return apiErrorResponseV1(request, input)
 }
-
 function boundRequest(body: CodeChatRequest): BoundCodeChatRequest {
   if (!body.repo || !body.sessionId || !body.responseId) {
-    throw new CodeAgentEnqueueContextError(
-      'conflict',
-      'Code Agent 需要 repo、sessionId 和 responseId',
-    )
+    throw new CodeAgentEnqueueContextError('conflict', 'Code Agent 需要 repo、sessionId 和 responseId')
   }
   return body as BoundCodeChatRequest
 }
-
-async function loadContext(
-  client: SupabaseClient,
-  userId: string,
-  taskId: string,
-  body: BoundCodeChatRequest,
-): Promise<{ userMessageId: string }> {
+async function loadContext(client: SupabaseClient, userId: string, taskId: string, body: BoundCodeChatRequest): Promise<{ userMessageId: string }> {
   const [task, session, userMessage] = await Promise.all([
-    client.from('agent_tasks').select('id,repo,status').eq('id', taskId)
-      .eq('user_id', userId).maybeSingle(),
-    client.from('code_sessions').select('id,repo').eq('id', body.sessionId)
-      .eq('user_id', userId).maybeSingle(),
+    client.from('agent_tasks').select('id,repo,status').eq('id', taskId).eq('user_id', userId).maybeSingle(),
+    client.from('code_sessions').select('id,repo').eq('id', body.sessionId).eq('user_id', userId).maybeSingle(),
     client.from('code_messages').select('id,session_id').eq('session_id', body.sessionId)
-      .eq('user_id', userId).eq('role', 'user').order('created_at', { ascending: false })
-      .limit(1).maybeSingle(),
+      .eq('user_id', userId).eq('role', 'user').order('created_at', { ascending: false }).limit(1).maybeSingle(),
   ])
-  return resolveCodeAgentEnqueueContext({
-    task,
-    session,
-    userMessage,
-    taskId,
-    sessionId: body.sessionId,
-    repo: body.repo,
-  })
+  return resolveCodeAgentEnqueueContext({ task, session, userMessage, taskId, sessionId: body.sessionId, repo: body.repo })
 }
-
 function contextFailure(request: NextRequest, error: CodeAgentEnqueueContextError): Response {
   if (error.kind === 'dependency') return apiFailure(request, {
-    status: 503,
-    code: 'DEPENDENCY_UNAVAILABLE',
-    message: error.message,
-    retryable: true,
+    status: 503, code: 'DEPENDENCY_UNAVAILABLE', message: error.message, retryable: true,
   })
-  return apiFailure(request, {
-    status: 409,
-    code: 'CONFLICT',
-    message: error.message,
-    retryable: false,
-  })
+  return apiFailure(request, { status: 409, code: 'CONFLICT', message: error.message, retryable: false })
 }
-
 function modelSelectionResponse(request: NextRequest, error: ChatModelSelectionError): Response {
   return apiFailure(request, {
     status: error.status,
-    code: error.status === 404 ? 'NOT_FOUND'
-      : error.status === 401 ? 'AUTH_REQUIRED'
-        : error.status === 403 ? 'FORBIDDEN' : 'CONFLICT',
+    code: error.status === 404 ? 'NOT_FOUND' : error.status === 401 ? 'AUTH_REQUIRED' : error.status === 403 ? 'FORBIDDEN' : 'CONFLICT',
     message: error.message,
     retryable: error.status >= 500,
   })
 }
-
-async function resolveAdmissionPolicy(
-  request: NextRequest,
-  auth: AuthCtx,
-  body: BoundCodeChatRequest,
-): Promise<AdmissionPolicy> {
+async function resolveAdmissionPolicy(request: NextRequest, auth: AuthCtx, body: BoundCodeChatRequest): Promise<AdmissionPolicy> {
   let selection: ChatModelSelection
   try {
     selection = await resolveCodeModelSelection({
@@ -116,14 +64,9 @@ async function resolveAdmissionPolicy(
       allowPremium: true,
     })
   } catch (error) {
-    if (error instanceof ChatModelSelectionError) {
-      return { response: modelSelectionResponse(request, error) }
-    }
+    if (error instanceof ChatModelSelectionError) return { response: modelSelectionResponse(request, error) }
     return { response: apiFailure(request, {
-      status: 503,
-      code: 'DEPENDENCY_UNAVAILABLE',
-      message: '模型策略暂时不可用',
-      retryable: true,
+      status: 503, code: 'DEPENDENCY_UNAVAILABLE', message: '模型策略暂时不可用', retryable: true,
     }) }
   }
   if (selection.accessClass !== 'quota') return { selection, usingBalance: false }
@@ -133,36 +76,22 @@ async function resolveAdmissionPolicy(
     return { selection, usingBalance: quota.usingBalance }
   } catch {
     return { response: apiFailure(request, {
-      status: 503,
-      code: 'DEPENDENCY_UNAVAILABLE',
-      message: '额度服务暂时不可用',
-      retryable: true,
+      status: 503, code: 'DEPENDENCY_UNAVAILABLE', message: '额度服务暂时不可用', retryable: true,
     }) }
   }
 }
-
 async function githubConnectionFailure(request: NextRequest): Promise<Response | null> {
   try {
-    const connection = await getCurrentGitHubConnectionStatus({
-      purpose: 'agent.enqueue',
-      requestId: requestId(request),
-    })
+    const connection = await getCurrentGitHubConnectionStatus({ purpose: 'agent.enqueue', requestId: requestId(request) })
     return connection ? null : apiFailure(request, {
-      status: 401,
-      code: 'AUTH_REQUIRED',
-      message: '未连接 GitHub 或账号会话已变化',
-      retryable: false,
+      status: 401, code: 'AUTH_REQUIRED', message: '未连接 GitHub 或账号会话已变化', retryable: false,
     })
   } catch {
     return apiFailure(request, {
-      status: 503,
-      code: 'DEPENDENCY_UNAVAILABLE',
-      message: 'GitHub 连接服务暂时不可用',
-      retryable: true,
+      status: 503, code: 'DEPENDENCY_UNAVAILABLE', message: 'GitHub 连接服务暂时不可用', retryable: true,
     })
   }
 }
-
 async function enqueueAgentTask(input: {
   userId: string
   isAnonymous: boolean
@@ -204,13 +133,7 @@ async function enqueueAgentTask(input: {
   if (!result) throw new Error('atomic enqueue failed')
   return result
 }
-
-function acceptedResponse(
-  taskId: string,
-  responseId: string,
-  job: { jobId: string; status: string; created: boolean },
-  trialRemaining: number | null,
-): Response {
+function acceptedResponse(taskId: string, responseId: string, job: { jobId: string; status: string; created: boolean }, trialRemaining: number | null): Response {
   if (job.created) jobMetrics.recordEnqueued('agent_task')
   return Response.json({
     schemaVersion: 1,
@@ -221,13 +144,7 @@ function acceptedResponse(
     created: job.created,
     streamUrl: `/api/v1/jobs/${job.jobId}/events?from_seq=0`,
     ...(trialRemaining !== null ? { trialRemaining, trialLimit: 3 } : {}),
-  }, {
-    status: 202,
-    headers: {
-      'Cache-Control': 'no-store',
-      Location: `/api/v1/jobs/${job.jobId}`,
-    },
-  })
+  }, { status: 202, headers: { 'Cache-Control': 'no-store', Location: `/api/v1/jobs/${job.jobId}` } })
 }
 
 export async function POST(request: NextRequest): Promise<Response> {
@@ -242,7 +159,6 @@ export async function POST(request: NextRequest): Promise<Response> {
     message: auth.authUnavailable ? '认证服务暂时不可用' : '请先登录',
     retryable: auth.authUnavailable === true,
   })
-
   let body: BoundCodeChatRequest
   try {
     body = boundRequest(parseCodeChatRequest(await readJson(request, { maxBytes: 4 * 1024 * 1024 })))
@@ -250,29 +166,18 @@ export async function POST(request: NextRequest): Promise<Response> {
     const message = error instanceof Error ? error.message : '请求参数无效'
     return apiFailure(request, { status: 400, code: 'INVALID_REQUEST', message, retryable: false })
   }
-
   const policy = await resolveAdmissionPolicy(request, auth, body)
   if (policy.response) return policy.response
   if (!policy.selection || policy.usingBalance === undefined) return apiFailure(request, {
-    status: 503,
-    code: 'DEPENDENCY_UNAVAILABLE',
-    message: '模型准入策略暂时不可用',
-    retryable: true,
+    status: 503, code: 'DEPENDENCY_UNAVAILABLE', message: '模型准入策略暂时不可用', retryable: true,
   })
-
   const connectionFailure = await githubConnectionFailure(request)
   if (connectionFailure) return connectionFailure
-
   let trialReserved = false
   let trialRemaining: number | null = null
   if (policy.selection.accessClass !== 'quota' && auth.isOwner !== true) {
     try {
-      const trial = await reserveTrialCall(
-        auth.supabase,
-        auth.userId,
-        body.responseId,
-        policy.selection.model,
-      )
+      const trial = await reserveTrialCall(auth.supabase, auth.userId, body.responseId, policy.selection.model)
       trialRemaining = trial.remaining
       if (!trial.allowed) return apiFailure(request, {
         status: 403,
@@ -291,7 +196,6 @@ export async function POST(request: NextRequest): Promise<Response> {
       })
     }
   }
-
   const taskId = body.taskId ?? crypto.randomUUID()
   try {
     const context = await loadContext(auth.supabase, auth.userId, taskId, body)
@@ -306,15 +210,10 @@ export async function POST(request: NextRequest): Promise<Response> {
     })
     return acceptedResponse(taskId, body.responseId, job, trialRemaining)
   } catch (error) {
-    if (trialReserved) {
-      await releaseTrialCall(auth.supabase, auth.userId, body.responseId).catch(() => undefined)
-    }
+    if (trialReserved) await releaseTrialCall(auth.supabase, auth.userId, body.responseId).catch(() => undefined)
     if (error instanceof CodeAgentEnqueueContextError) return contextFailure(request, error)
     return apiFailure(request, {
-      status: 503,
-      code: 'DEPENDENCY_UNAVAILABLE',
-      message: 'Agent 作业暂时无法入队',
-      retryable: true,
+      status: 503, code: 'DEPENDENCY_UNAVAILABLE', message: 'Agent 作业暂时无法入队', retryable: true,
     })
   }
 }
