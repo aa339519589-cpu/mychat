@@ -84,6 +84,13 @@ SQL
 
 while IFS= read -r migration; do
   [[ -n "$migration" ]] || continue
+  # Contract v4+ attestation RPCs are service-only deployment probes. They are
+  # deliberately excluded from the browser-facing generated Supabase types.
+  case "$migration" in
+    20260801020000_schema_contract_attestation_v4.sql|20260802190000_schema_contract_attestation_v5.sql)
+      continue
+      ;;
+  esac
   "${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/$migration" >/dev/null
 done < <(node -e '
   const manifest = require(process.argv[1])
