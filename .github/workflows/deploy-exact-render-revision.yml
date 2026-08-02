@@ -14,7 +14,7 @@ permissions:
 
 env:
   PRODUCTION_URL: https://mychat-nm6x.onrender.com
-  # Deployment trigger for final verified Code repair revision.
+  # Deployment trigger for direct DeepSeek API routing.
 
 jobs:
   deploy:
