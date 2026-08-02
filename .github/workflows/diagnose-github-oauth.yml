@@ -1,0 +1,71 @@
+name: Diagnose GitHub OAuth on Render
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/diagnose-github-oauth.yml
+
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check Render OAuth dependencies
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+          base="https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars"
+          post_status() {
+            local context="$1" state="$2" description="$3"
+            jq -nc --arg context "$context" --arg state "$state" --arg description "$description" '{context:$context,state:$state,description:$description}' \
+              | gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" --input - >/dev/null
+          }
+          check_key() {
+            local key="$1" minimum="$2" body status value
+            body="$(mktemp)"
+            status="$(curl --silent --show-error --output "$body" --write-out '%{http_code}' \
+              --connect-timeout 10 --max-time 60 \
+              --header "Authorization: Bearer $RENDER_API_KEY" \
+              "$base/$key" || true)"
+            value=""
+            if [[ "$status" == "200" ]]; then
+              value="$(jq -r '.value // empty' "$body")"
+            fi
+            rm -f "$body"
+            if (( ${#value} >= minimum )); then
+              post_status "OAuth $key" success "Configured on Render"
+            else
+              post_status "OAuth $key" failure "Missing or invalid on Render"
+            fi
+          }
+          check_key GITHUB_CLIENT_ID 1
+          check_key GITHUB_CLIENT_SECRET 1
+          check_key AGENT_CREDENTIAL_KEY 32
+          check_key SUPABASE_SERVICE_ROLE_KEY 1
+
+      - name: Check production OAuth route
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          status="$(curl --silent --show-error --output /tmp/oauth-body --write-out '%{http_code}' \
+            --connect-timeout 10 --max-time 30 \
+            https://mychat-nm6x.onrender.com/api/auth/github || true)"
+          if [[ "$status" == "401" || "$status" == "302" ]]; then
+            state=success
+            description="OAuth route enabled"
+          else
+            state=failure
+            description="OAuth route returned HTTP $status"
+          fi
+          jq -nc --arg context "OAuth Route" --arg state "$state" --arg description "$description" '{context:$context,state:$state,description:$description}' \
+            | gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" --input - >/dev/null
