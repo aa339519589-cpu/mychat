@@ -4,7 +4,13 @@ import type { ModelAccessClass } from '@/lib/model-catalog'
 import { getOpenRouterModel } from '@/lib/openrouter-catalog'
 import { endpointAuthType, getOwnedModelEndpoint, resolveModelEndpointKey, type ModelEndpointRow } from '@/lib/model-endpoint-server'
 import { isModelOutputKind, type EndpointAuthType, type ModelOutputKind } from '@/lib/model-endpoints'
-import { customModelCapability, getModelCapability, openRouterModelCapability, type ModelCapability } from '@/lib/llm/models'
+import {
+  customModelCapability,
+  getDirectDeepSeekCatalogRoute,
+  getModelCapability,
+  openRouterModelCapability,
+  type ModelCapability,
+} from '@/lib/llm/models'
 import { ModelEndpointError, validateModelEndpointNetwork } from '@/lib/llm/openai-compatible'
 
 export type ChatModelSelection = {
@@ -40,6 +46,46 @@ const DEFAULT_DEPENDENCIES: ModelSelectionDependencies = {
   validateEndpointNetwork: validateModelEndpointNetwork,
 }
 
+function resolveDirectDeepSeekSelection(options: {
+  modelId: string
+  reasoningEffort?: string
+  allowPremium?: boolean
+}): ChatModelSelection | null {
+  const route = getDirectDeepSeekCatalogRoute(options.modelId)
+  if (!route) return null
+  if (route.access === 'premium' && options.allowPremium !== true) {
+    throw new ChatModelSelectionError(403, { error: '该模型需要会员' })
+  }
+  const requested = options.reasoningEffort?.toLowerCase()
+  if (requested && !route.reasoningEfforts.includes(requested)) {
+    throw new ChatModelSelectionError(409, { error: '当前模型不支持所选思考深度' })
+  }
+  const effort = requested ?? route.defaultReasoningEffort
+  const capability = getModelCapability(route.runtimeModel)
+  const apiKeyEnvironment = capability.provider.apiKeyEnv
+  const apiKey = apiKeyEnvironment ? process.env[apiKeyEnvironment]?.trim() ?? '' : ''
+  if (!apiKey) {
+    throw new ChatModelSelectionError(
+      500,
+      { error: `服务未配置（${apiKeyEnvironment ?? '模型 API Key'} 未设置）` },
+      true,
+      `${apiKeyEnvironment ?? 'model key'} not configured`,
+    )
+  }
+  return {
+    customEndpoint: false,
+    model: capability.id,
+    thinking: effort !== 'none',
+    reasoningEffort: effort,
+    accessClass: route.access,
+    capability,
+    apiKey,
+    authType: capability.provider.authType,
+    outputKind: route.outputKind,
+    platformTierLabel: route.name,
+  }
+}
+
 export async function resolveChatModelSelection(options: {
   tier: string
   endpointId?: string
@@ -50,6 +96,13 @@ export async function resolveChatModelSelection(options: {
   allowPremium?: boolean
 }, dependencies: ModelSelectionDependencies = DEFAULT_DEPENDENCIES): Promise<ChatModelSelection> {
   if (options.modelId) {
+    const directDeepSeek = resolveDirectDeepSeekSelection({
+      modelId: options.modelId,
+      reasoningEffort: options.reasoningEffort,
+      allowPremium: options.allowPremium,
+    })
+    if (directDeepSeek) return directDeepSeek
+
     const model = await getOpenRouterModel(options.modelId)
     if (!model) throw new ChatModelSelectionError(404, { error: '该模型当前未在 OpenRouter 提供' })
     if (model.access === 'premium' && options.allowPremium !== true) throw new ChatModelSelectionError(403, { error: '该模型需要会员' })
