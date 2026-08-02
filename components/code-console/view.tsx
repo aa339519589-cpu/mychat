@@ -10,6 +10,7 @@ import { type CodeMessage, type CodeSession, type PlanAction } from "@/lib/code-
 import type { ModelCatalogItem } from "@/lib/model-catalog"
 import { cn } from "@/lib/utils"
 import { useMediaQuery } from "@/components/literary-chat/use-media-query"
+import { EffortPickerSheet } from "./effort-picker"
 import {
   ACCENT,
   COMMANDS,
@@ -70,7 +71,10 @@ export type CodeConsoleViewProps = {
   onCloseOverlay: () => void
   models: ModelCatalogItem[]
   activeModelId: string | null
+  activeModel: ModelCatalogItem | null
+  reasoningEffort: string | null
   onChangeModel: (model: ModelCatalogItem) => void
+  onChangeReasoningEffort: (effort: string) => void
   onLoadSession: (session: CodeSession) => void
 }
 
@@ -194,24 +198,24 @@ function CodeComposer(props: Pick<CodeConsoleViewProps,
   "input" | "repo" | "streaming" | "onInputChange" | "onSubmit" | "onStopAgent">) {
   const canSend = !props.streaming && !!props.input.trim()
   return (
-    <div className="border-y border-border px-4 pb-[max(0.25rem,env(safe-area-inset-bottom))] pt-1 md:px-8">
-      <div className="mx-auto flex min-h-14 max-w-3xl items-end gap-2">
-        <span className="mb-3 shrink-0 select-none" aria-hidden="true" style={{ color: ACCENT, fontFamily: MONO }}>›</span>
+    <div className="border-y border-border px-4 pb-[max(0px,env(safe-area-inset-bottom))] md:px-8">
+      <div className="mx-auto flex min-h-11 max-w-3xl items-center gap-2">
+        <span className="shrink-0 select-none" aria-hidden="true" style={{ color: ACCENT, fontFamily: MONO }}>›</span>
         <label htmlFor="code-task-input" className="sr-only">任务目标</label>
         <textarea id="code-task-input" rows={1} value={props.input}
-          onChange={event => { props.onInputChange(event.target.value); const element = event.target; element.style.height = "auto"; element.style.height = Math.min(element.scrollHeight, 160) + "px" }}
+          onChange={event => { props.onInputChange(event.target.value); const element = event.target; element.style.height = "auto"; element.style.height = Math.min(element.scrollHeight, 96) + "px" }}
           onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); if (!props.streaming) props.onSubmit() } }}
           placeholder={props.repo ? "输入仓库任务目标" : "输入新项目目标"}
-          className="min-h-11 min-w-0 flex-1 resize-none bg-transparent py-2.5 text-base leading-6 text-foreground outline-none placeholder:text-muted-foreground/60 focus-visible:ring-0"
+          className="min-h-8 min-w-0 flex-1 resize-none bg-transparent py-1 text-base leading-5 text-foreground outline-none placeholder:text-muted-foreground/60 focus-visible:ring-0"
           style={{ fontFamily: MONO }} />
         {props.streaming ? (
           <button type="button" onClick={props.onStopAgent} aria-label="停止 Agent" title="停止"
-            className="fluid-press fluid-icon-press mb-1 inline-flex size-11 shrink-0 items-center justify-center rounded-lg border border-border bg-secondary text-foreground hover:bg-secondary/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--code-accent)]">
+            className="fluid-press fluid-icon-press inline-flex size-11 shrink-0 items-center justify-center rounded-lg border border-border bg-secondary text-foreground hover:bg-secondary/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--code-accent)]">
             <Square className="size-3.5 fill-current" aria-hidden="true" />
           </button>
         ) : (
           <button type="button" onClick={props.onSubmit} disabled={!canSend} aria-label="发送" title="发送"
-            className={cn("fluid-press fluid-icon-press mb-1 inline-flex size-11 shrink-0 items-center justify-center rounded-lg border text-[11px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--code-accent)]", canSend ? "border-transparent text-white" : "border-border text-muted-foreground/40")}
+            className={cn("fluid-press fluid-icon-press inline-flex size-11 shrink-0 items-center justify-center rounded-lg border text-[11px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--code-accent)]", canSend ? "border-transparent text-white" : "border-border text-muted-foreground/40")}
             style={canSend ? { background: ACCENT } : undefined}>
             <CornerDownLeft className="size-3.5" aria-hidden="true" />
           </button>
@@ -256,6 +260,7 @@ function ActiveConsole(props: CodeConsoleViewProps) {
       <CodeComposer {...props} />
       <ConsoleOverlays {...props} />
       <ModelPickerSheet open={props.overlay === "model"} mobile={mobile} models={props.models} activeModelId={props.activeModelId} onClose={props.onCloseOverlay} onSelect={props.onChangeModel} />
+      <EffortPickerSheet open={props.overlay === "effort"} model={props.activeModel} activeEffort={props.reasoningEffort} onClose={props.onCloseOverlay} onSelect={props.onChangeReasoningEffort} />
     </Shell>
   )
 }
