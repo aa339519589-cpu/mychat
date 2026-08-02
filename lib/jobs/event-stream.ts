@@ -2,8 +2,10 @@ import type { SupabaseClient } from '@/lib/supabase/types'
 import { isTerminalJobStatus, type JobStatus } from './contracts'
 import { readOwnedJob, readOwnedJobEvents } from './read-model'
 
-const INITIAL_POLL_INTERVAL_MS = 40
-const MAX_POLL_INTERVAL_MS = 120
+const INITIAL_POLL_INTERVAL_MS = 250
+const MAX_POLL_INTERVAL_MS = 2_000
+const CHAT_INITIAL_POLL_INTERVAL_MS = 40
+const CHAT_MAX_POLL_INTERVAL_MS = 120
 const HEARTBEAT_INTERVAL_MS = 10_000
 const STATUS_REFRESH_INTERVAL_MS = 5_000
 const ADMISSION_RENEW_INTERVAL_MS = 15_000
@@ -77,22 +79,37 @@ function eventFrame(event: {
   return `id: ${event.seq}\nevent: ${event.kind}\ndata: ${JSON.stringify(event)}\n\n`
 }
 
+function pollBounds(
+  jobType: string | undefined,
+  dependencies: JobEventStreamDependencies,
+): { initial: number; maximum: number } {
+  if (jobType !== 'chat.generation') {
+    return {
+      initial: dependencies.initialPollIntervalMs,
+      maximum: dependencies.maxPollIntervalMs,
+    }
+  }
+  return {
+    initial: Math.min(dependencies.initialPollIntervalMs, CHAT_INITIAL_POLL_INTERVAL_MS),
+    maximum: Math.min(dependencies.maxPollIntervalMs, CHAT_MAX_POLL_INTERVAL_MS),
+  }
+}
+
 function nextPollInterval(
   current: number,
   hadEvents: boolean,
-  dependencies: JobEventStreamDependencies,
+  initial: number,
+  maximum: number,
 ): number {
-  if (hadEvents) return dependencies.initialPollIntervalMs
-  return Math.min(
-    dependencies.maxPollIntervalMs,
-    current + dependencies.initialPollIntervalMs,
-  )
+  if (hadEvents) return initial
+  return Math.min(maximum, current + initial)
 }
 
 export function createJobEventStream(input: {
   client: SupabaseClient
   principalId: string
   jobId: string
+  jobType?: string
   fromSequence: number
   initialStatus: JobStatus
   requestSignal: AbortSignal
@@ -101,6 +118,7 @@ export function createJobEventStream(input: {
   onClosed?: () => void | Promise<void>
 }, dependencyOverrides: Partial<JobEventStreamDependencies> = {}): ReadableStream<Uint8Array> {
   const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides }
+  const polling = pollBounds(input.jobType, dependencies)
   const stop = new AbortController()
   const deadline = AbortSignal.timeout(input.maxDurationMs ?? 15 * 60_000)
   const signal = AbortSignal.any([input.requestSignal, stop.signal, deadline])
@@ -123,7 +141,7 @@ export function createJobEventStream(input: {
       }
       let sequence = input.fromSequence
       let status = input.initialStatus
-      let pollIntervalMs = dependencies.initialPollIntervalMs
+      let pollIntervalMs = polling.initial
       let lastHeartbeat = dependencies.now()
       let lastStatusRefresh = dependencies.now()
       let lastAdmissionRenewal = dependencies.now()
@@ -188,7 +206,8 @@ export function createJobEventStream(input: {
             pollIntervalMs = nextPollInterval(
               pollIntervalMs,
               result.value.length > 0,
-              dependencies,
+              polling.initial,
+              polling.maximum,
             )
             await dependencies.wait(pollIntervalMs, signal)
           }
