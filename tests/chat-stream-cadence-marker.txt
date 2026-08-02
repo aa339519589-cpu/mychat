@@ -1,0 +1,1 @@
+Chat cadence regression coverage: 2200 characters, bounded event chunks, active polling <= 80 ms.
