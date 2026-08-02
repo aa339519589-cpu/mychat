@@ -21,6 +21,7 @@ import { useProjects } from "@/components/literary-chat/use-projects"
 import { LiteraryChatView, type LiteraryChatViewController } from "@/components/literary-chat/literary-chat-view"
 
 const EMPTY_DRAFT_TITLE = "未命名的篇章"
+const TOKEN_USAGE_TEST_EMAIL = "339519589@qq.com"
 function createDraft(id: string, projectId?: string): Conversation { return { id, title: EMPTY_DRAFT_TITLE, excerpt: "", date: "今日", messages: [], draft: true, projectId } }
 
 export function LiteraryChat() {
@@ -42,6 +43,7 @@ export function LiteraryChat() {
   const activationTokenRef = useRef(0)
   conversationsRef.current = conversations
   activeIdRef.current = activeId
+  const showTokenUsage = user?.email?.trim().toLowerCase() === TOKEN_USAGE_TEST_EMAIL
 
   const memory = useMemories(user)
   const model = useModelSelection({ setSearchMode, setHistoryRetrieval, setRenderEnabled })
@@ -85,6 +87,7 @@ export function LiteraryChat() {
     searchMode,
     historyRetrieval,
     renderEnabled,
+    showTokenUsage,
     authorityReady,
     setActiveId,
     setConversations,
@@ -180,8 +183,8 @@ export function LiteraryChat() {
     setConversations(previous => [createDraft(id), ...previous]); route.openConversation(null); setActiveId(id); activationTokenRef.current += 1; setHydratingConversationId(null)
   }
   function handleNewInProject(projectId: string) { const id = project.handleNewInProject(projectId); if (!id) return; rootConversationIdRef.current = id; layout.setOpenArtifactId(null); route.openConversation(null) }
-  function handleToggleStar(id: string) { const current = conversationsRef.current.find(conversation => conversation.id === id); if (!current) return; const starred = !current.starred; setConversations(previous => previous.map(conversation => conversation.id === id ? { ...conversation, starred } : conversation)); setConversationStarred(id, starred) }
-  function handleTogglePin(id: string) { const current = conversationsRef.current.find(conversation => conversation.id === id); if (!current) return; const pinned = !current.pinned; setConversations(previous => previous.map(conversation => conversation.id === id ? { ...conversation, pinned } : conversation)); setConversationPinned(id, pinned) }
+  function handleToggleStar(id: string) { const current = conversationsRef.current.find(item => item.id === id); if (!current) return; const starred = !current.starred; setConversations(previous => previous.map(conversation => conversation.id === id ? { ...conversation, starred } : conversation)); setConversationStarred(id, starred) }
+  function handleTogglePin(id: string) { const current = conversationsRef.current.find(item => item.id === id); if (!current) return; const pinned = !current.pinned; setConversations(previous => previous.map(conversation => conversation.id === id ? { ...conversation, pinned } : conversation)); setConversationPinned(id, pinned) }
   function handleRename(id: string, title: string) { const nextTitle = title.trim(); if (!nextTitle) return; setConversations(previous => previous.map(conversation => conversation.id === id ? { ...conversation, title: nextTitle } : conversation)); updateConversationTitle(id, nextTitle) }
   function handleMove(id: string, projectId: string | null) { setConversations(previous => previous.map(conversation => conversation.id === id ? { ...conversation, projectId } : conversation)); setConversationProject(id, projectId) }
   async function handleLogout() { await createClient().auth.signOut(); setUser(null) }
@@ -204,7 +207,7 @@ export function LiteraryChat() {
     layout,
     chat: {
       scrollRef,
-      messages: { onRegenerate: generation.handleRegenerate, onEditUserMessage: generation.handleEditUserMessage, onRegenerateFromUser: generation.handleRegenerateFromUser, isLoading: !authorityReady || generation.isActiveGenerating, onOpenArtifact: layout.setOpenArtifactId, openArtifactId: layout.openArtifactId },
+      messages: { showTokenUsage, onRegenerate: generation.handleRegenerate, onEditUserMessage: generation.handleEditUserMessage, onRegenerateFromUser: generation.handleRegenerateFromUser, isLoading: !authorityReady || generation.isActiveGenerating, onOpenArtifact: layout.setOpenArtifactId, openArtifactId: layout.openArtifactId },
       input: { onSend: generation.handleSend, activeTier: model.activeTier, onTierChange: model.handleTierChange, models: model.catalog, activeModelId: model.activeModelId, activeModel: model.activeModel, onModelChange: model.handleModelSelect, reasoningEffort: model.reasoningEffort, onReasoningChange: model.setReasoningEffort, searchMode, onSearchModeChange: setSearchMode, historyRetrieval, onHistoryRetrievalChange: setHistoryRetrieval, renderEnabled, onRenderEnabledChange: setRenderEnabled, disabled: !authorityReady, isLoading: generation.isActiveGenerating, onStop: generation.handleStop },
     },
   }
