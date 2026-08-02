@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  statuses: write
 
 jobs:
   diagnose:
@@ -19,10 +20,17 @@ jobs:
     steps:
       - name: Capture sanitized RPC response
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
+          post_status() {
+            jq -nc --arg state "$1" --arg context "$2" --arg description "${3:0:140}" --arg target_url "$RUN_URL" \
+              '{state:$state,context:$context,description:$description,target_url:$target_url}' \
+              | gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" --input - >/dev/null
+          }
           secret() {
             curl --fail-with-body --silent --show-error --retry 5 --retry-all-errors \
               -H "Authorization: Bearer $RENDER_API_KEY" \
@@ -66,7 +74,11 @@ jobs:
             out="$(mktemp)"
             if [[ "$mode" == user ]]; then headers=("${user[@]}"); else headers=("${admin[@]}"); fi
             status="$(curl -sS -o "$out" -w '%{http_code}' -X POST "${headers[@]}" --data "$body" "$SUPABASE_URL/rest/v1/rpc/enqueue_agent_task_job")"
+            message="$(jq -r '.message // .code // empty | tostring' "$out" 2>/dev/null | tr '\r\n' ' ' | cut -c1-110)"
             sanitized="$(jq -c 'del(.hint,.details) | if .message then .message=(.message|tostring|.[0:300]) else . end' "$out" 2>/dev/null || tr '\r\n' ' ' < "$out" | cut -c1-300)"
             echo "RPC_RESPONSE mode=$mode status=$status body=$sanitized"
+            state=failure
+            [[ "$status" =~ ^2 ]] && state=success
+            post_status "$state" "Agent RPC ${mode^}" "HTTP $status ${message:-empty response}"
             rm -f "$out"
           done
