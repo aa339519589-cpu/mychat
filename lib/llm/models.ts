@@ -55,7 +55,7 @@ export function openRouterModelCapability(model: ModelCatalogItem): ModelCapabil
     supportsThinking: model.reasoningEfforts.length > 0,
     provider: {
       id: 'openrouter',
-      adapter: 'generic-openai',
+      adapter: 'openrouter-openai',
       baseUrl: 'https://openrouter.ai/api/v1',
       apiKeyEnv: 'OPENROUTER_API_KEY',
       authType: 'bearer',
