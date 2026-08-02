@@ -17,6 +17,7 @@ import type { SupabaseClient } from '@/lib/supabase/types'
 
 type BoundCodeChatRequest = CodeChatRequest & { repo: string; responseId: string; sessionId: string }
 type AdmissionPolicy = { response?: Response; selection?: ChatModelSelection; usingBalance?: boolean }
+type TrialPolicy = { response?: Response; reserved: boolean; remaining: number | null }
 
 function latestGoal(messages: Array<{ role: string; content: string }>): string {
   return [...messages].reverse().find(message => message.role === 'user')?.content.slice(0, 10_000) || '代码任务'
@@ -78,6 +79,42 @@ async function resolveAdmissionPolicy(request: NextRequest, auth: AuthCtx, body:
     return { response: apiFailure(request, {
       status: 503, code: 'DEPENDENCY_UNAVAILABLE', message: '额度服务暂时不可用', retryable: true,
     }) }
+  }
+}
+async function reserveModelTrial(
+  request: NextRequest,
+  auth: AuthCtx,
+  body: BoundCodeChatRequest,
+  selection: ChatModelSelection,
+): Promise<TrialPolicy> {
+  if (selection.accessClass === 'quota' || auth.isOwner === true) {
+    return { reserved: false, remaining: null }
+  }
+  try {
+    const trial = await reserveTrialCall(auth.supabase!, auth.userId!, body.responseId, selection.model)
+    if (!trial.allowed) return {
+      reserved: false,
+      remaining: 0,
+      response: apiFailure(request, {
+        status: 403,
+        code: 'QUOTA_EXCEEDED',
+        message: '其他模型共享的 3 次额度已用完，当前剩余 0 次。请切换到基础模型继续使用。',
+        retryable: false,
+        details: { trialLimit: 3, trialRemaining: 0 },
+      }),
+    }
+    return { reserved: !trial.duplicate, remaining: trial.remaining }
+  } catch (error) {
+    return {
+      reserved: false,
+      remaining: null,
+      response: apiFailure(request, {
+        status: 503,
+        code: 'DEPENDENCY_UNAVAILABLE',
+        message: error instanceof Error ? error.message : '其他模型额度服务暂时不可用',
+        retryable: true,
+      }),
+    }
   }
 }
 async function githubConnectionFailure(request: NextRequest): Promise<Response | null> {
@@ -173,29 +210,8 @@ export async function POST(request: NextRequest): Promise<Response> {
   })
   const connectionFailure = await githubConnectionFailure(request)
   if (connectionFailure) return connectionFailure
-  let trialReserved = false
-  let trialRemaining: number | null = null
-  if (policy.selection.accessClass !== 'quota' && auth.isOwner !== true) {
-    try {
-      const trial = await reserveTrialCall(auth.supabase, auth.userId, body.responseId, policy.selection.model)
-      trialRemaining = trial.remaining
-      if (!trial.allowed) return apiFailure(request, {
-        status: 403,
-        code: 'QUOTA_EXCEEDED',
-        message: '其他模型共享的 3 次额度已用完，当前剩余 0 次。请切换到基础模型继续使用。',
-        retryable: false,
-        details: { trialLimit: 3, trialRemaining: 0 },
-      })
-      trialReserved = !trial.duplicate
-    } catch (error) {
-      return apiFailure(request, {
-        status: 503,
-        code: 'DEPENDENCY_UNAVAILABLE',
-        message: error instanceof Error ? error.message : '其他模型额度服务暂时不可用',
-        retryable: true,
-      })
-    }
-  }
+  const trial = await reserveModelTrial(request, auth, body, policy.selection)
+  if (trial.response) return trial.response
   const taskId = body.taskId ?? crypto.randomUUID()
   try {
     const context = await loadContext(auth.supabase, auth.userId, taskId, body)
@@ -208,9 +224,9 @@ export async function POST(request: NextRequest): Promise<Response> {
       selection: policy.selection,
       userMessageId: context.userMessageId,
     })
-    return acceptedResponse(taskId, body.responseId, job, trialRemaining)
+    return acceptedResponse(taskId, body.responseId, job, trial.remaining)
   } catch (error) {
-    if (trialReserved) await releaseTrialCall(auth.supabase, auth.userId, body.responseId).catch(() => undefined)
+    if (trial.reserved) await releaseTrialCall(auth.supabase, auth.userId, body.responseId).catch(() => undefined)
     if (error instanceof CodeAgentEnqueueContextError) return contextFailure(request, error)
     return apiFailure(request, {
       status: 503, code: 'DEPENDENCY_UNAVAILABLE', message: 'Agent 作业暂时无法入队', retryable: true,
