@@ -8,8 +8,7 @@ on:
       - .github/workflows/sync-code-repair-baseline.yml
 
 permissions:
-  contents: read
-  issues: write
+  contents: write
   statuses: write
 
 jobs:
@@ -29,7 +28,7 @@ jobs:
           node-version: 24
           cache: npm
 
-      - name: Generate and publish exact baseline
+      - name: Generate exact baseline staging branch
         env:
           GH_TOKEN: ${{ github.token }}
           REVISION: ${{ github.sha }}
@@ -47,7 +46,7 @@ jobs:
           fail() {
             local code=$?
             trap - ERR
-            report failure "Code Baseline: $stage" "Baseline synchronization failed at $stage"
+            report failure "Code Baseline: $stage" "Baseline staging failed at $stage"
             exit "$code"
           }
           trap fail ERR
@@ -55,9 +54,12 @@ jobs:
           npm ci --ignore-scripts --legacy-peer-deps
           stage=generate
           npm run complexity:baseline > scripts/function-complexity-baseline.json
-          stage=publish
-          jq -n --rawfile baseline scripts/function-complexity-baseline.json \
-            '{body:("CODE_REPAIR_BASELINE_START\n" + $baseline + "\nCODE_REPAIR_BASELINE_END")}' \
-            > /tmp/issue.json
-          gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/199" --input /tmp/issue.json >/dev/null
-          report success "Code Baseline: published" "Exact baseline published to operations probe"
+          stage=commit
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git checkout -B code-repair-baseline-artifact
+          git add scripts/function-complexity-baseline.json
+          git commit -m "Generated Code repair complexity baseline"
+          stage=push
+          git push --force origin HEAD:refs/heads/code-repair-baseline-artifact
+          report success "Code Baseline: staged" "Exact baseline pushed to staging branch"
