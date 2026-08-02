@@ -2,13 +2,13 @@ import type { SupabaseClient } from '@/lib/supabase/types'
 import { isTerminalJobStatus, type JobStatus } from './contracts'
 import { readOwnedJob, readOwnedJobEvents } from './read-model'
 
-const INITIAL_POLL_INTERVAL_MS = 250
-const MAX_POLL_INTERVAL_MS = 2_000
+const INITIAL_POLL_INTERVAL_MS = 35
+const MAX_POLL_INTERVAL_MS = 80
 const HEARTBEAT_INTERVAL_MS = 10_000
-const STATUS_REFRESH_INTERVAL_MS = 5_000
+const STATUS_REFRESH_INTERVAL_MS = 2_000
 const ADMISSION_RENEW_INTERVAL_MS = 15_000
 const BACKPRESSURE_TIMEOUT_MS = 5_000
-const BACKPRESSURE_POLL_MS = 50
+const BACKPRESSURE_POLL_MS = 25
 
 function wait(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -174,7 +174,7 @@ export function createJobEventStream(input: {
           }
           if (!isTerminalJobStatus(status)) {
             if (result.value.length > 0) pollIntervalMs = dependencies.initialPollIntervalMs
-            else pollIntervalMs = Math.min(dependencies.maxPollIntervalMs, pollIntervalMs * 2)
+            else pollIntervalMs = Math.min(dependencies.maxPollIntervalMs, Math.ceil(pollIntervalMs * 1.35))
             await dependencies.wait(pollIntervalMs, signal)
           }
         }

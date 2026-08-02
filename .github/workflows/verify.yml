@@ -51,6 +51,9 @@ jobs:
       - name: Install browser runtime
         run: npx playwright install --with-deps chromium
 
+      - name: Run 2200-character Chat streaming regression
+        run: npx tsx --test tests/chat-stream-2000-character-cadence.test.ts
+
       - name: Lint, typecheck, test, build, and smoke test
         run: npm run verify
 
@@ -220,8 +223,6 @@ jobs:
           ignore-unfixed: false
           exit-code: '1'
 
-      # This runs on push, so the official SLSA workflow predicate binds the
-      # subject to the same source SHA that Verify checked and built.
       - name: Attest published image
         uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
