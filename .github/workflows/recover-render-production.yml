@@ -1,5 +1,5 @@
 name: Recover Render Production
-# Recovery trigger: deploy bounded dynamic Code context with queued-deploy support.
+# Recovery trigger: deploy smooth character-by-character Code output.
 
 on:
   workflow_dispatch:
