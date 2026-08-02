@@ -1,4 +1,5 @@
 name: Check Code Worker Live
+# Trigger post-deploy worker verification.
 
 on:
   workflow_dispatch:
