@@ -20,11 +20,33 @@ async function fetchFreshRemoteMessages(conversationId: string): Promise<Message
   return (data as MessageRow[]).map(normalizeMessageRow).reverse()
 }
 
-/** Fresh cloud hydration that never lets a lagging read erase a locally accepted turn. */
+async function refreshMessageCache(conversationId: string, cached: Message[]): Promise<void> {
+  try {
+    const remote = await fetchFreshRemoteMessages(conversationId)
+    const latestCached = await readCachedMessages(conversationId)
+    const reconciled = reconcileRemoteMessages(latestCached.length ? latestCached : cached, remote)
+    await writeCachedMessages(conversationId, reconciled)
+  } catch (error) {
+    console.warn("[mychat/history] background refresh unavailable", {
+      conversationId,
+      error: error instanceof Error ? error.name : "unknown",
+    })
+  }
+}
+
+/**
+ * Cached history is the immediate UI authority. Cloud history refreshes in the
+ * background, so opening an existing conversation never waits on Supabase.
+ */
 export async function fetchReliableMessages(conversationId: string): Promise<Message[]> {
   const cached = await readCachedMessages(conversationId)
+  if (cached.length > 0) {
+    void refreshMessageCache(conversationId, cached)
+    return cached
+  }
+
   const remote = await fetchFreshRemoteMessages(conversationId)
-  const reconciled = reconcileRemoteMessages(cached, remote)
+  const reconciled = reconcileRemoteMessages([], remote)
   await writeCachedMessages(conversationId, reconciled)
   return reconciled
 }
