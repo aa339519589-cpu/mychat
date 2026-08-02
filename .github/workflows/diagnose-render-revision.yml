@@ -6,6 +6,10 @@ on:
       - main
     paths:
       - .github/workflows/diagnose-render-revision.yml
+  issues:
+    types:
+      - opened
+      - edited
 
 permissions:
   contents: read
@@ -13,6 +17,7 @@ permissions:
 
 jobs:
   diagnose:
+    if: github.event_name == 'push' || github.event.issue.title == 'Render revision probe'
     runs-on: ubuntu-latest
     steps:
       - name: Report production runtime and Render service identity
