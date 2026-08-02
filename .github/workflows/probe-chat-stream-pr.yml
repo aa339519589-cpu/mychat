@@ -1,0 +1,23 @@
+name: Production Chat Stream Probe
+
+on:
+  pull_request:
+    paths:
+      - scripts/probe-production-chat-stream.mjs
+      - .github/workflows/probe-chat-stream-pr.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PRODUCTION_URL: https://mychat-nm6x.onrender.com
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - name: Send real 2200-character request through production Chat
+        run: node scripts/probe-production-chat-stream.mjs
