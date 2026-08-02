@@ -2,12 +2,14 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import { createJobEventStream, nextActivePollInterval } from "../lib/jobs/event-stream"
+import type { PublicJobEvent } from "../lib/jobs/read-model"
 
 const JOB_ID = "00000000-0000-4000-8000-000000000001"
 const PRINCIPAL_ID = "00000000-0000-4000-8000-000000000002"
 
-function textEvent(seq: number, text: string) {
+function textEvent(seq: number, text: string): PublicJobEvent {
   return {
+    id: `event-${seq}`,
     seq,
     kind: "text.delta",
     schemaVersion: 1,
@@ -34,8 +36,9 @@ test("Chat streams a 2200-character reply through many bounded events", async ()
   const chunks = Array.from({ length: Math.ceil(source.length / 40) }, (_, index) => (
     source.slice(index * 40, (index + 1) * 40)
   ))
-  const events = chunks.map((chunk, index) => textEvent(index + 1, chunk))
+  const events: PublicJobEvent[] = chunks.map((chunk, index) => textEvent(index + 1, chunk))
   events.push({
+    id: `event-${events.length + 1}`,
     seq: events.length + 1,
     kind: "job.terminal",
     schemaVersion: 1,
