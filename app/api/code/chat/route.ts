@@ -1,13 +1,16 @@
 import { NextRequest } from 'next/server'
 import { apiErrorResponseV1, type ApiErrorResponseOptions } from '@/lib/api/errors'
-import { enforceQuotaLimit, enforceRequestRateLimit, resolveAuth } from '@/lib/api/guard'
+import { enforceQuotaLimit, enforceRequestRateLimit, resolveAuth, type AuthCtx } from '@/lib/api/guard'
 import { expensiveWriteMaintenanceResponse } from '@/lib/api/maintenance'
 import { readJson, requestId } from '@/lib/api/request'
+import { releaseTrialCall, reserveTrialCall } from '@/lib/chat/model-access'
+import { ChatModelSelectionError, type ChatModelSelection } from '@/lib/chat/model-selection'
 import {
   CodeAgentEnqueueContextError,
   parseAgentEnqueueResult,
   resolveCodeAgentEnqueueContext,
 } from '@/lib/code-agent/enqueue-context'
+import { resolveCodeModelSelection } from '@/lib/code-agent/model-selection'
 import { parseCodeChatRequest, type CodeChatRequest } from '@/lib/code-agent/request'
 import { getCurrentGitHubConnectionStatus } from '@/lib/github-session'
 import { sha256JobValue } from '@/lib/jobs/canonical'
@@ -20,6 +23,12 @@ type BoundCodeChatRequest = CodeChatRequest & {
   repo: string
   responseId: string
   sessionId: string
+}
+
+type AdmissionPolicy = {
+  response?: Response
+  selection?: ChatModelSelection
+  usingBalance?: boolean
 }
 
 function latestGoal(messages: Array<{ role: string; content: string }>): string {
@@ -81,6 +90,57 @@ function contextFailure(request: NextRequest, error: CodeAgentEnqueueContextErro
   })
 }
 
+function modelSelectionResponse(request: NextRequest, error: ChatModelSelectionError): Response {
+  return apiFailure(request, {
+    status: error.status,
+    code: error.status === 404 ? 'NOT_FOUND'
+      : error.status === 401 ? 'AUTH_REQUIRED'
+        : error.status === 403 ? 'FORBIDDEN' : 'CONFLICT',
+    message: error.message,
+    retryable: error.status >= 500,
+  })
+}
+
+async function resolveAdmissionPolicy(
+  request: NextRequest,
+  auth: AuthCtx,
+  body: BoundCodeChatRequest,
+): Promise<AdmissionPolicy> {
+  let selection: ChatModelSelection
+  try {
+    selection = await resolveCodeModelSelection({
+      modelId: body.modelId,
+      reasoningEffort: body.reasoningEffort,
+      supabase: auth.supabase,
+      userId: auth.userId,
+      allowPremium: true,
+    })
+  } catch (error) {
+    if (error instanceof ChatModelSelectionError) {
+      return { response: modelSelectionResponse(request, error) }
+    }
+    return { response: apiFailure(request, {
+      status: 503,
+      code: 'DEPENDENCY_UNAVAILABLE',
+      message: '模型策略暂时不可用',
+      retryable: true,
+    }) }
+  }
+  if (selection.accessClass !== 'quota') return { selection, usingBalance: false }
+  try {
+    const quota = await enforceQuotaLimit(auth, { quota: true })
+    if (quota.response) return { response: quota.response }
+    return { selection, usingBalance: quota.usingBalance }
+  } catch {
+    return { response: apiFailure(request, {
+      status: 503,
+      code: 'DEPENDENCY_UNAVAILABLE',
+      message: '额度服务暂时不可用',
+      retryable: true,
+    }) }
+  }
+}
+
 async function githubConnectionFailure(request: NextRequest): Promise<Response | null> {
   try {
     const connection = await getCurrentGitHubConnectionStatus({
@@ -109,13 +169,16 @@ async function enqueueAgentTask(input: {
   usingBalance: boolean
   taskId: string
   body: BoundCodeChatRequest
+  selection: ChatModelSelection
   userMessageId: string
 }): Promise<{ jobId: string; status: string; created: boolean }> {
   const jobId = crypto.randomUUID()
   const payload: JsonObject = {
     schemaVersion: 1,
     repo: input.body.repo,
-    tier: input.body.tier,
+    modelId: input.selection.model,
+    accessClass: input.selection.accessClass,
+    ...(input.selection.reasoningEffort ? { reasoningEffort: input.selection.reasoningEffort } : {}),
     sessionId: input.body.sessionId,
     responseId: input.body.responseId,
     userMessageId: input.userMessageId,
@@ -146,6 +209,7 @@ function acceptedResponse(
   taskId: string,
   responseId: string,
   job: { jobId: string; status: string; created: boolean },
+  trialRemaining: number | null,
 ): Response {
   if (job.created) jobMetrics.recordEnqueued('agent_task')
   return Response.json({
@@ -156,6 +220,7 @@ function acceptedResponse(
     status: job.status,
     created: job.created,
     streamUrl: `/api/v1/jobs/${job.jobId}/events?from_seq=0`,
+    ...(trialRemaining !== null ? { trialRemaining, trialLimit: 3 } : {}),
   }, {
     status: 202,
     headers: {
@@ -185,11 +250,47 @@ export async function POST(request: NextRequest): Promise<Response> {
     const message = error instanceof Error ? error.message : '请求参数无效'
     return apiFailure(request, { status: 400, code: 'INVALID_REQUEST', message, retryable: false })
   }
-  const quota = await enforceQuotaLimit(auth)
-  if (quota.response) return quota.response
+
+  const policy = await resolveAdmissionPolicy(request, auth, body)
+  if (policy.response) return policy.response
+  if (!policy.selection || policy.usingBalance === undefined) return apiFailure(request, {
+    status: 503,
+    code: 'DEPENDENCY_UNAVAILABLE',
+    message: '模型准入策略暂时不可用',
+    retryable: true,
+  })
 
   const connectionFailure = await githubConnectionFailure(request)
   if (connectionFailure) return connectionFailure
+
+  let trialReserved = false
+  let trialRemaining: number | null = null
+  if (policy.selection.accessClass !== 'quota' && auth.isOwner !== true) {
+    try {
+      const trial = await reserveTrialCall(
+        auth.supabase,
+        auth.userId,
+        body.responseId,
+        policy.selection.model,
+      )
+      trialRemaining = trial.remaining
+      if (!trial.allowed) return apiFailure(request, {
+        status: 403,
+        code: 'QUOTA_EXCEEDED',
+        message: '其他模型共享的 3 次额度已用完，当前剩余 0 次。请切换到基础模型继续使用。',
+        retryable: false,
+        details: { trialLimit: 3, trialRemaining: 0 },
+      })
+      trialReserved = !trial.duplicate
+    } catch (error) {
+      return apiFailure(request, {
+        status: 503,
+        code: 'DEPENDENCY_UNAVAILABLE',
+        message: error instanceof Error ? error.message : '其他模型额度服务暂时不可用',
+        retryable: true,
+      })
+    }
+  }
 
   const taskId = body.taskId ?? crypto.randomUUID()
   try {
@@ -197,13 +298,17 @@ export async function POST(request: NextRequest): Promise<Response> {
     const job = await enqueueAgentTask({
       userId: auth.userId,
       isAnonymous: auth.isAnonymous,
-      usingBalance: quota.usingBalance,
+      usingBalance: policy.usingBalance,
       taskId,
       body,
+      selection: policy.selection,
       userMessageId: context.userMessageId,
     })
-    return acceptedResponse(taskId, body.responseId, job)
+    return acceptedResponse(taskId, body.responseId, job, trialRemaining)
   } catch (error) {
+    if (trialReserved) {
+      await releaseTrialCall(auth.supabase, auth.userId, body.responseId).catch(() => undefined)
+    }
     if (error instanceof CodeAgentEnqueueContextError) return contextFailure(request, error)
     return apiFailure(request, {
       status: 503,
