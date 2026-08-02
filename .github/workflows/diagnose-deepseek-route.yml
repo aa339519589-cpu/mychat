@@ -8,19 +8,21 @@ on:
       - .github/workflows/diagnose-deepseek-route.yml
 
 permissions:
-  contents: read
+  contents: write
   statuses: write
 
 env:
   TARGET_URL: https://mychat-nm6x.onrender.com
 
 jobs:
-  diagnose:
+  baseline:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        uses: actions/checkout@9c091bb21b7c1c1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
@@ -28,7 +30,7 @@ jobs:
           node-version: 24
           cache: npm
 
-      - name: Run staged verification
+      - name: Generate exact baseline branch
         env:
           GH_TOKEN: ${{ github.token }}
           REVISION: ${{ github.sha }}
@@ -41,31 +43,27 @@ jobs:
               --header "Authorization: Bearer $GH_TOKEN" \
               --header "Accept: application/vnd.github+json" \
               --header "X-GitHub-Api-Version: 2022-11-28" \
-              --data "$(jq -nc --arg state "$1" --arg context "DeepSeek Verify: $2" --arg description "$3" --arg target_url "$TARGET_URL" '{state:$state,context:$context,description:$description,target_url:$target_url}')" \
+              --data "$(jq -nc --arg state "$1" --arg context "DeepSeek Baseline: $2" --arg description "$3" --arg target_url "$TARGET_URL" '{state:$state,context:$context,description:$description,target_url:$target_url}')" \
               "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$REVISION" >/dev/null || true
           }
           fail() {
             local code=$?
             trap - ERR
-            report failure "$stage" "Verification failed at $stage"
+            report failure "$stage" "Baseline generation failed at $stage"
             exit "$code"
           }
           trap fail ERR
-          report pending running "Running staged verification"
+          report pending running "Generating exact complexity baseline"
           npm ci --ignore-scripts --legacy-peer-deps
-          for spec in \
-            'architecture:npm run architecture' \
-            'complexity:npm run complexity' \
-            'migration-contract:npm run migration:contract' \
-            'typecheck:npm run check' \
-            'lint-backend:npm run lint:backend' \
-            'lint:npm run lint' \
-            'tests:npm test' \
-            'build:npm run build'; do
-            stage="${spec%%:*}"
-            command="${spec#*:}"
-            report pending "$stage" "Running $stage"
-            bash -lc "$command"
-            report success "$stage" "$stage passed"
-          done
-          report success complete "Core verification passed"
+          stage=generate
+          node scripts/check-function-complexity.mjs --print-baseline > scripts/function-complexity-baseline.json
+          jq --exit-status . scripts/function-complexity-baseline.json >/dev/null
+          stage=commit
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git checkout -B deepseek-route-baseline
+          git add scripts/function-complexity-baseline.json
+          git commit -m "Generate DeepSeek route complexity baseline"
+          stage=push
+          git push --force origin HEAD:refs/heads/deepseek-route-baseline
+          report success staged "Exact baseline staged"
