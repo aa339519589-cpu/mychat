@@ -6,6 +6,7 @@ import type { Conversation } from "@/lib/chat-data"
 import type { Memory } from "@/lib/memory-data"
 import type { ModelEndpointSummary } from "@/lib/model-endpoints"
 import type { Project } from "@/lib/project-data"
+import { readLastConversationId, writeLastConversationId } from "@/lib/last-conversation"
 import { synchronizeConversationState } from "./conversation-synchronization"
 import {
   deleteConversationRow,
@@ -72,6 +73,27 @@ async function applyCachedMessages(
   return true
 }
 
+function pickStartupConversation(
+  conversations: Conversation[],
+  routeConversationId: string | null,
+): Conversation {
+  const requested = routeConversationId
+    ? conversations.find(row => row.id === routeConversationId)
+    : undefined
+  if (requested) return requested
+
+  const rememberedId = readLastConversationId()
+  const remembered = rememberedId
+    ? conversations.find(row => row.id === rememberedId)
+    : undefined
+  if (remembered) return remembered
+
+  // Prefer the most recently updated non-pinned-priority entry when possible.
+  // fetchConversations already orders pinned first, then updated_at desc;
+  // for cold start without a remembered id, first real conversation is fine.
+  return conversations[0]
+}
+
 export function useChatBootstrap({
   user,
   routeConversationId,
@@ -131,9 +153,9 @@ export function useChatBootstrap({
         return
       }
 
-      const requested = conversations.find(row => row.id === routeConversationId)
-      const selected = requested ?? conversations[0]
-      rootConversationIdRef.current = conversations[0].id
+      const selected = pickStartupConversation(conversations, routeConversationId)
+      rootConversationIdRef.current = selected.id
+      writeLastConversationId(selected.id)
       setConversations(conversations)
       setActiveId(selected.id)
       replaceConversation(selected.id)

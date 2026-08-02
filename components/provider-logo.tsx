@@ -37,7 +37,12 @@ export function ProviderLogo({
       fetchPriority="high"
       unoptimized
       aria-hidden="true"
-      className={cn("object-contain", logo.monochrome && "dark:invert", className)}
+      // currentColor SVGs paint black as <img>; force pure white on dark UI.
+      className={cn(
+        "object-contain",
+        logo.monochrome && "dark:brightness-0 dark:invert",
+        className,
+      )}
       style={{ width: dimension, height: dimension }}
     />
   )
