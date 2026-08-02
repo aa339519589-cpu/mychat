@@ -18,7 +18,7 @@ export type AccumulatedToolCall = { id: string; name: string; args: string }
 export type TurnAccumulationResult = {
   assistantMessage: ModelMessage | null
   toolCalls: AccumulatedToolCall[]
-  failed: false
+  failed: boolean
   totalTokens: number
   content: string
   finishReason: string | null
@@ -26,6 +26,7 @@ export type TurnAccumulationResult = {
   leaked: boolean
   hasIncompleteToolCall: boolean
   reasoningContent: string
+  error?: string
 }
 
 type TurnAccumulatorOptions = {
@@ -67,6 +68,18 @@ function reasoningValue(delta: Record<string, unknown>): unknown {
   return delta.reasoning.content ?? delta.reasoning.text ?? delta.reasoning.summary
 }
 
+function streamErrorMessage(value: unknown): string | null {
+  if (typeof value === 'string' && value.trim()) return value.trim()
+  if (!isRecord(value)) return null
+  const message = typeof value.message === 'string' && value.message.trim()
+    ? value.message.trim()
+    : '模型流式响应失败'
+  const code = typeof value.code === 'string' || typeof value.code === 'number'
+    ? String(value.code)
+    : ''
+  return code ? `${message}（${code}）` : message
+}
+
 export class TurnAccumulator {
   readonly pendingRemoteMedia: GeneratedMedia[] = []
   private readonly options: TurnAccumulatorOptions
@@ -74,11 +87,13 @@ export class TurnAccumulator {
   private readonly mediaBudget: { remaining: number; seen: Set<string> }
   private readonly filter = makeContentFilter()
   private readonly callMap: Record<number, AccumulatedToolCall> = {}
+  private readonly reasoningDetails: Record<string, unknown>[] = []
   private content = ''
   private rawContent = ''
   private totalTokens = 0
   private finishReason: string | null = null
   private reasoningContent = ''
+  private streamError: string | null = null
   private accumulatedTextChars = 0
   private acceptedOutputChars = 0
   private firstEventAt: number | null = null
@@ -136,6 +151,13 @@ export class TurnAccumulator {
     if (!text) return
     this.reasoningContent += text
     this.options.emit({ thinking: text })
+  }
+
+  private acceptReasoningDetails(value: unknown): void {
+    if (!Array.isArray(value)) return
+    for (const item of value) {
+      if (isRecord(item)) this.reasoningDetails.push(item)
+    }
   }
 
   private acceptMedia(value: unknown): boolean {
@@ -208,6 +230,7 @@ export class TurnAccumulator {
     const deltaValue = choice.delta ?? choice.message
     const delta = isRecord(deltaValue) ? deltaValue : {}
     this.acceptReasoning(reasoningValue(delta))
+    this.acceptReasoningDetails(delta.reasoning_details)
     this.handleContent(delta.content)
     this.handleContent(delta.images)
     this.handleContent(delta.videos)
@@ -219,6 +242,8 @@ export class TurnAccumulator {
   handle = (value: unknown): void => {
     if (!isRecord(value)) return
     this.recordFirstEvent(value)
+    const streamError = streamErrorMessage(value.error)
+    if (streamError) this.streamError = streamError
     if (this.handleResponsesApiEvent(value)) return
     const usage = isRecord(value.usage) ? value.usage : null
     if (typeof usage?.total_tokens === 'number') this.totalTokens = usage.total_tokens
@@ -255,6 +280,7 @@ export class TurnAccumulator {
       role: 'assistant',
       content: visibleContent || '',
       ...(this.reasoningContent ? { reasoning_content: this.reasoningContent } : {}),
+      ...(this.reasoningDetails.length ? { reasoning_details: this.reasoningDetails } : {}),
       tool_calls: toolCalls.map<ModelToolCall>(call => ({
         id: call.id,
         type: 'function',
@@ -266,6 +292,21 @@ export class TurnAccumulator {
   finish(input: { sawDone: boolean; callerLimitReached: boolean }): TurnAccumulationResult {
     if (input.callerLimitReached) this.finishReason = 'caller_limit'
     this.flushVisibleTail()
+    if (this.streamError) {
+      return {
+        assistantMessage: null,
+        toolCalls: [],
+        failed: true,
+        totalTokens: this.totalTokens,
+        content: '',
+        finishReason: 'error',
+        truncated: false,
+        leaked: false,
+        hasIncompleteToolCall: false,
+        reasoningContent: this.reasoningContent,
+        error: this.streamError,
+      }
+    }
     const toolCalls = this.resolvedToolCalls()
     const visibleContent = this.options.contentPolicy?.({
       content: this.content,
