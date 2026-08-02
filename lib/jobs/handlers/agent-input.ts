@@ -15,6 +15,7 @@ import {
   ChatModelSelectionError,
   type ChatModelSelection,
 } from '@/lib/chat/model-selection'
+import { codeAgentMode, type CodeAgentMode } from '@/lib/code-agent/context'
 import { resolveCodeModelSelection } from '@/lib/code-agent/model-selection'
 import { isProvisionalRepositoryForSession } from '@/lib/code-agent/provisional-repository'
 import type { CodeChatMessage } from '@/lib/code-agent/request'
@@ -27,6 +28,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import type { SupabaseClient } from '@/lib/supabase/types'
 import { JobRuntimeError } from '../errors'
 import type { JobExecutionContext } from '../worker'
+import { loadAgentMessageHistory } from './agent-message-history'
 
 type AgentIdentity = {
   userId: string
@@ -63,6 +65,7 @@ export type LoadedAgentJob = {
   defaultBranch: string | null
   repoIsPrivate: boolean
   memories: string[]
+  mode: CodeAgentMode
   workspaceReady: boolean
   selection: ChatModelSelection
   usingBalance: boolean
@@ -184,27 +187,6 @@ async function authorityRows(
     throw new JobRuntimeError('JOB_CONFLICT', 'Agent authority mismatch')
   }
   return { task, source, memories }
-}
-
-async function messageHistory(
-  client: SupabaseClient,
-  value: AgentIdentity,
-  source: AgentSourceRow,
-): Promise<CodeChatMessage[]> {
-  const { data, error } = await client.from('code_messages')
-    .select('id,role,content,created_at').eq('session_id', value.sessionId)
-    .eq('user_id', value.userId).in('role', ['user', 'assistant'])
-    .lte('created_at', source.created_at).order('created_at', { ascending: true }).limit(200)
-  if (error) throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'Agent messages are unavailable')
-  const messages = (data ?? []).flatMap(row => (
-    (row.role === 'user' || row.role === 'assistant') && typeof row.content === 'string'
-      ? [{ role: row.role, content: row.content } as CodeChatMessage]
-      : []
-  ))
-  if (!messages.length || !data?.some(row => row.id === value.userMessageId)) {
-    throw new JobRuntimeError('JOB_NOT_FOUND', 'Agent user message does not exist')
-  }
-  return messages
 }
 
 async function githubCredential(context: JobExecutionContext, userId: string): Promise<AgentCredential> {
@@ -352,8 +334,9 @@ export async function loadAgentJob(
   const value = identity(context)
   const model = await selectedModel(context, client, value.userId)
   const provisional = isProvisionalRepositoryForSession(value.wireRepo, value.sessionId)
-  const { task, source, memories } = await authorityRows(client, value, !provisional)
-  const messages = await messageHistory(client, value, source)
+  const mode = codeAgentMode(!provisional)
+  const { task, source, memories } = await authorityRows(client, value, mode === 'workspace')
+  const messages = await loadAgentMessageHistory(client, value, source, mode)
   if (provisional) {
     const connection = await dependencies.githubIdentity(context, value.userId)
     return {
@@ -370,6 +353,7 @@ export async function loadAgentJob(
       defaultBranch: null,
       repoIsPrivate: false,
       memories: [],
+      mode,
       workspaceReady: false,
       ...model,
     }
@@ -388,6 +372,7 @@ export async function loadAgentJob(
     token: credential.token,
     login: credential.login,
     memories,
+    mode,
     workspaceReady: true,
     ...workspace,
     ...model,

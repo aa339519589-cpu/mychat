@@ -1,5 +1,9 @@
 import { validate } from '@/lib/validation'
 import { isValidGitHubRepository } from '@/lib/agent/git-publish/shared'
+import {
+  MAX_CODE_CONTEXT_BYTES,
+  MAX_CODE_CONTEXT_MESSAGES,
+} from './context'
 import { isProvisionalRepositoryForSession } from './provisional-repository'
 
 export type CodeChatMessage = {
@@ -51,8 +55,9 @@ function repositoryOf(value: unknown, sessionId: string | null): string | null {
 }
 
 function messagesOf(value: unknown): CodeChatMessage[] {
-  validate.array(value, 'messages', { minLength: 1, maxLength: 200 })
-  let totalChars = 0
+  validate.array(value, 'messages', { minLength: 1, maxLength: MAX_CODE_CONTEXT_MESSAGES })
+  let totalBytes = 0
+  const encoder = new TextEncoder()
   for (const message of value as unknown[]) {
     if (!message || typeof message !== 'object'
       || !('role' in message) || (message.role !== 'user' && message.role !== 'assistant')
@@ -60,9 +65,9 @@ function messagesOf(value: unknown): CodeChatMessage[] {
       throw new Error('消息格式或角色无效')
     }
     if (message.content.length > 100_000) throw new Error('单条消息过长')
-    totalChars += message.content.length
+    totalBytes += encoder.encode(message.content).byteLength
   }
-  if (totalChars > 2_000_000) throw new Error('消息上下文过大')
+  if (totalBytes > MAX_CODE_CONTEXT_BYTES) throw new Error('消息上下文过大')
   return value as CodeChatMessage[]
 }
 

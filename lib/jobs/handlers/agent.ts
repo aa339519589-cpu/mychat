@@ -76,12 +76,25 @@ const DEFAULT_DEPENDENCIES: AgentTaskDependencies = {
   saveRunState: saveAgentRunState,
 }
 
+function modelDisplayName(input: LoadedAgentJob): string {
+  return input.selection.platformTierLabel?.trim()
+    || input.selection.endpointDisplayName?.trim()
+    || input.selection.model
+}
+
 function prepareAgentRun(
   context: JobExecutionContext,
   input: LoadedAgentJob,
   canExecute: boolean,
 ): PreparedAgentRun {
-  const system = buildCodeSystem(input.repo, input.login, input.memories, input.workspaceReady, canExecute)
+  const system = buildCodeSystem(
+    modelDisplayName(input),
+    input.repo,
+    input.login,
+    input.memories,
+    input.mode,
+    canExecute,
+  )
   const messages: ModelMessage[] = [{ role: 'system', content: system }, ...toOpenAI(input.messages)]
   const baseLength = messages.length
   if (context.job.checkpoint && !context.job.checkpoint.resumable) {
@@ -195,7 +208,7 @@ async function completeAgentRun(input: {
     throw new JobRuntimeError('JOB_INTERNAL', 'Agent stopped before a durable completion point')
   }
   await runtime.recorder.artifact('summary', {
-    title: 'Code Agent 回复', content,
+    title: `${modelDisplayName(job)} 回复`, content,
     meta: { responseId: job.responseId, sessionId: job.sessionId, ...state },
   })
   return {
