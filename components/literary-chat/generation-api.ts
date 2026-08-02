@@ -1,4 +1,3 @@
-import type { Conversation } from '@/lib/chat-data'
 import {
   normalizeConversationGenerationSnapshot,
   type ConversationGenerationSnapshot,
