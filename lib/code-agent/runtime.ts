@@ -64,25 +64,16 @@ export function finalCodeTaskStatus(
   return 'running'
 }
 
-/** Preserve the Code SSE contract while withholding model preambles until real progress. */
+/** Forward every accepted model text delta immediately; no lead-text holdback. */
 export function createCodeEventCollector(options: {
   send: (event: object) => void
   recordStep?: (kind: string, label: string) => void
 }) {
-  let sawProgressEvent = false
-  let bufferedLeadText = ''
   let finalText = ''
 
   const emit: Emit = (event: ChatEvent) => {
     if ('thinking' in event) return
-    if ('plan' in event || 'step' in event) sawProgressEvent = true
-    if ('text' in event) {
-      if (!sawProgressEvent) {
-        bufferedLeadText += event.text
-        return
-      }
-      finalText += event.text
-    }
+    if ('text' in event) finalText += event.text
     if ('error' in event) finalText = `${finalText}${finalText ? '\n\n' : ''}${event.error}`
     if ('step' in event) options.recordStep?.(event.step.kind, event.step.label)
     options.send(event)
@@ -90,13 +81,7 @@ export function createCodeEventCollector(options: {
 
   return {
     emit,
-    flushLeadText: () => {
-      if (!sawProgressEvent && !finalText.trim() && bufferedLeadText.trim()) {
-        finalText = bufferedLeadText
-        options.send({ text: bufferedLeadText })
-      }
-      return finalText
-    },
+    flushLeadText: () => finalText,
     getFinalText: () => finalText,
   }
 }
