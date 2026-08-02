@@ -5,8 +5,8 @@ import { CircleAlert, Check, CornerDownLeft, GitBranch, Loader2, Square, X } fro
 import { AnimatePresence } from "motion/react"
 
 import { WorkingDots } from "@/components/working-dots"
-import { type Tier } from "@/lib/chat-data"
 import { type CodeMessage, type CodeSession, type PlanAction } from "@/lib/code-data"
+import type { ModelCatalogItem } from "@/lib/model-catalog"
 import { cn } from "@/lib/utils"
 import {
   ACCENT,
@@ -67,8 +67,9 @@ export type CodeConsoleViewProps = {
   onCommand: (command: string) => void
   overlay: Overlay
   onCloseOverlay: () => void
-  tier: Tier
-  onChangeTier: (tier: Tier) => void
+  models: ModelCatalogItem[]
+  activeModelId: string | null
+  onChangeModel: (model: ModelCatalogItem) => void
   onLoadSession: (session: CodeSession) => void
 }
 
@@ -220,9 +221,9 @@ function CodeComposer(props: Pick<CodeConsoleViewProps,
 }
 
 function ConsoleOverlays(props: Pick<CodeConsoleViewProps,
-  "overlay" | "tier" | "repo" | "userId" | "messages" | "onChangeTier" | "onCloseOverlay" | "onLoadSession">) {
+  "overlay" | "models" | "activeModelId" | "repo" | "userId" | "messages" | "onChangeModel" | "onCloseOverlay" | "onLoadSession">) {
   return <AnimatePresence initial={false}>
-    {props.overlay === "model" && <ModelOverlay key="model" tier={props.tier} onPick={props.onChangeTier} onClose={props.onCloseOverlay} />}
+    {props.overlay === "model" && <ModelOverlay key="model" models={props.models} activeModelId={props.activeModelId} onPick={props.onChangeModel} onClose={props.onCloseOverlay} />}
     {props.overlay === "memory" && props.repo && <MemoryOverlay key="memory" repo={props.repo} userId={props.userId} onClose={props.onCloseOverlay} />}
     {props.overlay === "memory" && !props.repo && <SimpleOverlay key="memory-empty" title="记忆" text="新项目尚未建立仓库。" onClose={props.onCloseOverlay} />}
     {props.overlay === "context" && <ContextOverlay key="context" messages={props.messages} onClose={props.onCloseOverlay} />}
