@@ -20,6 +20,8 @@ const ADMISSION_RENEW_INTERVAL_MS = 15_000
 const EVENT_BATCH_SIZE = 200
 const encoder = new TextEncoder()
 
+type RealtimeChannel = ReturnType<SupabaseClient['channel']>
+
 type LiveStreamState = {
   sequence: number
   databaseSequence: number
@@ -100,11 +102,15 @@ function snapshotPayload(job: PublicJobSnapshot, state: LiveStreamState): JsonOb
 function wait(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) return reject(signal.reason)
-    const timer = setTimeout(resolve, milliseconds)
-    signal.addEventListener('abort', () => {
+    const onAbort = () => {
       clearTimeout(timer)
       reject(signal.reason)
-    }, { once: true })
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, milliseconds)
+    signal.addEventListener('abort', onAbort, { once: true })
   })
 }
 
@@ -113,7 +119,7 @@ class LiveJobEventStreamSession {
   private readonly lifetime = new AbortController()
   private readonly signal: AbortSignal
   private readonly state: LiveStreamState
-  private readonly channel
+  private readonly channel: RealtimeChannel | null
   private controller: ReadableStreamDefaultController<Uint8Array> | null = null
   private processing: Promise<void> = Promise.resolve()
   private closed = false
