@@ -8,7 +8,8 @@ on:
       - .github/workflows/sync-code-repair-baseline.yml
 
 permissions:
-  contents: write
+  contents: read
+  issues: write
   statuses: write
 
 jobs:
@@ -28,7 +29,7 @@ jobs:
           node-version: 24
           cache: npm
 
-      - name: Regenerate and commit exact baseline
+      - name: Generate and publish exact baseline
         env:
           GH_TOKEN: ${{ github.token }}
           REVISION: ${{ github.sha }}
@@ -54,15 +55,9 @@ jobs:
           npm ci --ignore-scripts --legacy-peer-deps
           stage=generate
           npm run complexity:baseline > scripts/function-complexity-baseline.json
-          stage=commit
-          if git diff --quiet -- scripts/function-complexity-baseline.json; then
-            report success "Code Baseline: exact" "Complexity baseline already exact"
-            exit 0
-          fi
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add scripts/function-complexity-baseline.json
-          git commit -m "Lower complexity baseline after Code repair"
-          stage=push
-          git push origin HEAD:main
-          report success "Code Baseline: committed" "Lowered complexity baseline committed"
+          stage=publish
+          jq -n --rawfile baseline scripts/function-complexity-baseline.json \
+            '{body:("CODE_REPAIR_BASELINE_START\n" + $baseline + "\nCODE_REPAIR_BASELINE_END")}' \
+            > /tmp/issue.json
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/199" --input /tmp/issue.json >/dev/null
+          report success "Code Baseline: published" "Exact baseline published to operations probe"
