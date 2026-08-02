@@ -73,9 +73,8 @@ function defaultLiveRelay(context: JobExecutionContext): {
 }
 
 /**
- * Bridges synchronous model deltas to both the live relay and the durable,
- * fenced event log. The relay runs first, so database persistence is no longer
- * on the visible token-delivery path.
+ * Sends raw text/thinking deltas through the live relay first, then appends all
+ * events to the fenced durable log. Database reads stay on recovery paths.
  */
 export class JobEventWriter {
   private readonly context: JobExecutionContext
@@ -111,15 +110,14 @@ export class JobEventWriter {
     if ('thinking' in event) this.fullThinking += event.thinking
     const draft = eventDraft(event)
     if (!draft) return
-    const liveOffset = draft.kind === 'text.delta'
-      ? textOffset
-      : draft.kind === 'thinking.delta' ? thinkingOffset : undefined
-    this.publishLive({
-      kind: draft.kind,
-      payload: draft.payload,
-      ...(liveOffset === undefined ? {} : { offset: liveOffset }),
-    })
     const current = deltaValue(draft)
+    if (current) {
+      this.publishLive({
+        kind: draft.kind,
+        payload: draft.payload,
+        offset: current.field === 'text' ? textOffset : thinkingOffset,
+      })
+    }
     const previous = this.queue.at(-1)
     const previousDelta = previous ? deltaValue(previous) : null
     if (current && previous && previousDelta?.field === current.field
@@ -157,9 +155,7 @@ export class JobEventWriter {
   }
 
   async append(kind: string, payload: JsonObject, idempotencyKey?: string): Promise<void> {
-    const draft = { kind, payload, ...(idempotencyKey ? { idempotencyKey } : {}) }
-    this.publishLive({ kind, payload })
-    this.queue.push(draft)
+    this.queue.push({ kind, payload, ...(idempotencyKey ? { idempotencyKey } : {}) })
     await this.flush()
   }
 
