@@ -13,7 +13,7 @@ permissions:
 
 concurrency:
   group: force-code-worker-deploy
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   deploy:
@@ -23,6 +23,15 @@ jobs:
       PRODUCTION_URL: https://mychat-nm6x.onrender.com
       SUPABASE_URL: https://usibkqqksgwgvdiqwpyo.supabase.co
     steps:
+      - name: Mark deployment pending
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          jq -nc --arg context "Code Worker Deploy" --arg description "Deploying web and Code worker" --arg target_url "$RUN_URL" \
+            '{state:"pending",context:$context,description:$description,target_url:$target_url}' \
+            | gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" --input - >/dev/null
+
       - name: Configure Render supervisor and runtime role
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
