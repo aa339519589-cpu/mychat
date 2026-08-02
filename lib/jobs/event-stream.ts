@@ -53,6 +53,11 @@ const DEFAULT_DEPENDENCIES: JobEventStreamDependencies = {
   backpressurePollMs: BACKPRESSURE_POLL_MS,
 }
 
+function nextPollInterval(current: number, received: boolean, initial: number, maximum: number): number {
+  if (received) return initial
+  return Math.min(maximum, Math.max(initial, Math.ceil(current * 1.35)))
+}
+
 async function waitForCapacity(
   controller: ReadableStreamDefaultController<Uint8Array>,
   signal: AbortSignal,
@@ -173,12 +178,12 @@ export function createJobEventStream(input: {
             lastHeartbeat = dependencies.now()
           }
           if (!isTerminalJobStatus(status)) {
-            pollIntervalMs = result.value.length > 0
-              ? dependencies.initialPollIntervalMs
-              : Math.min(
-                dependencies.maxPollIntervalMs,
-                Math.max(dependencies.initialPollIntervalMs, Math.ceil(pollIntervalMs * 1.35)),
-              )
+            pollIntervalMs = nextPollInterval(
+              pollIntervalMs,
+              result.value.length > 0,
+              dependencies.initialPollIntervalMs,
+              dependencies.maxPollIntervalMs,
+            )
             await dependencies.wait(pollIntervalMs, signal)
           }
         }
