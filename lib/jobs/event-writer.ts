@@ -3,8 +3,8 @@ import type { JobEventDraft, JsonObject, JsonValue } from './contracts'
 import type { JobExecutionContext } from './worker'
 
 const FLUSH_INTERVAL_MS = 16
-const FLUSH_BATCH_SIZE = 32
-const MAX_COALESCED_DELTA_CHARS = 512
+const FLUSH_BATCH_SIZE = 8
+const MAX_COALESCED_DELTA_CHARS = 64
 
 function jsonObject(value: object): JsonObject {
   const parsed: unknown = JSON.parse(JSON.stringify(value))
