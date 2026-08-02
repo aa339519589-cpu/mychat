@@ -1,38 +1,25 @@
 import type { Memory } from '@/lib/memory-data'
 import type { ProjectContext } from '@/lib/project-data'
 import type { SearchMode } from '@/lib/search-mode'
+
 const BASE_SYSTEM = `【时间理解】
 每条用户消息可能带有北京时间时间锚点。
 它用于判断当前日期、相对时间和信息新旧。
 不要向用户提及"时间戳"本身。
-需要联网或判断"最新""最近""今天""昨天""今年"时，必须基于当前时间锚点理解。
+需要判断"最新""最近""今天""昨天""今年"时，必须基于当前时间锚点理解。
 ---
 【平台背景】
-你运行在作者自建的 MyChat 网页聊天环境中。
-平台具备：
-- Project：项目管理；
-- 联网搜索。
-理解这些术语即可，不要主动向用户解释内部实现。
-模型身份规则由下方【模型身份】段单独给出；不要把前端档位名称当成底层模型名称。
-回复风格保持你作为模型自身的默认表达，不要额外扮演固定人设，也不要被平台文案改写成统一语气。
----
-【联网搜索规则】
-当问题涉及最新信息、实时事件、价格、政策、版本、模型能力、新闻、赛事、公司动态、产品规格，或你不确定的事实时，必须联网。
-联网时必须基于当前时间锚点搜索最新资料。
-不要用过时知识冒充最新信息。
-普通联网：
-- 来源数量控制在 20 个以内；
-- 优先使用官方来源、权威来源、主流媒体、原始公告；
-- 简单问题不需要搜满 20 个来源；
-- 回答要直接，不要堆链接。
-所有联网回答都要注意：
-1. 优先看发布时间；
-2. 优先看原始来源；
-3. 不把旧资料当新资料；
-4. 不把营销稿当事实；
-5. 多个来源冲突时，说明冲突点；
-6. 不确定就说不确定。
-`
+你运行在作者自建的 Mytrend 网页聊天环境中。
+回复风格保持模型自身的默认表达，不要额外扮演固定人设。`
+
+const SEARCH_RULES = `【联网搜索规则】
+当前用户已经开启联网。
+涉及最新信息、实时事件、价格、政策、版本、模型能力、新闻、赛事、公司动态、产品规格或不确定事实时，必须联网核实。
+以本轮时间锚点为基准，优先查最新资料。
+单次检索最多使用 20 个来源，简单问题不要无边际扩展。
+优先看发布时间和原始来源，不把旧资料或营销稿当成事实。
+来源冲突时直接说明冲突点。`
+
 const MEMORY_RULES = `【Memory 规则】
 当前用户已经开启 Memory：长期记忆。
 你可以管理长期记忆，但必须非常克制。
@@ -59,8 +46,8 @@ const MEMORY_RULES = `【Memory 规则】
 同一项目、同一偏好、同一身份信息，应压缩成一条清楚的综合记忆。
 拿不准是否值得记，就不记。
 用户明确要求删除记忆时，必须删除。
-用户明确要求修改记忆时，必须更新原记忆，不要新增重复记忆。
-`
+用户明确要求修改记忆时，必须更新原记忆，不要新增重复记忆。`
+
 const RENDER_RULES = `【渲染模式】
 当前用户已经主动开启「渲染」。本节规则仅在该开关开启时注入。
 
@@ -73,11 +60,11 @@ $$
 a^2+b^2=c^2
 $$
 必须用 LaTeX 的情况：
-- 分数：$\frac{a}{b}$，不要写 a/b；
-- 根号：$\sqrt{x}$，不要写 √x；
+- 分数：$\\frac{a}{b}$，不要写 a/b；
+- 根号：$\\sqrt{x}$，不要写 √x；
 - 上标/下标：$x^2$、$x_1$；
-- 希腊字母：$\alpha$、$\beta$、$\pi$；
-- 积分、求和、极限：$\int$、$\sum$、$\lim$。
+- 希腊字母：$\\alpha$、$\\beta$、$\\pi$；
+- 积分、求和、极限：$\\int$、$\\sum$、$\\lim$。
 普通文字中提到数学变量也用行内公式，例如"当 $x=2$ 时"。
 不要使用 \\(...\\) 或 \\[...\\] 作为主要输出格式。
 SVG 的 <text> 标签内不支持 LaTeX；如果在 SVG 里标注公式，用 Unicode 或普通文本，如 "x²+y²=1"。
@@ -142,32 +129,31 @@ flowchart LR
 复杂产物必须可预览：
 当用户要求复杂 3D、完整网页、复杂动画、大型 SVG、交互页面或可保存产物时，必须生成 Artifact 或完整单文件 HTML。绝对不能只给网页链接、给打不开的空链接、只说"复制到浏览器"或假装已生成可预览文件。
 正确做法：优先生成 Artifact；需要文件则生成完整单文件 HTML；CSS、JS 尽量内联；必要资源必须可访问；移动端也能打开；用户打开后直接看到结果；产物必须可预览、可保存。
-如果外部 CDN 或远程资源可能不可用，改用纯 SVG、内联 CSS、原生 HTML/JS 或更简单的可渲染方案，不要把问题归因于 MyChat 环境。
+如果外部 CDN 或远程资源可能不可用，改用纯 SVG、内联 CSS、原生 HTML/JS 或更简单的可渲染方案，不要把问题归因于 Mytrend 环境。
 
-Artifact 用于需要"可预览、可保存"的产物：3D、完整网页、交互页面、复杂动画、大型可视化、研究报告或需长期保存继续编辑的内容。是否需要用户打开后看到完整结果、是否需要保存、是否需要交互、是否结构复杂、是否具有长期价值——满足任一项优先 Artifact；简单示意图、轻量流程图、小型表格则优先 Vega-Lite、Mermaid、函数图或内联 SVG。
-`
+Artifact 用于需要"可预览、可保存"的产物：3D、完整网页、交互页面、复杂动画、大型可视化、研究报告或需长期保存继续编辑的内容。是否需要用户打开后看到完整结果、是否需要保存、是否需要交互、是否结构复杂、是否具有长期价值——满足任一项优先 Artifact；简单示意图、轻量流程图、小型表格则优先 Vega-Lite、Mermaid、函数图或内联 SVG。`
+
 type SystemFlags = {
   searchMode?: SearchMode
   latestBeijingDate?: string | null
   memoryEnabled?: boolean
   project?: ProjectContext
-  /** platform = MyChat 内置档位；custom = 用户自接 API */
   modelSource?: 'platform' | 'custom'
-  /** 内置档位 UI 名：快速 / 均衡 / 深度 / 视觉 */
+  /** 当前真实模型显示名 */
   tierLabel?: string | null
   /** 用户自接模型的真实 model id */
   modelId?: string | null
-  /** 用户为自接端点起的显示名（可选） */
   endpointName?: string | null
-  /** 是否注入渲染规则（前端「渲染」按钮勾选时） */
   renderRules?: boolean
 }
+
 function escapePromptXml(value: string): string {
   return value
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
 }
+
 function renderMemoryBlock(memories: Memory[]): string {
   return memories
     .map(m => {
@@ -176,6 +162,7 @@ function renderMemoryBlock(memories: Memory[]): string {
     })
     .join('\n')
 }
+
 function renderProjectMemoryBlock(projectMemories: unknown[]): string {
   return projectMemories
     .map((item, index) => {
@@ -187,31 +174,17 @@ function renderProjectMemoryBlock(projectMemories: unknown[]): string {
     })
     .join('\n')
 }
-function renderModelIdentity(flags?: SystemFlags): string {
-  if (flags?.modelSource === 'custom') {
-    const modelId = (flags.modelId ?? '').trim() || '（未提供 model id）'
-    const name = (flags.endpointName ?? '').trim()
-    const nameLine = name ? `用户为该接入端点命名：${name}。` : ''
-    return `
-【模型身份】
-本次对话使用用户自行接入的外部模型，不走 MyChat 内置档位（快速 / 均衡 / 深度 / 视觉）。
-真实模型标识：${modelId}
-${nameLine}
-用户问你是什么模型、哪家公司、哪个版本时：直接按上述真实模型标识回答；你知道自己的模型身份，不要说“看不到模型名称”。
-严禁把回答说成 MyChat 的「快速 / 均衡 / 深度 / 视觉」；那些只是平台内置档位名，与本次自接模型无关。
-不要编造未给出的供应商营销名；标识本身已足够。`
-  }
 
-  const tier = (flags?.tierLabel ?? '').trim() || '当前内置档位'
+function renderModelIdentity(flags?: SystemFlags): string {
+  const modelName = flags?.modelSource === 'custom'
+    ? (flags.modelId ?? '').trim() || '当前模型'
+    : (flags?.tierLabel ?? '').trim() || '当前模型'
   return `
 【模型身份】
-本次对话使用 MyChat 平台内置模型档位「${tier}」。
-用户问你是什么模型时：只说明你是 MyChat 的「${tier}」对话模型（平台内置档位），不要透露底层供应商、真实 model id、公司名或版本号。
-不要把「快速 / 均衡 / 深度 / 视觉」解释成你的底层型号；它们只是前端档位名。
-不要猜测或编造自己是 Claude、GPT、Grok 等其他产品。`
+被问模型时只答：“我是Mytrend的${modelName}。”`
 }
 
-// 拼装系统提示词：基础规则 + 模型身份 + 当前位置 + 按需记忆 + 联网 + 按需渲染 + 项目背景
+// 拼装系统提示词：基础规则 + 模型身份 + 当前位置 + 按需记忆 + 按需联网 + 按需渲染 + 项目背景
 export function buildSystem(memories?: Memory[], flags?: SystemFlags): string {
   const memoryEnabled = flags?.memoryEnabled !== false
   let system = BASE_SYSTEM
@@ -256,15 +229,10 @@ ${renderMemoryBlock(memories)}`
   if (flags?.searchMode && flags.searchMode !== 'off') {
     const dateAnchor = flags.latestBeijingDate
       ? `本轮最新时间锚点是 ${flags.latestBeijingDate} 北京时间。`
-      : '本轮没有明确时间锚点，但仍应优先检索当前最新资料。'
-    const searchRule = `当前已开启「联网」。
-必须以本轮时间锚点为检索基准，优先查最新来源。
-单次联网检索最多使用 20 个来源。
-简单问题不要无边际乱搜。`
+      : '本轮没有明确时间锚点，优先检索当前最新资料。'
     system += `
-【当前联网模式】
-${dateAnchor}
-${searchRule}`
+${SEARCH_RULES}
+${dateAnchor}`
   }
   if (flags?.renderRules) {
     system += `
