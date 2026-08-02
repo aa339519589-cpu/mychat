@@ -79,30 +79,36 @@ function eventFrame(event: {
   return `id: ${event.seq}\nevent: ${event.kind}\ndata: ${JSON.stringify(event)}\n\n`
 }
 
+type PollBounds = { initial: number; maximum: number; lowLatency: boolean }
+
 function pollBounds(
   jobType: string | undefined,
   dependencies: JobEventStreamDependencies,
-): { initial: number; maximum: number } {
+): PollBounds {
   if (jobType !== 'chat.generation') {
     return {
       initial: dependencies.initialPollIntervalMs,
       maximum: dependencies.maxPollIntervalMs,
+      lowLatency: false,
     }
   }
   return {
     initial: Math.min(dependencies.initialPollIntervalMs, CHAT_INITIAL_POLL_INTERVAL_MS),
     maximum: Math.min(dependencies.maxPollIntervalMs, CHAT_MAX_POLL_INTERVAL_MS),
+    lowLatency: true,
   }
 }
 
 function nextPollInterval(
   current: number,
   hadEvents: boolean,
-  initial: number,
-  maximum: number,
+  bounds: PollBounds,
 ): number {
-  if (hadEvents) return initial
-  return Math.min(maximum, current + initial)
+  if (hadEvents) return bounds.initial
+  return Math.min(
+    bounds.maximum,
+    bounds.lowLatency ? current + bounds.initial : current * 2,
+  )
 }
 
 export function createJobEventStream(input: {
@@ -206,8 +212,7 @@ export function createJobEventStream(input: {
             pollIntervalMs = nextPollInterval(
               pollIntervalMs,
               result.value.length > 0,
-              polling.initial,
-              polling.maximum,
+              polling,
             )
             await dependencies.wait(pollIntervalMs, signal)
           }
