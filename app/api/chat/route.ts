@@ -32,10 +32,12 @@ function admissionError(request: Request, error: unknown): Response {
 type AdmissionPolicy = { response?: Response; selection?: ChatModelSelection; usingBalance?: boolean }
 type AcceptedChatJob = Awaited<ReturnType<typeof enqueueChatJob>>
 
-function acceptedChatResponse(input: { body: DurableChatRequestBody; enqueued: AcceptedChatJob; requestId: string; startedAt: number; authenticatedAt: number; rateLimitedAt: number; parsedAt: number; policyResolvedAt: number; trialRemaining: number | null }): Response {
+function acceptedChatResponse(input: { body: DurableChatRequestBody; enqueued: AcceptedChatJob; outputKind: ChatModelSelection['outputKind']; requestId: string; startedAt: number; authenticatedAt: number; rateLimitedAt: number; parsedAt: number; policyResolvedAt: number; trialRemaining: number | null }): Response {
   const completedAt = Date.now()
   log.info('chat', 'Chat request admission timing', { requestId: input.requestId, jobId: input.enqueued.job.id, authMs: input.authenticatedAt - input.startedAt, rateLimitMs: input.rateLimitedAt - input.authenticatedAt, parseMs: input.parsedAt - input.rateLimitedAt, quotaAndModelPolicyMs: input.policyResolvedAt - input.parsedAt, enqueueMs: completedAt - input.policyResolvedAt, totalMs: completedAt - input.startedAt })
-  const streamUrl = `/api/v1/jobs/${input.enqueued.job.id}/events?from_seq=0`
+  const streamUrl = input.outputKind === 'chat'
+    ? `/api/v1/jobs/${input.enqueued.job.id}/live?from_seq=0`
+    : `/api/v1/jobs/${input.enqueued.job.id}/events?from_seq=0`
   return Response.json({
     schemaVersion: 1,
     jobId: input.enqueued.job.id,
@@ -125,7 +127,7 @@ export async function POST(request: NextRequest) {
   const searchMode = body.searchMode === 'web' ? 'web' : normalizeSearchMode(body.webSearch)
   try {
     const enqueued = await enqueueChatJob({ body, userId: auth.userId, isAnonymous: auth.isAnonymous, usingBalance: policy.usingBalance, searchMode, outputKind: selection.outputKind, accessClass: selection.accessClass, requestId: traceId })
-    return acceptedChatResponse({ body, enqueued, requestId: traceId, startedAt, authenticatedAt, rateLimitedAt, parsedAt, policyResolvedAt, trialRemaining })
+    return acceptedChatResponse({ body, enqueued, outputKind: selection.outputKind, requestId: traceId, startedAt, authenticatedAt, rateLimitedAt, parsedAt, policyResolvedAt, trialRemaining })
   } catch (error) {
     if (trialReserved) await releaseTrialCall(auth.supabase, auth.userId, body.generationId).catch(() => undefined)
     return admissionError(request, error)

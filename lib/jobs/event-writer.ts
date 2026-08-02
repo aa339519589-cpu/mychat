@@ -1,10 +1,15 @@
 import type { ChatEvent } from '@/lib/llm/events'
+import { createAdminClient } from '@/lib/supabase/admin'
 import type { JobEventDraft, JsonObject, JsonValue } from './contracts'
+import { LiveJobPublisher, type LiveJobEventInput } from './live-events'
 import type { JobExecutionContext } from './worker'
 
 const FLUSH_INTERVAL_MS = 12
 const FLUSH_BATCH_SIZE = 16
 const MAX_COALESCED_DELTA_CHARS = 64
+
+type DeltaValue = { field: 'text' | 'thinking'; value: string }
+type EventOffsets = { text: number; thinking: number; isText: boolean }
 
 function jsonObject(value: object): JsonObject {
   const parsed: unknown = JSON.parse(JSON.stringify(value))
@@ -27,7 +32,7 @@ function eventDraft(event: ChatEvent): JobEventDraft | null {
   return null
 }
 
-function deltaValue(event: JobEventDraft): { field: 'text' | 'thinking'; value: string } | null {
+function deltaValue(event: JobEventDraft): DeltaValue | null {
   if (event.kind === 'text.delta' && typeof event.payload.text === 'string') {
     return { field: 'text', value: event.payload.text }
   }
@@ -55,13 +60,29 @@ function materializedText(
   return text.join('')
 }
 
+function defaultLiveRelay(context: JobExecutionContext): {
+  publisher: LiveJobPublisher | null
+  emit?: (event: LiveJobEventInput) => void
+} {
+  try {
+    const client = createAdminClient()
+    if (!client) return { publisher: null }
+    const publisher = new LiveJobPublisher(client, context.job.id)
+    publisher.start()
+    return { publisher, emit: event => publisher.publish(event) }
+  } catch {
+    return { publisher: null }
+  }
+}
+
 /**
- * Bridges synchronous model deltas to the durable, fenced event log. The first
- * visible text delta flushes immediately; later deltas flush once per display
- * frame so clients receive real streaming without a second artificial queue.
+ * Sends raw text/thinking deltas through the live relay first, then appends all
+ * events to the fenced durable log. Database reads stay on recovery paths.
  */
 export class JobEventWriter {
   private readonly context: JobExecutionContext
+  private readonly livePublisher: LiveJobPublisher | null
+  private readonly onLiveEvent?: (event: LiveJobEventInput) => void
   private queue: JobEventDraft[] = []
   private chain: Promise<void> = Promise.resolve()
   private failure: unknown = null
@@ -70,8 +91,14 @@ export class JobEventWriter {
   private fullThinking = ''
   private firstTextFlushed = false
 
-  constructor(context: JobExecutionContext) {
+  constructor(
+    context: JobExecutionContext,
+    onLiveEvent?: (event: LiveJobEventInput) => void,
+  ) {
     this.context = context
+    const relay = onLiveEvent ? { publisher: null, emit: onLiveEvent } : defaultLiveRelay(context)
+    this.livePublisher = relay.publisher
+    this.onLiveEvent = relay.emit
     const progress = context.job.checkpoint?.progress
     this.fullText = materializedText(progress, 'content', 'contentParts')
     this.fullThinking = materializedText(progress, 'thinking', 'thinkingParts')
@@ -79,28 +106,13 @@ export class JobEventWriter {
   }
 
   emit = (event: ChatEvent): void => {
-    const isText = 'text' in event && event.text.length > 0
-    if ('text' in event) this.fullText += event.text
-    if ('thinking' in event) this.fullThinking += event.thinking
+    const offsets = this.appendEventText(event)
     const draft = eventDraft(event)
     if (!draft) return
     const current = deltaValue(draft)
-    const previous = this.queue.at(-1)
-    const previousDelta = previous ? deltaValue(previous) : null
-    if (current && previous && previousDelta?.field === current.field
-      && previousDelta.value.length + current.value.length <= MAX_COALESCED_DELTA_CHARS) {
-      previous.payload[current.field] = `${previousDelta.value}${current.value}`
-    } else {
-      this.queue.push(draft)
-    }
-    if (isText && !this.firstTextFlushed) {
-      this.firstTextFlushed = true
-      this.scheduleFlush(0)
-    } else if (this.queue.length >= FLUSH_BATCH_SIZE) {
-      this.scheduleFlush(0)
-    } else if (!this.timer) {
-      this.scheduleFlush(FLUSH_INTERVAL_MS)
-    }
+    this.relayDelta(draft, current, offsets)
+    this.enqueueDraft(draft, current)
+    this.scheduleAfterEmit(offsets.isText)
   }
 
   snapshot(extra: JsonObject = {}): JsonObject {
@@ -145,8 +157,62 @@ export class JobEventWriter {
     if (this.timer) clearTimeout(this.timer)
     this.timer = null
     await this.drainEvents()
+    await this.closeLive()
     if (this.failure) throw this.failure
     this.context.assertAuthority()
+  }
+
+  async closeLive(): Promise<void> {
+    await this.livePublisher?.close()
+  }
+
+  private appendEventText(event: ChatEvent): EventOffsets {
+    const offsets = {
+      text: this.fullText.length,
+      thinking: this.fullThinking.length,
+      isText: 'text' in event && event.text.length > 0,
+    }
+    if ('text' in event) this.fullText += event.text
+    if ('thinking' in event) this.fullThinking += event.thinking
+    return offsets
+  }
+
+  private relayDelta(draft: JobEventDraft, current: DeltaValue | null, offsets: EventOffsets): void {
+    if (!current) return
+    this.publishLive({
+      kind: draft.kind,
+      payload: draft.payload,
+      offset: current.field === 'text' ? offsets.text : offsets.thinking,
+    })
+  }
+
+  private enqueueDraft(draft: JobEventDraft, current: DeltaValue | null): void {
+    const previous = this.queue.at(-1)
+    const previousDelta = previous ? deltaValue(previous) : null
+    const coalescible = current && previous && previousDelta?.field === current.field
+      && previousDelta.value.length + current.value.length <= MAX_COALESCED_DELTA_CHARS
+    if (!coalescible) {
+      this.queue.push(draft)
+      return
+    }
+    previous.payload[current.field] = `${previousDelta.value}${current.value}`
+  }
+
+  private scheduleAfterEmit(isText: boolean): void {
+    if (isText && !this.firstTextFlushed) {
+      this.firstTextFlushed = true
+      this.scheduleFlush(0)
+      return
+    }
+    if (this.queue.length >= FLUSH_BATCH_SIZE) {
+      this.scheduleFlush(0)
+      return
+    }
+    if (!this.timer) this.scheduleFlush(FLUSH_INTERVAL_MS)
+  }
+
+  private publishLive(event: LiveJobEventInput): void {
+    try { this.onLiveEvent?.(event) } catch {}
   }
 
   private scheduleFlush(milliseconds: number): void {

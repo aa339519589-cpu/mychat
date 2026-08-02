@@ -110,8 +110,7 @@
     },
     "components/literary-chat/generation-api.ts": {
       "complexity": [
-        24,
-        22
+        24
       ],
       "maxLines": [
         118
