@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: write
+  statuses: write
 
 jobs:
   sync:
@@ -27,19 +28,41 @@ jobs:
           node-version: 24
           cache: npm
 
-      - name: Install dependencies
-        run: npm ci --ignore-scripts --legacy-peer-deps
-
-      - name: Regenerate exact complexity baseline
-        run: npm run complexity:baseline > scripts/function-complexity-baseline.json
-
-      - name: Commit lowered baseline
+      - name: Regenerate and commit exact baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVISION: ${{ github.sha }}
         run: |
+          set -Eeuo pipefail
+          stage=install
+          report() {
+            curl --silent --show-error --request POST \
+              --header "Authorization: Bearer $GH_TOKEN" \
+              --header "Accept: application/vnd.github+json" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              --data "$(jq -nc --arg state "$1" --arg context "Code Repair Baseline" --arg description "$2" '{state:$state,context:$context,description:$description}')" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/statuses/$REVISION" >/dev/null || true
+          }
+          fail() {
+            local code=$?
+            trap - ERR
+            report failure "Baseline synchronization failed at $stage"
+            exit "$code"
+          }
+          trap fail ERR
+          report pending "Regenerating exact complexity baseline"
+          npm ci --ignore-scripts --legacy-peer-deps
+          stage=generate
+          npm run complexity:baseline > scripts/function-complexity-baseline.json
+          stage=commit
           if git diff --quiet -- scripts/function-complexity-baseline.json; then
+            report success "Complexity baseline already exact"
             exit 0
           fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add scripts/function-complexity-baseline.json
           git commit -m "Lower complexity baseline after Code repair"
+          stage=push
           git push origin HEAD:main
+          report success "Lowered complexity baseline committed"
