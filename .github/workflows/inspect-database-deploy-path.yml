@@ -1,0 +1,43 @@
+name: Inspect Database Deploy Path
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/inspect-database-deploy-path.yml
+
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect database deployment configuration
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          jq -nc --arg context "Database Deploy Path" --arg description "Inspecting migration deployment credentials" --arg target_url "$RUN_URL" \
+            '{state:"pending",context:$context,description:$description,target_url:$target_url}' \
+            | gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" --input - >/dev/null
+          echo '=== REPOSITORY DEPLOY REFERENCES ==='
+          grep -RIn -E 'supabase (db push|migration|link)|SUPABASE_ACCESS_TOKEN|DATABASE_URL|DIRECT_URL|POSTGRES_URL|DB_PASSWORD' \
+            .github scripts docs package.json supabase 2>/dev/null | head -n 120 || true
+          envs="$(curl --fail-with-body --silent --show-error --retry 4 --retry-all-errors \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars?limit=100")"
+          normalized="$(jq -c 'if type == "array" then map(.envVar // .) elif (.envVars | type) == "array" then (.envVars | map(.envVar // .)) else [] end' <<<"$envs")"
+          echo '=== RENDER DATABASE KEYS ==='
+          jq -r '.[] | .key' <<<"$normalized" | grep -Ei 'DATABASE|POSTGRES|SUPABASE.*(TOKEN|PASSWORD|URL)|DIRECT_URL|DB_' | sort || true
+          keys="$(jq -r '[.[] | .key | select(test("DATABASE|POSTGRES|SUPABASE.*(TOKEN|PASSWORD|URL)|DIRECT_URL|DB_";"i"))] | join(",")' <<<"$normalized")"
+          jq -nc --arg context "Database Deploy Path" --arg description "Render database keys: ${keys:-none}" --arg target_url "$RUN_URL" \
+            '{state:"success",context:$context,description:($description[0:140]),target_url:$target_url}' \
+            | gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" --input - >/dev/null
