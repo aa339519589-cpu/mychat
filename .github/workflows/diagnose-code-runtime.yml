@@ -8,7 +8,8 @@ on:
       - .github/workflows/diagnose-code-runtime.yml
 
 permissions:
-  contents: write
+  contents: read
+  statuses: write
 
 jobs:
   diagnose:
@@ -17,55 +18,55 @@ jobs:
     env:
       SUPABASE_URL: https://usibkqqksgwgvdiqwpyo.supabase.co
     steps:
-      - uses: actions/checkout@v4
-      - name: Capture sanitized production runtime state
+      - name: Inspect production Code runtime
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
         run: |
           set -euo pipefail
           auth=(-H "apikey: $SUPABASE_SERVICE_ROLE_KEY" -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY")
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
           heartbeats="$(curl --fail-with-body --silent --show-error "${auth[@]}" \
             "$SUPABASE_URL/rest/v1/job_worker_heartbeats?select=revision,queues,capacity,draining,started_at,heartbeat_at,queue_capacities&order=heartbeat_at.desc&limit=8")"
-
           jobs="$(curl --fail-with-body --silent --show-error "${auth[@]}" \
-            "$SUPABASE_URL/rest/v1/jobs?type=eq.agent.task&select=id,status,attempt,max_attempts,error_code,error_class,created_at,updated_at,started_at,terminal_at,payload&order=created_at.desc&limit=30")"
-
-          ids="$(jq -r 'map(.id) | join(",")' <<<"$jobs")"
-          events='[]'
-          if [[ -n "$ids" ]]; then
-            encoded="$(jq -rn --arg value "in.($ids)" '$value|@uri')"
-            events="$(curl --fail-with-body --silent --show-error "${auth[@]}" \
-              "$SUPABASE_URL/rest/v1/job_events?job_id=$encoded&select=kind,payload,created_at&order=created_at.desc&limit=120")"
-          fi
-
+            "$SUPABASE_URL/rest/v1/jobs?type=eq.agent.task&select=status,attempt,max_attempts,error_code,error_class,created_at,updated_at,started_at,terminal_at,payload&order=created_at.desc&limit=20")"
+          tasks="$(curl --fail-with-body --silent --show-error "${auth[@]}" \
+            "$SUPABASE_URL/rest/v1/agent_tasks?select=status,error,created_at,updated_at,started_at,finished_at&order=updated_at.desc&limit=10")"
           runtime="$(curl --fail-with-body --silent --show-error \
             -H "Authorization: Bearer $RENDER_API_KEY" \
             "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars/MYCHAT_RUNTIME_ROLE")"
 
-          mkdir -p .diagnostics
-          jq -n \
-            --arg generatedAt "$(date -u +%FT%TZ)" \
-            --argjson heartbeats "$heartbeats" \
-            --argjson jobs "$jobs" \
-            --argjson events "$events" \
-            --argjson runtime "$runtime" \
-            '{
-              generatedAt: $generatedAt,
-              runtimeRole: ($runtime.value // null),
-              heartbeats: ($heartbeats | map({revision,queues,capacity,draining,started_at,heartbeat_at,queue_capacities})),
-              jobs: ($jobs | map({status,attempt,max_attempts,error_code,error_class,created_at,updated_at,started_at,terminal_at,modelId:(.payload.modelId // null),accessClass:(.payload.accessClass // null),reasoningEffort:(.payload.reasoningEffort // null)})),
-              eventSummary: ($events | group_by([.kind, (.payload.errorCode // null), (.payload.status // null)]) | map({kind:.[0].kind,errorCode:(.[0].payload.errorCode // null),status:(.[0].payload.status // null),count:length,latest:(map(.created_at)|max)}))
-            }' > .diagnostics/code-runtime.json
+          now="$(date +%s)"
+          role="$(jq -r '.value // "missing"' <<<"$runtime")"
+          hb_at="$(jq -r '.[0].heartbeat_at // empty' <<<"$heartbeats")"
+          hb_age=999999
+          if [[ -n "$hb_at" ]]; then hb_age=$(( now - $(date -d "$hb_at" +%s) )); fi
+          hb_queues="$(jq -r '.[0].queues // [] | join(",")' <<<"$heartbeats")"
+          hb_draining="$(jq -r '.[0].draining // true' <<<"$heartbeats")"
+          worker_state=failure
+          if [[ "$role" == "all" && "$hb_age" -le 30 && "$hb_queues" == *agent* && "$hb_draining" == "false" ]]; then worker_state=success; fi
+          worker_desc="role=$role hb=${hb_age}s queues=${hb_queues:-none} draining=$hb_draining"
 
-      - name: Commit diagnostic result
-        run: |
-          set -euo pipefail
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add .diagnostics/code-runtime.json
-          git diff --cached --quiet && exit 0
-          git commit -m "Record sanitized Code runtime diagnostics"
-          git push
+          job_status="$(jq -r '.[0].status // "none"' <<<"$jobs")"
+          job_model="$(jq -r '.[0].payload.modelId // "none"' <<<"$jobs")"
+          job_error="$(jq -r '.[0].error_code // "none"' <<<"$jobs")"
+          job_attempt="$(jq -r '.[0].attempt // 0' <<<"$jobs")"
+          case "$job_status" in completed) job_state=success;; failed|cancelled) job_state=failure;; *) job_state=pending;; esac
+          job_desc="status=$job_status model=$job_model error=$job_error attempt=$job_attempt"
+
+          task_status="$(jq -r '.[0].status // "none"' <<<"$tasks")"
+          task_error="$(jq -r '.[0].error // "none" | gsub("[\\r\\n]+";" ") | .[0:95]' <<<"$tasks")"
+          case "$task_status" in completed|waiting_for_user|published) task_state=success;; failed) task_state=failure;; *) task_state=pending;; esac
+          task_desc="status=$task_status error=$task_error"
+
+          post_status() {
+            jq -nc --arg state "$1" --arg context "$2" --arg description "${3:0:140}" --arg target_url "$run_url" \
+              '{state:$state,context:$context,description:$description,target_url:$target_url}' \
+              | gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" --input - >/dev/null
+          }
+          post_status "$worker_state" "Code Worker Diagnostic" "$worker_desc"
+          post_status "$job_state" "Code Job Diagnostic" "$job_desc"
+          post_status "$task_state" "Code Task Diagnostic" "$task_desc"
