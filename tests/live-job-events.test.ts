@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  LiveJobPublisher,
   applyOffsetDelta,
   liveJobChannelName,
   parseLiveJobEvent,
@@ -48,4 +49,29 @@ test('live event parser rejects malformed broadcast payloads', () => {
   })
   assert.equal(parseLiveJobEvent({ revision: 0, kind: 'text.delta', payload: {} }), null)
   assert.equal(parseLiveJobEvent({ revision: 1, kind: 'text.delta', offset: -1, payload: {} }), null)
+})
+
+test('publisher sends adjacent provider deltas separately without subscribing', async () => {
+  const sent: unknown[] = []
+  const channel = {
+    httpSend: async (_event: string, payload: unknown) => {
+      sent.push(payload)
+      return 'ok'
+    },
+  }
+  const client = {
+    channel: () => channel,
+    removeChannel: async () => undefined,
+  }
+  const publisher = new LiveJobPublisher(client as never, JOB_ID)
+  publisher.start()
+  publisher.publish({ kind: 'text.delta', offset: 0, payload: { text: '你' } })
+  publisher.publish({ kind: 'text.delta', offset: 1, payload: { text: '好' } })
+  await publisher.close()
+
+  assert.equal(sent.length, 2)
+  assert.deepEqual(sent, [
+    { revision: 1, kind: 'text.delta', offset: 0, payload: { text: '你' } },
+    { revision: 2, kind: 'text.delta', offset: 1, payload: { text: '好' } },
+  ])
 })
