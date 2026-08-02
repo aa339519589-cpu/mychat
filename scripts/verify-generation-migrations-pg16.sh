@@ -1469,9 +1469,9 @@ CONTRACT_MIGRATION_COUNT="$(node -e \
   "$ROOT/supabase/migrations.manifest.json")"
 
 SCHEMA_CONTRACT_RESULT="$("${PSQL[@]}" -qAt -d "$DB" -c \
-  "set role service_role; select public.verify_schema_contract_v4(${CONTRACT_VERSION}, '${CONTRACT_DIGEST}', ${CONTRACT_MIGRATION_COUNT})")"
+  "set role service_role; select public.verify_schema_contract_v5(${CONTRACT_VERSION}, '${CONTRACT_DIGEST}', ${CONTRACT_MIGRATION_COUNT})")"
 if [[ "$SCHEMA_CONTRACT_RESULT" != "t" ]]; then
-  echo "Exact current v4 schema contract attestation was not accepted" >&2
+  echo "Exact current v5 schema contract attestation was not accepted" >&2
   exit 1
 fi
 for mismatch in \
@@ -1480,23 +1480,23 @@ for mismatch in \
   "${CONTRACT_VERSION} '${CONTRACT_DIGEST}' $((CONTRACT_MIGRATION_COUNT + 1))"; do
   read -r version digest count <<<"$mismatch"
   result="$("${PSQL[@]}" -qAt -d "$DB" -c \
-    "set role service_role; select public.verify_schema_contract_v4(${version}, ${digest}, ${count})")"
+    "set role service_role; select public.verify_schema_contract_v5(${version}, ${digest}, ${count})")"
   if [[ "$result" != "f" ]]; then
-    echo "Mismatched current v4 schema contract was accepted: $mismatch" >&2
+    echo "Mismatched current v5 schema contract was accepted: $mismatch" >&2
     exit 1
   fi
 done
 SCHEMA_CONTRACT_ROWS="$("${PSQL[@]}" -qAt -d "$DB" -c \
   "select count(*) from public.schema_contract_attestations")"
-if [[ "$SCHEMA_CONTRACT_ROWS" != "4" ]]; then
-  echo "Schema contract v4 replay created unexpected attestation rows" >&2
+if [[ "$SCHEMA_CONTRACT_ROWS" != "5" ]]; then
+  echo "Schema contract v5 replay created unexpected attestation rows" >&2
   exit 1
 fi
 for role in anon authenticated; do
   if "${PSQL[@]}" -qAt -d "$DB" -c \
-    "set role ${role}; select public.verify_schema_contract_v4(${CONTRACT_VERSION}, '${CONTRACT_DIGEST}', ${CONTRACT_MIGRATION_COUNT})" \
+    "set role ${role}; select public.verify_schema_contract_v5(${CONTRACT_VERSION}, '${CONTRACT_DIGEST}', ${CONTRACT_MIGRATION_COUNT})" \
     >/dev/null 2>&1; then
-    echo "$role can execute the service-only v4 schema contract RPC" >&2
+    echo "$role can execute the service-only v5 schema contract RPC" >&2
     exit 1
   fi
 done
