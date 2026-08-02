@@ -1,5 +1,5 @@
 name: Recover Render Production
-# Recovery trigger: retry bounded dynamic Code context deployment.
+# Recovery trigger: diagnose and deploy bounded dynamic Code context.
 
 on:
   workflow_dispatch:
@@ -36,11 +36,13 @@ jobs:
       - name: Mark recovery pending
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          jq -nc --arg context "Render Recovery" --arg description "Repairing GitHub OAuth and deploying main" '{
+          jq -nc --arg context "Render Recovery" --arg description "Repairing GitHub OAuth and deploying main" --arg target_url "$RUN_URL" '{
             state: "pending",
             context: $context,
-            description: $description
+            description: $description,
+            target_url: $target_url
           }' | gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" --input - >/dev/null
 
       - name: Configure Render and restore OAuth dependencies
@@ -133,6 +135,7 @@ jobs:
           echo "deploy_id=$deploy_id" >> "$GITHUB_OUTPUT"
 
       - name: Wait for Render deployment
+        id: wait
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_DEPLOY_ID: ${{ steps.render.outputs.deploy_id }}
@@ -165,6 +168,7 @@ jobs:
           exit 1
 
       - name: Confirm production and OAuth liveness
+        id: live
         run: |
           for attempt in {1..30}; do
             live="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
@@ -186,6 +190,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           JOB_STATUS: ${{ job.status }}
           MISSING: ${{ steps.oauth.outputs.missing }}
+          OAUTH_OUTCOME: ${{ steps.oauth.outcome }}
+          RENDER_OUTCOME: ${{ steps.render.outcome }}
+          WAIT_OUTCOME: ${{ steps.wait.outcome }}
+          LIVE_OUTCOME: ${{ steps.live.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           if [[ "$JOB_STATUS" == "success" ]]; then
             state="success"
@@ -194,10 +203,18 @@ jobs:
             state="failure"
             if [[ -n "$MISSING" ]]; then
               description="Missing Render secrets: ${MISSING:0:105}"
+            elif [[ "$OAUTH_OUTCOME" != "success" ]]; then
+              description="Render configuration or OAuth recovery failed"
+            elif [[ "$RENDER_OUTCOME" != "success" ]]; then
+              description="Render deploy request failed"
+            elif [[ "$WAIT_OUTCOME" != "success" ]]; then
+              description="Render build or rollout failed"
+            elif [[ "$LIVE_OUTCOME" != "success" ]]; then
+              description="Production liveness check failed"
             else
-              description="Render OAuth recovery failed"
+              description="Render recovery failed"
             fi
           fi
-          jq -nc --arg state "$state" --arg context "Render Recovery" --arg description "$description" \
-            '{state:$state,context:$context,description:$description}' \
+          jq -nc --arg state "$state" --arg context "Render Recovery" --arg description "$description" --arg target_url "$RUN_URL" \
+            '{state:$state,context:$context,description:$description,target_url:$target_url}' \
             | gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" --input - >/dev/null
