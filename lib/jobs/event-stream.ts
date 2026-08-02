@@ -2,25 +2,19 @@ import type { SupabaseClient } from '@/lib/supabase/types'
 import { isTerminalJobStatus, type JobStatus } from './contracts'
 import { readOwnedJob, readOwnedJobEvents } from './read-model'
 
-const INITIAL_POLL_INTERVAL_MS = 250
-const MAX_POLL_INTERVAL_MS = 2_000
+const INITIAL_POLL_INTERVAL_MS = 35
+const MAX_ACTIVE_POLL_INTERVAL_MS = 80
 const HEARTBEAT_INTERVAL_MS = 10_000
-const STATUS_REFRESH_INTERVAL_MS = 5_000
+const STATUS_REFRESH_INTERVAL_MS = 2_000
 const ADMISSION_RENEW_INTERVAL_MS = 15_000
 const BACKPRESSURE_TIMEOUT_MS = 5_000
-const BACKPRESSURE_POLL_MS = 50
+const BACKPRESSURE_POLL_MS = 25
 
 function wait(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) return reject(signal.reason)
-    const abort = () => {
-      clearTimeout(timer)
-      reject(signal.reason)
-    }
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', abort)
-      resolve()
-    }, milliseconds)
+    const abort = () => { clearTimeout(timer); reject(signal.reason) }
+    const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve() }, milliseconds)
     signal.addEventListener('abort', abort, { once: true })
   })
 }
@@ -45,12 +39,21 @@ const DEFAULT_DEPENDENCIES: JobEventStreamDependencies = {
   wait,
   now: Date.now,
   initialPollIntervalMs: INITIAL_POLL_INTERVAL_MS,
-  maxPollIntervalMs: MAX_POLL_INTERVAL_MS,
+  maxPollIntervalMs: MAX_ACTIVE_POLL_INTERVAL_MS,
   statusRefreshIntervalMs: STATUS_REFRESH_INTERVAL_MS,
   heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
   admissionRenewIntervalMs: ADMISSION_RENEW_INTERVAL_MS,
   backpressureTimeoutMs: BACKPRESSURE_TIMEOUT_MS,
   backpressurePollMs: BACKPRESSURE_POLL_MS,
+}
+
+export function nextActivePollInterval(
+  current: number,
+  receivedEvents: boolean,
+  initial = INITIAL_POLL_INTERVAL_MS,
+  maximum = MAX_ACTIVE_POLL_INTERVAL_MS,
+): number {
+  return receivedEvents ? initial : Math.min(maximum, Math.max(initial, Math.ceil(current * 1.35)))
 }
 
 async function waitForCapacity(
@@ -67,12 +70,7 @@ async function waitForCapacity(
 }
 
 function eventFrame(event: {
-  seq: number
-  kind: string
-  schemaVersion: number
-  jobId: string
-  payload: object
-  createdAt: string
+  seq: number; kind: string; schemaVersion: number; jobId: string; payload: object; createdAt: string
 }): string {
   return `id: ${event.seq}\nevent: ${event.kind}\ndata: ${JSON.stringify(event)}\n\n`
 }
@@ -117,64 +115,36 @@ export function createJobEventStream(input: {
       let lastAdmissionRenewal = dependencies.now()
       try {
         while (!signal.aborted) {
-          if (input.renewAdmission
-            && dependencies.now() - lastAdmissionRenewal >= dependencies.admissionRenewIntervalMs) {
+          if (input.renewAdmission && dependencies.now() - lastAdmissionRenewal >= dependencies.admissionRenewIntervalMs) {
             if (!await input.renewAdmission(signal)) break
             lastAdmissionRenewal = dependencies.now()
           }
-          const result = await dependencies.readEvents(
-            input.client,
-            input.principalId,
-            input.jobId,
-            sequence,
-            200,
-            signal,
-          )
+          const result = await dependencies.readEvents(input.client, input.principalId, input.jobId, sequence, 200, signal)
           if (!result.ok) {
-            await send(`event: stream.error\ndata: ${JSON.stringify({
-              schemaVersion: 1,
-              jobId: input.jobId,
-              code: 'DEPENDENCY_UNAVAILABLE',
-              retryable: true,
-            })}\n\n`)
+            await send(`event: stream.error\ndata: ${JSON.stringify({ schemaVersion: 1, jobId: input.jobId, code: 'DEPENDENCY_UNAVAILABLE', retryable: true })}\n\n`)
             break
           }
           for (const event of result.value) {
-            if (!await send(eventFrame(event))) {
-              stop.abort(new Error('slow_consumer'))
-              break
-            }
+            if (!await send(eventFrame(event))) { stop.abort(new Error('slow_consumer')); break }
             sequence = event.seq
             const terminalStatus = event.kind === 'job.terminal' ? event.payload.status : null
-            if (typeof terminalStatus === 'string' && isTerminalJobStatus(terminalStatus)) {
-              status = terminalStatus
-            }
+            if (typeof terminalStatus === 'string' && isTerminalJobStatus(terminalStatus)) status = terminalStatus
           }
           if (signal.aborted) break
           if (isTerminalJobStatus(status) && result.value.length === 0) break
           const now = dependencies.now()
-          if (result.value.length === 0
-            && now - lastStatusRefresh >= dependencies.statusRefreshIntervalMs) {
-            const snapshot = await dependencies.readJob(
-              input.client,
-              input.principalId,
-              input.jobId,
-              signal,
-            )
+          if (result.value.length === 0 && now - lastStatusRefresh >= dependencies.statusRefreshIntervalMs) {
+            const snapshot = await dependencies.readJob(input.client, input.principalId, input.jobId, signal)
             if (!snapshot.ok) break
             status = snapshot.value.status
             lastStatusRefresh = now
           }
           if (now - lastHeartbeat >= dependencies.heartbeatIntervalMs) {
-            if (!await send(`: heartbeat ${sequence}\n\n`)) {
-              stop.abort(new Error('slow_consumer'))
-              break
-            }
+            if (!await send(`: heartbeat ${sequence}\n\n`)) { stop.abort(new Error('slow_consumer')); break }
             lastHeartbeat = dependencies.now()
           }
           if (!isTerminalJobStatus(status)) {
-            if (result.value.length > 0) pollIntervalMs = dependencies.initialPollIntervalMs
-            else pollIntervalMs = Math.min(dependencies.maxPollIntervalMs, pollIntervalMs * 2)
+            pollIntervalMs = nextActivePollInterval(pollIntervalMs, result.value.length > 0, dependencies.initialPollIntervalMs, dependencies.maxPollIntervalMs)
             await dependencies.wait(pollIntervalMs, signal)
           }
         }
@@ -186,10 +156,6 @@ export function createJobEventStream(input: {
         try { controller.close() } catch {}
       }
     },
-    cancel(reason) {
-      closed = true
-      stop.abort(reason)
-      return releaseAdmission()
-    },
+    cancel(reason) { closed = true; stop.abort(reason); return releaseAdmission() },
   })
 }
