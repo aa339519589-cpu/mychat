@@ -65,18 +65,18 @@ test('code chat request enforces per-message and aggregate context limits', () =
   )
 })
 
-test('code event collector releases plain final text when no progress occurred', () => {
+test('code event collector forwards plain final text immediately', () => {
   const sent: object[] = []
   const collector = createCodeEventCollector({ send: event => sent.push(event) })
 
   collector.emit({ text: '最终答复' })
   collector.emit({ thinking: '隐藏推理' })
-  assert.deepEqual(sent, [])
-  assert.equal(collector.flushLeadText(), '最终答复')
+
   assert.deepEqual(sent, [{ text: '最终答复' }])
+  assert.equal(collector.flushLeadText(), '最终答复')
 })
 
-test('code event collector drops lead-in after progress and preserves SSE ordering', () => {
+test('code event collector preserves visible text and SSE ordering around progress', () => {
   const sent: object[] = []
   const steps: string[] = []
   const collector = createCodeEventCollector({
@@ -88,8 +88,9 @@ test('code event collector drops lead-in after progress and preserves SSE orderi
   collector.emit({ step: { kind: 'read', label: '读取 route.ts' } })
   collector.emit({ text: '修改完成' })
 
-  assert.equal(collector.flushLeadText(), '修改完成')
+  assert.equal(collector.flushLeadText(), '让我先看看。修改完成')
   assert.deepEqual(sent, [
+    { text: '让我先看看。' },
     { step: { kind: 'read', label: '读取 route.ts' } },
     { text: '修改完成' },
   ])
