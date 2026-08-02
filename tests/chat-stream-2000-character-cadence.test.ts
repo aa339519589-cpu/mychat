@@ -29,6 +29,7 @@ test("active job polling never backs off into multi-second Chat stalls", () => {
 })
 
 test("Chat streams a 2200-character reply through many bounded events", async () => {
+  // This exercises the same durable SSE path used by production Chat.
   const source = "流式输出应持续前进，不能停住几秒再突然整段出现。".repeat(100).slice(0, 2200)
   const chunks = Array.from({ length: Math.ceil(source.length / 40) }, (_, index) => (
     source.slice(index * 40, (index + 1) * 40)
