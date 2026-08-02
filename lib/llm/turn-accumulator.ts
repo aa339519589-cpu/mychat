@@ -38,6 +38,7 @@ type TurnAccumulatorOptions = {
   timingEnabled: boolean
   startedAt: number
   deferTextUntilTurnEnd?: boolean
+  lowLatencyTextStreaming?: boolean
   contentPolicy?: (input: { content: string; hasToolCalls: boolean }) => string
   maxOutputTokens?: number
   mediaBudget?: { remaining: number; seen: Set<string> }
@@ -87,7 +88,7 @@ export class TurnAccumulator {
   private readonly options: TurnAccumulatorOptions
   private readonly maximumOutputChars: number
   private readonly mediaBudget: { remaining: number; seen: Set<string> }
-  private readonly filter = makeContentFilter()
+  private readonly filter: ReturnType<typeof makeContentFilter>
   private readonly callMap: Record<number, AccumulatedToolCall> = {}
   private readonly reasoningDetails: Record<string, unknown>[] = []
   private content = ''
@@ -109,6 +110,7 @@ export class TurnAccumulator {
       remaining: MAX_GENERATED_MEDIA_ITEMS,
       seen: new Set<string>(),
     }
+    this.filter = makeContentFilter({ lowLatency: options.lowLatencyTextStreaming })
   }
 
   private boundedText(value: unknown): string {

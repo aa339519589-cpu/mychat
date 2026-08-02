@@ -39,6 +39,12 @@ function stripStandalone(s: string): string {
   return r
 }
 
+function lowLatencySafeLength(value: string): number {
+  const lastMarkerStart = value.lastIndexOf("<")
+  if (lastMarkerStart === -1) return value.length
+  return value.length - lastMarkerStart <= MAX_MARKER ? lastMarkerStart : value.length
+}
+
 // 一次性整段清洗（前端兜底用）。
 export function stripToolMarkup(text: string): string {
   if (!text) return text
@@ -55,7 +61,7 @@ export function stripToolMarkup(text: string): string {
 }
 
 // 流式安全过滤器：成对开标记先在原始 buf 上用 indexOf 定位，零散标记只作用于即将放出的安全文本。
-export function makeContentFilter() {
+export function makeContentFilter(options: { lowLatency?: boolean } = {}) {
   let buf = ""
   let waitingClose: string | null = null
 
@@ -83,7 +89,9 @@ export function makeContentFilter() {
         }
       }
       if (bestIdx === -1) {
-        const safeLen = buf.length - MAX_MARKER
+        const safeLen = options.lowLatency !== false
+          ? lowLatencySafeLength(buf)
+          : buf.length - MAX_MARKER
         if (safeLen > 0) {
           out += stripStandalone(buf.slice(0, safeLen))
           buf = buf.slice(safeLen)

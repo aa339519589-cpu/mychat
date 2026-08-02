@@ -40,6 +40,7 @@ export type RunTurnOptions = {
   authType?: EndpointAuthType
   reasoningEffort?: ReasoningEffort | null
   deferTextUntilTurnEnd?: boolean
+  lowLatencyTextStreaming?: boolean
   contentPolicy?: TurnContentPolicy
   emitErrors?: boolean
   signal?: AbortSignal
@@ -215,6 +216,7 @@ export async function runTurn(
     timingEnabled: opened.timingEnabled,
     startedAt: opened.startedAt,
     deferTextUntilTurnEnd: options?.deferTextUntilTurnEnd,
+    lowLatencyTextStreaming: options?.lowLatencyTextStreaming,
     contentPolicy: options?.contentPolicy,
     maxOutputTokens: options?.maxOutputTokens,
     mediaBudget: options?.mediaBudget,
