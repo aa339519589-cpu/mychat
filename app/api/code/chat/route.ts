@@ -25,6 +25,15 @@ function latestGoal(messages: Array<{ role: string; content: string }>): string 
 function apiFailure(request: NextRequest, input: ApiErrorResponseOptions): Response {
   return apiErrorResponseV1(request, input)
 }
+function authFailureResponse(request: NextRequest, auth: AuthCtx): Response {
+  const unavailable = auth.authUnavailable === true
+  return apiFailure(request, {
+    status: unavailable ? 503 : 401,
+    code: unavailable ? 'AUTH_DEPENDENCY_UNAVAILABLE' : 'AUTH_REQUIRED',
+    message: unavailable ? '认证服务暂时不可用' : '请先登录',
+    retryable: unavailable,
+  })
+}
 function boundRequest(body: CodeChatRequest): BoundCodeChatRequest {
   if (!body.repo || !body.sessionId || !body.responseId) {
     throw new CodeAgentEnqueueContextError('conflict', 'Code Agent 需要 repo、sessionId 和 responseId')
@@ -190,12 +199,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   const auth = await resolveAuth()
   const rate = await enforceRequestRateLimit(auth, request)
   if (rate.response) return rate.response
-  if (!auth.supabase || !auth.userId) return apiFailure(request, {
-    status: auth.authUnavailable ? 503 : 401,
-    code: auth.authUnavailable ? 'AUTH_DEPENDENCY_UNAVAILABLE' : 'AUTH_REQUIRED',
-    message: auth.authUnavailable ? '认证服务暂时不可用' : '请先登录',
-    retryable: auth.authUnavailable === true,
-  })
+  if (!auth.supabase || !auth.userId) return authFailureResponse(request, auth)
   let body: BoundCodeChatRequest
   try {
     body = boundRequest(parseCodeChatRequest(await readJson(request, { maxBytes: 4 * 1024 * 1024 })))
