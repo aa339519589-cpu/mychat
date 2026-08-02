@@ -46,8 +46,9 @@ function props(overrides: Partial<CodeConsoleViewProps> = {}): CodeConsoleViewPr
     onCommand: () => {},
     overlay: null,
     onCloseOverlay: () => {},
-    tier: '正构',
-    onChangeTier: () => {},
+    models: [],
+    activeModelId: null,
+    onChangeModel: () => {},
     onLoadSession: () => {},
     ...overrides,
   }
