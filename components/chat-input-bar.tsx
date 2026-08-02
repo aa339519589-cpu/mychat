@@ -1,10 +1,11 @@
 "use client"
 
 import type { RefObject } from "react"
-import { ArrowRight, ArrowUp, ChevronDown, Image as ImageIcon, Sparkles, Square } from "lucide-react"
+import { ArrowRight, ArrowUp, ChevronDown, Square } from "lucide-react"
+import { ComposerProviderIcon } from "@/components/provider-logo"
 import { cn } from "@/lib/utils"
 
-export function ComposerBar({ mobile, value, onValueChange, textareaRef, onResize, onSubmit, disabled, isLoading, sendPending, activeModelLabel, activeOutputKind, canSend, onStop, onOpenModel }: {
+export function ComposerBar({ mobile, value, onValueChange, textareaRef, onResize, onSubmit, disabled, isLoading, sendPending, activeModelLabel, activeModelProvider, activeOutputKind, canSend, onStop, onOpenModel }: {
   mobile: boolean
   value: string
   onValueChange: (value: string) => void
@@ -15,20 +16,20 @@ export function ComposerBar({ mobile, value, onValueChange, textareaRef, onResiz
   isLoading: boolean
   sendPending: boolean
   activeModelLabel: string
+  activeModelProvider?: string | null
   activeOutputKind?: string
   canSend: boolean
   onStop: () => void
   onOpenModel: () => void
 }) {
   const placeholder = disabled ? "正在同步会话……" : activeOutputKind === "image" ? "描述要生成的图片……" : "说点什么……"
-  const modelIcon = activeOutputKind === "image" ? <ImageIcon className="size-[1.1rem] shrink-0" /> : <Sparkles className="size-[1.1rem] shrink-0" />
   const SendIcon = value.trim() ? ArrowUp : ArrowRight
 
   return (
     <>
       <textarea ref={textareaRef} rows={1} value={value} disabled={disabled} onChange={event => { onValueChange(event.target.value); onResize() }} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !disabled && !isLoading && !sendPending) { event.preventDefault(); onSubmit() } }} placeholder={placeholder} className={cn("order-1 block min-h-[2.75rem] w-full basis-full resize-none bg-transparent px-2.5 pb-0.5 pt-1 text-[16px] font-normal leading-6 tracking-[-0.01em] text-foreground outline-none placeholder:font-normal placeholder:text-[#92908B] disabled:cursor-wait dark:text-white dark:placeholder:text-white/42", mobile ? "max-h-[112px]" : "max-h-[172px]")} />
       <button type="button" onClick={onOpenModel} aria-label="选择模型" title={activeModelLabel} className={cn("fluid-press order-3 flex h-11 shrink-0 items-center justify-center gap-1 rounded-full text-[#98958F] hover:bg-secondary/70 hover:text-foreground dark:text-white/55 dark:hover:bg-white/10 dark:hover:text-white", mobile ? "w-11" : "min-w-11 max-w-[11rem] px-2.5")}>
-        {modelIcon}
+        <ComposerProviderIcon provider={activeModelProvider} outputKind={activeOutputKind} />
         <span className={cn("min-w-0 truncate text-xs", mobile && "sr-only")}>{activeModelLabel}</span>
         {!mobile && <ChevronDown className="size-3 shrink-0" />}
       </button>

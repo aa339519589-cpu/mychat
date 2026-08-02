@@ -1,8 +1,8 @@
 "use client"
 
-import Image from "next/image"
 import { Check, ChevronRight, Eye, Image as ImageIcon, Wrench } from "lucide-react"
 import type { ModelCatalogItem } from "@/lib/model-catalog"
+import { ProviderMark } from "@/components/provider-logo"
 import { cn } from "@/lib/utils"
 
 export function ModelCatalogList({ models, activeModelId, onSelect, compact = false }: {
@@ -88,44 +88,6 @@ function price(value: number): string {
   if (value < 0.01) return value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "")
   if (value < 1) return value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "")
   return value.toFixed(value >= 100 ? 0 : 1).replace(/\.0$/, "")
-}
-
-function ProviderMark({ provider }: { provider: string }) {
-  return (
-    <span className="flex size-9 shrink-0 items-center justify-center text-foreground">
-      <ProviderLogo provider={provider} />
-      <span className="sr-only">{provider}</span>
-    </span>
-  )
-}
-
-const PROVIDER_LOGOS: Record<string, { src: string; monochrome?: boolean }> = {
-  OpenAI: { src: "/provider-icons/openai.svg", monochrome: true },
-  Anthropic: { src: "/provider-icons/claude-color.svg" },
-  Google: { src: "/provider-icons/gemini-color.svg" },
-  DeepSeek: { src: "/provider-icons/deepseek-color.svg" },
-  MiniMax: { src: "/provider-icons/minimax-color.svg" },
-  Moonshot: { src: "/provider-icons/kimi.svg", monochrome: true },
-  "Z.ai": { src: "/provider-icons/zai.svg", monochrome: true },
-  xAI: { src: "/provider-icons/grok.svg", monochrome: true },
-}
-
-function ProviderLogo({ provider }: { provider: string }) {
-  const logo = PROVIDER_LOGOS[provider] ?? PROVIDER_LOGOS["Z.ai"]
-  return (
-    <Image
-      src={logo.src}
-      alt=""
-      width={28}
-      height={28}
-      priority
-      loading="eager"
-      fetchPriority="high"
-      unoptimized
-      aria-hidden="true"
-      className={cn("size-7 object-contain", logo.monochrome && "dark:invert")}
-    />
-  )
 }
 
 export function ModelCapabilitySummary({ model }: { model: ModelCatalogItem }) {
