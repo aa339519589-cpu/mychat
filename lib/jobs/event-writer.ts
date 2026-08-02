@@ -2,10 +2,18 @@ import type { ChatEvent } from '@/lib/llm/events'
 import type { JobEventDraft, JsonObject, JsonValue } from './contracts'
 import type { JobExecutionContext } from './worker'
 
-const FLUSH_INTERVAL_MS = 16
-const FLUSH_BATCH_SIZE = 12
-const MAX_TEXT_DELTA_CHARS = 24
-const MAX_THINKING_DELTA_CHARS = 256
+const DEFAULT_FLUSH_INTERVAL_MS = 16
+const DEFAULT_FLUSH_BATCH_SIZE = 32
+const DEFAULT_MAX_COALESCED_DELTA_CHARS = 512
+
+export type JobEventWriterOptions = {
+  flushIntervalMs?: number
+  flushBatchSize?: number
+  textChunkChars?: number
+  maxTextDeltaChars?: number
+  maxThinkingDeltaChars?: number
+  singleFlight?: boolean
+}
 
 function jsonObject(value: object): JsonObject {
   const parsed: unknown = JSON.parse(JSON.stringify(value))
@@ -13,8 +21,9 @@ function jsonObject(value: object): JsonObject {
   return parsed as JsonObject
 }
 
-function splitText(value: string, maximum: number): string[] {
+function splitText(value: string, maximum: number | undefined): string[] {
   if (!value) return []
+  if (!maximum) return [value]
   const characters = Array.from(value)
   const chunks: string[] = []
   for (let index = 0; index < characters.length; index += maximum) {
@@ -23,15 +32,12 @@ function splitText(value: string, maximum: number): string[] {
   return chunks
 }
 
-function eventDrafts(event: ChatEvent): JobEventDraft[] {
+function eventDrafts(event: ChatEvent, textChunkChars: number | undefined): JobEventDraft[] {
   if ('text' in event) {
-    return splitText(event.text, MAX_TEXT_DELTA_CHARS)
+    return splitText(event.text, textChunkChars)
       .map(text => ({ kind: 'text.delta', payload: { text } }))
   }
-  if ('thinking' in event) {
-    return splitText(event.thinking, MAX_THINKING_DELTA_CHARS)
-      .map(thinking => ({ kind: 'thinking.delta', payload: { thinking } }))
-  }
+  if ('thinking' in event) return [{ kind: 'thinking.delta', payload: { thinking: event.thinking } }]
   if ('media' in event) return [{ kind: 'media.uploaded', payload: { media: jsonObject(event.media) } }]
   if ('memory' in event) return [{ kind: 'tool.memory', payload: { memory: jsonObject(event.memory) } }]
   if ('search' in event) return [{ kind: 'tool.search', payload: { search: jsonObject(event.search) } }]
@@ -54,10 +60,6 @@ function deltaValue(event: JobEventDraft): { field: 'text' | 'thinking'; value: 
   return null
 }
 
-function deltaLimit(field: 'text' | 'thinking'): number {
-  return field === 'text' ? MAX_TEXT_DELTA_CHARS : MAX_THINKING_DELTA_CHARS
-}
-
 function materializedText(
   progress: JsonObject | undefined,
   field: 'content' | 'thinking',
@@ -76,13 +78,15 @@ function materializedText(
   return text.join('')
 }
 
-/**
- * Bridges synchronous model deltas to the durable, fenced event log. Visible
- * text is kept in small bounded events, and only one database append is allowed
- * in flight so fast providers cannot build a seconds-long RPC promise chain.
- */
+/** Bridges synchronous model deltas to the durable, fenced event log. */
 export class JobEventWriter {
   private readonly context: JobExecutionContext
+  private readonly flushIntervalMs: number
+  private readonly flushBatchSize: number
+  private readonly textChunkChars: number | undefined
+  private readonly maxTextDeltaChars: number
+  private readonly maxThinkingDeltaChars: number
+  private readonly singleFlight: boolean
   private queue: JobEventDraft[] = []
   private chain: Promise<void> = Promise.resolve()
   private failure: unknown = null
@@ -92,8 +96,14 @@ export class JobEventWriter {
   private firstTextFlushed = false
   private flushing = false
 
-  constructor(context: JobExecutionContext) {
+  constructor(context: JobExecutionContext, options: JobEventWriterOptions = {}) {
     this.context = context
+    this.flushIntervalMs = options.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS
+    this.flushBatchSize = options.flushBatchSize ?? DEFAULT_FLUSH_BATCH_SIZE
+    this.textChunkChars = options.textChunkChars
+    this.maxTextDeltaChars = options.maxTextDeltaChars ?? DEFAULT_MAX_COALESCED_DELTA_CHARS
+    this.maxThinkingDeltaChars = options.maxThinkingDeltaChars ?? DEFAULT_MAX_COALESCED_DELTA_CHARS
+    this.singleFlight = options.singleFlight === true
     const progress = context.job.checkpoint?.progress
     this.fullText = materializedText(progress, 'content', 'contentParts')
     this.fullThinking = materializedText(progress, 'thinking', 'thinkingParts')
@@ -104,15 +114,15 @@ export class JobEventWriter {
     const isText = 'text' in event && event.text.length > 0
     if ('text' in event) this.fullText += event.text
     if ('thinking' in event) this.fullThinking += event.thinking
-    for (const draft of eventDrafts(event)) this.enqueueDraft(draft)
+    for (const draft of eventDrafts(event, this.textChunkChars)) this.enqueueDraft(draft)
     if (this.queue.length === 0) return
     if (isText && !this.firstTextFlushed) {
       this.firstTextFlushed = true
       this.scheduleFlush(0)
-    } else if (this.queue.length >= FLUSH_BATCH_SIZE) {
+    } else if (this.queue.length >= this.flushBatchSize) {
       this.scheduleFlush(0)
     } else if (!this.timer) {
-      this.scheduleFlush(FLUSH_INTERVAL_MS)
+      this.scheduleFlush(this.flushIntervalMs)
     }
   }
 
@@ -136,7 +146,8 @@ export class JobEventWriter {
 
   async append(kind: string, payload: JsonObject, idempotencyKey?: string): Promise<void> {
     this.queue.push({ kind, payload, ...(idempotencyKey ? { idempotencyKey } : {}) })
-    await this.drainEvents()
+    if (this.singleFlight) await this.drainSingleFlight()
+    else await this.flush()
   }
 
   async checkpoint(input: {
@@ -160,12 +171,16 @@ export class JobEventWriter {
     this.context.assertAuthority()
   }
 
+  private deltaLimit(field: 'text' | 'thinking'): number {
+    return field === 'text' ? this.maxTextDeltaChars : this.maxThinkingDeltaChars
+  }
+
   private enqueueDraft(draft: JobEventDraft): void {
     const current = deltaValue(draft)
     const previous = this.queue.at(-1)
     const previousDelta = previous ? deltaValue(previous) : null
     if (current && previous && previousDelta?.field === current.field
-      && previousDelta.value.length + current.value.length <= deltaLimit(current.field)) {
+      && previousDelta.value.length + current.value.length <= this.deltaLimit(current.field)) {
       previous.payload[current.field] = `${previousDelta.value}${current.value}`
       return
     }
@@ -180,7 +195,7 @@ export class JobEventWriter {
     }, milliseconds)
   }
 
-  private async drainEvents(): Promise<void> {
+  private async drainSingleFlight(): Promise<void> {
     if (this.timer) clearTimeout(this.timer)
     this.timer = null
     while (!this.failure && (this.queue.length > 0 || this.flushing)) {
@@ -190,19 +205,35 @@ export class JobEventWriter {
     if (this.failure) throw this.failure
   }
 
+  private async drainEvents(): Promise<void> {
+    if (this.singleFlight) {
+      await this.drainSingleFlight()
+      return
+    }
+    if (this.timer) clearTimeout(this.timer)
+    this.timer = null
+    await this.flush()
+    await this.chain
+    if (this.failure) throw this.failure
+  }
+
   private flush(): Promise<void> {
-    if (this.failure || this.flushing || this.queue.length === 0) return this.chain
-    const batch = this.queue.splice(0, FLUSH_BATCH_SIZE)
-    this.flushing = true
+    if (this.failure || this.queue.length === 0 || (this.singleFlight && this.flushing)) {
+      return this.chain
+    }
+    const batch = this.queue.splice(0, this.flushBatchSize)
+    if (this.singleFlight) this.flushing = true
     this.chain = this.chain.then(async () => {
       this.context.assertAuthority()
       await this.context.appendEvents(batch)
     }).catch(error => {
       this.failure = error
     }).finally(() => {
+      if (!this.singleFlight) return
       this.flushing = false
       if (!this.failure && this.queue.length > 0) this.scheduleFlush(0)
     })
+    if (!this.singleFlight && this.queue.length > 0) this.scheduleFlush(0)
     return this.chain
   }
 }
