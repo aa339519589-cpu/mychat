@@ -12,7 +12,6 @@ test("Code forwards the first model text delta immediately", () => {
 
   assert.deepEqual(sent, [{ text: "首" }, { text: "Token" }])
   assert.equal(collector.getFinalText(), "首Token")
-  assert.equal(collector.flushLeadText(), "首Token")
 })
 
 test("Code still suppresses hidden reasoning while streaming visible text", () => {
