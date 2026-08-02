@@ -63,7 +63,7 @@ test('publisher sends adjacent provider deltas separately without subscribing', 
     channel: () => channel,
     removeChannel: async () => undefined,
   }
-  const publisher = new LiveJobPublisher(client as never, JOB_ID)
+  const publisher = new LiveJobPublisher(client as never, JOB_ID, CHANNEL_HASH_INPUT)
   publisher.start()
   publisher.publish({ kind: 'text.delta', offset: 0, payload: { text: '你' } })
   publisher.publish({ kind: 'text.delta', offset: 1, payload: { text: '好' } })
