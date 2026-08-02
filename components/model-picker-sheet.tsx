@@ -9,7 +9,7 @@ import { MOMENTUM_SPRING, shouldDismissGesture, transitionFor } from "@/componen
 import type { ModelCatalogItem } from "@/lib/model-catalog"
 import { cn } from "@/lib/utils"
 
-function ModelGroupDivider({ models }: { models: ModelCatalogItem[] }) {
+function ModelGroupDivider({ models, baseCount }: { models: ModelCatalogItem[]; baseCount: number }) {
   const sample = models.find(model =>
     model.trialUnlimited === true
     || typeof model.trialRemaining === "number"
@@ -18,11 +18,15 @@ function ModelGroupDivider({ models }: { models: ModelCatalogItem[] }) {
   const limit = typeof sample?.trialLimit === "number" ? sample.trialLimit : 3
   const remaining = typeof sample?.trialRemaining === "number" ? sample.trialRemaining : null
   const unlimited = sample?.trialUnlimited === true
+  const accessCopy = unlimited || remaining === null
+    ? `以下模型：会员不限次数，非会员共 ${limit} 次`
+    : `以下模型：会员不限次数，非会员剩余 ${remaining} 次`
+
   return (
     <div className="px-3 py-4">
       <div className="flex items-center gap-2.5">
         <span className="h-[2px] flex-1 rounded-full bg-foreground/30 dark:bg-white/30" />
-        <span className="shrink-0 rounded-full border border-foreground/20 bg-background/90 px-3 py-1 text-[12px] font-semibold tracking-[0.02em] text-foreground dark:border-white/20 dark:bg-black/20">以上 3 个为基础模型</span>
+        <span className="shrink-0 rounded-full border border-foreground/20 bg-background/90 px-3 py-1 text-[12px] font-semibold tracking-[0.02em] text-foreground dark:border-white/20 dark:bg-black/20">以上 {baseCount} 个为基础模型</span>
         <span className="h-[2px] flex-1 rounded-full bg-foreground/30 dark:bg-white/30" />
       </div>
       <p className={cn(
@@ -31,11 +35,7 @@ function ModelGroupDivider({ models }: { models: ModelCatalogItem[] }) {
           ? "border-destructive/45 bg-destructive/10 text-destructive"
           : "border-border/80 bg-secondary/65 text-foreground/85 dark:border-white/15 dark:bg-white/8",
       )}>
-        {unlimited
-          ? "会员账户：其他模型不限次数"
-          : remaining === null
-            ? `其他模型共享 ${limit} 次试用`
-            : `其他模型共享试用：剩余 ${remaining} 次`}
+        {accessCopy}
       </p>
     </div>
   )
@@ -92,7 +92,7 @@ export function ModelPickerSheet({ open, mobile, models, activeModelId, onClose,
             </div>
             <div className="fluid-scroll min-h-0 flex-1 overflow-y-auto px-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-1.5 md:px-3">
               <ModelCatalogList models={baseModels} activeModelId={activeModelId} onSelect={model => { onSelect(model); onClose() }} compact />
-              {otherModels.length > 0 && <ModelGroupDivider models={otherModels} />}
+              {otherModels.length > 0 && <ModelGroupDivider models={otherModels} baseCount={baseModels.length} />}
               {otherModels.length > 0 && <ModelCatalogList models={otherModels} activeModelId={activeModelId} onSelect={model => { onSelect(model); onClose() }} compact />}
             </div>
           </motion.section>
