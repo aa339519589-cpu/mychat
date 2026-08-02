@@ -22,4 +22,5 @@ test("Code still suppresses hidden reasoning while streaming visible text", () =
   collector.emit({ text: "可见回复" })
 
   assert.deepEqual(sent, [{ text: "可见回复" }])
+  assert.equal(collector.getFinalText(), "可见回复")
 })
