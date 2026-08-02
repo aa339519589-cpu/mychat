@@ -124,7 +124,12 @@ export function LiteraryChat() {
 
   async function activateConversation(id: string) {
     const activationToken = ++activationTokenRef.current
-    setActiveId(id); setHydratingConversationId(id); layout.setDrawerOpen(false); layout.setOpenArtifactId(null)
+    setActiveId(id); layout.setDrawerOpen(false); layout.setOpenArtifactId(null)
+    const existing = conversationsRef.current.find(item => item.id === id)
+    const hasLocalMessages = (existing?.messages.length ?? 0) > 0
+    const alreadyLoaded = loadedRef.current.has(id)
+    // Only lock the composer when this conversation has no local history yet.
+    if (!hasLocalMessages && !alreadyLoaded) setHydratingConversationId(id)
     const locallyRunning = generation.generationByConversation[id]?.status === "running"
     const reconciled = await synchronizeConversationState({
       hydrate: locallyRunning ? async () => undefined : async () => {

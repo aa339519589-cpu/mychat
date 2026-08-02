@@ -17,6 +17,7 @@ import {
   fetchProjects,
   lastExcerpt,
 } from "@/lib/data"
+import { readCachedMessages } from "@/lib/data/message-cache"
 import { fetchReliableMessages } from "@/lib/data/reliable-messages"
 import { reconcileRemoteMessages } from "@/lib/data/remote-message-reconciliation"
 import { restoreModelEndpointsWhenAvailable } from "./model-endpoint-restoration"
@@ -48,6 +49,27 @@ function restoreModelEndpoints(
     restore: model.restore,
     isCancelled,
   })
+}
+
+async function applyCachedMessages(
+  conversationId: string,
+  setConversations: Dispatch<SetStateAction<Conversation[]>>,
+  loadedRef: MutableRefObject<Set<string>>,
+): Promise<boolean> {
+  const cached = await readCachedMessages(conversationId)
+  if (!cached.length) return false
+  loadedRef.current.add(conversationId)
+  setConversations(previous => previous.map(conversation => {
+    if (conversation.id !== conversationId) return conversation
+    if (conversation.messages.length >= cached.length) return conversation
+    const merged = reconcileRemoteMessages(conversation.messages, cached)
+    return {
+      ...conversation,
+      messages: merged,
+      excerpt: lastExcerpt(merged),
+    }
+  }))
+  return true
 }
 
 export function useChatBootstrap({
@@ -115,7 +137,13 @@ export function useChatBootstrap({
       setConversations(conversations)
       setActiveId(selected.id)
       replaceConversation(selected.id)
-      const reconciled = await synchronizeConversationState({
+
+      // Prefer local cache so the composer is not blocked on network history.
+      await applyCachedMessages(selected.id, setConversations, loadedRef)
+      if (cancelled()) return
+      setReady(true)
+
+      void synchronizeConversationState({
         hydrate: async () => {
           const messages = await fetchReliableMessages(selected.id)
           if (cancelled()) return
@@ -132,9 +160,7 @@ export function useChatBootstrap({
         },
         reconcile: () => onConversationHydrated?.(selected.id) ?? Promise.resolve(true),
         isCancelled: cancelled,
-      })
-      if (cancelled()) return
-      setReady(reconciled)
+      }).catch(() => undefined)
     })()
   })
 

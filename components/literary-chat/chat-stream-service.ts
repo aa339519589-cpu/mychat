@@ -49,7 +49,7 @@ export type RunChatStreamOptions = {
 export type RunChatStreamResult = { content: string; status: ClientGenerationState['status']; accepted: boolean }
 
 const MODEL_QUOTA_CHANGED_EVENT = 'mychat:model-quota-changed'
-const TERMINAL_RECONCILE_INTERVAL_MS = 1_000
+const TERMINAL_RECONCILE_INTERVAL_MS = 400
 
 function latestUserMessageId(messages: HistoryMessage[]): string | undefined {
   for (let index = messages.length - 1; index >= 0; index--) {
@@ -129,6 +129,27 @@ function terminalEnvelope(value: unknown, accepted: AcceptedJob): JobStreamEnvel
   }
 }
 
+function clientStatusFromTerminal(status: 'completed' | 'failed' | 'cancelled'): ClientGenerationState['status'] {
+  if (status === 'completed') return 'completed'
+  if (status === 'cancelled') return 'cancelled'
+  return 'error'
+}
+
+/** Clear the stop button as soon as the job is terminal; finalizer still does durable cleanup. */
+function markTerminalGeneration(
+  options: RunChatStreamOptions,
+  accepted: AcceptedJob,
+  event: JobStreamEnvelope,
+): void {
+  if (event.kind !== 'job.terminal' || !terminalStatus(event.payload.status)) return
+  options.markGeneration(options.conversationId, {
+    status: clientStatusFromTerminal(event.payload.status),
+    generationId: accepted.jobId,
+    assistantMessageId: options.assistantMessageId,
+    authoritativeTerminal: true,
+  })
+}
+
 function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) return reject(signal.reason)
@@ -171,6 +192,7 @@ async function consumeChatStream(options: RunChatStreamOptions, state: ChatStrea
   options.controller.signal.addEventListener('abort', abortStream, { once: true })
   const stream = (async () => {
     for await (const event of streamJobEvents(accepted, streamController.signal)) {
+      markTerminalGeneration(options, accepted, event)
       if (!processChatStreamEvent(context, event)) return
     }
   })()
@@ -180,7 +202,10 @@ async function consumeChatStream(options: RunChatStreamOptions, state: ChatStrea
       stream.then(() => null),
       reconciliation,
     ])
-    if (winner) processChatStreamEvent(context, winner)
+    if (winner) {
+      markTerminalGeneration(options, accepted, winner)
+      processChatStreamEvent(context, winner)
+    }
   } finally {
     options.controller.signal.removeEventListener('abort', abortStream)
     if (!streamController.signal.aborted) streamController.abort()
