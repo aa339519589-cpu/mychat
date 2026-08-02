@@ -2,7 +2,7 @@ import {
   MAX_GENERATED_MEDIA_ITEMS,
   type GeneratedMedia,
 } from '@/lib/generated-media'
-import { addTokenUsage, providerTokenUsage, tokenUsageTotal, type TokenUsage } from '@/lib/token-usage'
+import { providerTokenUsage, tokenUsageTotal, type TokenUsage } from '@/lib/token-usage'
 import { isRecord } from '@/lib/unknown-value'
 import { makeContentFilter, parseDsmlToolCalls, hasIncompleteDsmlToolCall } from './sanitize'
 import type { Emit } from './events'
@@ -166,8 +166,8 @@ export class TurnAccumulator {
   private acceptUsage(value: unknown): void {
     const usage = providerTokenUsage(value)
     if (!usage) return
-    this.tokenUsage = this.tokenUsage ? addTokenUsage(this.tokenUsage, usage) : usage
-    this.totalTokens = tokenUsageTotal(this.tokenUsage)
+    this.tokenUsage = usage
+    this.totalTokens = tokenUsageTotal(usage)
   }
 
   private acceptMedia(value: unknown): boolean {
