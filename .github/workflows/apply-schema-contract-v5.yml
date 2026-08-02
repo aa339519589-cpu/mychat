@@ -1,0 +1,78 @@
+name: Apply Schema Contract V5
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/apply-schema-contract-v5.yml
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: apply-schema-contract-v5
+  cancel-in-progress: false
+
+env:
+  SUPABASE_PROJECT_REF: usibkqqksgwgvdiqwpyo
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Apply current contract and verify stable readiness
+        run: |
+          set -Eeuo pipefail
+          stage=initializing
+          post_status() {
+            jq -nc --arg state "$1" --arg context "Schema Contract V5" --arg description "${2:0:140}" --arg target_url "$RUN_URL" \
+              '{state:$state,context:$context,description:$description,target_url:$target_url}' \
+              | gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" --input - >/dev/null
+          }
+          fail() {
+            code=$?
+            trap - ERR
+            post_status failure "Failed at $stage"
+            exit "$code"
+          }
+          trap fail ERR
+          query() {
+            curl --fail-with-body --silent --show-error --retry 4 --retry-all-errors \
+              --connect-timeout 10 --max-time 180 --request POST \
+              --header "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+              --header 'Content-Type: application/json' \
+              --data "$(jq -nc --arg query "$1" '{query:$query,read_only:false}')" \
+              "https://api.supabase.com/v1/projects/$SUPABASE_PROJECT_REF/database/query"
+          }
+
+          stage=credentials
+          test -n "$SUPABASE_ACCESS_TOKEN"
+          post_status pending "Applying the exact v5 schema contract"
+
+          stage=service-role-repair
+          query "$(cat supabase/migrations/20260802181500_fix_service_role_claim_context.sql)" >/dev/null
+
+          stage=contract-seal
+          query "$(cat supabase/migrations/20260802190000_schema_contract_attestation_v5.sql)" >/dev/null
+
+          stage=verification
+          result="$(query "select public.verify_schema_contract_v5(5, '69e4973cfac2b9532f27b784257df991e09796c1bdf8a6872297806de0db4d74', 51) as versioned_ready, public.verify_schema_contract_v3(5, '69e4973cfac2b9532f27b784257df991e09796c1bdf8a6872297806de0db4d74', 51) as stable_ready;")"
+          versioned="$(jq -r '.. | objects | select(has("versioned_ready")) | .versioned_ready' <<<"$result" | head -n 1)"
+          stable="$(jq -r '.. | objects | select(has("stable_ready")) | .stable_ready' <<<"$result" | head -n 1)"
+          test "$versioned" = true
+          test "$stable" = true
+
+          post_status success "Exact v5 contract and stable readiness RPC verified"
