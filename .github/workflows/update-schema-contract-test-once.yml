@@ -1,0 +1,62 @@
+name: Update schema contract test once
+
+on:
+  push:
+    branches:
+      - fix/chat-live-direct-sse
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-schema-contract-test-once
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: fix/chat-live-direct-sse
+          fetch-depth: 0
+
+      - name: Update current schema contract verification
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('scripts/verify-generation-migrations-pg16.sh')
+          text = path.read_text()
+          replacements = {
+              'verify_schema_contract_v4': 'verify_schema_contract_v5',
+              'Exact current v4 schema contract attestation was not accepted': 'Exact current v5 schema contract attestation was not accepted',
+              'Mismatched current v4 schema contract was accepted': 'Mismatched current v5 schema contract was accepted',
+              'Schema contract v4 replay created unexpected attestation rows': 'Schema contract v5 replay created unexpected attestation rows',
+              'service-only v4 schema contract RPC': 'service-only v5 schema contract RPC',
+              'if [[ "$SCHEMA_CONTRACT_ROWS" != "4" ]]': 'if [[ "$SCHEMA_CONTRACT_ROWS" != "5" ]]',
+          }
+          expected = {
+              'verify_schema_contract_v4': 3,
+              'Exact current v4 schema contract attestation was not accepted': 1,
+              'Mismatched current v4 schema contract was accepted': 1,
+              'Schema contract v4 replay created unexpected attestation rows': 1,
+              'service-only v4 schema contract RPC': 1,
+              'if [[ "$SCHEMA_CONTRACT_ROWS" != "4" ]]': 1,
+          }
+          for old, count in expected.items():
+              actual = text.count(old)
+              if actual != count:
+                  raise SystemExit(f'Expected {count} occurrence(s) of {old!r}, found {actual}')
+          for old, new in replacements.items():
+              text = text.replace(old, new)
+          path.write_text(text)
+          PY
+          git add scripts/verify-generation-migrations-pg16.sh
+          git rm .github/workflows/update-schema-contract-test-once.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Verify current schema contract v5"
+          git push origin HEAD:fix/chat-live-direct-sse
