@@ -4,6 +4,7 @@ import {
   resolveChatModelSelection,
   type ChatModelSelection,
 } from '@/lib/chat/model-selection'
+import { getDirectDeepSeekCatalogRoute } from '@/lib/llm/models'
 import { getOpenRouterModel } from '@/lib/openrouter-catalog'
 
 export async function resolveCodeModelSelection(options: {
@@ -13,15 +14,18 @@ export async function resolveCodeModelSelection(options: {
   userId: string | null
   allowPremium?: boolean
 }): Promise<ChatModelSelection> {
-  const catalogModel = await getOpenRouterModel(options.modelId)
-  if (!catalogModel) {
-    throw new ChatModelSelectionError(404, { error: '该模型当前未在 OpenRouter 提供' })
-  }
-  if (catalogModel.outputKind !== 'chat') {
-    throw new ChatModelSelectionError(409, { error: 'Code 仅支持文本模型' })
-  }
-  if (!catalogModel.tools) {
-    throw new ChatModelSelectionError(409, { error: '该模型不支持 Code 所需的函数调用' })
+  const directDeepSeek = getDirectDeepSeekCatalogRoute(options.modelId)
+  if (!directDeepSeek) {
+    const catalogModel = await getOpenRouterModel(options.modelId)
+    if (!catalogModel) {
+      throw new ChatModelSelectionError(404, { error: '该模型当前未在 OpenRouter 提供' })
+    }
+    if (catalogModel.outputKind !== 'chat') {
+      throw new ChatModelSelectionError(409, { error: 'Code 仅支持文本模型' })
+    }
+    if (!catalogModel.tools) {
+      throw new ChatModelSelectionError(409, { error: '该模型不支持 Code 所需的函数调用' })
+    }
   }
   return resolveChatModelSelection({
     tier: '绝句',
