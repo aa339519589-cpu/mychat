@@ -52,9 +52,10 @@ function record(value: unknown): Record<string, unknown> | null {
 }
 
 function jsonObject(value: unknown): JsonObject | null {
-  return isJsonValue(value) && value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? value as JsonObject
-    : null
+  if (!isJsonValue(value) || value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+  return value as JsonObject
 }
 
 function terminal(status: string): boolean {
