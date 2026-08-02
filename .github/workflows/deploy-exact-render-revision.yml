@@ -14,6 +14,7 @@ permissions:
 
 env:
   PRODUCTION_URL: https://mychat-nm6x.onrender.com
+  # Deployment trigger for dynamic search and model identity prompts.
 
 jobs:
   deploy:
