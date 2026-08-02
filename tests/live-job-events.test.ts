@@ -26,6 +26,9 @@ test('offset deltas append, trim overlap and report gaps', () => {
   assert.deepEqual(applyOffsetDelta('abcdef', 3, 'defghi'), {
     next: 'abcdefghi', appended: 'ghi', gap: false,
   })
+  assert.deepEqual(applyOffsetDelta('abcdef', 3, 'def'), {
+    next: 'abcdef', appended: '', gap: false,
+  })
   assert.deepEqual(applyOffsetDelta('abc', 5, 'x'), {
     next: 'abc', appended: '', gap: true,
   })
