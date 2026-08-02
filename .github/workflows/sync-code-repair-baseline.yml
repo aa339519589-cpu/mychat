@@ -53,7 +53,8 @@ jobs:
           report pending "Code Baseline: running" "Regenerating exact complexity baseline"
           npm ci --ignore-scripts --legacy-peer-deps
           stage=generate
-          npm run complexity:baseline > scripts/function-complexity-baseline.json
+          node scripts/check-function-complexity.mjs --print-baseline > scripts/function-complexity-baseline.json
+          jq --exit-status . scripts/function-complexity-baseline.json >/dev/null
           stage=commit
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
