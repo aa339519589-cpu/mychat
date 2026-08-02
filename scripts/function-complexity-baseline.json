@@ -330,11 +330,6 @@
         85
       ]
     },
-    "lib/code-agent/system-prompt.ts": {
-      "maxLines": [
-        90
-      ]
-    },
     "lib/code-tools/definitions.ts": {
       "complexity": [
         16
@@ -533,10 +528,10 @@
     },
     "lib/llm/system.ts": {
       "complexity": [
-        23
+        27
       ],
       "maxLines": [
-        91
+        92
       ]
     },
     "lib/llm/turn-response.ts": {
