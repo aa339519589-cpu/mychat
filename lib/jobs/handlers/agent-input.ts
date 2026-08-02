@@ -24,6 +24,7 @@ import {
 } from '@/lib/github-connection'
 import { repoMeta } from '@/lib/github'
 import { createAdminClient } from '@/lib/supabase/admin'
+import type { SupabaseClient } from '@/lib/supabase/types'
 import { JobRuntimeError } from '../errors'
 import type { JobExecutionContext } from '../worker'
 
