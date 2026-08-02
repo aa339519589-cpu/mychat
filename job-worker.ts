@@ -2,7 +2,8 @@ import { hostname } from 'node:os'
 import { assertProductionAgentSandbox } from '@/lib/agent/execution-policy'
 import { handleChatGeneration } from '@/lib/jobs/handlers/chat'
 import { handleChatTitle } from '@/lib/jobs/handlers/title'
-import { handleAgentTask } from '@/lib/jobs/handlers/agent'
+import { runAgentTaskJob } from '@/lib/jobs/handlers/agent'
+import { loadAgentJob } from '@/lib/jobs/handlers/agent-input'
 import { handleAgentOperation } from '@/lib/jobs/handlers/agent-operation'
 import { SupabaseJobRepository } from '@/lib/jobs/supabase-repository'
 import { SupabaseJobOutboxRepository } from '@/lib/jobs/supabase-outbox'
@@ -52,6 +53,13 @@ function measured(handler: JobHandler): JobHandler {
   }
 }
 
+const handleAgentTaskWithoutPlanGitHub: JobHandler = async context => {
+  const input = await loadAgentJob(context, {
+    githubIdentity: async () => ({ login: 'mychat-user' }),
+  })
+  return runAgentTaskJob(context, input)
+}
+
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.once(signal, () => {
     log.info('jobs', 'Worker shutdown requested', { workerId: baseWorkerId, signal })
@@ -63,7 +71,7 @@ const repository = new SupabaseJobRepository()
 const handlers: Record<string, JobHandler> = {
   'chat.generation': measured(handleChatGeneration),
   'chat.title': measured(handleChatTitle),
-  'agent.task': measured(handleAgentTask),
+  'agent.task': measured(handleAgentTaskWithoutPlanGitHub),
   'agent.operation': measured(handleAgentOperation),
 }
 const finalized: NonNullable<ConstructorParameters<typeof JobWorker>[0]['onFinalized']> = (
