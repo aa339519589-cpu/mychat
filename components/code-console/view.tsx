@@ -4,17 +4,18 @@ import type { RefObject } from "react"
 import { CircleAlert, Check, CornerDownLeft, GitBranch, Loader2, Square, X } from "lucide-react"
 import { AnimatePresence } from "motion/react"
 
+import { ModelPickerSheet } from "@/components/model-picker-sheet"
 import { WorkingDots } from "@/components/working-dots"
-import { type Tier } from "@/lib/chat-data"
 import { type CodeMessage, type CodeSession, type PlanAction } from "@/lib/code-data"
+import type { ModelCatalogItem } from "@/lib/model-catalog"
 import { cn } from "@/lib/utils"
+import { useMediaQuery } from "@/components/literary-chat/use-media-query"
 import {
   ACCENT,
   COMMANDS,
   ContextOverlay,
   MemoryOverlay,
   MessageView,
-  ModelOverlay,
   MONO,
   RepoPicker,
   ResumeOverlay,
@@ -67,8 +68,9 @@ export type CodeConsoleViewProps = {
   onCommand: (command: string) => void
   overlay: Overlay
   onCloseOverlay: () => void
-  tier: Tier
-  onChangeTier: (tier: Tier) => void
+  models: ModelCatalogItem[]
+  activeModelId: string | null
+  onChangeModel: (model: ModelCatalogItem) => void
   onLoadSession: (session: CodeSession) => void
 }
 
@@ -220,9 +222,8 @@ function CodeComposer(props: Pick<CodeConsoleViewProps,
 }
 
 function ConsoleOverlays(props: Pick<CodeConsoleViewProps,
-  "overlay" | "tier" | "repo" | "userId" | "messages" | "onChangeTier" | "onCloseOverlay" | "onLoadSession">) {
+  "overlay" | "repo" | "userId" | "messages" | "onCloseOverlay" | "onLoadSession">) {
   return <AnimatePresence initial={false}>
-    {props.overlay === "model" && <ModelOverlay key="model" tier={props.tier} onPick={props.onChangeTier} onClose={props.onCloseOverlay} />}
     {props.overlay === "memory" && props.repo && <MemoryOverlay key="memory" repo={props.repo} userId={props.userId} onClose={props.onCloseOverlay} />}
     {props.overlay === "memory" && !props.repo && <SimpleOverlay key="memory-empty" title="记忆" text="新项目尚未建立仓库。" onClose={props.onCloseOverlay} />}
     {props.overlay === "context" && <ContextOverlay key="context" messages={props.messages} onClose={props.onCloseOverlay} />}
@@ -242,6 +243,7 @@ function ConnectedPicker(props: CodeConsoleViewProps) {
 }
 
 function ActiveConsole(props: CodeConsoleViewProps) {
+  const mobile = useMediaQuery("(max-width: 767px)")
   return (
     <Shell onExit={props.onLeaveRepo} login={props.login} repo={props.repo} onSwitchRepo={props.onLeaveRepo}
       onGhMenu={props.onOpenGhMenu} ghMenu={props.ghMenu} onCloseGh={props.onCloseGhMenu} onDisconnect={props.onDisconnect}
@@ -253,6 +255,7 @@ function ActiveConsole(props: CodeConsoleViewProps) {
       <CommandHints input={props.input} onCommand={props.onCommand} />
       <CodeComposer {...props} />
       <ConsoleOverlays {...props} />
+      <ModelPickerSheet open={props.overlay === "model"} mobile={mobile} models={props.models} activeModelId={props.activeModelId} onClose={props.onCloseOverlay} onSelect={props.onChangeModel} />
     </Shell>
   )
 }

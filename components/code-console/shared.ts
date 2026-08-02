@@ -9,7 +9,7 @@ export type Overlay = null | "model" | "memory" | "resume" | "context" | "tasks"
 
 export const COMMANDS = [
   { cmd: "/new", desc: "在当前项目内开启新对话" },
-  { cmd: "/model", desc: "切换模型（快速 / 均衡 / 深度）" },
+  { cmd: "/model", desc: "打开统一模型列表" },
   { cmd: "/memory", desc: "查看 / 编辑本仓库的记忆" },
   { cmd: "/context", desc: "查看当前上下文用量" },
   { cmd: "/resume", desc: "恢复本仓库的历史排查" },

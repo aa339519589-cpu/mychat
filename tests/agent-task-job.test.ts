@@ -8,6 +8,7 @@ import { JobRuntimeError } from '../lib/jobs/errors'
 import { JobEventWriter } from '../lib/jobs/event-writer'
 import { createCodeEventCollector, type CodeProgressSnapshot } from '../lib/code-agent/runtime'
 import type { ChatEvent } from '../lib/llm/events'
+import { getModelCapability } from '../lib/llm/models'
 import type { LoadedAgentJob } from '../lib/jobs/handlers/agent-input'
 import { createAgentRuntime } from '../lib/jobs/handlers/agent-runtime'
 import {
@@ -21,6 +22,7 @@ const SESSION_ID = '73000000-0000-4000-8000-000000000003'
 const RESPONSE_ID = '73000000-0000-4000-8000-000000000004'
 
 function agentInput(): LoadedAgentJob {
+  const capability = getModelCapability('deepseek-chat')
   return {
     client: {} as SupabaseClient,
     userId: '73000000-0000-4000-8000-000000000005',
@@ -36,8 +38,17 @@ function agentInput(): LoadedAgentJob {
     repoIsPrivate: false,
     memories: [],
     workspaceReady: false,
-    model: 'deepseek-chat',
-    thinking: false,
+    selection: {
+      customEndpoint: false,
+      model: capability.id,
+      thinking: false,
+      reasoningEffort: null,
+      accessClass: 'legacy',
+      capability,
+      apiKey: 'test-key',
+      authType: capability.provider.authType,
+      outputKind: 'chat',
+    },
     usingBalance: false,
   }
 }
@@ -122,7 +133,6 @@ test('agent Job durably preserves plan output and flushes accounting before chec
   const artifacts: Array<{ content?: string; meta?: Record<string, unknown> }> = []
   let savedMessages = 0
   const result = await runAgentTaskJob(context.value, agentInput(), {
-    apiKey: () => 'test-key',
     createRuntime: runtimeFactory(context.order, artifacts),
     runLoop: async options => {
       assert.match(String(options.messages[0]?.content), /Plan 模式/)
@@ -175,7 +185,6 @@ test('agent Job refuses an explicitly non-resumable checkpoint before provider w
   let providerCalls = 0
   await assert.rejects(
     runAgentTaskJob(context.value, agentInput(), {
-      apiKey: () => 'test-key',
       createRuntime: runtimeFactory(context.order, []),
       runLoop: async () => { providerCalls++; return { totalTokens: 0 } },
     }),
