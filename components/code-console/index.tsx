@@ -254,7 +254,7 @@ export function CodeConsole({ userId, onExit }: CodeConsoleProps) {
     const text = input.trim()
     if (!text) return
     const command = text.split(" ")[0]
-    if (["/new", "/model", "/memory", "/context", "/resume", "/tasks"].includes(command)) {
+    if (["/new", "/model", "/effort", "/memory", "/context", "/resume", "/tasks"].includes(command)) {
       runCommand(command)
       return
     }
@@ -321,7 +321,10 @@ export function CodeConsole({ userId, onExit }: CodeConsoleProps) {
       onCloseOverlay={() => setOverlay(null)}
       models={model.models}
       activeModelId={model.activeModelId}
+      activeModel={model.activeModel}
+      reasoningEffort={model.reasoningEffort}
       onChangeModel={model.selectModel}
+      onChangeReasoningEffort={model.selectReasoningEffort}
       onLoadSession={session => { void loadSession(session) }}
     />
   )
