@@ -1,5 +1,6 @@
 // Shared multi-round Agent loop for both chat and code jobs. Provider calls,
 // durable usage, checkpoints, and tool effects intentionally stay ordered.
+import { addTokenUsage, type TokenUsage } from '@/lib/token-usage'
 import { runTurn, type RunTurnOptions, type TurnResult } from './turn'
 import type { Emit } from './events'
 import type { ProviderAdapterId } from './provider-adapters'
@@ -40,6 +41,7 @@ export type AgentLoopOpts = {
 
 type AgentLoopState = {
   totalTokens: number
+  tokenUsage: TokenUsage | null
   lastHadToolCalls: boolean
   lastTurn: TurnResult | null
   consecutiveFailures: number
@@ -63,6 +65,7 @@ function createContext(options: AgentLoopOpts): AgentLoopContext {
     options,
     state: {
       totalTokens: 0,
+      tokenUsage: null,
       lastHadToolCalls: false,
       lastTurn: null,
       consecutiveFailures: 0,
@@ -76,8 +79,13 @@ function createContext(options: AgentLoopOpts): AgentLoopContext {
   }
 }
 
-async function recordUsage(context: AgentLoopContext, tokens: number): Promise<void> {
-  context.state.totalTokens += tokens
+async function recordUsage(context: AgentLoopContext, turn: TurnResult): Promise<void> {
+  context.state.totalTokens += turn.totalTokens
+  if (turn.tokenUsage) {
+    context.state.tokenUsage = context.state.tokenUsage
+      ? addTokenUsage(context.state.tokenUsage, turn.tokenUsage)
+      : turn.tokenUsage
+  }
   await context.options.onUsage?.(context.state.totalTokens)
 }
 
@@ -103,7 +111,7 @@ async function executeTurn(
       emitErrors: false,
     },
   )
-  await recordUsage(context, turn.totalTokens)
+  await recordUsage(context, turn)
   options.onTurn?.(round === undefined ? { phase, turn } : { phase, round, turn })
   return turn
 }
@@ -306,10 +314,16 @@ async function continueOutput(context: AgentLoopContext): Promise<void> {
   emitContinuationWarning(context, turn, count)
 }
 
-export async function runAgentLoop(options: AgentLoopOpts): Promise<{ totalTokens: number }> {
+export async function runAgentLoop(options: AgentLoopOpts): Promise<{
+  totalTokens: number
+  tokenUsage?: TokenUsage
+}> {
   const context = createContext(options)
   await executeRounds(context)
   await requestFinalText(context)
   await continueOutput(context)
-  return { totalTokens: context.state.totalTokens }
+  return {
+    totalTokens: context.state.totalTokens,
+    ...(context.state.tokenUsage ? { tokenUsage: context.state.tokenUsage } : {}),
+  }
 }

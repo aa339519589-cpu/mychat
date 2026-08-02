@@ -5,6 +5,7 @@ import type { GenerationTerminalSnapshot } from "@/lib/generation/types"
 import {
   cacheGenerationTerminal,
   conversationExcerpt,
+  persistOwnerTokenUsage,
   touchConversation,
   updateMessageFields,
 } from "@/lib/data"
@@ -18,6 +19,7 @@ export async function finalizeChatStream(options: {
   assistantMessageId: string
   controller: AbortController
   generationId?: string
+  showTokenUsage: boolean
   fullReply: string
   fullThinking: string
   fullMedia: GeneratedMedia[]
@@ -35,6 +37,7 @@ export async function finalizeChatStream(options: {
     assistantMessageId,
     controller,
     generationId,
+    showTokenUsage,
     fullReply,
     fullThinking,
     fullMedia,
@@ -70,6 +73,7 @@ export async function finalizeChatStream(options: {
         content: terminal.content,
         thinking: terminal.thinking || undefined,
         media: undefined,
+        tokenUsage: terminal.tokenUsage ?? message.tokenUsage,
         isError: terminal.status === "failed" ? true : undefined,
         generation: generationId ? {
           id: generationId,
@@ -121,6 +125,7 @@ export async function finalizeChatStream(options: {
             ? message
             : {
               ...message,
+              tokenUsage: authoritativeTerminal.tokenUsage ?? message.tokenUsage,
               generation: {
                 id: generationId,
                 status: "completed",
@@ -130,6 +135,13 @@ export async function finalizeChatStream(options: {
             }),
         }
         : conversation))
+      if (showTokenUsage && generationId && authoritativeTerminal.tokenUsage) {
+        await persistOwnerTokenUsage(
+          conversationId,
+          assistantMessageId,
+          generationId,
+        ).catch(() => null)
+      }
     } else {
       try {
         await updateMessageFields(conversationId, assistantMessageId, {

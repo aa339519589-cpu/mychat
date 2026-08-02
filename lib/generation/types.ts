@@ -4,6 +4,7 @@ import {
   normalizeGeneratedMedia,
   type GeneratedMedia,
 } from '@/lib/generated-media'
+import { normalizeTokenUsage, type TokenUsage } from '@/lib/token-usage'
 
 export type GenerationStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
 export type GenerationDurability = 'durable' | 'ephemeral'
@@ -32,6 +33,7 @@ export type GenerationTerminalSnapshot = {
   sequence: number
   error: string | null
   media: GeneratedMedia[]
+  tokenUsage?: TokenUsage
 }
 
 export type GenerationTerminalEvent = {
@@ -71,6 +73,7 @@ export function isGenerationTerminalSnapshot(value: unknown): value is Generatio
     && Number(snapshot.sequence) >= 0
     && (snapshot.error === null || typeof snapshot.error === 'string')
     && normalizeGenerationMedia(snapshot.media) !== null
+    && (snapshot.tokenUsage === undefined || normalizeTokenUsage(snapshot.tokenUsage) !== null)
 }
 
 export type GenerationDatabaseRow = {

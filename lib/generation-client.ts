@@ -6,6 +6,7 @@ import {
   type GenerationStatus,
   type GenerationTerminalSnapshot,
 } from '@/lib/generation/types'
+import { normalizeTokenUsage, type TokenUsage } from '@/lib/token-usage'
 
 export type ClientGenerationStatus = 'idle' | 'running' | 'completed' | 'error' | 'cancelled'
 
@@ -58,6 +59,7 @@ export type ConversationGenerationSnapshot = {
   content: string
   thinking: string
   media: GeneratedMedia[]
+  tokenUsage?: TokenUsage
   sequence: number
   error: string | null
 }
@@ -86,6 +88,8 @@ export function normalizeConversationGenerationSnapshot(
   }
   const media = normalizeGeneratedMediaList(snapshot.media)
   if (media.length !== snapshot.media.length) return null
+  const tokenUsage = normalizeTokenUsage(snapshot.tokenUsage)
+  if (snapshot.tokenUsage !== undefined && !tokenUsage) return null
   return {
     id: snapshot.id,
     conversationId: snapshot.conversationId,
@@ -94,6 +98,7 @@ export function normalizeConversationGenerationSnapshot(
     content: snapshot.content,
     thinking: snapshot.thinking,
     media,
+    ...(tokenUsage ? { tokenUsage } : {}),
     sequence: Number(snapshot.sequence),
     error: typeof snapshot.error === 'string' ? snapshot.error : null,
   }
@@ -107,6 +112,7 @@ export function toGenerationTerminalSnapshot(
     content: snapshot.content,
     thinking: snapshot.thinking,
     media: snapshot.media,
+    ...(snapshot.tokenUsage ? { tokenUsage: snapshot.tokenUsage } : {}),
     sequence: snapshot.sequence,
     error: snapshot.error,
   }
@@ -151,6 +157,7 @@ function applySnapshotToMessage(
     content: snapshot.content,
     thinking: snapshot.thinking || undefined,
     media: snapshot.media.length ? snapshot.media : undefined,
+    tokenUsage: snapshot.tokenUsage ?? message.tokenUsage,
     isError: snapshot.status === 'failed' ? true : undefined,
     outputWarning: generationTerminalWarning(terminal),
     generation: terminal,

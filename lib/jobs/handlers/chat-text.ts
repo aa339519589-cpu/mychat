@@ -13,6 +13,7 @@ import { ensureImageSummaries } from '@/lib/llm/image-context'
 import { chatCompletionsUrl, injectAttachmentsOpenAI } from '@/lib/llm/openai'
 import type { ReasoningEffort } from '@/lib/llm/provider-adapters'
 import { buildSystem } from '@/lib/llm/system'
+import type { TokenUsage } from '@/lib/token-usage'
 import { activeTools, execTool, toOpenAITools, type ToolContext } from '@/lib/tools'
 import { isJobIdentifier } from '../contracts'
 import { JobRuntimeError } from '../errors'
@@ -60,6 +61,7 @@ export type ChatTextRuntime = {
   historicalTokens: number
   attemptTokens: number
   totalTokens: number
+  tokenUsage?: TokenUsage
   persistedMedia: DurableMediaPersistenceBatch | null
 }
 
@@ -331,7 +333,7 @@ async function runPreparedChat(
   const { selection } = input
   const isDeepTierProxy = selection.capability.provider.id === 'deep-tier'
   const trial = selection.accessClass === 'trial'
-  await dependencies.runAgentLoop({
+  const result = await dependencies.runAgentLoop({
     url: chatCompletionsUrl(selection.capability.provider.baseUrl),
     apiKey: selection.apiKey,
     model: selection.model,
@@ -359,6 +361,7 @@ async function runPreparedChat(
     },
     onTurn: logTurn(context.job.id),
   })
+  runtime.tokenUsage = result.tokenUsage
 }
 
 export async function runChatTextJob(

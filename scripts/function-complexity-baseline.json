@@ -97,24 +97,24 @@
     },
     "components/literary-chat.tsx": {
       "maxLines": [
-        177
+        179
       ]
     },
     "components/literary-chat/chat-stream-finalizer.ts": {
       "complexity": [
-        29
+        32
       ],
       "maxLines": [
-        174
+        185
       ]
     },
     "components/literary-chat/generation-api.ts": {
       "complexity": [
         24,
-        21
+        22
       ],
       "maxLines": [
-        107
+        118
       ]
     },
     "components/literary-chat/job-stream-client.ts": {
@@ -154,10 +154,10 @@
     },
     "components/messages/assistant-message.tsx": {
       "complexity": [
-        24
+        26
       ],
       "maxLines": [
-        89
+        93
       ]
     },
     "components/model-endpoint-settings.tsx": {
@@ -342,7 +342,7 @@
     },
     "lib/data/conversation-rows.ts": {
       "complexity": [
-        17
+        19
       ]
     },
     "lib/data/conversations.ts": {
@@ -366,7 +366,7 @@
     },
     "lib/generation-client.ts": {
       "complexity": [
-        18,
+        21,
         17
       ]
     },

@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Brain, Check, ChevronDown, ChevronRight, Copy, Globe, RefreshCw } from "lucide-react"
+import { ArrowDownToLine, ArrowUp, Brain, Check, ChevronDown, ChevronRight, Copy, Globe, RefreshCw } from "lucide-react"
 
 import { ArtifactCard } from "@/components/artifact-card"
 import { FunctionPlotChart } from "@/components/function-plot-chart"
@@ -13,6 +13,7 @@ import { artifactTitle, parseArtifact, type ArtifactBlock } from "@/lib/artifact
 import type { Message } from "@/lib/chat-data"
 import { stripToolMarkup } from "@/lib/llm/sanitize"
 import { normalizeSearchNotes } from "@/lib/search-notes"
+import type { TokenUsage } from "@/lib/token-usage"
 import { MessageMarkdown } from "./markdown-content"
 
 type Searches = NonNullable<Message["searchNotes"]>
@@ -51,21 +52,42 @@ function SearchBlock({ searches, replying }: { searches: Searches; replying: boo
   )
 }
 
+function TokenUsageDisplay({ usage }: { usage: TokenUsage }) {
+  const input = usage.inputTokens.toLocaleString("en-US")
+  const output = usage.outputTokens.toLocaleString("en-US")
+  return (
+    <div className="ml-1 flex h-11 items-center gap-3 px-1 text-xs font-[500] tabular-nums text-muted-foreground/75">
+      <span className="flex items-center gap-1" title={`输入 Token：${input}`} aria-label={`输入 Token ${input}`}>
+        <ArrowDownToLine className="size-3.5" />
+        <span>{input}</span>
+      </span>
+      <span className="flex items-center gap-1" title={`输出 Token：${output}`} aria-label={`输出 Token ${output}`}>
+        <ArrowUp className="size-3.5" />
+        <span>{output}</span>
+      </span>
+    </div>
+  )
+}
+
 function AssistantActions({
   text,
   isLast,
   isLoading,
   hasOutput,
+  showTokenUsage,
+  tokenUsage,
   onRegenerate,
 }: {
   text: string
   isLast: boolean
   isLoading: boolean
   hasOutput?: boolean
+  showTokenUsage: boolean
+  tokenUsage?: TokenUsage
   onRegenerate?: () => void
 }) {
   const [copied, setCopied] = useState(false)
-  if (!text && !hasOutput) return null
+  if (!text && !hasOutput && !(showTokenUsage && tokenUsage)) return null
 
   function copy() {
     navigator.clipboard.writeText(text).catch(() => {})
@@ -85,6 +107,7 @@ function AssistantActions({
           <RefreshCw className="size-4" />
         </button>
       )}
+      {showTokenUsage && tokenUsage && <TokenUsageDisplay usage={tokenUsage} />}
     </div>
   )
 }
@@ -144,6 +167,7 @@ export function AssistantMessage({
   message,
   isLast,
   isLoading,
+  showTokenUsage,
   openArtifactId,
   onOpenArtifact,
   onRegenerate,
@@ -151,6 +175,7 @@ export function AssistantMessage({
   message: Message
   isLast: boolean
   isLoading: boolean
+  showTokenUsage: boolean
   openArtifactId?: string | null
   onOpenArtifact?: (messageId: string) => void
   onRegenerate?: () => void
@@ -207,13 +232,15 @@ export function AssistantMessage({
                 active={openArtifactId === message.id}
                 onOpen={() => onOpenArtifact?.(message.id)}
               />
-              {(!!display || !!message.media?.length || hasArtifactOutput || isLast) && (
+              {(!!display || !!message.media?.length || hasArtifactOutput || isLast || (showTokenUsage && !!message.tokenUsage)) && (
                 <div className="space-y-2.5">
                   <AssistantActions
                     text={display}
                     hasOutput={!!message.media?.length || hasArtifactOutput}
                     isLast={isLast}
                     isLoading={isLoading}
+                    showTokenUsage={showTokenUsage}
+                    tokenUsage={message.tokenUsage}
                     onRegenerate={onRegenerate}
                   />
                 </div>

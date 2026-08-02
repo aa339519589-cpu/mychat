@@ -2,6 +2,7 @@ import type { Message } from "@/lib/chat-data"
 import { hasInlineGeneratedMedia, normalizeGeneratedMediaList } from "@/lib/generated-media"
 import { generationTerminalWarning, normalizeMessageGeneration } from "@/lib/generation-message"
 import { normalizeSearchNotes } from "@/lib/search-notes"
+import { normalizeTokenUsage } from '@/lib/token-usage'
 import { isRecord } from "@/lib/unknown-value"
 
 // ───────────── 本地消息缓存 ─────────────
@@ -74,6 +75,7 @@ function normalizeCachedMessage(value: unknown): Message | null {
   const media = normalizeGeneratedMediaList(value.media)
   const generation = normalizeMessageGeneration(value.generation)
   const searchNotes = normalizeSearchNotes(value.searchNotes)
+  const tokenUsage = normalizeTokenUsage(value.tokenUsage)
   return {
     id: value.id,
     role: value.role,
@@ -85,6 +87,7 @@ function normalizeCachedMessage(value: unknown): Message | null {
     memoryNotes: stringArray(value.memoryNotes),
     files: stringArray(value.files),
     searchNotes: searchNotes.length ? searchNotes : undefined,
+    tokenUsage: tokenUsage ?? undefined,
     generation,
   }
 }
@@ -105,12 +108,16 @@ export function mergeCachedMessages(existing: Message[], incoming: Message[]): M
       || (incomingGeneration.id === previousGeneration.id
         && incomingGeneration.sequence < previousGeneration.sequence)
     )
-    if (!previous || !previousGeneration || !incomingIsOlder) return message
+    const tokenUsage = message.tokenUsage ?? previous?.tokenUsage
+    if (!previous || !previousGeneration || !incomingIsOlder) {
+      return tokenUsage ? { ...message, tokenUsage } : message
+    }
     return {
       ...message,
       content: previous.content,
       thinking: previous.thinking,
       media: previous.media,
+      tokenUsage,
       isError: previous.isError,
       outputWarning: previous.outputWarning,
       generation: previousGeneration,

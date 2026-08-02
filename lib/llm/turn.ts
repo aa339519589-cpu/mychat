@@ -1,4 +1,5 @@
 import type { EndpointAuthType } from '@/lib/model-endpoints'
+import type { TokenUsage } from '@/lib/token-usage'
 import { upstreamError } from './stream'
 import type { Emit } from './events'
 import type { ProviderAdapterId, ReasoningEffort } from './provider-adapters'
@@ -23,6 +24,7 @@ export type TurnResult = {
   toolCalls: AccumulatedToolCall[]
   failed: boolean
   totalTokens: number
+  tokenUsage?: TokenUsage
   content: string
   finishReason: string | null
   truncated: boolean

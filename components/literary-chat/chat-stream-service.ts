@@ -37,6 +37,7 @@ export type RunChatStreamOptions = {
   searchMode: SearchMode
   historyRetrieval: boolean
   renderEnabled: boolean
+  showTokenUsage: boolean
   turn?: ChatTurnAuthority
   onAccepted?: () => void
   setConversations: Dispatch<SetStateAction<Conversation[]>>
@@ -130,7 +131,7 @@ function mergeAcknowledgedTerminal(options: RunChatStreamOptions, state: ChatStr
 async function finishChatStream(options: RunChatStreamOptions, state: ChatStreamState, renderer: ChatStreamRenderer): Promise<ClientGenerationState['status']> {
   mergeAcknowledgedTerminal(options, state)
   renderer.cancel()
-  return finalizeChatStream({ userId: options.userId, conversationId: options.conversationId, assistantMessageId: options.assistantMessageId, controller: options.controller, generationId: options.generationId, fullReply: state.fullReply, fullThinking: state.fullThinking, fullMedia: state.fullMedia, terminalError: state.terminalError, authoritativeTerminal: state.authoritativeTerminal, terminalProtocolExpected: state.terminalProtocolExpected, aborted: state.aborted, setConversations: options.setConversations, markGeneration: options.markGeneration, clearAbort: options.clearAbort, flushStreamMessage: renderer.flush })
+  return finalizeChatStream({ userId: options.userId, conversationId: options.conversationId, assistantMessageId: options.assistantMessageId, controller: options.controller, generationId: options.generationId, showTokenUsage: options.showTokenUsage, fullReply: state.fullReply, fullThinking: state.fullThinking, fullMedia: state.fullMedia, terminalError: state.terminalError, authoritativeTerminal: state.authoritativeTerminal, terminalProtocolExpected: state.terminalProtocolExpected, aborted: state.aborted, setConversations: options.setConversations, markGeneration: options.markGeneration, clearAbort: options.clearAbort, flushStreamMessage: renderer.flush })
 }
 
 export async function runChatStream(options: RunChatStreamOptions): Promise<RunChatStreamResult> {
