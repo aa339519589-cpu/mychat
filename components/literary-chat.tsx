@@ -6,7 +6,6 @@ import type { SearchMode } from "@/lib/search-mode"
 import { cacheConversationMessages, deleteConversationRow, deleteAllConversations, lastExcerpt, setConversationPinned, setConversationProject, setConversationStarred, updateConversationTitle, removeCachedMessages } from "@/lib/data"
 import { fetchReliableMessages } from "@/lib/data/reliable-messages"
 import { reconcileRemoteMessages } from "@/lib/data/remote-message-reconciliation"
-import { writeLastConversationId } from "@/lib/last-conversation"
 import { createClient } from "@/lib/supabase/client"
 import { LoginScreen } from "@/components/login-screen"
 import type { AppSidebarProps } from "@/components/app-sidebar"
@@ -102,7 +101,6 @@ export function LiteraryChat() {
       draftIdRef.current = pendingDraft?.id ?? null
       if (activeIdRef.current !== id) return
       rootConversationIdRef.current = id
-      writeLastConversationId(id)
       route.replaceConversation(id)
     },
   })
@@ -128,7 +126,6 @@ export function LiteraryChat() {
     const activationToken = ++activationTokenRef.current
     setActiveId(id); layout.setDrawerOpen(false); layout.setOpenArtifactId(null)
     const existing = conversationsRef.current.find(item => item.id === id)
-    if (existing && !existing.draft) writeLastConversationId(id)
     const hasLocalMessages = (existing?.messages.length ?? 0) > 0
     const alreadyLoaded = loadedRef.current.has(id)
     // Only lock the composer when this conversation has no local history yet.
@@ -154,14 +151,36 @@ export function LiteraryChat() {
   const syncConversationRoute = useEffectEvent(() => {
     if (!workspaceReady) return
     const items = conversationsRef.current
-    const target = route.routeConversationId ? items.find(item => !item.draft && item.id === route.routeConversationId) : items.find(item => item.id === rootConversationIdRef.current)
-    if (target) { if (target.id !== activeId) void activateConversation(target.id); return }
-    const fallback = items.find(item => !item.draft) ?? items[0]
-    if (!fallback) return
-    rootConversationIdRef.current = fallback.id
-    if (!fallback.draft) writeLastConversationId(fallback.id)
-    route.replaceConversation(fallback.draft ? null : fallback.id)
-    if (fallback.id !== activeId) void activateConversation(fallback.id)
+    // Explicit URL wins. Otherwise stay on the current root (usually a blank draft).
+    const target = route.routeConversationId
+      ? items.find(item => !item.draft && item.id === route.routeConversationId)
+      : items.find(item => item.id === rootConversationIdRef.current)
+    if (target) {
+      if (target.id !== activeId) void activateConversation(target.id)
+      return
+    }
+    // No matching root — keep a blank draft in focus instead of jumping to history.
+    const existingDraft = items.find(item => item.draft && item.messages.length === 0)
+    if (existingDraft) {
+      rootConversationIdRef.current = existingDraft.id
+      draftIdRef.current = existingDraft.id
+      route.replaceConversation(null)
+      if (existingDraft.id !== activeId) {
+        setActiveId(existingDraft.id)
+        activationTokenRef.current += 1
+        setHydratingConversationId(null)
+      }
+      return
+    }
+    const id = crypto.randomUUID()
+    const draft = createDraft(id)
+    draftIdRef.current = id
+    rootConversationIdRef.current = id
+    setConversations(previous => [draft, ...previous.filter(item => item.id !== id)])
+    route.replaceConversation(null)
+    setActiveId(id)
+    activationTokenRef.current += 1
+    setHydratingConversationId(null)
   })
   useEffect(() => { syncConversationRoute() }, [route.routeConversationId, workspaceReady])
 
@@ -174,15 +193,29 @@ export function LiteraryChat() {
     const remaining = conversationsRef.current.filter(conversation => conversation.id !== id)
     if (remaining.length === 0) {
       const draftId = crypto.randomUUID(); draftIdRef.current = draftId; rootConversationIdRef.current = draftId
-      writeLastConversationId(null)
       setConversations([createDraft(draftId)]); setActiveId(draftId); activationTokenRef.current += 1; setHydratingConversationId(null); route.replaceConversation(null); return
     }
     setConversations(remaining)
     if (activeId !== id) return
-    const next = remaining.find(conversation => !conversation.draft) ?? remaining[0]
-    rootConversationIdRef.current = next.id
-    if (!next.draft) writeLastConversationId(next.id)
-    route.replaceConversation(next.draft ? null : next.id); await activateConversation(next.id)
+    // After deleting the active chat, open a blank draft rather than the next history item.
+    const existingDraft = remaining.find(conversation => conversation.draft && conversation.messages.length === 0)
+    if (existingDraft) {
+      rootConversationIdRef.current = existingDraft.id
+      draftIdRef.current = existingDraft.id
+      route.replaceConversation(null)
+      setActiveId(existingDraft.id)
+      activationTokenRef.current += 1
+      setHydratingConversationId(null)
+      return
+    }
+    const draftId = crypto.randomUUID()
+    draftIdRef.current = draftId
+    rootConversationIdRef.current = draftId
+    setConversations(previous => [createDraft(draftId), ...previous])
+    route.replaceConversation(null)
+    setActiveId(draftId)
+    activationTokenRef.current += 1
+    setHydratingConversationId(null)
   }
 
   function handleNew() {
@@ -200,7 +233,7 @@ export function LiteraryChat() {
   function handleRename(id: string, title: string) { const nextTitle = title.trim(); if (!nextTitle) return; setConversations(previous => previous.map(conversation => conversation.id === id ? { ...conversation, title: nextTitle } : conversation)); updateConversationTitle(id, nextTitle) }
   function handleMove(id: string, projectId: string | null) { setConversations(previous => previous.map(conversation => conversation.id === id ? { ...conversation, projectId } : conversation)); setConversationProject(id, projectId) }
   async function handleLogout() { await createClient().auth.signOut(); setUser(null) }
-  async function handleDeleteAll() { await deleteAllConversations(); for (const conversation of conversationsRef.current) removeCachedMessages(conversation.id); const id = crypto.randomUUID(); activationTokenRef.current += 1; loadedRef.current.clear(); draftIdRef.current = id; rootConversationIdRef.current = id; writeLastConversationId(null); setHydratingConversationId(null); setConversations([createDraft(id)]); setActiveId(id); route.openConversation(null) }
+  async function handleDeleteAll() { await deleteAllConversations(); for (const conversation of conversationsRef.current) removeCachedMessages(conversation.id); const id = crypto.randomUUID(); activationTokenRef.current += 1; loadedRef.current.clear(); draftIdRef.current = id; rootConversationIdRef.current = id; setHydratingConversationId(null); setConversations([createDraft(id)]); setActiveId(id); route.openConversation(null) }
 
   const sidebar: AppSidebarProps = {
     conversation: { items: conversations, activeId, select: handleSelect, create: handleNew, delete: handleDelete, deleteAll: handleDeleteAll, toggleStar: handleToggleStar, togglePin: handleTogglePin, rename: handleRename, move: handleMove },

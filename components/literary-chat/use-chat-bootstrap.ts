@@ -6,7 +6,6 @@ import type { Conversation } from "@/lib/chat-data"
 import type { Memory } from "@/lib/memory-data"
 import type { ModelEndpointSummary } from "@/lib/model-endpoints"
 import type { Project } from "@/lib/project-data"
-import { readLastConversationId, writeLastConversationId } from "@/lib/last-conversation"
 import { synchronizeConversationState } from "./conversation-synchronization"
 import {
   deleteConversationRow,
@@ -73,25 +72,15 @@ async function applyCachedMessages(
   return true
 }
 
-function pickStartupConversation(
-  conversations: Conversation[],
-  routeConversationId: string | null,
-): Conversation {
-  const requested = routeConversationId
-    ? conversations.find(row => row.id === routeConversationId)
-    : undefined
-  if (requested) return requested
-
-  const rememberedId = readLastConversationId()
-  const remembered = rememberedId
-    ? conversations.find(row => row.id === rememberedId)
-    : undefined
-  if (remembered) return remembered
-
-  // Prefer the most recently updated non-pinned-priority entry when possible.
-  // fetchConversations already orders pinned first, then updated_at desc;
-  // for cold start without a remembered id, first real conversation is fine.
-  return conversations[0]
+function createBlankDraft(): Conversation {
+  return {
+    id: crypto.randomUUID(),
+    title: "未命名的篇章",
+    excerpt: "",
+    date: "今日",
+    messages: [],
+    draft: true,
+  }
 }
 
 export function useChatBootstrap({
@@ -139,50 +128,51 @@ export function useChatBootstrap({
       for (const row of rows) if (row.msgCount === 0) {
         void deleteConversationRow(row.id).catch(() => undefined)
       }
-      const conversations = rows.filter(row => row.msgCount !== 0)
+      const history = rows.filter(row => row.msgCount !== 0)
 
-      if (conversations.length === 0) {
-        const id = crypto.randomUUID()
-        const draft: Conversation = { id, title: "未命名的篇章", excerpt: "", date: "今日", messages: [], draft: true }
-        draftIdRef.current = id
-        rootConversationIdRef.current = id
-        setConversations([draft])
-        setActiveId(id)
-        replaceConversation(null)
+      // Explicit deep link keeps that conversation. Otherwise cold start /
+      // reopen always lands on a blank draft — never the last history chat.
+      const requested = routeConversationId
+        ? history.find(row => row.id === routeConversationId)
+        : undefined
+
+      if (requested) {
+        rootConversationIdRef.current = requested.id
+        draftIdRef.current = null
+        setConversations(history)
+        setActiveId(requested.id)
+        replaceConversation(requested.id)
+        await applyCachedMessages(requested.id, setConversations, loadedRef)
+        if (cancelled()) return
         setReady(true)
+        void synchronizeConversationState({
+          hydrate: async () => {
+            const messages = await fetchReliableMessages(requested.id)
+            if (cancelled()) return
+            loadedRef.current.add(requested.id)
+            setConversations(previous => previous.map(conversation => {
+              if (conversation.id !== requested.id) return conversation
+              const merged = reconcileRemoteMessages(conversation.messages, messages)
+              return {
+                ...conversation,
+                messages: merged,
+                excerpt: lastExcerpt(merged),
+              }
+            }))
+          },
+          reconcile: () => onConversationHydrated?.(requested.id) ?? Promise.resolve(true),
+          isCancelled: cancelled,
+        }).catch(() => undefined)
         return
       }
 
-      const selected = pickStartupConversation(conversations, routeConversationId)
-      rootConversationIdRef.current = selected.id
-      writeLastConversationId(selected.id)
-      setConversations(conversations)
-      setActiveId(selected.id)
-      replaceConversation(selected.id)
-
-      // Prefer local cache so the composer is not blocked on network history.
-      await applyCachedMessages(selected.id, setConversations, loadedRef)
-      if (cancelled()) return
+      const draft = createBlankDraft()
+      draftIdRef.current = draft.id
+      rootConversationIdRef.current = draft.id
+      setConversations([draft, ...history])
+      setActiveId(draft.id)
+      replaceConversation(null)
       setReady(true)
-
-      void synchronizeConversationState({
-        hydrate: async () => {
-          const messages = await fetchReliableMessages(selected.id)
-          if (cancelled()) return
-          loadedRef.current.add(selected.id)
-          setConversations(previous => previous.map(conversation => {
-            if (conversation.id !== selected.id) return conversation
-            const merged = reconcileRemoteMessages(conversation.messages, messages)
-            return {
-              ...conversation,
-              messages: merged,
-              excerpt: lastExcerpt(merged),
-            }
-          }))
-        },
-        reconcile: () => onConversationHydrated?.(selected.id) ?? Promise.resolve(true),
-        isCancelled: cancelled,
-      }).catch(() => undefined)
     })()
   })
 
