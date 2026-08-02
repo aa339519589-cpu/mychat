@@ -85,22 +85,11 @@ function context(): JobExecutionContext {
 }
 
 test('provisional Agent input loads only durable chat and GitHub identity metadata', { concurrency: false }, async t => {
-  const previousKey = process.env.OPENROUTER_API_KEY
-  const previousFetch = globalThis.fetch
-  process.env.OPENROUTER_API_KEY = 'test-openrouter-key'
-  globalThis.fetch = async () => new Response(JSON.stringify({
-    data: [{
-      id: MODEL_ID,
-      context_length: 128_000,
-      architecture: { input_modalities: ['text'], output_modalities: ['text'] },
-      pricing: { prompt: '0.0000001', completion: '0.0000006' },
-      supported_parameters: ['tools', 'tool_choice'],
-    }],
-  }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  const previousDeepSeekKey = process.env.DEEPSEEK_API_KEY
+  process.env.DEEPSEEK_API_KEY = 'test-deepseek-key'
   t.after(() => {
-    globalThis.fetch = previousFetch
-    if (previousKey === undefined) delete process.env.OPENROUTER_API_KEY
-    else process.env.OPENROUTER_API_KEY = previousKey
+    if (previousDeepSeekKey === undefined) delete process.env.DEEPSEEK_API_KEY
+    else process.env.DEEPSEEK_API_KEY = previousDeepSeekKey
   })
 
   const tables: string[] = []
@@ -124,7 +113,8 @@ test('provisional Agent input loads only durable chat and GitHub identity metada
   assert.equal(input.login, 'architect')
   assert.equal(input.workspaceReady, false)
   assert.equal(input.defaultBranch, null)
-  assert.equal(input.selection.model, MODEL_ID)
+  assert.equal(input.selection.model, 'deepseek-v4-flash')
+  assert.equal(input.selection.capability.provider.id, 'deepseek')
   assert.deepEqual(input.memories, [])
   assert.deepEqual(input.messages, [{ role: 'user', content: 'build it' }])
   assert.equal(credentialCalls, 0)
