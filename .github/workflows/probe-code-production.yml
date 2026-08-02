@@ -8,7 +8,7 @@ on:
       - .github/workflows/probe-code-production.yml
 
 permissions:
-  contents: read
+  contents: write
   statuses: write
 
 jobs:
@@ -20,7 +20,20 @@ jobs:
       - name: Discover Code API contract
         run: |
           set -euo pipefail
-          echo '=== CODE API ROUTES ==='
-          find app -path '*api*' -type f | grep -Ei 'code|agent|task' | sort || true
-          echo '=== CLIENT CALLS ==='
-          rg -n "(/api/[^\"']*(code|agent|task)|taskId|modelId|sessionId)" app components lib --glob '*.{ts,tsx}' | head -n 300 || true
+          {
+            echo '=== CODE API ROUTES ==='
+            find app -path '*api*' -type f | grep -Ei 'code|agent|task' | sort || true
+            echo '=== CLIENT CALLS ==='
+            rg -n "(/api/[^\"']*(code|agent|task)|taskId|modelId|sessionId)" app components lib --glob '*.{ts,tsx}' | head -n 400 || true
+          } > /tmp/code-contract.txt
+          cat /tmp/code-contract.txt
+      - name: Persist discovery result
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          content="$(base64 -w0 /tmp/code-contract.txt)"
+          path='diagnostics/code-contract.txt'
+          current_sha="$(gh api "repos/$GITHUB_REPOSITORY/contents/$path" --jq '.sha' 2>/dev/null || true)"
+          payload="$(jq -nc --arg message 'Update Code API discovery' --arg content "$content" --arg branch "$GITHUB_REF_NAME" --arg sha "$current_sha" 'if $sha == "" then {message:$message,content:$content,branch:$branch} else {message:$message,content:$content,branch:$branch,sha:$sha} end')"
+          gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/$path" --input - <<<"$payload" >/dev/null
