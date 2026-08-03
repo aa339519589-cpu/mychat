@@ -58,7 +58,7 @@ const DIRECT_DEEPSEEK_CATALOG_ROUTES: Record<string, DirectDeepSeekCatalogRoute>
     outputKind: 'chat',
     tools: true,
     reasoningEfforts: DEEPSEEK_REASONING_EFFORTS,
-    defaultReasoningEffort: 'high',
+    defaultReasoningEffort: 'none',
   },
   'deepseek/deepseek-v4-pro': {
     catalogId: 'deepseek/deepseek-v4-pro',
@@ -68,7 +68,7 @@ const DIRECT_DEEPSEEK_CATALOG_ROUTES: Record<string, DirectDeepSeekCatalogRoute>
     outputKind: 'chat',
     tools: true,
     reasoningEfforts: DEEPSEEK_REASONING_EFFORTS,
-    defaultReasoningEffort: 'high',
+    defaultReasoningEffort: 'none',
   },
 }
 
