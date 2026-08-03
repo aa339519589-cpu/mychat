@@ -53,9 +53,20 @@ function reasoningEfforts(model: OpenRouterModel): {
   const requestedDefault = typeof model.reasoning?.default_effort === 'string'
     ? model.reasoning.default_effort.toLowerCase()
     : null
-  const defaultValue = requestedDefault && values.includes(requestedDefault)
-    ? requestedDefault
-    : values.includes('none') ? 'none' : values[0] ?? null
+  // Product default is Off whenever thinking is optional. Provider defaults
+  // (medium/high) only apply when the model requires reasoning.
+  let defaultValue: string | null
+  if (mandatory) {
+    defaultValue = requestedDefault && values.includes(requestedDefault)
+      ? requestedDefault
+      : values[0] ?? null
+  } else if (values.includes('none')) {
+    defaultValue = 'none'
+  } else if (requestedDefault && values.includes(requestedDefault)) {
+    defaultValue = requestedDefault
+  } else {
+    defaultValue = values[0] ?? null
+  }
   return { values, mandatory, defaultValue }
 }
 
