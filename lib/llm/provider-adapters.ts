@@ -25,7 +25,8 @@ function applyOpenRouterOptions(
   effort: ReasoningEffort | null | undefined,
 ): void {
   if (requestedOutputTokens !== undefined) body.max_completion_tokens = requestedOutputTokens
-  if (effort) body.reasoning = { effort }
+  // Off = omit reasoning entirely (do not send effort:"none").
+  if (effort && effort !== 'none') body.reasoning = { effort }
   body.stream_options = { include_usage: true }
 }
 
@@ -35,9 +36,9 @@ function applyGenericOptions(
   effort: ReasoningEffort | null | undefined,
 ): void {
   if (requestedOutputTokens !== undefined) body.max_tokens = requestedOutputTokens
-  if (!effort) return
+  if (!effort || effort === 'none') return
   body.reasoning_effort = effort
-  body.reasoning = effort === 'none' ? { enabled: false } : { effort }
+  body.reasoning = { effort }
 }
 
 export function buildProviderRequest(adapter: ProviderAdapterId, opts: RequestOptions) {
