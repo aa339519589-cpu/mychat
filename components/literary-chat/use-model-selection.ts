@@ -41,7 +41,10 @@ function isSelectable(model: ModelCatalogItem): boolean {
 }
 
 function preferredEffort(model: ModelCatalogItem, saved?: string | null): string | null {
+  // Explicit user choice wins only when it is still valid for this model.
   if (saved && model.reasoningEfforts.includes(saved)) return saved
+  // Product default: Off whenever thinking is optional.
+  if (!model.reasoningMandatory && model.reasoningEfforts.includes("none")) return "none"
   if (model.defaultReasoningEffort && model.reasoningEfforts.includes(model.defaultReasoningEffort)) {
     return model.defaultReasoningEffort
   }
@@ -70,7 +73,11 @@ export function useModelSelection(options: UseModelSelectionOptions) {
           ?? null
         setActiveModelId(selected?.id ?? null)
         const savedEffort = localStorage.getItem("chat_reasoning_effort")
-        setReasoningEffortState(selected ? preferredEffort(selected, savedEffort) : null)
+        // Ignore legacy saved medium/high so cold start lands on Off.
+        const usableSaved = savedEffort === "none" || savedEffort === "minimal" || savedEffort === "low"
+          ? savedEffort
+          : null
+        setReasoningEffortState(selected ? preferredEffort(selected, usableSaved) : null)
       })
       .catch(() => {
         if (!cancelled) setCatalog([])
@@ -142,6 +149,7 @@ export function useModelSelection(options: UseModelSelectionOptions) {
   }
   function handleEndpointDeleted(id: string) {
     setModelEndpoints(previous => previous.filter(item => item.id !== id))
+    if (activeEndpointId === id) setActiveEndpointId(null)
   }
 
   const activeModel = useMemo(
