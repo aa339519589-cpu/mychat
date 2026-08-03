@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@/lib/supabase/types'
 import type { SupabaseServer } from '@/lib/api/guard'
 import { AuthoritativeContextError, loadAuthoritativeChatContext } from '@/lib/chat/authoritative-context'
-import { resolveChatModelSelection, type ChatModelSelection } from '@/lib/chat/model-selection'
+import { ChatModelSelectionError, resolveChatModelSelection, type ChatModelSelection } from '@/lib/chat/model-selection'
 import type { ModelAccessClass } from '@/lib/model-catalog'
 import type { SearchMode } from '@/lib/chat/request-context'
 import { loadCustomSystemPrompt } from '@/lib/chat/user-system-prompt'
@@ -88,9 +88,20 @@ export async function loadChatJob(job: JobRecord): Promise<LoadedChatJob> {
     const payloadReadyAt = Date.now()
     const parsedCommand = command(loadedCommand.payload)
     const jobInput = record(job.input); const admission = record(jobInput?.admission); const billingClass = jobInput?.billingClass
+    // Admission already authorized premium access at enqueue time. Worker must
+    // re-resolve the same route with allowPremium, or every premium model fails
+    // with 403 after the client already accepted the job.
     const [authoritativeContext, selection] = await Promise.all([
       loadAuthoritativeChatContext({ client, userId, conversationId, userMessageId, allowInstant: allowInstantContext(parsedCommand) }),
-      resolveChatModelSelection({ tier: parsedCommand.tier, endpointId: parsedCommand.endpointId, modelId: parsedCommand.modelId, reasoningEffort: parsedCommand.reasoningEffort, supabase: client as unknown as SupabaseServer, userId }),
+      resolveChatModelSelection({
+        tier: parsedCommand.tier,
+        endpointId: parsedCommand.endpointId,
+        modelId: parsedCommand.modelId,
+        reasoningEffort: parsedCommand.reasoningEffort,
+        supabase: client as unknown as SupabaseServer,
+        userId,
+        allowPremium: true,
+      }),
     ])
     const selectedKind = selection.outputKind === 'chat' ? 'text' : selection.outputKind
     if (selectedKind !== parsedCommand.outputKind || selection.accessClass !== parsedCommand.accessClass) throw new JobRuntimeError('JOB_CONFLICT', 'Model policy changed after enqueue')
@@ -100,6 +111,9 @@ export async function loadChatJob(job: JobRecord): Promise<LoadedChatJob> {
   } catch (error) {
     if (error instanceof JobRuntimeError) throw error
     if (error instanceof AuthoritativeContextError) throw new JobRuntimeError(error.code === 'CONTEXT_UNAVAILABLE' ? 'JOB_DEPENDENCY_UNAVAILABLE' : 'JOB_INVALID_INPUT', error.message, { cause: error })
+    if (error instanceof ChatModelSelectionError) {
+      throw new JobRuntimeError('JOB_INVALID_INPUT', error.message, { cause: error, retryable: false })
+    }
     throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'Chat policy is unavailable', { cause: error })
   }
 }

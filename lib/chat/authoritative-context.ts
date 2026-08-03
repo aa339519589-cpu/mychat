@@ -311,19 +311,27 @@ async function fullContext(
   userMessageRow: MessageRow,
 ): Promise<AuthoritativeChatContext> {
   const userSequence = Number(userMessageRow.seq)
-  const messages = await loadMessageHistory({
+  const historyInput = {
     client: input.client,
     conversationId: input.conversationId,
     userId: input.userId,
     userMessageId: input.userMessageId,
     userSequence: Number.isSafeInteger(userSequence) && userSequence > 0 ? userSequence : null,
-  })
+  }
+  // Message history and memories/project are independent — load in parallel to
+  // shave a full Supabase RTT off every non-instant turn before the LLM starts.
   if (projectId) {
-    const project = await loadProjectContext(input.client, input.userId, projectId)
+    const [messages, project] = await Promise.all([
+      loadMessageHistory(historyInput),
+      loadProjectContext(input.client, input.userId, projectId),
+    ])
     assertContextBudget({ messages, project })
     return { messages, memories: [], memoryEnabled: false, project }
   }
-  const globalMemory = await loadGlobalMemories(input.client, input.userId)
+  const [messages, globalMemory] = await Promise.all([
+    loadMessageHistory(historyInput),
+    loadGlobalMemories(input.client, input.userId),
+  ])
   assertContextBudget({ messages, memories: globalMemory.memories })
   return {
     messages,
