@@ -212,7 +212,7 @@ export function AssistantMessage({
           ) : (
             <>
               {display && (
-                <div className="font-sans text-[17px] font-[450] leading-[1.7] tracking-[0.01em] text-foreground md:text-[18px] md:leading-[1.72]">
+                <div className="font-sans text-[18px] font-[450] leading-[1.7] tracking-[0.01em] text-foreground md:text-[19px] md:leading-[1.72]">
                   <MessageMarkdown text={display} />
                 </div>
               )}
