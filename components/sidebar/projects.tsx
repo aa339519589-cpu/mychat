@@ -59,8 +59,8 @@ export function ProjectsScreen({ projects, conversations, onCreate, onOpen, onDe
             autoFocus
             value={name}
             onChange={e => setName(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter") create(); if (e.key === "Escape") { setAdding(false); setName("") } }}
-            placeholder="项目名称"
+            onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); create() } if (e.key === "Escape") { setAdding(false); setName("") } }}
+            placeholder="项目名称……"
             className="w-full rounded-xl bg-sidebar-accent/40 px-3 py-2 text-[12px] outline-none placeholder:text-muted-foreground/40 focus:bg-sidebar-accent/60 border border-sidebar-primary/40"
           />
           <div className="flex gap-2">
@@ -71,32 +71,31 @@ export function ProjectsScreen({ projects, conversations, onCreate, onOpen, onDe
           </div>
         </div>
       )}
+
       <div className="flex-1 overflow-y-auto space-y-2">
         {filtered.length === 0 ? (
           <p className="rounded-2xl bg-sidebar-accent/20 px-4 py-8 text-center text-[12px] italic text-muted-foreground/70">没有项目</p>
-        ) : (
-          filtered.map(p => (
-            <ProjectRow key={p.id} project={p} conversationCount={countFor(p.id)} onOpen={onOpen} onDelete={onDelete} />
-          ))
-        )}
+        ) : filtered.map(project => (
+          <ProjectCard key={project.id} project={project} conversationCount={countFor(project.id)} onOpen={onOpen} onDelete={onDelete} />
+        ))}
       </div>
     </div>
   )
 }
 
-function ProjectRow({ project, conversationCount, onOpen, onDelete }: {
+function ProjectCard({ project, conversationCount, onOpen, onDelete }: {
   project: Project
   conversationCount: number
   onOpen: (id: string) => void
   onDelete: (id: string) => void
 }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false)
-
-  function deleteProject() {
+  const deleteProject = () => {
     if (!confirmingDelete) {
       setConfirmingDelete(true)
       return
     }
+    setConfirmingDelete(false)
     onDelete(project.id)
   }
 
@@ -124,40 +123,30 @@ function ProjectRow({ project, conversationCount, onOpen, onDelete }: {
   )
 }
 
+// ── 项目详情＝工作台（单页纵向滚动）：起新对谈 + 对谈列表 + 记忆/指令/资料分组 ──
+// 重命名、删除收进顶部 ⋯ 菜单（由 ScreenPanel 的 action 触发），此处不再出现管理型大按钮。
 export function ProjectDetailScreen({
-  project,
-  conversations,
-  renamingId,
-  onNewChat,
-  onOpenChat,
-  onOpenConvMenu,
-  onRenameConversation,
-  onStopRename,
-  onInstructions,
-  onLoadFiles,
-  onAddFile,
-  onDeleteFile,
-  onLoadProjectMemories,
-  onAddProjectMemory,
-  onEditProjectMemory,
-  onDeleteProjectMemory,
+  project, conversations, onOpenChat, onNewChat,
+  onInstructions, onLoadFiles, onAddFile, onDeleteFile,
+  onLoadProjectMemories, onAddProjectMemory, onEditProjectMemory, onDeleteProjectMemory,
+  renamingId, onOpenConvMenu, onRenameConversation, onStopRename,
 }: {
   project: Project
   conversations: Conversation[]
-  renamingId: string | null
-  onNewChat: (projectId: string) => void
   onOpenChat: (id: string) => void
-  onOpenConvMenu: (c: Conversation, a: SidebarAnchor) => void
-  onRenameConversation: (id: string, title: string) => void
-  onStopRename: () => void
-  onInstructions: (id: string, value: string) => void
+  onNewChat: (projectId: string) => void
+  onInstructions: (id: string, instructions: string) => void
   onLoadFiles: (projectId: string) => Promise<ProjectFile[]>
   onAddFile: (projectId: string, file: File) => Promise<ProjectFile | null>
   onDeleteFile: (fileId: string) => void
   onLoadProjectMemories: (projectId: string) => Promise<Memory[]>
-  onAddProjectMemory: (projectId: string, content: string) => Promise<Memory | null>
-  onEditProjectMemory: (id: string, content: string) => Promise<boolean>
+  onAddProjectMemory: (content: string) => Promise<Memory | null>
+  onEditProjectMemory: (id: string, content: string) => void
   onDeleteProjectMemory: (id: string) => void
+  renamingId: string | null
+  onOpenConvMenu: (id: string, anchor: SidebarAnchor) => void
+  onRenameConversation: (id: string, title: string) => void
+  onStopRename: () => void
 }) {
   const chats = sortConversations(conversations.filter(c => c.projectId === project.id && !c.draft))
 
