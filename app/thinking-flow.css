@@ -72,7 +72,7 @@ code * {
   position: relative;
   display: inline-block;
   font-family: var(--mychat-base-font) !important;
-  font-size: 14px;
+  font-size: 16px;
   font-style: normal;
   font-weight: 500;
   line-height: 1.5;
@@ -108,7 +108,7 @@ code * {
 
 @media (min-width: 768px) {
   .thinking-flow {
-    font-size: 15px;
+    font-size: 17px;
   }
 }
 
