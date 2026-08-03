@@ -37,21 +37,31 @@ export function createChatStreamState(): ChatStreamState {
 
 function streamingMessage(
   message: Message,
-  state: ChatStreamState,
   assistantMessageId: string,
   generationId: string | undefined,
+  content: string,
+  thinking: string,
+  media: GeneratedMedia[],
   outputWarning: string | undefined,
 ): Message {
   if (message.id !== assistantMessageId
     || (generationId && message.generation?.id === generationId)) return message
   return {
     ...message,
-    content: state.fullReply,
-    thinking: state.fullThinking || undefined,
-    media: state.fullMedia.length ? [...state.fullMedia] : undefined,
+    content,
+    thinking: thinking || undefined,
+    media: media.length ? [...media] : undefined,
     isError: undefined,
     outputWarning,
   }
+}
+
+/** Adaptive step: 1 char when close, speed up when the buffer is ahead. */
+function revealStep(backlog: number): number {
+  if (backlog <= 0) return 0
+  if (backlog > 40) return Math.ceil(backlog / 5)
+  if (backlog > 12) return 2
+  return 1
 }
 
 export function createChatStreamRenderer(options: {
@@ -61,8 +71,9 @@ export function createChatStreamRenderer(options: {
   generationId?: string
   setConversations: Dispatch<SetStateAction<Conversation[]>>
 }): ChatStreamRenderer {
-  let renderScheduled = false
-  let frameId: number | null = null
+  let displayedReply = ''
+  let displayedThinking = ''
+  let typewriterId: number | null = null
   let cacheTimer: ReturnType<typeof setTimeout> | null = null
   let latestMessages: Message[] | null = null
 
@@ -85,32 +96,92 @@ export function createChatStreamRenderer(options: {
     }, 300)
   }
 
-  const cancel = () => {
-    if (frameId !== null) cancelAnimationFrame(frameId)
-    renderScheduled = false
-    frameId = null
-  }
-  const flush = (outputWarning?: string) => {
-    renderScheduled = false
-    frameId = null
+  const paint = (content: string, thinking: string, outputWarning?: string, immediateCache = false) => {
     options.setConversations(previous => previous.map(conversation => {
       if (conversation.id !== options.conversationId) return conversation
       const messages = conversation.messages.map(message => streamingMessage(
         message,
-        options.state,
         options.assistantMessageId,
         options.generationId,
+        content,
+        thinking,
+        options.state.fullMedia,
         outputWarning,
       ))
-      persistSnapshot(messages, outputWarning !== undefined)
+      // Cache authoritative full text so a mid-stream refresh does not lose tokens.
+      const cacheMessages = conversation.messages.map(message => streamingMessage(
+        message,
+        options.assistantMessageId,
+        options.generationId,
+        options.state.fullReply,
+        options.state.fullThinking,
+        options.state.fullMedia,
+        outputWarning,
+      ))
+      persistSnapshot(cacheMessages, immediateCache)
       return { ...conversation, messages }
     }))
   }
-  const schedule = () => {
-    if (options.state.terminalError || options.state.aborted || renderScheduled) return
-    renderScheduled = true
-    frameId = requestAnimationFrame(() => flush())
+
+  const stopTypewriter = () => {
+    if (typewriterId !== null) cancelAnimationFrame(typewriterId)
+    typewriterId = null
   }
+
+  const tick = () => {
+    typewriterId = null
+    if (options.state.terminalError || options.state.aborted) return
+
+    const targetReply = options.state.fullReply
+    const targetThinking = options.state.fullThinking
+
+    // Retry / reset may shrink the buffer — clamp displayed text.
+    if (displayedReply.length > targetReply.length) displayedReply = targetReply
+    if (displayedThinking.length > targetThinking.length) displayedThinking = targetThinking
+
+    let progressed = false
+    if (displayedReply.length < targetReply.length) {
+      displayedReply = targetReply.slice(
+        0,
+        displayedReply.length + revealStep(targetReply.length - displayedReply.length),
+      )
+      progressed = true
+    }
+    if (displayedThinking.length < targetThinking.length) {
+      displayedThinking = targetThinking.slice(
+        0,
+        displayedThinking.length + revealStep(targetThinking.length - displayedThinking.length),
+      )
+      progressed = true
+    }
+
+    if (progressed) paint(displayedReply, displayedThinking)
+
+    if (displayedReply.length < options.state.fullReply.length
+      || displayedThinking.length < options.state.fullThinking.length) {
+      typewriterId = requestAnimationFrame(tick)
+    }
+  }
+
+  const cancel = () => {
+    stopTypewriter()
+  }
+
+  /** Snap UI to authoritative text (terminal, error, explicit flush). */
+  const flush = (outputWarning?: string) => {
+    stopTypewriter()
+    displayedReply = options.state.fullReply
+    displayedThinking = options.state.fullThinking
+    paint(displayedReply, displayedThinking, outputWarning, outputWarning !== undefined)
+  }
+
+  /** Start or continue character-level reveal toward the latest buffer. */
+  const schedule = () => {
+    if (options.state.terminalError || options.state.aborted) return
+    if (typewriterId !== null) return
+    typewriterId = requestAnimationFrame(tick)
+  }
+
   return { cancel, flush, schedule }
 }
 
