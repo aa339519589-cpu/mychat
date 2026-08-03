@@ -25,8 +25,11 @@ function applyOpenRouterOptions(
   effort: ReasoningEffort | null | undefined,
 ): void {
   if (requestedOutputTokens !== undefined) body.max_completion_tokens = requestedOutputTokens
-  // Off = omit reasoning entirely (do not send effort:"none").
-  if (effort && effort !== 'none') body.reasoning = { effort }
+  // OpenRouter models with default_enabled=true (e.g. Claude Sonnet/Opus 5)
+  // keep reasoning ON at default_effort when the field is omitted. Explicitly
+  // send effort:"none" to turn it off; omit only when effort is unset.
+  if (effort === 'none') body.reasoning = { effort: 'none' }
+  else if (effort) body.reasoning = { effort }
   body.stream_options = { include_usage: true }
 }
 
@@ -36,7 +39,11 @@ function applyGenericOptions(
   effort: ReasoningEffort | null | undefined,
 ): void {
   if (requestedOutputTokens !== undefined) body.max_tokens = requestedOutputTokens
-  if (!effort || effort === 'none') return
+  if (effort === 'none') {
+    body.reasoning = { effort: 'none' }
+    return
+  }
+  if (!effort) return
   body.reasoning_effort = effort
   body.reasoning = { effort }
 }
