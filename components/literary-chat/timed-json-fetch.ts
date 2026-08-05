@@ -10,13 +10,13 @@ export class RequestTimeoutError extends Error {
   }
 }
 
-export async function fetchJsonWithTimeout(
+export async function fetchWithTimeout(
   fetcher: typeof fetch,
   input: RequestInfo | URL,
   init: RequestInit,
   signal: AbortSignal,
   timeoutMs: number,
-): Promise<TimedJsonResponse> {
+): Promise<Response> {
   if (signal.aborted) throw signal.reason ?? new Error('请求已取消')
   const controller = new AbortController()
   let timeout: ReturnType<typeof setTimeout> | null = null
@@ -38,14 +38,22 @@ export async function fetchJsonWithTimeout(
     }, Math.max(1, timeoutMs))
   })
   try {
-    const request = (async () => {
-      const response = await fetcher(input, { ...init, signal: controller.signal })
-      const payload: unknown = await response.json().catch(() => null)
-      return { response, payload }
-    })()
+    const request = fetcher(input, { ...init, signal: controller.signal })
     return await Promise.race([request, cancellation])
   } finally {
     if (timeout) clearTimeout(timeout)
     detachAbort()
   }
+}
+
+export async function fetchJsonWithTimeout(
+  fetcher: typeof fetch,
+  input: RequestInfo | URL,
+  init: RequestInit,
+  signal: AbortSignal,
+  timeoutMs: number,
+): Promise<TimedJsonResponse> {
+  const response = await fetchWithTimeout(fetcher, input, init, signal, timeoutMs)
+  const payload: unknown = await response.json().catch(() => null)
+  return { response, payload }
 }

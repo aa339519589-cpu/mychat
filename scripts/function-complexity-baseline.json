@@ -68,7 +68,7 @@
     },
     "components/chat-input.tsx": {
       "complexity": [
-        16
+        17
       ]
     },
     "components/code-console/index.tsx": {
@@ -97,7 +97,12 @@
     },
     "components/literary-chat.tsx": {
       "maxLines": [
-        179
+        220
+      ]
+    },
+    "components/literary-chat/chat-stream-events.ts": {
+      "complexity": [
+        16
       ]
     },
     "components/literary-chat/chat-stream-finalizer.ts": {
@@ -123,12 +128,12 @@
     },
     "components/literary-chat/message-regeneration.ts": {
       "maxLines": [
-        84
+        83
       ]
     },
     "components/literary-chat/use-chat-bootstrap.ts": {
       "maxLines": [
-        90
+        92
       ]
     },
     "components/literary-chat/use-chat-generation.ts": {
@@ -138,7 +143,7 @@
     },
     "components/literary-chat/use-model-selection.ts": {
       "maxLines": [
-        111
+        115
       ]
     },
     "components/literary-chat/use-projects.ts": {
@@ -414,7 +419,7 @@
     "lib/jobs/handlers/chat-input.ts": {
       "complexity": [
         20,
-        16
+        17
       ]
     },
     "lib/jobs/handlers/chat-media.ts": {
@@ -566,6 +571,11 @@
     "lib/observability/worker-fleet-metrics.ts": {
       "complexity": [
         33,
+        18
+      ]
+    },
+    "lib/openrouter-catalog.ts": {
+      "complexity": [
         18
       ]
     },

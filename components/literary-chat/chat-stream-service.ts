@@ -11,7 +11,16 @@ import type { ChatTurnAuthority } from '@/lib/llm/chat-request'
 import { takeAcknowledgedGenerationTerminal } from './generation-terminal-registry'
 import { finalizeChatStream } from './chat-stream-finalizer'
 import { enqueueJobUntilAccepted } from './durable-job-enqueue'
-import { streamJobEvents, type AcceptedJob, type JobStreamEnvelope } from './job-stream-client'
+import {
+  isRetryableEnqueueError,
+  streamJobEvents,
+  type AcceptedJob,
+  type JobStreamEnvelope,
+} from './job-stream-client'
+import {
+  enqueueJobStream,
+  type AcceptedJobStream,
+} from './live-job-stream-client'
 import { removePermanentlyRejectedSubmission, removePendingChatSubmission, savePendingChatSubmission } from './pending-chat-submission'
 import { processChatStreamEvent } from './chat-stream-events'
 import { createChatStreamRenderer, createChatStreamState, type ChatStreamRenderer, type ChatStreamState } from './chat-stream-state'
@@ -59,20 +68,27 @@ function latestUserMessageId(messages: HistoryMessage[]): string | undefined {
   return undefined
 }
 
-function requestBody(options: RunChatStreamOptions): Record<string, unknown> {
+export function chatAdmissionMessages(messages: HistoryMessage[]): HistoryMessage[] {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    if (messages[index]?.role === 'user') return [messages[index]]
+  }
+  return messages.slice(-1)
+}
+
+export function chatAdmissionRequestBody(options: RunChatStreamOptions): Record<string, unknown> {
   const userMessageId = latestUserMessageId(options.messages)
   return {
     tier: options.tier,
     ...(options.endpoint ? { endpointId: options.endpoint.id } : {}),
     ...(options.modelId ? { modelId: options.modelId } : {}),
     ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
-    messages: options.messages,
-    memories: options.projectContext ? undefined : (options.memoryEnabled && options.memories.length > 0 ? options.memories : undefined),
+    // The server rebuilds history, memories, and project context from the
+    // authoritative database. Upload only the user turn needed for admission.
+    messages: chatAdmissionMessages(options.messages),
     attachments: options.attachments?.length ? options.attachments : undefined,
     searchMode: options.searchMode,
     historyRetrieval: options.historyRetrieval,
     renderEnabled: options.renderEnabled,
-    project: options.projectContext,
     conversationId: options.conversationId,
     ...(userMessageId ? { userMessageId } : {}),
     generationId: options.generationId,
@@ -88,25 +104,35 @@ function notifyModelQuotaChanged(): void {
   window.dispatchEvent(new Event(MODEL_QUOTA_CHANGED_EVENT))
 }
 
-async function enqueueChatStream(options: RunChatStreamOptions, state: ChatStreamState, renderer: ChatStreamRenderer): Promise<AcceptedJob> {
-  const body = requestBody(options)
+async function enqueueChatStream(options: RunChatStreamOptions, state: ChatStreamState, renderer: ChatStreamRenderer): Promise<AcceptedJobStream> {
+  const body = chatAdmissionRequestBody(options)
   const generationId = options.generationId
   if (generationId) await savePendingChatSubmission({ schemaVersion: 1, conversationId: options.conversationId, generationId, assistantMessageId: options.assistantMessageId, path: '/api/chat', serializedBody: JSON.stringify(body), createdAt: Date.now() })
-  let accepted: AcceptedJob
+  let opened: AcceptedJobStream
   try {
-    accepted = await enqueueJobUntilAccepted('/api/chat', body, options.controller.signal, () => renderer.flush('消息已保存；连接恢复后会自动继续，无需重新发送。'))
+    opened = await enqueueJobStream('/api/chat', body, options.controller.signal)
   } catch (error) {
-    await removePermanentlyRejectedSubmission(options.conversationId, generationId ? { id: generationId } : null, error)
-    throw error
+    if (!isRetryableEnqueueError(error)) {
+      await removePermanentlyRejectedSubmission(options.conversationId, generationId ? { id: generationId } : null, error)
+      throw error
+    }
+    renderer.flush('消息已保存；连接恢复后会自动继续，无需重新发送。')
+    try {
+      const accepted = await enqueueJobUntilAccepted('/api/chat', body, options.controller.signal, () => renderer.flush('消息已保存；连接恢复后会自动继续，无需重新发送。'))
+      opened = { accepted, response: null }
+    } catch (fallbackError) {
+      await removePermanentlyRejectedSubmission(options.conversationId, generationId ? { id: generationId } : null, fallbackError)
+      throw fallbackError
+    }
   }
   if (generationId) await removePendingChatSubmission(options.conversationId, generationId)
   notifyModelQuotaChanged()
   state.acceptedByServer = true
   options.onAccepted?.()
   state.terminalProtocolExpected = true
-  options.markGeneration(options.conversationId, { status: 'running', generationId: accepted.jobId, assistantMessageId: options.assistantMessageId })
+  options.markGeneration(options.conversationId, { status: 'running', generationId: opened.accepted.jobId, assistantMessageId: options.assistantMessageId })
   renderer.flush()
-  return accepted
+  return opened
 }
 
 function terminalStatus(value: unknown): value is 'completed' | 'failed' | 'cancelled' {
@@ -185,13 +211,14 @@ async function reconcileTerminal(
   throw signal.reason ?? new DOMException('Aborted', 'AbortError')
 }
 
-async function consumeChatStream(options: RunChatStreamOptions, state: ChatStreamState, renderer: ChatStreamRenderer, accepted: AcceptedJob): Promise<void> {
+async function consumeChatStream(options: RunChatStreamOptions, state: ChatStreamState, renderer: ChatStreamRenderer, opened: AcceptedJobStream): Promise<void> {
+  const { accepted } = opened
   const context = { state, renderer, conversationId: options.conversationId, assistantMessageId: options.assistantMessageId, projectContext: options.projectContext, setConversations: options.setConversations, setMemories: options.setMemories }
   const streamController = new AbortController()
   const abortStream = () => streamController.abort(options.controller.signal.reason)
   options.controller.signal.addEventListener('abort', abortStream, { once: true })
   const stream = (async () => {
-    for await (const event of streamJobEvents(accepted, streamController.signal)) {
+    for await (const event of streamJobEvents(accepted, streamController.signal, undefined, opened.response)) {
       markTerminalGeneration(options, accepted, event)
       if (!processChatStreamEvent(context, event)) return
     }
