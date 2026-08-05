@@ -418,3 +418,5 @@ test('durable chat admission remains explicitly cancellable while offline', asyn
       },
     }),
     error => error instanceof DOMException && error.name === 'AbortError',
+  )
+})
