@@ -10,7 +10,12 @@ import {
   type GitHubConnectionRpcClient,
 } from '../lib/github-connection'
 import { openGitHubCredential, sealGitHubCredential } from '../lib/github-credential'
-import { createGitHubOAuthState, verifyGitHubOAuthState } from '../lib/github-oauth-state'
+import {
+  createGitHubMobileOAuthState,
+  createGitHubOAuthState,
+  verifyGitHubMobileOAuthState,
+  verifyGitHubOAuthState,
+} from '../lib/github-oauth-state'
 import { revokeGitHubOAuthToken } from '../lib/github-token-revocation'
 
 const SECRET = 'test-github-credential-secret-with-at-least-32-characters'
@@ -143,6 +148,47 @@ test('workers retrieve by explicit user id and user access additionally requires
   assert.equal(calls.length, 1, 'invalid browser binding must fail before the RPC')
 })
 
+test('authenticated mobile API access is audited as a server service and remains bound to one user', { concurrency: false }, async t => {
+  withCredentialSecret(t)
+  const ciphertext = sealGitHubCredential(TOKEN, { userId: USER_A, login: 'octocat' })
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = []
+  const client = rpcClient(async (name, args) => {
+    calls.push({ name, args })
+    return {
+      data: [{
+        connection_id: CONNECTION_ID,
+        user_id: USER_A,
+        github_user_id: 12345,
+        login: 'octocat',
+        credential_ciphertext: ciphertext,
+        scopes: ['repo'],
+        expires_at: null,
+      }],
+      error: null,
+    }
+  })
+
+  const connection = await getGitHubCredentialForUser(USER_A, {
+    actorType: 'service',
+    actorId: `mobile-api:${USER_A}`,
+    purpose: 'github.repos',
+    requestId: 'mobile-request-1234',
+  }, client)
+
+  assert.equal(connection?.token, TOKEN)
+  assert.deepEqual(calls[0], {
+    name: 'read_github_connection',
+    args: {
+      input_user_id: USER_A,
+      input_connection_id: null,
+      input_actor_type: 'service',
+      input_actor_id: `mobile-api:${USER_A}`,
+      input_purpose: 'github.repos',
+      input_request_id: 'mobile-request-1234',
+    },
+  })
+})
+
 test('credential and status reads fail closed when encryption is not configured', { concurrency: false }, async t => {
   const previous = process.env.AGENT_CREDENTIAL_KEY
   delete process.env.AGENT_CREDENTIAL_KEY
@@ -180,6 +226,22 @@ test('OAuth state is opaque, integrity-protected, and bound to the Supabase user
   assert.equal(verifyGitHubOAuthState(state, USER_A, 'github-client-secret'), true)
   assert.equal(verifyGitHubOAuthState(state, USER_B, 'github-client-secret'), false)
   assert.equal(verifyGitHubOAuthState(`${state.slice(0, -1)}x`, USER_A, 'github-client-secret'), false)
+})
+
+test('mobile OAuth state is signed, user-bound, canonical, and expires after ten minutes', () => {
+  const issuedAt = Date.UTC(2026, 7, 5, 12, 0, 0)
+  const secret = 'github-client-secret'
+  const state = createGitHubMobileOAuthState(USER_A, secret, issuedAt)
+  const replacement = state.endsWith('x') ? 'y' : 'x'
+
+  assert.match(state, /^github-mobile-oauth:v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/)
+  assert.deepEqual(verifyGitHubMobileOAuthState(state, secret, issuedAt), { userId: USER_A })
+  assert.deepEqual(verifyGitHubMobileOAuthState(state, secret, issuedAt + 599_999), { userId: USER_A })
+  assert.equal(verifyGitHubMobileOAuthState(state, secret, issuedAt + 600_000), null)
+  assert.equal(verifyGitHubMobileOAuthState(state, 'wrong-secret', issuedAt), null)
+  assert.equal(verifyGitHubMobileOAuthState(`${state.slice(0, -1)}${replacement}`, secret, issuedAt), null)
+  assert.equal(verifyGitHubMobileOAuthState(`${state}=`, secret, issuedAt), null)
+  assert.equal(verifyGitHubMobileOAuthState(state, secret, issuedAt - 1), null)
 })
 
 test('disconnect revokes exactly one GitHub OAuth token with app-owner authentication', async () => {

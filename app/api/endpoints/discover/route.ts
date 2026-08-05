@@ -20,7 +20,7 @@ function errorResponse(error: unknown): Response {
 }
 
 export async function POST(req: NextRequest) {
-  const auth = await resolveAuth()
+  const auth = await resolveAuth(req)
   if (!auth.supabase || !auth.userId) return Response.json({ error: "请先登录" }, { status: 401 })
   const gate = await enforceLimits(auth, req, { quota: false })
   if (gate.response) return gate.response

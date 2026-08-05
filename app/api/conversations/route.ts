@@ -1,8 +1,8 @@
 import { resolveAuth } from '@/lib/api/guard'
 import { deleteAllConversationsWithGeneratedMedia } from '@/lib/chat/history-deletion'
 
-export async function DELETE() {
-  const auth = await resolveAuth()
+export async function DELETE(request: Request) {
+  const auth = await resolveAuth(request)
   if (auth.authUnavailable) return Response.json({ error: '认证服务暂时不可用，请稍后再试' }, { status: 503 })
   if (!auth.userId) return Response.json({ error: '请先登录' }, { status: 401 })
   const result = await deleteAllConversationsWithGeneratedMedia(auth.userId)

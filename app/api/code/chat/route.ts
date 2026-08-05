@@ -128,7 +128,9 @@ async function reserveModelTrial(
 }
 async function githubConnectionFailure(request: NextRequest): Promise<Response | null> {
   try {
-    const connection = await getCurrentGitHubConnectionStatus({ purpose: 'agent.enqueue', requestId: requestId(request) })
+    const connection = await getCurrentGitHubConnectionStatus({
+      purpose: 'agent.enqueue', requestId: requestId(request), request,
+    })
     return connection ? null : apiFailure(request, {
       status: 401, code: 'AUTH_REQUIRED', message: '未连接 GitHub 或账号会话已变化', retryable: false,
     })
@@ -228,7 +230,7 @@ async function completeEnqueue(request: NextRequest, input: {
 export async function POST(request: NextRequest): Promise<Response> {
   const maintenance = expensiveWriteMaintenanceResponse(request)
   if (maintenance) return maintenance
-  const auth = await resolveAuth()
+  const auth = await resolveAuth(request)
   const rate = await enforceRequestRateLimit(auth, request)
   if (rate.response) return rate.response
   if (!auth.supabase || !auth.userId) return authFailureResponse(request, auth)

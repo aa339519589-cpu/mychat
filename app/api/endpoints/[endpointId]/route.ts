@@ -30,7 +30,7 @@ function errorResponse(error: unknown): Response {
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ endpointId: string }> }) {
-  const auth = await resolveAuth()
+  const auth = await resolveAuth(req)
   if (!auth.supabase || !auth.userId) return Response.json({ error: "请先登录" }, { status: 401 })
   const userId = auth.userId
   const gate = await enforceLimits(auth, req, { quota: false })
@@ -118,8 +118,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ en
   }
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ endpointId: string }> }) {
-  const auth = await resolveAuth()
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ endpointId: string }> }) {
+  const auth = await resolveAuth(req)
   if (!auth.supabase || !auth.userId) return Response.json({ error: "请先登录" }, { status: 401 })
   const { endpointId } = await params
   if (!UUID.test(endpointId)) return Response.json({ error: "端点 ID 无效" }, { status: 400 })

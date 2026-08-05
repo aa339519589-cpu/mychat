@@ -12,7 +12,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 export async function POST(request: NextRequest) {
   const maintenance = expensiveWriteMaintenanceResponse(request)
   if (maintenance) return maintenance
-  const auth = await resolveAuth()
+  const auth = await resolveAuth(request)
   const rate = await enforceRequestRateLimit(auth, request)
   if (rate.response) return rate.response
   if (!auth.supabase || !auth.userId) return apiErrorResponseV1(request, {
@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
     const commandClient = createAdminClient()
     if (!commandClient) throw new Error('command authority unavailable')
     const connection = await getCurrentGitHubConnectionStatus({
-      purpose: 'agent.operation.enqueue', requestId: requestId(request),
+      purpose: 'agent.operation.enqueue', requestId: requestId(request), request,
     })
     if (!connection) return apiErrorResponseV1(request, {
       status: 401, code: 'AUTH_REQUIRED',

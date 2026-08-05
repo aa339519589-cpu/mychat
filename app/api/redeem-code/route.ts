@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { resolveAuth } from '@/lib/api/guard'
 import { log } from '@/lib/logger'
 import { validate } from '@/lib/validation'
 import { readJson, requestErrorResponse } from '@/lib/api/request'
@@ -18,13 +18,15 @@ export async function POST(req: NextRequest) {
     const code = validate.string(body.code, 'code', { minLength: 8, maxLength: 128 })
     log.info('redeemCode', 'Attempting to redeem code', { codeLength: code.length })
 
-    const supabase = await createClient()
-    const { data: user } = await supabase.auth.getUser()
-    if (!user.user?.id) {
+    const auth = await resolveAuth(req)
+    if (auth.authUnavailable) {
+      return Response.json({ error: '认证服务暂时不可用，请稍后再试' }, { status: 503 })
+    }
+    if (!auth.supabase || !auth.userId) {
       log.warn('redeemCode', 'Not logged in')
       return new Response(JSON.stringify({ error: '未登录' }), { status: 401, headers: { 'Content-Type': 'application/json' } })
     }
-    const rate = await checkRateLimit(`redeem:${user.user.id}`, { max: 10, windowMs: 60 * 60_000 })
+    const rate = await checkRateLimit(`redeem:${auth.userId}`, { max: 10, windowMs: 60 * 60_000 })
     if (rate.unavailable) {
       return Response.json({ error: '服务暂时不可用，请稍后再试' }, {
         status: 503,
@@ -38,16 +40,16 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    const { data, error } = await supabase.rpc('redeem_invitation_code', { input_code: code.trim() })
+    const { data, error } = await auth.supabase.rpc('redeem_invitation_code', { input_code: code.trim() })
     const result = Array.isArray(data) ? data[0] : data
     if (error || !result) {
       const invalid = error?.message?.includes('invalid_or_used')
-      log.warn('redeemCode', 'Atomic redemption rejected', { userId: user.user.id, invalid, code: error?.code })
+      log.warn('redeemCode', 'Atomic redemption rejected', { userId: auth.userId, invalid, code: error?.code })
       return Response.json({ error: invalid ? '邀请码无效或已被使用' : '兑换失败' }, { status: invalid ? 400 : 500 })
     }
     const tokensAdded = Number(result.tokens_added ?? 0)
     const newBalance = Number(result.new_balance ?? 0)
-    log.info('redeemCode', 'Code redeemed successfully', { userId: user.user.id, tokens: tokensAdded, newBalance })
+    log.info('redeemCode', 'Code redeemed successfully', { userId: auth.userId, tokens: tokensAdded, newBalance })
     return Response.json({ success: true, tokensAdded, newBalance })
   } catch (e) {
     log.error('redeemCode', 'Exception during code redemption', e)

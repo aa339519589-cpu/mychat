@@ -1,5 +1,5 @@
 import { createAdminClient } from '@/lib/supabase/admin'
-import { createClient as createSessionClient } from '@/lib/supabase/server'
+import { resolveAuth } from '@/lib/api/guard'
 import {
   MAX_CUSTOM_SYSTEM_PROMPT_CHARS,
   normalizeCustomSystemPrompt,
@@ -15,15 +15,10 @@ function response(body: object, status = 200): Response {
   })
 }
 
-async function authenticatedUserId(): Promise<string | null> {
-  const session = await createSessionClient()
-  const { data, error } = await session.auth.getUser()
-  if (error || !data.user) return null
-  return data.user.id
-}
-
-export async function GET(): Promise<Response> {
-  const userId = await authenticatedUserId()
+export async function GET(request: Request): Promise<Response> {
+  const auth = await resolveAuth(request)
+  if (auth.authUnavailable) return response({ error: '认证服务暂时不可用，请稍后再试' }, 503)
+  const userId = auth.userId
   if (!userId) return response({ error: '请先登录后再读取系统提示词' }, 401)
 
   const admin = createAdminClient()
@@ -44,7 +39,9 @@ export async function GET(): Promise<Response> {
 }
 
 export async function PUT(request: Request): Promise<Response> {
-  const userId = await authenticatedUserId()
+  const auth = await resolveAuth(request)
+  if (auth.authUnavailable) return response({ error: '认证服务暂时不可用，请稍后再试' }, 503)
+  const userId = auth.userId
   if (!userId) return response({ error: '请先登录后再保存' }, 401)
 
   let body: unknown

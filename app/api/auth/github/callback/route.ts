@@ -18,13 +18,16 @@ import {
   type GitHubOAuthCredential,
   type GitHubOAuthTokenResult,
 } from '@/lib/github-oauth-flow'
-import { verifyGitHubOAuthState } from '@/lib/github-oauth-state'
+import { verifyGitHubMobileOAuthState, verifyGitHubOAuthState } from '@/lib/github-oauth-state'
 import { revokeGitHubOAuthToken } from '@/lib/github-token-revocation'
 import { isAdminConfigured } from '@/lib/supabase/admin'
 
 type OAuthConfig = { clientId: string; clientSecret: string }
+type OAuthOutcome = 'connected' | 'error'
 
-function redirect(home: string, outcome: 'connected' | 'error', connection?: {
+const MOBILE_STATE_PREFIX = 'github-mobile-oauth:v1.'
+
+function redirect(home: string, outcome: OAuthOutcome, connection?: {
   id: string
   maxAgeSeconds: number
 }): Response {
@@ -36,6 +39,16 @@ function redirect(home: string, outcome: 'connected' | 'error', connection?: {
   appendLegacyGitHubCookieCleanup(headers)
   if (connection) appendGitHubConnectionCookie(headers, connection.id, connection.maxAgeSeconds)
   return new Response(null, { status: 302, headers })
+}
+
+function mobileRedirect(outcome: OAuthOutcome): Response {
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: `mychat://oauth/github?status=${outcome}`,
+      'Cache-Control': 'no-store',
+    },
+  })
 }
 
 function callbackHome(request: NextRequest): string | null {
@@ -111,12 +124,47 @@ async function persistConnection(
   })
 }
 
+async function handleMobileCallback(
+  request: NextRequest,
+  config: OAuthConfig,
+): Promise<Response> {
+  const state = request.nextUrl.searchParams.get('state') ?? ''
+  const verified = verifyGitHubMobileOAuthState(state, config.clientSecret)
+  const code = parseGitHubOAuthCode(request.nextUrl.searchParams.get('code'))
+  if (!verified || !code) return mobileRedirect('error')
+
+  const credential = await exchangeCode(code, config)
+  if (!credential.ok) {
+    await revoke(credential.accessToken, config)
+    return mobileRedirect('error')
+  }
+  const user = await githubUser(credential.accessToken)
+  if (!user) {
+    await revoke(credential.accessToken, config)
+    return mobileRedirect('error')
+  }
+  try {
+    await persistConnection(request, verified.userId, credential, user)
+    return mobileRedirect('connected')
+  } catch {
+    await revoke(credential.accessToken, config)
+    return mobileRedirect('error')
+  }
+}
+
 // GitHub returns a code once; the bearer token is encrypted into a service-only
 // connection row and only an opaque connection id reaches the browser.
 export async function GET(request: NextRequest): Promise<Response> {
+  const state = request.nextUrl.searchParams.get('state') ?? ''
+  const isMobileCallback = state.startsWith(MOBILE_STATE_PREFIX)
+  const config = oauthConfig()
+  if (isMobileCallback) {
+    if (!config) return mobileRedirect('error')
+    return handleMobileCallback(request, config)
+  }
+
   const home = callbackHome(request)
   if (!home) return new Response('GitHub OAuth 配置无效', { status: 503 })
-  const config = oauthConfig()
   if (!config) return redirect(home, 'error')
   const auth = await resolveAuth()
   if (!auth.userId) return redirect(home, 'error')

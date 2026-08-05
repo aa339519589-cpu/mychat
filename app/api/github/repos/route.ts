@@ -8,6 +8,7 @@ export async function GET(req: NextRequest) {
   const session = await getGitHubSession({
     purpose: 'github.repos',
     requestId: requestId(req),
+    request: req,
   })
   if (!session) return Response.json({ error: '未连接 GitHub 或账号会话已变化' }, { status: 401 })
   const repos = await listRepos(session.token)

@@ -20,6 +20,7 @@ export async function GET(req: NextRequest) {
     const connection = await getCurrentGitHubConnectionStatus({
       purpose: 'github.status',
       requestId: requestId(req),
+      request: req,
     })
     return json({ connected: !!connection, login: connection?.login || null })
   } catch {

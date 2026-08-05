@@ -9,6 +9,12 @@ import { GITHUB_CONNECTION_COOKIE } from "@/lib/github-cookies"
 
 export type GitHubSession = { token: string; login: string; userId: string }
 
+type GitHubSessionOptions = {
+  purpose?: string
+  requestId?: string
+  request?: Request
+}
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const CODE_PLAN_CONNECTION_ID = "00000000-0000-4000-8000-000000000000"
 
@@ -29,18 +35,27 @@ function codePlanConnectionStatus(userId: string): GitHubConnectionStatus {
   }
 }
 
+function hasBearerAuthorization(request: Request | undefined): boolean {
+  return /^Bearer\s+\S+$/i.test(request?.headers.get("authorization")?.trim() ?? "")
+}
+
+function mobileServiceActorId(userId: string): string {
+  return `mobile-api:${userId}`
+}
+
 export async function getGitHubSession(
-  options: { purpose?: string; requestId?: string } = {},
+  options: GitHubSessionOptions = {},
 ): Promise<GitHubSession | null> {
-  const [store, auth] = await Promise.all([cookies(), resolveAuth()])
+  const [store, auth] = await Promise.all([cookies(), resolveAuth(options.request)])
   if (!auth.userId) return null
+  const bearerAuthenticated = hasBearerAuthorization(options.request)
   const connectionId = connectionIdFromCookie(store)
-  if (!connectionId) return null
+  if (!bearerAuthenticated && !connectionId) return null
   try {
     const connection = await getGitHubCredentialForUser(auth.userId, {
-      actorType: "user",
-      actorId: auth.userId,
-      connectionId,
+      actorType: bearerAuthenticated ? "service" : "user",
+      actorId: bearerAuthenticated ? mobileServiceActorId(auth.userId) : auth.userId,
+      ...(connectionId && !bearerAuthenticated ? { connectionId } : {}),
       purpose: options.purpose ?? "github.session",
       ...(options.requestId ? { requestId: options.requestId } : {}),
     })
@@ -56,20 +71,21 @@ export async function getGitHubSession(
 }
 
 export async function getCurrentGitHubConnectionStatus(
-  options: { purpose?: string; requestId?: string } = {},
+  options: GitHubSessionOptions = {},
 ): Promise<GitHubConnectionStatus | null> {
-  const [store, auth] = await Promise.all([cookies(), resolveAuth()])
+  const [store, auth] = await Promise.all([cookies(), resolveAuth(options.request)])
   if (!auth.userId) return null
+  const bearerAuthenticated = hasBearerAuthorization(options.request)
   const connectionId = connectionIdFromCookie(store)
-  if (!connectionId) {
+  if (!bearerAuthenticated && !connectionId) {
     return options.purpose === "agent.enqueue"
       ? codePlanConnectionStatus(auth.userId)
       : null
   }
   const connection = await getGitHubConnectionStatusForUser(auth.userId, {
-    actorType: "user",
-    actorId: auth.userId,
-    connectionId,
+    actorType: bearerAuthenticated ? "service" : "user",
+    actorId: bearerAuthenticated ? mobileServiceActorId(auth.userId) : auth.userId,
+    ...(connectionId && !bearerAuthenticated ? { connectionId } : {}),
     purpose: options.purpose ?? "github.status",
     ...(options.requestId ? { requestId: options.requestId } : {}),
   })

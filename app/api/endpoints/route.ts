@@ -25,8 +25,8 @@ function errorResponse(error: unknown): Response {
   return Response.json({ error: error instanceof Error ? error.message : "端点连接失败" }, { status: 500 })
 }
 
-export async function GET() {
-  const auth = await resolveAuth()
+export async function GET(request: Request) {
+  const auth = await resolveAuth(request)
   if (!auth.supabase || !auth.userId) return Response.json({ error: "请先登录" }, { status: 401 })
   const { data, error } = await auth.supabase
     .from("endpoints")
@@ -38,7 +38,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const auth = await resolveAuth()
+  const auth = await resolveAuth(req)
   if (!auth.supabase || !auth.userId) return Response.json({ error: "请先登录" }, { status: 401 })
   const gate = await enforceLimits(auth, req, { quota: false })
   if (gate.response) return gate.response
