@@ -4,7 +4,11 @@ import {
   EnqueueJobError,
   enqueueJob,
   enqueueTimeoutPolicy,
+  streamJobEvents,
 } from '../components/literary-chat/job-stream-client'
+import {
+  enqueueJobStream,
+} from '../components/literary-chat/live-job-stream-client'
 import { enqueueJobUntilAccepted } from '../components/literary-chat/durable-job-enqueue'
 
 const conversationId = '99000000-0000-4000-8000-000000000001'
@@ -121,6 +125,43 @@ test('chat admission uses standard foreground fetch instead of Safari keepalive'
   assert.equal(requestInit.credentials, 'same-origin')
   assert.equal(requestInit.cache, 'no-store')
   assert.equal((requestInit.headers as Record<string, string>).Accept, 'application/json')
+})
+
+test('chat admission reuses its POST response as the first SSE connection', async () => {
+  let requestInit: RequestInit | undefined
+  const frames = [
+    { jobId: generationId, seq: 1, kind: 'text.delta', payload: { text: '首' } },
+    { jobId: generationId, seq: 2, kind: 'job.terminal', payload: { status: 'completed' } },
+  ].map(event => `data: ${JSON.stringify(event)}\n\n`).join('')
+  const fetcher = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    requestInit = init
+    return new Response(frames, { headers: {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'X-MyChat-Job-Id': generationId,
+      'X-MyChat-Job-Status': 'queued',
+      'X-MyChat-Stream-Url': `/api/v1/jobs/${generationId}/live?from_seq=0`,
+    } })
+  }) as typeof fetch
+
+  const opened = await enqueueJobStream(
+    '/api/chat',
+    body,
+    new AbortController().signal,
+    fetcher,
+  )
+  const events = []
+  for await (const event of streamJobEvents(
+    opened.accepted,
+    new AbortController().signal,
+    1_000,
+    opened.response,
+  )) events.push(event)
+
+  assert.equal((requestInit?.headers as Record<string, string>).Accept,
+    'text/event-stream, application/json')
+  assert.equal(events[0]?.kind, 'text.delta')
+  assert.equal(events[0]?.payload.text, '首')
+  assert.equal(events[1]?.kind, 'job.terminal')
 })
 
 test('permanent admission errors are not retried', async () => {

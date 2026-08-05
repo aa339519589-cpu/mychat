@@ -1,8 +1,9 @@
 import { NextRequest } from 'next/server'
 import { apiErrorResponseV1 } from '@/lib/api/errors'
 import { enforceQuotaLimit, enforceRequestRateLimit, resolveAuth } from '@/lib/api/guard'
-import { readJson, requestId, RequestError } from '@/lib/api/request'
+import { clientAddress, readJson, requestId, RequestError } from '@/lib/api/request'
 import { enqueueChatJob } from '@/lib/chat/job-command'
+import { acceptedLiveChatResponse } from '@/lib/chat/live-response'
 import { clampTrialInput, releaseTrialCall, reserveTrialCall } from '@/lib/chat/model-access'
 import { ChatModelSelectionError, resolveChatModelSelection } from '@/lib/chat/model-selection'
 import { hasScannedPdfAttachment } from '@/lib/chat/attachments'
@@ -32,12 +33,31 @@ function admissionError(request: Request, error: unknown): Response {
 type AdmissionPolicy = { response?: Response; selection?: ChatModelSelection; usingBalance?: boolean }
 type AcceptedChatJob = Awaited<ReturnType<typeof enqueueChatJob>>
 
-function acceptedChatResponse(input: { body: DurableChatRequestBody; enqueued: AcceptedChatJob; outputKind: ChatModelSelection['outputKind']; requestId: string; startedAt: number; authenticatedAt: number; rateLimitedAt: number; parsedAt: number; policyResolvedAt: number; trialRemaining: number | null }): Response {
+function acceptsLiveChat(request: Request, outputKind: ChatModelSelection['outputKind']): boolean {
+  return outputKind === 'chat'
+    && request.headers.get('accept')?.toLowerCase().includes('text/event-stream') === true
+}
+
+function acceptedChatResponse(input: { request: NextRequest; auth: AuthCtx; body: DurableChatRequestBody; enqueued: AcceptedChatJob; outputKind: ChatModelSelection['outputKind']; requestId: string; startedAt: number; authenticatedAt: number; rateLimitedAt: number; parsedAt: number; policyResolvedAt: number; trialRemaining: number | null }): Response {
   const completedAt = Date.now()
   log.info('chat', 'Chat request admission timing', { requestId: input.requestId, jobId: input.enqueued.job.id, authMs: input.authenticatedAt - input.startedAt, rateLimitMs: input.rateLimitedAt - input.authenticatedAt, parseMs: input.parsedAt - input.rateLimitedAt, quotaAndModelPolicyMs: input.policyResolvedAt - input.parsedAt, enqueueMs: completedAt - input.policyResolvedAt, totalMs: completedAt - input.startedAt })
   const streamUrl = input.outputKind === 'chat'
     ? `/api/v1/jobs/${input.enqueued.job.id}/live?from_seq=0`
     : `/api/v1/jobs/${input.enqueued.job.id}/events?from_seq=0`
+  if (acceptsLiveChat(input.request, input.outputKind) && input.auth.supabase && input.auth.userId) {
+    return acceptedLiveChatResponse({
+      request: input.request,
+      client: input.auth.supabase,
+      principalId: input.auth.userId,
+      address: clientAddress(input.request),
+      accepted: {
+        jobId: input.enqueued.job.id,
+        status: input.enqueued.job.status,
+        created: input.enqueued.created,
+        streamUrl,
+      },
+    })
+  }
   return Response.json({
     schemaVersion: 1,
     jobId: input.enqueued.job.id,
@@ -127,7 +147,7 @@ export async function POST(request: NextRequest) {
   const searchMode = body.searchMode === 'web' ? 'web' : normalizeSearchMode(body.webSearch)
   try {
     const enqueued = await enqueueChatJob({ body, userId: auth.userId, isAnonymous: auth.isAnonymous, usingBalance: policy.usingBalance, searchMode, outputKind: selection.outputKind, accessClass: selection.accessClass, requestId: traceId })
-    return acceptedChatResponse({ body, enqueued, outputKind: selection.outputKind, requestId: traceId, startedAt, authenticatedAt, rateLimitedAt, parsedAt, policyResolvedAt, trialRemaining })
+    return acceptedChatResponse({ request, auth, body, enqueued, outputKind: selection.outputKind, requestId: traceId, startedAt, authenticatedAt, rateLimitedAt, parsedAt, policyResolvedAt, trialRemaining })
   } catch (error) {
     if (trialReserved) await releaseTrialCall(auth.supabase, auth.userId, body.generationId).catch(() => undefined)
     return admissionError(request, error)

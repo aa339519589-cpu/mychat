@@ -37,6 +37,7 @@ const user = { id: '92000000-0000-4000-8000-000000000010' } as User
 
 test('assistant regeneration retains the old reply until the server accepts the transaction', async () => {
   const active = conversation()
+  active.projectId = '92000000-0000-4000-8000-000000000011'
   const conversations = state([active])
   await regenerateLastAssistant({
     user,
@@ -46,11 +47,17 @@ test('assistant regeneration retains the old reply until the server accepts the 
     setOpenArtifactId: openArtifactSetter(),
     setConversations: conversations.set,
     markGeneration: () => undefined,
-    getProjectContext: async () => undefined,
+    getProjectContext: async () => { throw new Error('project context must be server-loaded') },
     registerAbort: () => undefined,
     startStream: async (_history, assistantMessageId, _conversationId, _controller,
-      _attachments, _project, _generationId, authority, onAccepted) => {
+      _attachments, project, _generationId, authority, onAccepted) => {
       assert.equal(conversations.get()[0]?.messages.at(-1)?.content, 'second reply')
+      assert.deepEqual(project, {
+        id: active.projectId,
+        instructions: '',
+        files: [],
+        projectMemories: [],
+      })
       assert.deepEqual(authority, {
         schemaVersion: 2,
         operation: 'replace-assistant',

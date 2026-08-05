@@ -18,6 +18,7 @@ import { generateConversationTitle } from "./generation-job-actions"
 import { cancelActiveGeneration } from "./generation-cancellation"
 import { toHistoryMessage } from "./message-history"
 import { regenerateFromUser, regenerateLastAssistant } from "./message-regeneration"
+import { projectContextMarker } from './project-context-marker'
 
 type UseChatGenerationOptions = {
   user: User | null
@@ -115,7 +116,7 @@ export function useChatGeneration(options: UseChatGenerationOptions) {
       const turn: ChatTurnAuthority = { schemaVersion: 1, createConversation: wasDraft, title: active.title || '未命名的篇章', projectId: active.projectId ?? null }
       const onAccepted = wasDraft ? () => { loadedRef.current.add(conversationId); draftIdRef.current = null; setConversations(previous => previous.map(conversation => conversation.id === draftId ? { ...conversation, draft: false } : conversation)); onConversationCreated?.(conversationId) } : undefined
       const history = [...baseHistory, userMessage].map(toHistoryMessage)
-      const projectContext = await getProjectContext(active.projectId)
+      const projectContext = projectContextMarker(active.projectId)
       const controller = new AbortController()
       abortByConversationRef.current.set(conversationId, controller)
       const result = await startStream(history, assistantMessageId, conversationId, controller, files?.length ? files : undefined, projectContext, generationId, turn, onAccepted)

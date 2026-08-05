@@ -8,6 +8,7 @@ import type { ProjectContext } from "@/lib/project-data"
 import { cacheConversationMessages } from "@/lib/data"
 import type { HistoryMessage, RunChatStreamResult } from "./chat-stream-service"
 import { toHistoryMessage } from "./message-history"
+import { projectContextMarker } from './project-context-marker'
 
 type StartStream = (
   history: HistoryMessage[],
@@ -53,7 +54,6 @@ export async function regenerateLastAssistant(context: RegenerationContext) {
     setOpenArtifactId,
     setConversations,
     markGeneration,
-    getProjectContext,
     registerAbort,
     startStream,
   } = context
@@ -84,7 +84,7 @@ export async function regenerateLastAssistant(context: RegenerationContext) {
   markGeneration(activeId, { status: "running", generationId, assistantMessageId, begin: true })
 
   try {
-    const projectContext = await getProjectContext(active.projectId)
+    const projectContext = projectContextMarker(active.projectId)
     const controller = new AbortController()
     registerAbort(activeId, controller)
     const result = await startStream(
@@ -128,7 +128,6 @@ export async function regenerateFromUser(context: RegenerationContext & {
     setOpenArtifactId,
     setConversations,
     markGeneration,
-    getProjectContext,
     registerAbort,
     startStream,
     userMessageId,
@@ -160,7 +159,7 @@ export async function regenerateFromUser(context: RegenerationContext & {
   markGeneration(conversationId, { status: "running", generationId, assistantMessageId, begin: true })
 
   try {
-    const projectContext = await getProjectContext(active.projectId)
+    const projectContext = projectContextMarker(active.projectId)
     const controller = new AbortController()
     registerAbort(conversationId, controller)
     const result = await startStream(

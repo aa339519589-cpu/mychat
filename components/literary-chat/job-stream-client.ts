@@ -1,6 +1,12 @@
 import { isRecord } from '@/lib/unknown-value'
+import {
+  DEFAULT_ENQUEUE_TIMEOUT_POLICY,
+  enqueueTimeoutPolicy,
+} from './job-enqueue-policy'
 import { parseSseEvent, splitSseEvents } from './stream-events'
 import { fetchJsonWithTimeout, RequestTimeoutError } from './timed-json-fetch'
+
+export { enqueueTimeoutPolicy, type EnqueueTimeoutPolicy } from './job-enqueue-policy'
 
 export type AcceptedJob = {
   jobId: string
@@ -24,11 +30,6 @@ type EnqueueJobDependencies = {
   totalTimeoutMs: number
 }
 
-export type EnqueueTimeoutPolicy = Pick<
-  EnqueueJobDependencies,
-  'requestTimeoutMs' | 'reconcileTimeoutMs' | 'totalTimeoutMs'
->
-
 type EnqueueAttempt = {
   accepted: AcceptedJob | null
   error: Error | null
@@ -47,28 +48,6 @@ export class EnqueueJobError extends Error {
 
 const ENQUEUE_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 4_000, 8_000, 8_000, 8_000] as const
 const RETRYABLE_ENQUEUE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504])
-const ENQUEUE_REQUEST_TIMEOUT_MS = 15_000
-const RECONCILE_REQUEST_TIMEOUT_MS = 3_000
-const ENQUEUE_TOTAL_TIMEOUT_MS = 30_000
-const REGENERATION_REQUEST_TIMEOUT_MS = 45_000
-const REGENERATION_RECONCILE_TIMEOUT_MS = 10_000
-const REGENERATION_TOTAL_TIMEOUT_MS = 90_000
-
-function isRegenerationRequest(body: unknown): boolean {
-  return isRecord(body) && isRecord(body.turn) && body.turn.schemaVersion === 2
-}
-
-export function enqueueTimeoutPolicy(body: unknown): EnqueueTimeoutPolicy {
-  return isRegenerationRequest(body) ? {
-    requestTimeoutMs: REGENERATION_REQUEST_TIMEOUT_MS,
-    reconcileTimeoutMs: REGENERATION_RECONCILE_TIMEOUT_MS,
-    totalTimeoutMs: REGENERATION_TOTAL_TIMEOUT_MS,
-  } : {
-    requestTimeoutMs: ENQUEUE_REQUEST_TIMEOUT_MS,
-    reconcileTimeoutMs: RECONCILE_REQUEST_TIMEOUT_MS,
-    totalTimeoutMs: ENQUEUE_TOTAL_TIMEOUT_MS,
-  }
-}
 
 function responseError(value: unknown, status: number): string {
   if (!isRecord(value)) return `请求失败（${status}）`
@@ -128,9 +107,7 @@ const DEFAULT_ENQUEUE_DEPENDENCIES: EnqueueJobDependencies = {
   fetcher: fetch,
   sleep: abortableWait,
   now: Date.now,
-  requestTimeoutMs: ENQUEUE_REQUEST_TIMEOUT_MS,
-  reconcileTimeoutMs: RECONCILE_REQUEST_TIMEOUT_MS,
-  totalTimeoutMs: ENQUEUE_TOTAL_TIMEOUT_MS,
+  ...DEFAULT_ENQUEUE_TIMEOUT_POLICY,
 }
 
 async function enqueueAttempt(
@@ -276,67 +253,84 @@ export async function enqueueJob(
 export function isRetryableEnqueueError(error: unknown): error is EnqueueJobError {
   return error instanceof EnqueueJobError && error.retryable
 }
+
 function streamUrl(path: string, sequence: number): string {
   const url = new URL(path, window.location.origin)
   url.searchParams.set('from_seq', String(sequence))
   return `${url.pathname}${url.search}`
 }
 
-/** Durable SSE client: reconnects from the last database sequence, never from
- * a process-local cursor. Duplicate delivery is ignored and gaps are rejected. */
+async function openJobStream(
+  accepted: AcceptedJob,
+  sequence: number,
+  signal: AbortSignal,
+  directResponse: Response | null,
+): Promise<Response> {
+  if (directResponse) return directResponse
+  return fetch(streamUrl(accepted.streamUrl, sequence), {
+    signal,
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: sequence > 0 ? { 'Last-Event-ID': String(sequence) } : undefined,
+  })
+}
+
+/** Durable SSE client. The chat path may supply its admission POST as the
+ * initial response; every interruption reconnects through the existing GET. */
 export async function* streamJobEvents(
   accepted: AcceptedJob,
   signal: AbortSignal,
   deadlineMs = 20 * 60_000,
+  initialResponse?: Response | null,
 ): AsyncGenerator<JobStreamEnvelope> {
   let sequence = 0
   let retryMs = 250
   const deadline = Date.now() + deadlineMs
+  let directResponse = initialResponse ?? null
   while (!signal.aborted && Date.now() < deadline) {
     try {
-      const response = await fetch(streamUrl(accepted.streamUrl, sequence), {
-        signal,
-        credentials: 'same-origin',
-        cache: 'no-store',
-        headers: sequence > 0 ? { 'Last-Event-ID': String(sequence) } : undefined,
-      })
+      const response = await openJobStream(accepted, sequence, signal, directResponse)
+      directResponse = null
       if (!response.ok) {
         const payload: unknown = await response.json().catch(() => null)
         throw new Error(responseError(payload, response.status))
       }
       if (!response.body) throw new Error('作业事件流无响应体')
       const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
+      const cancelReader = () => { void reader.cancel(signal.reason).catch(() => undefined) }
+      signal.addEventListener('abort', cancelReader, { once: true })
       let terminal = false
-      while (!signal.aborted) {
-        const chunk = await reader.read()
-        if (chunk.done) break
-        const split = splitSseEvents(buffer + decoder.decode(chunk.value, { stream: true }))
-        buffer = split.rest
-        for (const text of split.events) {
-          const event = parseSseEvent(text)
-          if (!event || event.kind === 'done' || !isRecord(event.data)) continue
-          const data = event.data
-          if (typeof data.code === 'string' && data.retryable === true) {
-            throw new Error(data.code)
+      try {
+        const decoder = new TextDecoder()
+        let buffer = ''
+        while (!signal.aborted) {
+          const chunk = await reader.read()
+          if (chunk.done) break
+          const split = splitSseEvents(buffer + decoder.decode(chunk.value, { stream: true }))
+          buffer = split.rest
+          for (const text of split.events) {
+            const event = parseSseEvent(text)
+            if (!event || event.kind === 'done' || !isRecord(event.data)) continue
+            const data = event.data
+            if (typeof data.code === 'string' && data.retryable === true) throw new Error(data.code)
+            if (typeof data.jobId !== 'string' || !Number.isSafeInteger(data.seq)
+              || typeof data.kind !== 'string' || !isRecord(data.payload)) continue
+            const next = Number(data.seq)
+            if (next <= sequence) continue
+            if (next !== sequence + 1) throw new Error('作业事件序列出现缺口')
+            sequence = next
+            yield { jobId: data.jobId, seq: next, kind: data.kind, payload: data.payload }
+            if (data.kind === 'job.terminal') {
+              terminal = true
+              break
+            }
           }
-          if (typeof data.jobId !== 'string' || !Number.isSafeInteger(data.seq)
-            || typeof data.kind !== 'string' || !isRecord(data.payload)) continue
-          const next = Number(data.seq)
-          if (next <= sequence) continue
-          if (next !== sequence + 1) throw new Error('作业事件序列出现缺口')
-          sequence = next
-          const envelope = { jobId: data.jobId, seq: next, kind: data.kind, payload: data.payload }
-          yield envelope
-          if (data.kind === 'job.terminal') {
-            terminal = true
-            break
-          }
+          if (terminal) break
         }
-        if (terminal) break
+      } finally {
+        signal.removeEventListener('abort', cancelReader)
+        try { await reader.cancel() } catch {}
       }
-      try { await reader.cancel() } catch {}
       if (terminal) return
       retryMs = 250
     } catch (error) {
