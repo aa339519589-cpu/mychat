@@ -1,0 +1,22 @@
+/* Reduce typography by exactly 1px without changing rem-based layout dimensions. */
+@theme inline {
+  --text-xs: 11px;
+  --text-sm: 13px;
+  --text-base: 15px;
+  --text-lg: 17px;
+  --text-xl: 19px;
+  --text-2xl: 23px;
+  --text-3xl: 29px;
+  --text-4xl: 35px;
+  --text-5xl: 47px;
+  --text-6xl: 59px;
+  --text-7xl: 71px;
+  --text-8xl: 95px;
+  --text-9xl: 127px;
+}
+
+@layer base {
+  body {
+    font-size: 15px;
+  }
+}
