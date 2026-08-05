@@ -52,6 +52,34 @@ function SearchBlock({ searches, replying }: { searches: Searches; replying: boo
   )
 }
 
+function ThinkingDisclosure({ thinking, live }: { thinking: string; live: boolean }) {
+  const [open, setOpen] = useState(false)
+  const text = thinking.trim()
+  if (!text) return null
+
+  return (
+    <div className="mb-2.5 min-w-0">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen(value => !value)}
+        className="fluid-press flex min-h-10 max-w-full items-center gap-1.5 rounded-lg px-1.5 text-left text-xs font-[500] text-muted-foreground/80 hover:bg-muted/25 hover:text-foreground md:text-[12px]"
+      >
+        <ChevronRight className={`size-3.5 shrink-0 transition-transform duration-150 ${open ? "rotate-90" : ""}`} />
+        <Brain className="size-3.5 shrink-0" />
+        <span className="truncate">
+          {open ? "收起思考过程" : live ? "正在思考，点击展开" : "查看思考过程"}
+        </span>
+      </button>
+      {open && (
+        <div className="ml-2 mt-1 max-h-[42dvh] overflow-y-auto whitespace-pre-wrap border-l border-border/50 py-1 pl-3 pr-1 text-[13px] font-[450] leading-[1.65] tracking-[0.005em] text-muted-foreground [overflow-wrap:anywhere]">
+          {text}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function TokenUsageDisplay({ usage }: { usage: TokenUsage }) {
   const input = usage.inputTokens.toLocaleString("en-US")
   const output = usage.outputTokens.toLocaleString("en-US")
@@ -182,6 +210,7 @@ export function AssistantMessage({
 }) {
   const { display, blocks } = parseArtifact(stripToolMarkup(message.content ?? ""))
   const hasArtifactOutput = blocks.length > 0
+  const liveThinking = isLast && isLoading
 
   return (
     <div className="group min-w-0 pl-[6px] md:pl-0">
@@ -199,7 +228,10 @@ export function AssistantMessage({
             ))}
           </div>
         )}
-        {isLast && isLoading && !message.content && !message.media?.length && !message.isError && (
+        {message.thinking && (
+          <ThinkingDisclosure thinking={message.thinking} live={liveThinking} />
+        )}
+        {isLast && isLoading && !message.content && !message.thinking && !message.media?.length && !message.isError && (
           <div role="status" aria-live="polite">
             <span className="thinking-flow" data-text="Thinking">Thinking</span>
           </div>
