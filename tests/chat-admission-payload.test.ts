@@ -56,3 +56,26 @@ test('chat admission body keeps command metadata while omitting authoritative hi
     turn: { schemaVersion: 2, operation: 'append' },
   })
 })
+
+test('chat admission body handles a minimal turn without optional client metadata', () => {
+  const message = { role: 'assistant', content: 'fallback' }
+  const options = {
+    tier: 'free',
+    endpoint: null,
+    modelId: null,
+    reasoningEffort: null,
+    messages: [message],
+    searchMode: 'off',
+    historyRetrieval: false,
+    renderEnabled: false,
+    conversationId: 'conversation-2',
+    assistantMessageId: 'assistant-2',
+  } as unknown as RunChatStreamOptions
+
+  const result = chatAdmissionRequestBody(options)
+  assert.deepEqual(result.messages, [message])
+  assert.equal('userMessageId' in result, false)
+  assert.equal('endpointId' in result, false)
+  assert.equal('attachments' in result && result.attachments !== undefined, false)
+  assert.equal('turn' in result, false)
+})
