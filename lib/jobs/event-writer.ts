@@ -135,6 +135,17 @@ export class JobEventWriter {
 
   async append(kind: string, payload: JsonObject, idempotencyKey?: string): Promise<void> {
     this.queue.push({ kind, payload, ...(idempotencyKey ? { idempotencyKey } : {}) })
+    // Control events must reach live SSE subscribers immediately; waiting for
+    // the 125ms durable recovery poll is the dominant silent-window source of
+    // felt TTFT after the browser already has an open stream.
+    if (
+      kind === 'job.started'
+      || kind === 'job.resumed'
+      || kind === 'job.retry_scheduled'
+      || kind.startsWith('tool.')
+    ) {
+      this.publishLive({ kind, payload })
+    }
     const persistence = this.flush()
     if (kind === 'job.started') return
     await persistence
