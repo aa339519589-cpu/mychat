@@ -2,8 +2,8 @@ import { NextRequest } from 'next/server'
 import { resolveAuth } from '@/lib/api/guard'
 import { deleteConversationWithGeneratedMedia } from '@/lib/chat/history-deletion'
 
-export async function DELETE(_request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const auth = await resolveAuth()
+export async function DELETE(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const auth = await resolveAuth(request)
   if (auth.authUnavailable) {
     return Response.json({ error: '认证服务暂时不可用，请稍后再试' }, { status: 503, headers: { 'Retry-After': '5' } })
   }
