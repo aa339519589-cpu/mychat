@@ -30,23 +30,23 @@ export async function applyGenerationTerminal(options: {
   const terminal = toGenerationTerminalSnapshot(options.snapshot)
   if (!terminal) return false
   applyGenerationSnapshot(options.setConversations, options.conversationId, options.snapshot)
-  await cacheGenerationTerminal(options.conversationId, options.snapshot.assistantMessageId, {
-    ...terminal,
-    generationId: options.snapshot.id,
-  }).catch(() => undefined)
-  if (options.showTokenUsage && terminal.status === 'completed' && terminal.tokenUsage) {
-    await persistOwnerTokenUsage(
-      options.conversationId,
-      options.snapshot.assistantMessageId,
-      options.snapshot.id,
-    ).catch(() => null)
-  }
   options.markGeneration(options.conversationId, {
     status: toClientGenerationStatus(options.snapshot.status),
     generationId: options.snapshot.id,
     assistantMessageId: options.snapshot.assistantMessageId,
     authoritativeTerminal: true,
   })
+  void cacheGenerationTerminal(options.conversationId, options.snapshot.assistantMessageId, {
+    ...terminal,
+    generationId: options.snapshot.id,
+  }).catch(() => undefined)
+  if (options.showTokenUsage && terminal.status === 'completed' && terminal.tokenUsage) {
+    void persistOwnerTokenUsage(
+      options.conversationId,
+      options.snapshot.assistantMessageId,
+      options.snapshot.id,
+    ).catch(() => null)
+  }
   return true
 }
 
