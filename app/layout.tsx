@@ -2,6 +2,7 @@ import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import { headers } from 'next/headers'
 import './globals.css'
+import './font-scale.css'
 import './theme-palette.css'
 import './dark-background.css'
 import './thinking-flow.css'
@@ -69,7 +70,7 @@ export default async function RootLayout({
   // Keep HTML request-bound so Next applies Proxy's nonce to framework scripts.
   await headers()
   return (
-    <html lang="zh-CN" className="bg-background" style={{ fontSize: '15px' }}>
+    <html lang="zh-CN" className="bg-background">
       <head>
         {PROVIDER_ICON_PATHS.map(src => (
           <link key={src} rel="preload" href={src} as="image" type="image/svg+xml" />
