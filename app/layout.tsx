@@ -69,7 +69,7 @@ export default async function RootLayout({
   // Keep HTML request-bound so Next applies Proxy's nonce to framework scripts.
   await headers()
   return (
-    <html lang="zh-CN" className="bg-background">
+    <html lang="zh-CN" className="bg-background" style={{ fontSize: '15px' }}>
       <head>
         {PROVIDER_ICON_PATHS.map(src => (
           <link key={src} rel="preload" href={src} as="image" type="image/svg+xml" />
