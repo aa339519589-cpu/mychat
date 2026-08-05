@@ -75,7 +75,7 @@ export function chatAdmissionMessages(messages: HistoryMessage[]): HistoryMessag
   return messages.slice(-1)
 }
 
-function requestBody(options: RunChatStreamOptions): Record<string, unknown> {
+export function chatAdmissionRequestBody(options: RunChatStreamOptions): Record<string, unknown> {
   const userMessageId = latestUserMessageId(options.messages)
   return {
     tier: options.tier,
@@ -105,7 +105,7 @@ function notifyModelQuotaChanged(): void {
 }
 
 async function enqueueChatStream(options: RunChatStreamOptions, state: ChatStreamState, renderer: ChatStreamRenderer): Promise<AcceptedJobStream> {
-  const body = requestBody(options)
+  const body = chatAdmissionRequestBody(options)
   const generationId = options.generationId
   if (generationId) await savePendingChatSubmission({ schemaVersion: 1, conversationId: options.conversationId, generationId, assistantMessageId: options.assistantMessageId, path: '/api/chat', serializedBody: JSON.stringify(body), createdAt: Date.now() })
   let opened: AcceptedJobStream

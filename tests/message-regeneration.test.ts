@@ -159,3 +159,56 @@ test('edited regeneration replaces the local branch only after database acceptan
     },
   })
 })
+
+test('rejected user regeneration preserves the original branch with a warning', async () => {
+  const active = conversation()
+  const conversations = state([active])
+
+  await regenerateFromUser({
+    user,
+    active,
+    activeId: active.id,
+    isActiveGenerating: false,
+    setOpenArtifactId: openArtifactSetter(),
+    setConversations: conversations.set,
+    markGeneration: () => undefined,
+    getProjectContext: async () => undefined,
+    registerAbort: () => undefined,
+    userMessageId: '92000000-0000-4000-8000-000000000002',
+    editedContent: 'edited first',
+    startStream: async () => ({ content: '', status: 'error', accepted: false }),
+  })
+
+  assert.equal(conversations.get()[0]?.messages.length, 4)
+  assert.equal(conversations.get()[0]?.messages[0]?.content, 'first')
+  assert.match(conversations.get()[0]?.messages.at(-1)?.outputWarning ?? '', /原有内容已保留/)
+})
+
+test('accepted user regeneration marks its replacement assistant when streaming fails', async () => {
+  const active = conversation()
+  const conversations = state([active])
+
+  await regenerateFromUser({
+    user,
+    active,
+    activeId: active.id,
+    isActiveGenerating: false,
+    setOpenArtifactId: openArtifactSetter(),
+    setConversations: conversations.set,
+    markGeneration: () => undefined,
+    getProjectContext: async () => undefined,
+    registerAbort: () => undefined,
+    userMessageId: '92000000-0000-4000-8000-000000000004',
+    startStream: async (_history, _assistantMessageId, _conversationId, _controller,
+      _attachments, _project, _generationId, _authority, onAccepted) => {
+      onAccepted?.()
+      throw new Error('stream failed')
+    },
+  })
+
+  assert.equal(conversations.get()[0]?.messages.length, 4)
+  const replacement = conversations.get()[0]?.messages.at(-1)
+  assert.equal(replacement?.role, 'assistant')
+  assert.equal(replacement?.isError, true)
+  assert.match(replacement?.content ?? '', /重新回复失败/)
+})
