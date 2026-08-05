@@ -1,4 +1,4 @@
-/* Reduce typography by exactly 1px without changing rem-based layout dimensions. */
+/* Reduce standard UI typography by exactly 1px without scaling rem-based layout. */
 @theme inline {
   --text-xs: 11px;
   --text-sm: 13px;
@@ -18,5 +18,40 @@
 @layer base {
   body {
     font-size: 15px;
+  }
+}
+
+/* Chat copy uses explicit arbitrary Tailwind sizes, so lower those separately. */
+.message-entry .text-\[18px\] {
+  font-size: 17px;
+}
+
+.message-entry .text-\[16px\] {
+  font-size: 15px;
+}
+
+.message-entry h1 {
+  font-size: clamp(25px, 1.6em, 29px);
+}
+
+.message-entry h2 {
+  font-size: clamp(22px, 1.38em, 25px);
+}
+
+.message-entry h3 {
+  font-size: clamp(19px, 1.18em, 22px);
+}
+
+.message-entry h4 {
+  font-size: clamp(17px, 1.06em, 19px);
+}
+
+@media (min-width: 768px) {
+  .message-entry .md\:text-\[19px\] {
+    font-size: 18px;
+  }
+
+  .message-entry .md\:text-\[17px\] {
+    font-size: 16px;
   }
 }
