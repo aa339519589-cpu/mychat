@@ -5,6 +5,26 @@ import { validate } from '@/lib/validation'
 import { readJson, requestErrorResponse } from '@/lib/api/request'
 import { checkRateLimit } from '@/lib/rate-limit'
 
+async function redemptionAuth(req: NextRequest) {
+  const auth = await resolveAuth(req)
+  if (auth.authUnavailable) {
+    return {
+      ok: false as const,
+      response: Response.json({ error: '认证服务暂时不可用，请稍后再试' }, { status: 503 }),
+    }
+  }
+  if (!auth.supabase || !auth.userId) {
+    return {
+      ok: false as const,
+      response: new Response(JSON.stringify({ error: '未登录' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    }
+  }
+  return { ok: true as const, supabase: auth.supabase, userId: auth.userId }
+}
+
 export async function POST(req: NextRequest) {
   let body: { code?: unknown } = {}
   try {
@@ -18,13 +38,10 @@ export async function POST(req: NextRequest) {
     const code = validate.string(body.code, 'code', { minLength: 8, maxLength: 128 })
     log.info('redeemCode', 'Attempting to redeem code', { codeLength: code.length })
 
-    const auth = await resolveAuth(req)
-    if (auth.authUnavailable) {
-      return Response.json({ error: '认证服务暂时不可用，请稍后再试' }, { status: 503 })
-    }
-    if (!auth.supabase || !auth.userId) {
-      log.warn('redeemCode', 'Not logged in')
-      return new Response(JSON.stringify({ error: '未登录' }), { status: 401, headers: { 'Content-Type': 'application/json' } })
+    const auth = await redemptionAuth(req)
+    if (!auth.ok) {
+      log.warn('redeemCode', auth.response.status === 503 ? 'Auth unavailable' : 'Not logged in')
+      return auth.response
     }
     const rate = await checkRateLimit(`redeem:${auth.userId}`, { max: 10, windowMs: 60 * 60_000 })
     if (rate.unavailable) {

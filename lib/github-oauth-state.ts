@@ -64,33 +64,56 @@ export function createGitHubMobileOAuthState(
   return `${MOBILE_PREFIX}.${payload}.${mobileSignature(payload, secret)}`
 }
 
+function verifiedMobileStateParts(value: string, secret: string): {
+  payload: string
+  supplied: string
+} | null {
+  const [prefix, payload, supplied, extra] = value.split('.')
+  if (extra !== undefined || prefix !== MOBILE_PREFIX || !secret) return null
+  if (!payload || payload.length > 512 || !/^[A-Za-z0-9_-]+$/.test(payload)) return null
+  if (!SIGNATURE_PATTERN.test(supplied ?? '')) return null
+  return { payload, supplied: supplied! }
+}
+
+function mobileSignatureMatches(payload: string, supplied: string, secret: string): boolean {
+  const expected = Buffer.from(mobileSignature(payload, secret), 'ascii')
+  const actual = Buffer.from(supplied, 'ascii')
+  return expected.length === actual.length && timingSafeEqual(expected, actual)
+}
+
+function decodedMobileState(payload: string): Record<string, unknown> | null {
+  try {
+    const bytes = Buffer.from(payload, 'base64url')
+    if (bytes.toString('base64url') !== payload) return null
+    const decoded: unknown = JSON.parse(bytes.toString('utf8'))
+    if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) return null
+    return decoded as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+function validMobileState(state: Record<string, unknown>, now: number): state is {
+  userId: string
+  nonce: string
+  expiresAt: number
+} {
+  if (Object.keys(state).sort().join(',') !== 'expiresAt,nonce,userId') return false
+  if (typeof state.userId !== 'string' || !UUID_PATTERN.test(state.userId)) return false
+  if (typeof state.nonce !== 'string' || !NONCE_PATTERN.test(state.nonce)) return false
+  if (typeof state.expiresAt !== 'number' || !Number.isSafeInteger(state.expiresAt)) return false
+  return state.expiresAt > now && state.expiresAt <= now + MOBILE_STATE_TTL_MS
+}
+
 export function verifyGitHubMobileOAuthState(
   value: string,
   secret: string,
   now = Date.now(),
 ): { userId: string } | null {
-  const [prefix, payload, supplied, extra] = value.split('.')
-  if (extra !== undefined || prefix !== MOBILE_PREFIX || !secret
-      || !payload || payload.length > 512 || !/^[A-Za-z0-9_-]+$/.test(payload)
-      || !SIGNATURE_PATTERN.test(supplied ?? '') || !Number.isSafeInteger(now)) return null
-  const expected = Buffer.from(mobileSignature(payload, secret), 'ascii')
-  const actual = Buffer.from(supplied, 'ascii')
-  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return null
-
-  let decoded: unknown
-  try {
-    const bytes = Buffer.from(payload, 'base64url')
-    if (bytes.toString('base64url') !== payload) return null
-    decoded = JSON.parse(bytes.toString('utf8'))
-  } catch {
-    return null
-  }
-  if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) return null
-  const state = decoded as Record<string, unknown>
-  if (Object.keys(state).sort().join(',') !== 'expiresAt,nonce,userId'
-      || typeof state.userId !== 'string' || !UUID_PATTERN.test(state.userId)
-      || typeof state.nonce !== 'string' || !NONCE_PATTERN.test(state.nonce)
-      || typeof state.expiresAt !== 'number' || !Number.isSafeInteger(state.expiresAt)
-      || state.expiresAt <= now || state.expiresAt > now + MOBILE_STATE_TTL_MS) return null
+  if (!Number.isSafeInteger(now)) return null
+  const parts = verifiedMobileStateParts(value, secret)
+  if (!parts || !mobileSignatureMatches(parts.payload, parts.supplied, secret)) return null
+  const state = decodedMobileState(parts.payload)
+  if (!state || !validMobileState(state, now)) return null
   return { userId: state.userId.toLowerCase() }
 }
