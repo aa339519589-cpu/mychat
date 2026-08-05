@@ -19,7 +19,7 @@ type ChatPaneProps = {
 }
 
 export function ChatPane({ mobile, sidebarCollapsed, active, scrollRef, onOpenSidebar, onToggleSidebar, messageProps, inputProps }: ChatPaneProps) {
-  useConversationBottomAnchor(active?.id, scrollRef)
+  useConversationBottomAnchor(active?.id, active?.messages.length ?? 0, scrollRef)
   const { showScrollButton, scrollToBottom } = useScrollToBottomControl(active?.id, scrollRef)
   const hasMessages = Boolean(active && active.messages.length > 0)
 
@@ -28,7 +28,7 @@ export function ChatPane({ mobile, sidebarCollapsed, active, scrollRef, onOpenSi
       <div className={cn("pointer-events-none absolute left-0 top-0 z-20", mobile ? "pl-3 pt-[max(0.65rem,env(safe-area-inset-top))]" : "pl-4 pt-4")}>
         <button onClick={mobile ? onOpenSidebar : onToggleSidebar} className="fluid-press fluid-icon-press pointer-events-auto flex size-11 items-center justify-center rounded-full border border-border/70 bg-background text-muted-foreground shadow-[0_2px_8px_rgba(8,8,8,0.07)] hover:bg-secondary hover:text-foreground dark:border-white/10 dark:bg-[#1D1D1D]" aria-label={mobile ? "打开对话列表" : sidebarCollapsed ? "展开侧栏" : "收起侧栏"}><PanelLeft className="size-5" /></button>
       </div>
-      <div ref={scrollRef} className={cn("fluid-scroll min-h-0 min-w-0 flex-1 overflow-x-clip overflow-y-auto bg-background font-sans", mobile ? "pt-[max(0.5rem,env(safe-area-inset-top))]" : "pt-2")}>
+      <div ref={scrollRef} style={{ overflowAnchor: "none" }} className={cn("fluid-scroll min-h-0 min-w-0 flex-1 overflow-x-clip overflow-y-auto bg-background font-sans", mobile ? "pt-[max(0.5rem,env(safe-area-inset-top))]" : "pt-2")}>
         {hasMessages ? <MessageList conversation={active!} {...messageProps} /> : <div className="mx-auto flex h-full max-w-[40rem] flex-col items-center justify-center px-8 text-center"><p className="text-[14px] text-muted-foreground/60">说点什么开始对谈</p></div>}
       </div>
       <div className="relative z-20 shrink-0">
@@ -46,6 +46,10 @@ export function ChatPane({ mobile, sidebarCollapsed, active, scrollRef, onOpenSi
       </div>
     </main>
   )
+}
+
+function jumpToAbsoluteBottom(element: HTMLDivElement) {
+  element.scrollTop = element.scrollHeight
 }
 
 function useScrollToBottomControl(conversationId: string | undefined, scrollRef: RefObject<HTMLDivElement | null>) {
@@ -73,9 +77,13 @@ function useScrollToBottomControl(conversationId: string | undefined, scrollRef:
       window.cancelAnimationFrame(frame)
       frame = window.requestAnimationFrame(updateScrollState)
     }
+    const handleLoad = () => scheduleUpdate()
     element.addEventListener("scroll", scheduleUpdate, { passive: true })
+    element.addEventListener("load", handleLoad, true)
     const resizeObserver = new ResizeObserver(scheduleUpdate)
     resizeObserver.observe(element)
+    const content = element.firstElementChild
+    if (content) resizeObserver.observe(content)
     const mutationObserver = new MutationObserver(scheduleUpdate)
     mutationObserver.observe(element, { childList: true, subtree: true, characterData: true })
     scheduleUpdate()
@@ -83,6 +91,7 @@ function useScrollToBottomControl(conversationId: string | undefined, scrollRef:
     return () => {
       window.cancelAnimationFrame(frame)
       element.removeEventListener("scroll", scheduleUpdate)
+      element.removeEventListener("load", handleLoad, true)
       resizeObserver.disconnect()
       mutationObserver.disconnect()
     }
@@ -91,30 +100,70 @@ function useScrollToBottomControl(conversationId: string | undefined, scrollRef:
   const scrollToBottom = useCallback(() => {
     const element = scrollRef.current
     if (!element) return
-    element.scrollTo({ top: element.scrollHeight, behavior: "smooth" })
+    setShowScrollButton(false)
+    jumpToAbsoluteBottom(element)
+    window.requestAnimationFrame(() => {
+      jumpToAbsoluteBottom(element)
+      window.requestAnimationFrame(() => jumpToAbsoluteBottom(element))
+    })
   }, [scrollRef])
 
   return { showScrollButton, scrollToBottom }
 }
 
-function useConversationBottomAnchor(conversationId: string | undefined, scrollRef: RefObject<HTMLDivElement | null>) {
+function useConversationBottomAnchor(conversationId: string | undefined, messageCount: number, scrollRef: RefObject<HTMLDivElement | null>) {
   useLayoutEffect(() => {
     const element = scrollRef.current
     if (!element || !conversationId) return
+
     let stopped = false
-    let secondFrame = 0
-    const pinToBottom = () => { if (!stopped) element.scrollTop = element.scrollHeight }
+    let frame = 0
+    const pinToBottom = () => {
+      if (!stopped) jumpToAbsoluteBottom(element)
+    }
+    const schedulePin = () => {
+      if (stopped) return
+      window.cancelAnimationFrame(frame)
+      frame = window.requestAnimationFrame(() => {
+        pinToBottom()
+        frame = window.requestAnimationFrame(pinToBottom)
+      })
+    }
+    const stopPinning = () => {
+      stopped = true
+      window.cancelAnimationFrame(frame)
+    }
+    const handleLoad = () => schedulePin()
+
     pinToBottom()
-    const firstFrame = window.requestAnimationFrame(() => { pinToBottom(); secondFrame = window.requestAnimationFrame(pinToBottom) })
-    const mutations = new MutationObserver(pinToBottom)
-    mutations.observe(element, { childList: true, subtree: true, characterData: true })
-    const timeout = window.setTimeout(() => mutations.disconnect(), 1_500)
+    schedulePin()
+
+    element.addEventListener("pointerdown", stopPinning, { passive: true })
+    element.addEventListener("touchstart", stopPinning, { passive: true })
+    element.addEventListener("wheel", stopPinning, { passive: true })
+    element.addEventListener("load", handleLoad, true)
+
+    const resizeObserver = new ResizeObserver(schedulePin)
+    resizeObserver.observe(element)
+    const content = element.firstElementChild
+    if (content) resizeObserver.observe(content)
+
+    const mutationObserver = new MutationObserver(schedulePin)
+    mutationObserver.observe(element, { childList: true, subtree: true, characterData: true })
+
+    const retryTimers = [50, 150, 400, 900, 1_600, 3_000].map(delay => window.setTimeout(schedulePin, delay))
+    void document.fonts?.ready.then(schedulePin)
+
     return () => {
       stopped = true
-      window.cancelAnimationFrame(firstFrame)
-      if (secondFrame) window.cancelAnimationFrame(secondFrame)
-      window.clearTimeout(timeout)
-      mutations.disconnect()
+      window.cancelAnimationFrame(frame)
+      retryTimers.forEach(timer => window.clearTimeout(timer))
+      element.removeEventListener("pointerdown", stopPinning)
+      element.removeEventListener("touchstart", stopPinning)
+      element.removeEventListener("wheel", stopPinning)
+      element.removeEventListener("load", handleLoad, true)
+      resizeObserver.disconnect()
+      mutationObserver.disconnect()
     }
-  }, [conversationId, scrollRef])
+  }, [conversationId, messageCount, scrollRef])
 }
