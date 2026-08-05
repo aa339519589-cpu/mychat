@@ -53,9 +53,29 @@ export async function finalizeChatStream(options: {
   const hasOutput = !!fullReply || fullMedia.length > 0
   const finalization = planChatStreamFinalization({ hasOutput, aborted, terminalError })
   const authoritativeTerminalMissing = terminalProtocolExpected && !authoritativeTerminal
-  const cacheAuthoritativeTerminal = async (terminal: GenerationTerminalSnapshot) => {
+  const status: ClientGenerationState["status"] = authoritativeTerminal
+    ? authoritativeTerminal.status === "completed"
+      ? "completed"
+      : authoritativeTerminal.status === "cancelled"
+        ? "cancelled"
+        : "error"
+    : authoritativeTerminalMissing
+      ? "error"
+      : aborted
+        ? "cancelled"
+        : terminalError
+          ? "error"
+          : "completed"
+  clearAbort(conversationId, controller)
+  markGeneration(conversationId, {
+    status,
+    generationId,
+    assistantMessageId,
+    authoritativeTerminal: Boolean(authoritativeTerminal),
+  })
+  const cacheAuthoritativeTerminal = (terminal: GenerationTerminalSnapshot) => {
     if (!generationId) return
-    await cacheGenerationTerminal(conversationId, assistantMessageId, {
+    void cacheGenerationTerminal(conversationId, assistantMessageId, {
       ...terminal,
       generationId,
     }).catch(() => undefined)
@@ -89,7 +109,7 @@ export async function finalizeChatStream(options: {
         }) : undefined,
       }),
     }))
-    await cacheAuthoritativeTerminal(terminal)
+    cacheAuthoritativeTerminal(terminal)
   } else if (authoritativeTerminalMissing) {
     setConversations(previous => previous.map(conversation => conversation.id !== conversationId ? conversation : {
       ...conversation,
@@ -115,7 +135,7 @@ export async function finalizeChatStream(options: {
       ? authoritativeTerminal.media
       : fullMedia
     if (authoritativeTerminal?.status === "completed") {
-      await cacheAuthoritativeTerminal(authoritativeTerminal)
+      cacheAuthoritativeTerminal(authoritativeTerminal)
       setConversations(previous => previous.map(conversation => conversation.id === conversationId
         ? {
           ...conversation,
@@ -136,7 +156,7 @@ export async function finalizeChatStream(options: {
         }
         : conversation))
       if (showTokenUsage && generationId && authoritativeTerminal.tokenUsage) {
-        await persistOwnerTokenUsage(
+        void persistOwnerTokenUsage(
           conversationId,
           assistantMessageId,
           generationId,
@@ -178,25 +198,5 @@ export async function finalizeChatStream(options: {
     }))
   }
 
-  const status: ClientGenerationState["status"] = authoritativeTerminal
-    ? authoritativeTerminal.status === "completed"
-      ? "completed"
-      : authoritativeTerminal.status === "cancelled"
-        ? "cancelled"
-        : "error"
-    : authoritativeTerminalMissing
-      ? "error"
-      : aborted
-        ? "cancelled"
-        : terminalError
-          ? "error"
-          : "completed"
-  clearAbort(conversationId, controller)
-  markGeneration(conversationId, {
-    status,
-    generationId,
-    assistantMessageId,
-    authoritativeTerminal: Boolean(authoritativeTerminal),
-  })
   return status
 }
