@@ -18,6 +18,7 @@ type HealthEnvironment = {
   SUPABASE_URL?: string
   SUPABASE_SERVICE_ROLE_KEY?: string
   E2B_API_KEY?: string
+  RENDER?: string
   RENDER_GIT_COMMIT?: string
   VERCEL_GIT_COMMIT_SHA?: string
   MYCHAT_BUILD_REVISION?: string
@@ -70,9 +71,13 @@ const RUNTIME_HEALTHCHECK_RPC = 'verify_schema_contract_v3'
 const WORKER_READINESS_RPC = 'read_job_worker_readiness_v3'
 
 export function safeRevision(environment: HealthEnvironment = process.env): string {
-  const raw = environment.RENDER_GIT_COMMIT?.trim()
-    || environment.MYCHAT_BUILD_REVISION?.trim()
-    || environment.VERCEL_GIT_COMMIT_SHA?.trim()
+  const builtRevision = environment.MYCHAT_BUILD_REVISION?.trim()
+  const renderRevision = environment.RENDER_GIT_COMMIT?.trim()
+  const vercelRevision = environment.VERCEL_GIT_COMMIT_SHA?.trim()
+  const isRenderRuntime = environment.RENDER?.trim().toLowerCase() === 'true'
+  const raw = isRenderRuntime
+    ? renderRevision || builtRevision || vercelRevision
+    : builtRevision || renderRevision || vercelRevision
   return raw && /^[a-f0-9]{7,64}$/i.test(raw) ? raw.slice(0, 12).toLowerCase() : 'unknown'
 }
 
