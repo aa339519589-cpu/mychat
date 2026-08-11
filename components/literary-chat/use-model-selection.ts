@@ -140,7 +140,15 @@ export function useModelSelection(options: UseModelSelectionOptions) {
     try { localStorage.setItem("chat_reasoning_effort", value) } catch {}
   }
 
-  function handleEndpointSelect(_id: string) {}
+  function handleEndpointSelect(id: string) {
+    const endpoint = modelEndpoints.find(item => item.id === id)
+    if (!endpoint || endpoint.needsReconnect) return
+    setActiveEndpointId(id)
+    setSearchMode("off")
+    setHistoryRetrieval(false)
+    setRenderEnabled(false)
+    setReasoningEffortState(null)
+  }
   function handleEndpointCreated(endpoint: ModelEndpointSummary) {
     setModelEndpoints(previous => [endpoint, ...previous.filter(item => item.id !== endpoint.id)])
   }
@@ -156,12 +164,16 @@ export function useModelSelection(options: UseModelSelectionOptions) {
     () => catalog.find(model => model.id === activeModelId) ?? null,
     [activeModelId, catalog],
   )
+  const activeEndpoint = useMemo(
+    () => modelEndpoints.find(endpoint => endpoint.id === activeEndpointId) ?? null,
+    [activeEndpointId, modelEndpoints],
+  )
 
   return {
     activeTier,
     modelEndpoints,
     activeEndpointId,
-    activeEndpoint: null,
+    activeEndpoint,
     catalog,
     activeModelId,
     activeModel,
