@@ -124,5 +124,5 @@ jobs:
       - name: Require current production to be fully ready
         run: |
           EXPECTED_REVISION="$GITHUB_SHA" EXPECTED_WORKER_DRAINING=false \
-            HEALTH_CHECK_ATTEMPTS=30 HEALTH_CHECK_RETRY_MS=5000 HEALTH_CHECK_TIMEOUT_MS=20000 \
+            HEALTH_CHECK_ATTEMPTS=10 HEALTH_CHECK_RETRY_MS=5000 HEALTH_CHECK_TIMEOUT_MS=20000 \
             node scripts/check-production-health.mjs "$PRODUCTION_READY_URL"
