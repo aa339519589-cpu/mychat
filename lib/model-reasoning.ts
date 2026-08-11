@@ -13,7 +13,7 @@ export type CustomModelReasoningProfile = {
 
 const SONNET_5_EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 const FABLE_5_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
-const HAIKU_45_EFFORTS = ['none', 'low', 'medium', 'high', 'max'] as const
+const HAIKU_45_EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 const REASONING_EFFORTS = new Set<ReasoningEffort>([
   'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max',
 ])
@@ -99,7 +99,8 @@ const HAIKU_BUDGET_TOKENS: Partial<Record<ReasoningEffort, number>> = {
   low: 1_024,
   medium: 4_096,
   high: 8_192,
-  max: 16_384,
+  xhigh: 16_384,
+  max: 32_768,
 }
 
 export function reasoningBudgetTokens(
