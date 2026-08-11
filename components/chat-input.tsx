@@ -14,8 +14,6 @@ import { ComposerBar } from "@/components/chat-input-bar"
 import { ComposerTools } from "@/components/chat-input-tools"
 import { useComposerState } from "@/components/chat-input-state"
 
-const CUSTOM_ENDPOINT_REASONING_OPTIONS = ["none", "low", "medium", "high", "max"]
-
 export type ChatInputProps = {
   onSend: (text: string, images?: string[], files?: AttachedFile[]) => void
   activeTier: string
@@ -63,7 +61,7 @@ export function ChatInput({
   const activeProvider = activeEndpoint ? "API" : activeModel?.provider
   const activeOutputKind = activeEndpoint?.outputKind ?? activeModel?.outputKind
   const reasoningOptions = activeEndpoint
-    ? activeEndpoint.outputKind === "chat" ? CUSTOM_ENDPOINT_REASONING_OPTIONS : []
+    ? activeEndpoint.outputKind === "chat" ? activeEndpoint.reasoningEfforts : []
     : activeModel?.reasoningEfforts ?? []
   const hasActiveTools = searchMode !== "off" || historyRetrieval || renderEnabled
   const canSend = !disabled && !isLoading && !state.sendPending && Boolean(activeEndpoint || activeModel) && (!!state.value.trim() || state.images.length > 0 || state.files.length > 0)
