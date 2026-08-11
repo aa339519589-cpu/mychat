@@ -12,7 +12,7 @@ export function toOpenAI(msgs: RawMsg[]) {
 
 export function chatCompletionsUrl(baseUrl: string) {
   const base = baseUrl.trim().replace(/\/+$/, '')
-  if (/\/chat\/completions$/i.test(base)) return base
+  if (/\/(?:chat\/completions|messages)$/i.test(base)) return base
 
   // A non-root path is an explicit API prefix. This covers providers such as
   // /v1beta/openai and preserves custom gateways normalized from
