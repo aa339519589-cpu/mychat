@@ -79,15 +79,22 @@ test('custom chat endpoint preserves selected reasoning effort', async () => {
   assert.equal(off.thinking, false)
 })
 
-test('custom chat endpoint rejects removed reasoning levels', async () => {
+test('custom Sonnet 5 endpoint accepts XHigh and rejects unsupported levels', async () => {
+  const dependencies = {
+    getOwnedEndpoint: async () => ({ ...endpoint, output_kind: 'chat', model: 'claude-sonnet-5' }),
+    resolveEndpointKey: () => 'secret',
+    validateEndpointNetwork: async () => 'https://safe.example/v1',
+  }
+  const xhigh = await resolveChatModelSelection({
+    tier: '绝句', endpointId: 'endpoint-id', reasoningEffort: 'xhigh', supabase: {} as never, userId: 'user-id',
+  }, dependencies)
+  assert.equal(xhigh.reasoningEffort, 'xhigh')
+  assert.equal(xhigh.thinking, true)
+
   await assert.rejects(
     resolveChatModelSelection({
-      tier: '绝句', endpointId: 'endpoint-id', reasoningEffort: 'xhigh', supabase: {} as never, userId: 'user-id',
-    }, {
-      getOwnedEndpoint: async () => ({ ...endpoint, output_kind: 'chat', model: 'claude-sonnet-5' }),
-      resolveEndpointKey: () => 'secret',
-      validateEndpointNetwork: async () => 'https://safe.example/v1',
-    }),
+      tier: '绝句', endpointId: 'endpoint-id', reasoningEffort: 'minimal', supabase: {} as never, userId: 'user-id',
+    }, dependencies),
     (error: unknown) => error instanceof ChatModelSelectionError
       && error.status === 409
       && error.message === '当前自定义模型不支持所选思考深度',

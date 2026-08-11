@@ -58,7 +58,7 @@ test('Claude Sonnet 5 uses adaptive thinking and output_config effort', () => {
   assert.equal(headers['anthropic-version'], '2023-06-01')
   assert.equal(headers.Authorization, 'Bearer sk-test')
   assert.equal(body.system, 'system')
-  assert.deepEqual(body.thinking, { type: 'adaptive' })
+  assert.deepEqual(body.thinking, { type: 'adaptive', display: 'summarized' })
   assert.deepEqual(body.output_config, { effort: 'xhigh' })
   assert.equal(body.reasoning_effort, undefined)
   assert.equal(body.max_tokens, 40_000)
@@ -86,12 +86,12 @@ test('Claude Fable 5 effort controls native adaptive thinking', () => {
     apiKey: 'sk-test',
     reasoningEffort: 'max',
   })
-  assert.deepEqual(body.thinking, { type: 'adaptive' })
+  assert.deepEqual(body.thinking, { type: 'adaptive', display: 'summarized' })
   assert.deepEqual(body.output_config, { effort: 'max' })
 })
 
-test('Claude Haiku 4.5 maps UI depth to real thinking budget tokens', () => {
-  const { body } = buildProviderRequest('anthropic-messages', {
+test('Claude Haiku 4.5 maps token-budget presets to extended thinking', () => {
+  const high = buildProviderRequest('anthropic-messages', {
     model: 'claude-haiku-4-5',
     messages: [{ role: 'user', content: 'hi' }],
     tools: [],
@@ -99,9 +99,20 @@ test('Claude Haiku 4.5 maps UI depth to real thinking budget tokens', () => {
     apiKey: 'sk-test',
     reasoningEffort: 'high',
     maxOutputTokens: 40_000,
-  })
-  assert.deepEqual(body.thinking, { type: 'enabled', budget_tokens: 8_192 })
-  assert.equal(body.output_config, undefined)
+  }).body
+  assert.deepEqual(high.thinking, { type: 'enabled', budget_tokens: 8_192, display: 'summarized' })
+  assert.equal(high.output_config, undefined)
+
+  const maximum = buildProviderRequest('anthropic-messages', {
+    model: 'claude-haiku-4-5',
+    messages: [{ role: 'user', content: 'hi' }],
+    tools: [],
+    thinking: false,
+    apiKey: 'sk-test',
+    reasoningEffort: 'max',
+    maxOutputTokens: 40_000,
+  }).body
+  assert.deepEqual(maximum.thinking, { type: 'enabled', budget_tokens: 32_768, display: 'summarized' })
 })
 
 test('Claude Haiku 4.5 Off omits extended thinking', () => {

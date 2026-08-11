@@ -189,7 +189,7 @@ function applyReasoning(
       return
     }
     if (!selected) return
-    body.thinking = { type: 'adaptive' }
+    body.thinking = { type: 'adaptive', display: 'summarized' }
     body.output_config = { effort: selected }
     return
   }
@@ -197,7 +197,9 @@ function applyReasoning(
   const selected = effort ?? profile.defaultReasoningEffort
   if (!selected || selected === 'none') return
   const budgetTokens = reasoningBudgetTokens(profile, selected, maxTokens)
-  if (budgetTokens !== null) body.thinking = { type: 'enabled', budget_tokens: budgetTokens }
+  if (budgetTokens !== null) {
+    body.thinking = { type: 'enabled', budget_tokens: budgetTokens, display: 'summarized' }
+  }
 }
 
 export function buildAnthropicMessagesRequest(options: AnthropicRequestOptions): {

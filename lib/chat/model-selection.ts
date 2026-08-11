@@ -93,12 +93,15 @@ function customReasoningEffort(model: string, requestedValue: string | undefined
   if (requestedValue !== undefined && requested === null) {
     throw new ChatModelSelectionError(409, { error: '思考深度参数无效' })
   }
+  if (profile.reasoningMandatory && requested === 'none') {
+    throw new ChatModelSelectionError(409, { error: '当前模型必须启用思考，不能选择 Off' })
+  }
   if (requested && !profile.reasoningEfforts.includes(requested)) {
     throw new ChatModelSelectionError(409, { error: '当前自定义模型不支持所选思考深度' })
   }
   const resolved = requested ?? profile.defaultReasoningEffort
-  if (profile.reasoningMandatory && (!resolved || resolved === 'none')) {
-    throw new ChatModelSelectionError(409, { error: '当前模型必须启用思考，不能选择 Off' })
+  if (profile.reasoningMandatory && !resolved) {
+    throw new ChatModelSelectionError(409, { error: '当前模型必须启用思考' })
   }
   return resolved
 }

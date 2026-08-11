@@ -33,14 +33,14 @@ function probeGenerationConfig(model: string): Record<string, unknown> {
   if (profile.reasoningMode === 'adaptive') {
     return {
       max_tokens: 2_048,
-      thinking: { type: 'adaptive' },
+      thinking: { type: 'adaptive', display: 'summarized' },
       output_config: { effort: 'low' },
     }
   }
   if (profile.reasoningMode === 'budget') {
     return {
       max_tokens: 2_048,
-      thinking: { type: 'enabled', budget_tokens: 1_024 },
+      thinking: { type: 'enabled', budget_tokens: 1_024, display: 'summarized' },
     }
   }
   return { max_tokens: 256 }
