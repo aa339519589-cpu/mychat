@@ -1,6 +1,7 @@
 import type { SupabaseServer } from '@/lib/api/guard'
 import { TIER_MAP } from '@/lib/chat-data'
 import type { ModelAccessClass } from '@/lib/model-catalog'
+import { customModelReasoningProfile, normalizeReasoningEffort, type ReasoningEffort } from '@/lib/model-reasoning'
 import { getOpenRouterModel } from '@/lib/openrouter-catalog'
 import { endpointAuthType, getOwnedModelEndpoint, resolveModelEndpointKey, type ModelEndpointRow } from '@/lib/model-endpoint-server'
 import { isModelOutputKind, type EndpointAuthType, type ModelOutputKind } from '@/lib/model-endpoints'
@@ -45,7 +46,6 @@ const DEFAULT_DEPENDENCIES: ModelSelectionDependencies = {
   resolveEndpointKey: resolveModelEndpointKey,
   validateEndpointNetwork: validateModelEndpointNetwork,
 }
-const CUSTOM_REASONING_EFFORTS = new Set(['none', 'low', 'medium', 'high', 'max'])
 
 function resolveDirectDeepSeekSelection(options: {
   modelId: string
@@ -85,6 +85,22 @@ function resolveDirectDeepSeekSelection(options: {
     outputKind: route.outputKind,
     platformTierLabel: route.name,
   }
+}
+
+function customReasoningEffort(model: string, requestedValue: string | undefined): ReasoningEffort | null {
+  const profile = customModelReasoningProfile(model)
+  const requested = requestedValue === undefined ? null : normalizeReasoningEffort(requestedValue)
+  if (requestedValue !== undefined && requested === null) {
+    throw new ChatModelSelectionError(409, { error: '思考深度参数无效' })
+  }
+  if (requested && !profile.reasoningEfforts.includes(requested)) {
+    throw new ChatModelSelectionError(409, { error: '当前自定义模型不支持所选思考深度' })
+  }
+  const resolved = requested ?? profile.defaultReasoningEffort
+  if (profile.reasoningMandatory && (!resolved || resolved === 'none')) {
+    throw new ChatModelSelectionError(409, { error: '当前模型必须启用思考，不能选择 Off' })
+  }
+  return resolved
 }
 
 export async function resolveChatModelSelection(options: {
@@ -137,17 +153,16 @@ export async function resolveChatModelSelection(options: {
       const endpoint = await dependencies.getOwnedEndpoint(options.supabase, options.userId, options.endpointId!)
       if (!endpoint) throw new ChatModelSelectionError(404, { error: '自定义模型不存在或无权访问' })
       if (!isModelOutputKind(endpoint.output_kind)) throw new ChatModelSelectionError(409, { error: '自定义模型用途无效，请在设置中重新连接' })
-      const requestedReasoningEffort = options.reasoningEffort?.toLowerCase()
-      if (requestedReasoningEffort && !CUSTOM_REASONING_EFFORTS.has(requestedReasoningEffort)) {
-        throw new ChatModelSelectionError(409, { error: '当前自定义模型不支持所选思考深度' })
-      }
+      const reasoningEffort = endpoint.output_kind === 'chat'
+        ? customReasoningEffort(endpoint.model, options.reasoningEffort)
+        : null
       const apiKey = dependencies.resolveEndpointKey(endpoint, options.userId)
       const baseUrl = await dependencies.validateEndpointNetwork(endpoint.base_url)
       return {
         customEndpoint: true,
         model: endpoint.model,
-        thinking: Boolean(requestedReasoningEffort && requestedReasoningEffort !== 'none'),
-        reasoningEffort: requestedReasoningEffort ?? null,
+        thinking: Boolean(reasoningEffort && reasoningEffort !== 'none'),
+        reasoningEffort,
         accessClass: 'legacy',
         capability: customModelCapability(endpoint.model, baseUrl),
         apiKey,
