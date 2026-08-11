@@ -18,7 +18,7 @@ type CatalogPayload = {
 
 const MODEL_QUOTA_CHANGED_EVENT = "mychat:model-quota-changed"
 const CUSTOM_REASONING_STORAGE_KEY = "chat_custom_reasoning_effort"
-const CUSTOM_REASONING_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max"])
+const CUSTOM_REASONING_EFFORTS = new Set(["none", "low", "medium", "high", "max"])
 
 function modelList(value: unknown): ModelCatalogItem[] {
   if (!Array.isArray(value)) return []
