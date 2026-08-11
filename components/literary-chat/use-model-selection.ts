@@ -53,12 +53,12 @@ function preferredEffort(model: ModelCatalogItem, saved?: string | null): string
   return model.reasoningEfforts[0] ?? null
 }
 
-function savedCustomReasoningEffort(): string | null {
+function savedCustomReasoningEffort(): string {
   try {
     const saved = localStorage.getItem(CUSTOM_REASONING_STORAGE_KEY)
-    return saved && CUSTOM_REASONING_EFFORTS.has(saved) ? saved : null
+    return saved && CUSTOM_REASONING_EFFORTS.has(saved) ? saved : "none"
   } catch {
-    return null
+    return "none"
   }
 }
 
