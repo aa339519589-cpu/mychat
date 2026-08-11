@@ -10,6 +10,7 @@ import {
   readLimitedResponseText,
 } from './turn-response'
 import { consumeTurnResponse } from './turn-stream'
+import { AnthropicTurnAccumulator } from './anthropic-turn-accumulator'
 import { TurnAccumulator, type AccumulatedToolCall } from './turn-accumulator'
 import { openTurnResponse, type OpenTurnResponse } from './turn-transport'
 import type { ModelMessage, ModelToolDefinition } from './types'
@@ -123,10 +124,12 @@ async function discardRetryResponse(response: Response): Promise<void> {
 
 function retryDelays(options: RunTurnOptions | undefined): readonly number[] {
   if (options?.retryDelaysMs?.length) return options.retryDelaysMs
-  // User-defined generic endpoints are opaque and may return one-shot bodies or
+  // User-defined endpoints are opaque and may return one-shot bodies or
   // implement their own retry semantics. Keep automatic retries on platform
   // providers only; explicit callers can still opt in through retryDelaysMs.
-  if (options?.adapter === 'generic-openai') return SINGLE_TURN_ATTEMPT
+  if (options?.adapter === 'generic-openai' || options?.adapter === 'anthropic-messages') {
+    return SINGLE_TURN_ATTEMPT
+  }
   return TURN_TRANSPORT_RETRY_DELAYS_MS
 }
 
@@ -170,8 +173,10 @@ async function openTurnWithRetry(input: {
   throw lastError ?? new Error('模型服务连接失败')
 }
 
+type ActiveAccumulator = TurnAccumulator | AnthropicTurnAccumulator
+
 async function emitRemoteMedia(input: {
-  accumulator: TurnAccumulator
+  accumulator: ActiveAccumulator
   url: string
   apiKey: string
   options?: RunTurnOptions
@@ -188,6 +193,30 @@ async function emitRemoteMedia(input: {
     })
     input.emit({ media: materialized })
   }
+}
+
+function createAccumulator(input: {
+  opened: OpenTurnResponse
+  model: string
+  emit: Emit
+  options?: RunTurnOptions
+}): ActiveAccumulator {
+  const common = {
+    model: input.model,
+    emit: input.emit,
+    timingEnabled: input.opened.timingEnabled,
+    startedAt: input.opened.startedAt,
+    deferTextUntilTurnEnd: input.options?.deferTextUntilTurnEnd,
+    lowLatencyTextStreaming: input.options?.lowLatencyTextStreaming,
+    contentPolicy: input.options?.contentPolicy,
+    maxOutputTokens: input.options?.maxOutputTokens,
+  }
+  if (input.options?.adapter === 'anthropic-messages') return new AnthropicTurnAccumulator(common)
+  return new TurnAccumulator({
+    ...common,
+    generic: input.opened.generic,
+    mediaBudget: input.options?.mediaBudget,
+  })
 }
 
 export async function runTurn(
@@ -209,18 +238,7 @@ export async function runTurn(
       options?.emitErrors !== false,
     )
   }
-  const accumulator = new TurnAccumulator({
-    generic: opened.generic,
-    model,
-    emit,
-    timingEnabled: opened.timingEnabled,
-    startedAt: opened.startedAt,
-    deferTextUntilTurnEnd: options?.deferTextUntilTurnEnd,
-    lowLatencyTextStreaming: options?.lowLatencyTextStreaming,
-    contentPolicy: options?.contentPolicy,
-    maxOutputTokens: options?.maxOutputTokens,
-    mediaBudget: options?.mediaBudget,
-  })
+  const accumulator = createAccumulator({ opened, model, emit, options })
   const consumed = await consumeTurnResponse(opened.response, opened.generic, accumulator.handle)
   await emitRemoteMedia({ accumulator, url, apiKey, options, signal: opened.signal, emit })
   return accumulator.finish(consumed)
