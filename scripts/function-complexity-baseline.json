@@ -68,7 +68,7 @@
     },
     "components/chat-input.tsx": {
       "complexity": [
-        17
+        29
       ]
     },
     "components/code-console/index.tsx": {
@@ -138,12 +138,12 @@
     },
     "components/literary-chat/use-chat-generation.ts": {
       "complexity": [
-        17
+        18
       ]
     },
     "components/literary-chat/use-model-selection.ts": {
       "maxLines": [
-        115
+        144
       ]
     },
     "components/literary-chat/use-projects.ts": {
@@ -158,10 +158,10 @@
     },
     "components/messages/assistant-message.tsx": {
       "complexity": [
-        26
+        29
       ],
       "maxLines": [
-        93
+        97
       ]
     },
     "components/model-endpoint-settings.tsx": {
@@ -188,6 +188,11 @@
       ],
       "maxLines": [
         182
+      ]
+    },
+    "components/sidebar/settings.tsx": {
+      "complexity": [
+        17
       ]
     },
     "components/vega-chart.tsx": {
@@ -301,10 +306,10 @@
     },
     "lib/chat/model-selection.ts": {
       "complexity": [
-        42
+        44
       ],
       "maxLines": [
-        101
+        104
       ]
     },
     "lib/chat/request-context.ts": {
@@ -473,6 +478,12 @@
         16
       ]
     },
+    "lib/llm/anthropic-turn-accumulator.ts": {
+      "complexity": [
+        19,
+        16
+      ]
+    },
     "lib/llm/chat-request.ts": {
       "complexity": [
         20
@@ -523,6 +534,11 @@
       ],
       "maxLines": [
         117
+      ]
+    },
+    "lib/llm/provider-adapters.ts": {
+      "complexity": [
+        16
       ]
     },
     "lib/llm/system.ts": {

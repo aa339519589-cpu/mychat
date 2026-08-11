@@ -4,8 +4,9 @@ import {
   ModelEndpointError,
   normalizeOpenAIBaseUrl,
 } from "./llm/openai-compatible"
-import { probeOpenAIChatDetailed } from "./llm/chat-endpoint-probe"
+import { probeAnthropicMessages, probeOpenAIChatDetailed } from "./llm/chat-endpoint-probe"
 import { openModelEndpointKey, type ModelEndpointSecretContext } from "./model-endpoint-secret"
+import { customModelReasoningProfile } from "./model-reasoning"
 import { isKnownTextOnlyModel, isModelOutputKind, type EndpointAuthType, type ModelEndpointSummary, type ModelOutputKind } from "./model-endpoints"
 
 export type ModelEndpointRow = {
@@ -47,6 +48,7 @@ function endpointSecretContext(row: ModelEndpointRow, userId = row.user_id): Mod
 }
 
 export function endpointSummary(row: ModelEndpointRow): ModelEndpointSummary {
+  const profile = customModelReasoningProfile(row.model)
   return {
     id: row.id,
     name: row.name,
@@ -55,6 +57,11 @@ export function endpointSummary(row: ModelEndpointRow): ModelEndpointSummary {
     outputKind: endpointOutputKind(row.output_kind),
     authType: endpointAuthType(row.auth_type),
     needsReconnect: openModelEndpointKey(row.api_key, endpointSecretContext(row)) === null,
+    transport: profile.transport,
+    reasoningMode: profile.reasoningMode,
+    reasoningEfforts: [...profile.reasoningEfforts],
+    reasoningMandatory: profile.reasoningMandatory,
+    defaultReasoningEffort: profile.defaultReasoningEffort,
     ...(row.created_at ? { createdAt: row.created_at } : {}),
     ...(row.updated_at ? { updatedAt: row.updated_at } : {}),
   }
@@ -117,6 +124,21 @@ export async function resolveMediaEndpointConnection(options: {
   }
 }
 
+async function probeChatEndpoint(options: {
+  baseUrl: string
+  apiKey: string
+  authType: EndpointAuthType
+  model: string
+  signal?: AbortSignal
+}): Promise<void> {
+  const profile = customModelReasoningProfile(options.model)
+  if (profile.transport === "anthropic") {
+    await probeAnthropicMessages(options)
+    return
+  }
+  await probeOpenAIChatDetailed(options)
+}
+
 export async function probeModelEndpointAuthentication(options: {
   baseUrl: string
   apiKey: string
@@ -131,7 +153,7 @@ export async function probeModelEndpointAuthentication(options: {
   for (let index = 0; index < candidates.length; index++) {
     const authType = candidates[index]
     try {
-      await probeOpenAIChatDetailed({ ...options, authType })
+      await probeChatEndpoint({ ...options, authType })
       return authType
     } catch (error) {
       const canRetry = options.authType === "auto"

@@ -17,8 +17,7 @@ type CatalogPayload = {
 }
 
 const MODEL_QUOTA_CHANGED_EVENT = "mychat:model-quota-changed"
-const CUSTOM_REASONING_STORAGE_KEY = "chat_custom_reasoning_effort"
-const CUSTOM_REASONING_EFFORTS = new Set(["none", "low", "medium", "high", "max"])
+const CUSTOM_REASONING_STORAGE_PREFIX = "chat_custom_reasoning_effort:"
 
 function modelList(value: unknown): ModelCatalogItem[] {
   if (!Array.isArray(value)) return []
@@ -43,9 +42,7 @@ function isSelectable(model: ModelCatalogItem): boolean {
 }
 
 function preferredEffort(model: ModelCatalogItem, saved?: string | null): string | null {
-  // Explicit user choice wins only when it is still valid for this model.
   if (saved && model.reasoningEfforts.includes(saved)) return saved
-  // Product default: Off whenever thinking is optional.
   if (!model.reasoningMandatory && model.reasoningEfforts.includes("none")) return "none"
   if (model.defaultReasoningEffort && model.reasoningEfforts.includes(model.defaultReasoningEffort)) {
     return model.defaultReasoningEffort
@@ -53,13 +50,32 @@ function preferredEffort(model: ModelCatalogItem, saved?: string | null): string
   return model.reasoningEfforts[0] ?? null
 }
 
-function savedCustomReasoningEffort(): string {
+function customReasoningStorageKey(endpointId: string): string {
+  return `${CUSTOM_REASONING_STORAGE_PREFIX}${endpointId}`
+}
+
+function endpointSupportsReasoning(endpoint: ModelEndpointSummary, effort: string): boolean {
+  const options: readonly string[] = endpoint.reasoningEfforts
+  return options.includes(effort)
+}
+
+function savedCustomReasoningEffort(endpoint: ModelEndpointSummary): string | null {
   try {
-    const saved = localStorage.getItem(CUSTOM_REASONING_STORAGE_KEY)
-    return saved && CUSTOM_REASONING_EFFORTS.has(saved) ? saved : "none"
+    const saved = localStorage.getItem(customReasoningStorageKey(endpoint.id))
+    return saved && endpointSupportsReasoning(endpoint, saved) ? saved : null
   } catch {
-    return "none"
+    return null
   }
+}
+
+function preferredEndpointEffort(endpoint: ModelEndpointSummary, saved?: string | null): string | null {
+  if (endpoint.outputKind !== "chat" || endpoint.reasoningEfforts.length === 0) return null
+  if (saved && endpointSupportsReasoning(endpoint, saved)) return saved
+  if (!endpoint.reasoningMandatory && endpointSupportsReasoning(endpoint, "none")) return "none"
+  if (endpoint.defaultReasoningEffort && endpointSupportsReasoning(endpoint, endpoint.defaultReasoningEffort)) {
+    return endpoint.defaultReasoningEffort
+  }
+  return endpoint.reasoningEfforts[0] ?? null
 }
 
 export function useModelSelection(options: UseModelSelectionOptions) {
@@ -84,7 +100,6 @@ export function useModelSelection(options: UseModelSelectionOptions) {
           ?? null
         setActiveModelId(selected?.id ?? null)
         const savedEffort = localStorage.getItem("chat_reasoning_effort")
-        // Ignore legacy saved medium/high so cold start lands on Off.
         const usableSaved = savedEffort === "none" || savedEffort === "minimal" || savedEffort === "low"
           ? savedEffort
           : null
@@ -147,9 +162,9 @@ export function useModelSelection(options: UseModelSelectionOptions) {
   function setReasoningEffort(value: string) {
     if (activeEndpointId) {
       const endpoint = modelEndpoints.find(item => item.id === activeEndpointId)
-      if (!endpoint || endpoint.outputKind !== "chat" || !CUSTOM_REASONING_EFFORTS.has(value)) return
+      if (!endpoint || endpoint.outputKind !== "chat" || !endpointSupportsReasoning(endpoint, value)) return
       setReasoningEffortState(value)
-      try { localStorage.setItem(CUSTOM_REASONING_STORAGE_KEY, value) } catch {}
+      try { localStorage.setItem(customReasoningStorageKey(endpoint.id), value) } catch {}
       return
     }
     const model = catalog.find(item => item.id === activeModelId)
@@ -165,17 +180,27 @@ export function useModelSelection(options: UseModelSelectionOptions) {
     setSearchMode("off")
     setHistoryRetrieval(false)
     setRenderEnabled(false)
-    setReasoningEffortState(endpoint.outputKind === "chat" ? savedCustomReasoningEffort() : null)
+    setReasoningEffortState(preferredEndpointEffort(endpoint, savedCustomReasoningEffort(endpoint)))
   }
   function handleEndpointCreated(endpoint: ModelEndpointSummary) {
     setModelEndpoints(previous => [endpoint, ...previous.filter(item => item.id !== endpoint.id)])
   }
   function handleEndpointUpdated(endpoint: ModelEndpointSummary) {
     setModelEndpoints(previous => previous.map(item => item.id === endpoint.id ? endpoint : item))
+    if (activeEndpointId === endpoint.id) {
+      const retained = reasoningEffort && endpointSupportsReasoning(endpoint, reasoningEffort)
+        ? reasoningEffort
+        : savedCustomReasoningEffort(endpoint)
+      setReasoningEffortState(preferredEndpointEffort(endpoint, retained))
+    }
   }
   function handleEndpointDeleted(id: string) {
     setModelEndpoints(previous => previous.filter(item => item.id !== id))
-    if (activeEndpointId === id) setActiveEndpointId(null)
+    try { localStorage.removeItem(customReasoningStorageKey(id)) } catch {}
+    if (activeEndpointId === id) {
+      setActiveEndpointId(null)
+      setReasoningEffortState(null)
+    }
   }
 
   const activeModel = useMemo(
