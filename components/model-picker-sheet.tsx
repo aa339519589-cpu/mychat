@@ -45,7 +45,7 @@ function ModelGroupDivider({ models, baseCount }: { models: ModelCatalogItem[]; 
 function EndpointList({ endpoints, activeEndpointId, onSelect }: {
   endpoints: ModelEndpointSummary[]
   activeEndpointId: string | null
-  onSelect: (endpoint: ModelEndpointSummary) => void
+  onSelect?: (endpoint: ModelEndpointSummary) => void
 }) {
   if (endpoints.length === 0) return null
   return (
@@ -54,13 +54,13 @@ function EndpointList({ endpoints, activeEndpointId, onSelect }: {
       <div className="divide-y divide-border/55 dark:divide-white/8">
         {endpoints.map(endpoint => {
           const active = endpoint.id === activeEndpointId
-          const disabled = endpoint.needsReconnect
+          const disabled = endpoint.needsReconnect || !onSelect
           return (
             <button
               key={endpoint.id}
               type="button"
               disabled={disabled}
-              onClick={() => { if (!disabled) onSelect(endpoint) }}
+              onClick={() => { if (!disabled) onSelect?.(endpoint) }}
               aria-current={active ? "true" : undefined}
               className={cn(
                 "group flex min-h-[4.85rem] w-full min-w-0 items-center gap-3 px-3.5 py-3 text-left transition-colors",
@@ -75,7 +75,7 @@ function EndpointList({ endpoints, activeEndpointId, onSelect }: {
               <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 items-center gap-2">
                   <span className="truncate text-[15px] font-medium tracking-[-0.01em] text-foreground">{endpoint.name}</span>
-                  {disabled && <span className="shrink-0 rounded-md bg-secondary/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">需重连</span>}
+                  {endpoint.needsReconnect && <span className="shrink-0 rounded-md bg-secondary/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">需重连</span>}
                 </div>
                 <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-1.5">
                   <span className="max-w-[15rem] truncate rounded-md bg-secondary/65 px-1.5 py-0.5 text-[10px] text-muted-foreground">{endpoint.model}</span>
@@ -92,16 +92,16 @@ function EndpointList({ endpoints, activeEndpointId, onSelect }: {
   )
 }
 
-export function ModelPickerSheet({ open, mobile, models, endpoints, activeModelId, activeEndpointId, onClose, onSelect, onEndpointSelect }: {
+export function ModelPickerSheet({ open, mobile, models, endpoints = [], activeModelId, activeEndpointId = null, onClose, onSelect, onEndpointSelect }: {
   open: boolean
   mobile: boolean
   models: ModelCatalogItem[]
-  endpoints: ModelEndpointSummary[]
+  endpoints?: ModelEndpointSummary[]
   activeModelId: string | null
-  activeEndpointId: string | null
+  activeEndpointId?: string | null
   onClose: () => void
   onSelect: (model: ModelCatalogItem) => void
-  onEndpointSelect: (endpoint: ModelEndpointSummary) => void
+  onEndpointSelect?: (endpoint: ModelEndpointSummary) => void
 }) {
   const dragControls = useDragControls()
   const reducedMotion = useReducedMotion()
@@ -145,7 +145,7 @@ export function ModelPickerSheet({ open, mobile, models, endpoints, activeModelI
               <button onClick={onClose} className="fluid-press fluid-icon-press absolute right-2.5 flex size-11 items-center justify-center rounded-full border border-border/55 bg-background/85 text-muted-foreground hover:text-foreground dark:border-white/10 dark:bg-white/5" aria-label="关闭模型选择"><X className="size-4" /></button>
             </div>
             <div className="fluid-scroll min-h-0 flex-1 overflow-y-auto px-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-1.5 md:px-3">
-              <EndpointList endpoints={endpoints} activeEndpointId={activeEndpointId} onSelect={endpoint => { onEndpointSelect(endpoint); onClose() }} />
+              <EndpointList endpoints={endpoints} activeEndpointId={activeEndpointId} onSelect={onEndpointSelect ? endpoint => { onEndpointSelect(endpoint); onClose() } : undefined} />
               <ModelCatalogList models={baseModels} activeModelId={activeEndpointId ? null : activeModelId} onSelect={model => { onSelect(model); onClose() }} compact />
               {otherModels.length > 0 && <ModelGroupDivider models={otherModels} baseCount={baseModels.length} />}
               {otherModels.length > 0 && <ModelCatalogList models={otherModels} activeModelId={activeEndpointId ? null : activeModelId} onSelect={model => { onSelect(model); onClose() }} compact />}
