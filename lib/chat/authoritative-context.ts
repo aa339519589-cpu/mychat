@@ -7,6 +7,7 @@ import { isRecord } from '@/lib/unknown-value'
 
 export const MAX_CONTEXT_MESSAGES = 48
 export const MAX_MESSAGE_HISTORY_BYTES = 128 * 1024
+export const MAX_SINGLE_CONTEXT_MESSAGE_TOKENS = 30_000
 const MAX_AUTHORITATIVE_CONTEXT_BYTES = 256 * 1024
 export const MAX_MEMORIES = 200
 export const MAX_PROJECT_FILES = 8
@@ -62,6 +63,18 @@ function jsonBytes(value: unknown): number {
   return encoder.encode(JSON.stringify(value)).byteLength
 }
 
+function estimateContextMessageTokens(message: RawMsg): number {
+  const serialized = JSON.stringify(message.content ?? '') ?? ''
+  let asciiChars = 0
+  for (let index = 0; index < serialized.length; index += 1) {
+    if (serialized.charCodeAt(index) <= 0x7f) asciiChars += 1
+  }
+  const utf8Bytes = encoder.encode(serialized).byteLength
+  const nonAsciiBytes = Math.max(0, utf8Bytes - asciiChars)
+  // Provider-agnostic estimate: about 4 ASCII chars/token and 3 non-ASCII UTF-8 bytes/token.
+  return Math.ceil(asciiChars / 4) + Math.ceil(nonAsciiBytes / 3)
+}
+
 function compactContextText(value: string, maxChars: number): string {
   const trimmed = value.trim()
   return trimmed.length <= maxChars
@@ -79,6 +92,10 @@ export function compileAuthoritativeMessages(
   let bytes = 0
   for (const row of rows) {
     const message = rawMessage(row)
+    if (
+      row.id !== userMessageId &&
+      estimateContextMessageTokens(message) > MAX_SINGLE_CONTEXT_MESSAGE_TOKENS
+    ) continue
     const messageBytes = jsonBytes(message)
     if (row.id === userMessageId && messageBytes > maxBytes) {
       throw new AuthoritativeContextError('CONTEXT_TOO_LARGE', '当前消息超过模型上下文上限')
@@ -266,8 +283,13 @@ async function loadMessageHistory(input: {
     for (const value of result.data) {
       const row = value as MessageRow
       const message = rawMessage(row)
+      const isCurrentUserMessage = row.id === input.userMessageId && row.role === 'user'
+      if (
+        !isCurrentUserMessage &&
+        estimateContextMessageTokens(message) > MAX_SINGLE_CONTEXT_MESSAGE_TOKENS
+      ) continue
       const messageBytes = jsonBytes(message)
-      if (row.id === input.userMessageId && row.role === 'user') {
+      if (isCurrentUserMessage) {
         foundUserMessage = true
         if (messageBytes > MAX_MESSAGE_HISTORY_BYTES) {
           throw new AuthoritativeContextError('CONTEXT_TOO_LARGE', '当前消息超过模型上下文上限')
