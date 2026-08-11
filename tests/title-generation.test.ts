@@ -49,6 +49,10 @@ async function capturedTitleOptions(model: string): Promise<AgentLoopOpts> {
   return captured
 }
 
+function outputLimit(options: AgentLoopOpts): number | undefined {
+  return options.turnOptions?.maxOutputTokens
+}
+
 test('title request accepts canonical UUIDs and rejects malformed IDs', () => {
   const parsed = validateTitleGenerationRequest({
     conversationId,
@@ -68,19 +72,19 @@ test('Sonnet 5 title generation explicitly disables optional thinking', async ()
   const options = await capturedTitleOptions('claude-sonnet-5')
   assert.equal(options.adapter, 'anthropic-messages')
   assert.equal(options.reasoningEffort, 'none')
-  assert.equal(options.turnOptions.maxOutputTokens, 64)
+  assert.equal(outputLimit(options), 64)
 })
 
 test('Fable 5 title generation uses the lowest valid mandatory thinking level', async () => {
   const options = await capturedTitleOptions('claude-fable-5')
   assert.equal(options.adapter, 'anthropic-messages')
   assert.equal(options.reasoningEffort, 'low')
-  assert.equal(options.turnOptions.maxOutputTokens, 2_048)
+  assert.equal(outputLimit(options), 2_048)
 })
 
 test('Haiku 4.5 title generation keeps extended thinking off', async () => {
   const options = await capturedTitleOptions('claude-haiku-4-5')
   assert.equal(options.adapter, 'anthropic-messages')
   assert.equal(options.reasoningEffort, 'none')
-  assert.equal(options.turnOptions.maxOutputTokens, 64)
+  assert.equal(outputLimit(options), 64)
 })
