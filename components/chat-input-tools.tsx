@@ -8,6 +8,8 @@ import { cn } from "@/lib/utils"
 import type { SearchMode } from "@/lib/search-mode"
 import { POPOVER_SPRING, transitionFor } from "@/components/motion/fluid"
 
+const REASONING_MENU_ORDER = ["max", "xhigh", "high", "medium", "low", "minimal", "none"]
+
 export function ComposerTools({
   open, onOpenChange, inputRef, containerRef, searchMode, onSearchModeChange,
   historyRetrieval, onHistoryRetrievalChange, renderEnabled, onRenderEnabledChange, hasActiveTools, reducedMotion,
@@ -44,10 +46,14 @@ function ReasoningTool({ value, options, onChange, reducedMotion }: { value: str
   const [menuOpen, setMenuOpen] = useState(false)
   useEffect(() => { if (disabled) setMenuOpen(false) }, [disabled])
   const active = Boolean(value && value !== "none")
+  const orderedOptions = [
+    ...REASONING_MENU_ORDER.filter(option => options.includes(option)),
+    ...options.filter(option => !REASONING_MENU_ORDER.includes(option)),
+  ]
   return (
     <div className="relative">
       <button type="button" disabled={disabled} onClick={() => setMenuOpen(!menuOpen)} aria-label="Thinking depth" aria-expanded={disabled ? undefined : menuOpen} className={cn("fluid-press fluid-icon-press flex size-11 items-center justify-center rounded-full transition-colors", disabled ? "cursor-not-allowed text-muted-foreground/25" : active ? "bg-secondary text-foreground" : "text-[#B0B0B0] hover:bg-secondary/70 hover:text-foreground dark:text-white/40 dark:hover:bg-white/10 dark:hover:text-white")}><Brain className="size-[1.15rem]" /></button>
-      <AnimatePresence initial={false}>{menuOpen && !disabled && <motion.div initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 5, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 4, scale: 0.97 }} transition={transitionFor(reducedMotion, POPOVER_SPRING)} className="fluid-material-strong absolute bottom-full left-1/2 z-30 mb-2 min-w-[8.5rem] -translate-x-1/2 overflow-hidden rounded-2xl border border-border/70 p-1.5 shadow-lg">{[...options.filter(option => option !== "none"), ...options.filter(option => option === "none")].map(option => <button key={option} type="button" onClick={() => { onChange(option); setMenuOpen(false) }} className="fluid-press flex min-h-10 w-full items-center justify-between rounded-xl px-3 text-left text-[12px] text-foreground hover:bg-secondary/70"><span>{effortLabel(option)}</span>{value === option && <Check className="size-3.5" />}</button>)}</motion.div>}</AnimatePresence>
+      <AnimatePresence initial={false}>{menuOpen && !disabled && <motion.div initial={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 5, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={reducedMotion ? { opacity: 0 } : { opacity: 0, y: 4, scale: 0.97 }} transition={transitionFor(reducedMotion, POPOVER_SPRING)} className="fluid-material-strong absolute bottom-full left-1/2 z-30 mb-2 min-w-[8.5rem] -translate-x-1/2 overflow-hidden rounded-2xl border border-border/70 p-1.5 shadow-lg">{orderedOptions.map(option => <button key={option} type="button" onClick={() => { onChange(option); setMenuOpen(false) }} className="fluid-press flex min-h-10 w-full items-center justify-between rounded-xl px-3 text-left text-[12px] text-foreground hover:bg-secondary/70"><span>{effortLabel(option)}</span>{value === option && <Check className="size-3.5" />}</button>)}</motion.div>}</AnimatePresence>
     </div>
   )
 }
