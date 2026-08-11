@@ -45,6 +45,7 @@ const DEFAULT_DEPENDENCIES: ModelSelectionDependencies = {
   resolveEndpointKey: resolveModelEndpointKey,
   validateEndpointNetwork: validateModelEndpointNetwork,
 }
+const CUSTOM_REASONING_EFFORTS = new Set(['none', 'low', 'medium', 'high', 'max'])
 
 function resolveDirectDeepSeekSelection(options: {
   modelId: string
@@ -136,13 +137,17 @@ export async function resolveChatModelSelection(options: {
       const endpoint = await dependencies.getOwnedEndpoint(options.supabase, options.userId, options.endpointId!)
       if (!endpoint) throw new ChatModelSelectionError(404, { error: '自定义模型不存在或无权访问' })
       if (!isModelOutputKind(endpoint.output_kind)) throw new ChatModelSelectionError(409, { error: '自定义模型用途无效，请在设置中重新连接' })
+      const requestedReasoningEffort = options.reasoningEffort?.toLowerCase()
+      if (requestedReasoningEffort && !CUSTOM_REASONING_EFFORTS.has(requestedReasoningEffort)) {
+        throw new ChatModelSelectionError(409, { error: '当前自定义模型不支持所选思考深度' })
+      }
       const apiKey = dependencies.resolveEndpointKey(endpoint, options.userId)
       const baseUrl = await dependencies.validateEndpointNetwork(endpoint.base_url)
       return {
         customEndpoint: true,
         model: endpoint.model,
-        thinking: false,
-        reasoningEffort: null,
+        thinking: Boolean(requestedReasoningEffort && requestedReasoningEffort !== 'none'),
+        reasoningEffort: requestedReasoningEffort ?? null,
         accessClass: 'legacy',
         capability: customModelCapability(endpoint.model, baseUrl),
         apiKey,
