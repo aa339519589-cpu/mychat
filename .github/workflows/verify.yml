@@ -48,6 +48,20 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts --legacy-peer-deps
 
+      - name: Generate audit-fixed production lockfile
+        run: npm audit fix --package-lock-only --omit=dev --legacy-peer-deps || true
+
+      - name: Upload audit-fixed lockfile
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: audit-fixed-lock-${{ github.run_id }}-${{ github.run_attempt }}
+          path: package-lock.json
+          if-no-files-found: error
+          compression-level: 0
+          overwrite: false
+          include-hidden-files: false
+          retention-days: 1
+
       - name: Install browser runtime
         run: npx playwright install --with-deps chromium
 
