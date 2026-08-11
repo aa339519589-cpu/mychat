@@ -26,13 +26,13 @@ export type ChatInputProps = {
   renderEnabled: boolean
   onRenderEnabledChange: (value: boolean) => void
   models: ModelCatalogItem[]
-  endpoints: ModelEndpointSummary[]
+  endpoints?: ModelEndpointSummary[]
   activeModelId: string | null
   activeModel: ModelCatalogItem | null
-  activeEndpointId: string | null
-  activeEndpoint: ModelEndpointSummary | null
+  activeEndpointId?: string | null
+  activeEndpoint?: ModelEndpointSummary | null
   onModelChange: (model: ModelCatalogItem) => void
-  onEndpointChange: (id: string) => void
+  onEndpointChange?: (id: string) => void
   reasoningEffort: string | null
   onReasoningChange: (value: string) => void
   disabled?: boolean
@@ -42,8 +42,8 @@ export type ChatInputProps = {
 
 export function ChatInput({
   onSend, activeTier, onTierChange, mobile, searchMode, onSearchModeChange,
-  historyRetrieval, onHistoryRetrievalChange, renderEnabled, onRenderEnabledChange, models, endpoints, activeModelId, activeModel,
-  activeEndpointId, activeEndpoint, onModelChange, onEndpointChange, reasoningEffort, onReasoningChange, disabled = false, isLoading, onStop,
+  historyRetrieval, onHistoryRetrievalChange, renderEnabled, onRenderEnabledChange, models, endpoints = [], activeModelId, activeModel,
+  activeEndpointId = null, activeEndpoint = null, onModelChange, onEndpointChange, reasoningEffort, onReasoningChange, disabled = false, isLoading, onStop,
 }: ChatInputProps) {
   const [plusOpen, setPlusOpen] = useState(false)
   const [modelPickerOpen, setModelPickerOpen] = useState(false)
@@ -96,7 +96,7 @@ export function ChatInput({
         activeEndpointId={activeEndpointId}
         onClose={() => setModelPickerOpen(false)}
         onSelect={onModelChange}
-        onEndpointSelect={endpoint => onEndpointChange(endpoint.id)}
+        onEndpointSelect={onEndpointChange ? endpoint => onEndpointChange(endpoint.id) : undefined}
       />
     </div>
   )
