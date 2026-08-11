@@ -59,6 +59,41 @@ test('custom endpoint selection resolves credentials, network and media kind onc
   assert.equal(result.capability.provider.baseUrl, 'https://safe.example/v1')
 })
 
+test('custom chat endpoint preserves selected reasoning effort', async () => {
+  const chatEndpoint = { ...endpoint, output_kind: 'chat' as const, model: 'claude-sonnet-5' }
+  const dependencies = {
+    getOwnedEndpoint: async () => chatEndpoint,
+    resolveEndpointKey: () => 'secret',
+    validateEndpointNetwork: async () => 'https://safe.example/v1',
+  }
+  const high = await resolveChatModelSelection({
+    tier: '绝句', endpointId: 'endpoint-id', reasoningEffort: 'high', supabase: {} as never, userId: 'user-id',
+  }, dependencies)
+  assert.equal(high.reasoningEffort, 'high')
+  assert.equal(high.thinking, true)
+
+  const off = await resolveChatModelSelection({
+    tier: '绝句', endpointId: 'endpoint-id', reasoningEffort: 'none', supabase: {} as never, userId: 'user-id',
+  }, dependencies)
+  assert.equal(off.reasoningEffort, 'none')
+  assert.equal(off.thinking, false)
+})
+
+test('custom chat endpoint rejects removed reasoning levels', async () => {
+  await assert.rejects(
+    resolveChatModelSelection({
+      tier: '绝句', endpointId: 'endpoint-id', reasoningEffort: 'xhigh', supabase: {} as never, userId: 'user-id',
+    }, {
+      getOwnedEndpoint: async () => ({ ...endpoint, output_kind: 'chat', model: 'claude-sonnet-5' }),
+      resolveEndpointKey: () => 'secret',
+      validateEndpointNetwork: async () => 'https://safe.example/v1',
+    }),
+    (error: unknown) => error instanceof ChatModelSelectionError
+      && error.status === 409
+      && error.message === '当前自定义模型不支持所选思考深度',
+  )
+})
+
 test('invalid stored endpoint output kind remains a reconnect error', async () => {
   await assert.rejects(
     resolveChatModelSelection({
