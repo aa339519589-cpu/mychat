@@ -1,5 +1,6 @@
 import type { EndpointAuthType } from '@/lib/model-endpoints'
 import type { ModelAccessClass, ModelCatalogItem } from '@/lib/model-catalog'
+import { customModelReasoningProfile } from '@/lib/model-reasoning'
 import type { ProviderAdapterId } from './provider-adapters'
 
 export type PlatformApiKeyEnv = 'DEEPSEEK_API_KEY' | 'MIMO_API_KEY' | 'DEEP_TIER_API_KEY' | 'OPENROUTER_API_KEY'
@@ -84,7 +85,21 @@ function parseEndpointAuthType(raw: string | undefined, fallback: EndpointAuthTy
 function readDeepTierAuthType(): EndpointAuthType { return parseEndpointAuthType(process.env.DEEP_TIER_AUTH_TYPE) }
 export function resolveDeepTierCapability(): ModelCapability { return { ...MODEL_REGISTRY['deepseek-v4-pro'] } }
 export function getModelCapability(model: string): ModelCapability { if (model === PLATFORM_DEEP_MODEL_KEY) return resolveDeepTierCapability(); return MODEL_REGISTRY[model as keyof typeof MODEL_REGISTRY] ?? MODEL_REGISTRY['deepseek-v4-flash'] }
-export function customModelCapability(model: string, baseUrl: string): ModelCapability { return { id: model, supportsVision: true, supportsImageInput: true, maxContext: 128_000, supportsThinking: false, provider: { id: 'custom', adapter: 'generic-openai', baseUrl } } }
+export function customModelCapability(model: string, baseUrl: string): ModelCapability {
+  const profile = customModelReasoningProfile(model)
+  return {
+    id: model,
+    supportsVision: true,
+    supportsImageInput: true,
+    maxContext: 128_000,
+    supportsThinking: profile.reasoningEfforts.length > 0,
+    provider: {
+      id: 'custom',
+      adapter: profile.transport === 'anthropic' ? 'anthropic-messages' : 'generic-openai',
+      baseUrl,
+    },
+  }
+}
 
 export function openRouterModelCapability(model: ModelCatalogItem): ModelCapability {
   return {
