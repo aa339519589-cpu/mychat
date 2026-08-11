@@ -1,0 +1,128 @@
+name: Recover Current Render Production
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/recover-current-render-production.yml
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: recover-current-render-production
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PRODUCTION_READY_URL: https://mychat-nm6x.onrender.com/api/ready
+    steps:
+      - name: Checkout current main
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Use production Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Confirm immutable current main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          current_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          test "$current_main" = "$GITHUB_SHA"
+
+      - name: Disable drain and synchronize Render revision marker
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$RENDER_API_KEY" ]] || [[ ! "$RENDER_SERVICE_ID" =~ ^srv-[a-z0-9]+$ ]]; then
+            echo "Render deployment credentials are unavailable" >&2
+            exit 1
+          fi
+          env_base="https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars"
+          auth=(--header "Authorization: Bearer $RENDER_API_KEY" --header 'Content-Type: application/json')
+          write_value() {
+            local key="$1" value="$2"
+            curl --fail-with-body --silent --show-error --retry 4 --retry-all-errors \
+              --connect-timeout 10 --max-time 60 "${auth[@]}" --request PUT \
+              --data "$(jq -nc --arg value "$value" '{value:$value}')" \
+              "$env_base/$key" >/dev/null
+          }
+          write_value MYCHAT_MAINTENANCE_MODE off
+          write_value MYCHAT_BUILD_REVISION "$GITHUB_SHA"
+          curl --fail-with-body --silent --show-error --connect-timeout 10 --max-time 60 \
+            "${auth[@]}" "$env_base/MYCHAT_MAINTENANCE_MODE" \
+            | jq --exit-status '.value == "off"' >/dev/null
+          curl --fail-with-body --silent --show-error --connect-timeout 10 --max-time 60 \
+            "${auth[@]}" "$env_base/MYCHAT_BUILD_REVISION" \
+            | jq --exit-status --arg revision "$GITHUB_SHA" '.value == $revision' >/dev/null
+
+      - name: Deploy exact current main to Render
+        id: render
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+          response="$(curl --fail-with-body --silent --show-error --retry 4 --retry-all-errors \
+            --connect-timeout 10 --max-time 60 \
+            --header "Authorization: Bearer $RENDER_API_KEY" \
+            --header 'Content-Type: application/json' \
+            --request POST \
+            --data "$(jq -nc --arg commitId "$GITHUB_SHA" '{commitId:$commitId}')" \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys")"
+          deploy_id="$(jq -er '.id // .deploy.id // empty' <<<"$response")"
+          [[ "$deploy_id" =~ ^dep-[a-z0-9]+$ ]]
+          echo "deploy_id=$deploy_id" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for exact Render deploy
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_DEPLOY_ID: ${{ steps.render.outputs.deploy_id }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+        run: |
+          set -euo pipefail
+          for attempt in {1..180}; do
+            response="$(curl --fail-with-body --silent --show-error --retry 4 --retry-all-errors \
+              --connect-timeout 10 --max-time 60 \
+              --header "Authorization: Bearer $RENDER_API_KEY" \
+              "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys/$RENDER_DEPLOY_ID")"
+            status="$(jq -er '.status' <<<"$response")"
+            commit="$(jq -r '.commit.id // empty' <<<"$response")"
+            if [[ -n "$commit" && "$commit" != "$GITHUB_SHA" ]]; then
+              echo "Render resolved a different commit: $commit" >&2
+              exit 1
+            fi
+            case "$status" in
+              live)
+                test "$commit" = "$GITHUB_SHA"
+                exit 0
+                ;;
+              build_failed|update_failed|pre_deploy_failed|canceled|deactivated)
+                echo "Render deploy failed with status $status" >&2
+                exit 1
+                ;;
+            esac
+            sleep 10
+          done
+          echo "Render deploy did not become live before the deadline" >&2
+          exit 1
+
+      - name: Require current production to be fully ready
+        run: |
+          EXPECTED_REVISION="$GITHUB_SHA" EXPECTED_WORKER_DRAINING=false \
+            HEALTH_CHECK_ATTEMPTS=30 HEALTH_CHECK_RETRY_MS=5000 HEALTH_CHECK_TIMEOUT_MS=20000 \
+            node scripts/check-production-health.mjs "$PRODUCTION_READY_URL"
