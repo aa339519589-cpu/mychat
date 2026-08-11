@@ -335,7 +335,7 @@ test('project and memory dependencies fail closed while oversized project input 
   assert.match(compacted.project.instructions, /内容已截断/)
 })
 
-test('history and project collections are fetched in bounded pages and stop at the byte budget', async () => {
+test('history and project collections are fetched in bounded pages and skip oversized history messages', async () => {
   const history = Array.from({ length: 24 }, (_, index) => ({
     id: index === 0 ? userMessageId : `history-${index}`,
     role: index % 2 === 0 ? 'user' : 'assistant',
@@ -351,7 +351,11 @@ test('history and project collections are fetched in bounded pages and stop at t
     history: result(history),
   })
   const loaded = await load(database.client)
-  assert.deepEqual(loaded.messages.map(message => message.id), [userMessageId])
+  assert.deepEqual(loaded.messages.map(message => message.id), [
+    ...Array.from({ length: 22 }, (_, index) => `history-${23 - index}`),
+    userMessageId,
+  ])
+  assert.equal(loaded.messages.some(message => message.id === 'history-1'), false)
   const historyCalls = database.calls.filter(call => (
     call.table === 'messages' && call.selected.includes('content_parts')
   ))
