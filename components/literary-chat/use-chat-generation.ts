@@ -93,7 +93,7 @@ export function useChatGeneration(options: UseChatGenerationOptions) {
 
   async function startStream(history: HistoryMessage[], assistantMessageId: string, conversationId: string, controller: AbortController, attachments?: AttachedFile[], projectContext?: ProjectContext, generationId?: string, turn?: ChatTurnAuthority, onAccepted?: () => void) {
     if (!user) { markGeneration(conversationId, { status: "error", generationId, assistantMessageId }); return { content: "", status: "error", accepted: false } satisfies RunChatStreamResult }
-    return runChatStream({ userId: user.id, messages: history, assistantMessageId, conversationId, controller, attachments, projectContext, generationId, tier: activeTier, endpoint: activeEndpoint, endpointId: activeEndpointId, modelId: activeModelId, reasoningEffort, memories, memoryEnabled, searchMode, historyRetrieval, renderEnabled, showTokenUsage, turn, onAccepted, setConversations, setMemories, markGeneration, clearAbort })
+    return runChatStream({ userId: user.id, messages: history, assistantMessageId, conversationId, controller, attachments, projectContext, generationId, tier: activeTier, endpoint: activeEndpoint, endpointId: activeEndpointId, modelId: activeEndpoint ? null : activeModelId, reasoningEffort: activeEndpoint ? null : reasoningEffort, memories, memoryEnabled, searchMode, historyRetrieval, renderEnabled, showTokenUsage, turn, onAccepted, setConversations, setMemories, markGeneration, clearAbort })
   }
 
   async function handleStop() {
@@ -102,7 +102,7 @@ export function useChatGeneration(options: UseChatGenerationOptions) {
   }
 
   async function handleSend(text: string, images?: string[], files?: AttachedFile[]) {
-    if (!authorityReady || !user || !active || !activeModelId) return
+    if (!authorityReady || !user || !active || (!activeModelId && !activeEndpointId)) return
     const { userMessage, assistantMessageId, baseHistory, optimisticMessages } = createOptimisticTurn(active, text, images, files)
     const isFirstExchange = active.messages.length === 0
     const wasDraft = Boolean(active.draft)
