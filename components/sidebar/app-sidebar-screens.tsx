@@ -32,7 +32,8 @@ export function SidebarScreens(props: SidebarScreensProps) {
 }
 
 function SettingsPanel({ stack, memory, model, conversation, onBack }: SidebarScreensProps) {
-  return <ScreenPanel open={stack.includes("settings")} style={sidebarScreenStyle(stack, "settings")} title="设置" onBack={onBack}><SettingsScreen memories={memory.items} memoryEnabled={memory.enabled} onMemoryEnabledChange={memory.setEnabled} onMemoryAdd={memory.add} onMemoryEdit={memory.edit} onMemoryDelete={memory.delete} onDeleteAllConversations={conversation.deleteAll} models={model.catalog} activeModelId={model.activeModelId} onModelSelect={model.selectModel} /></ScreenPanel>
+  const ownerCustomApi = model.catalog.some(item => item.trialUnlimited === true)
+  return <ScreenPanel open={stack.includes("settings")} style={sidebarScreenStyle(stack, "settings")} title="设置" onBack={onBack}><SettingsScreen memories={memory.items} memoryEnabled={memory.enabled} onMemoryEnabledChange={memory.setEnabled} onMemoryAdd={memory.add} onMemoryEdit={memory.edit} onMemoryDelete={memory.delete} onDeleteAllConversations={conversation.deleteAll} models={model.catalog} activeModelId={model.activeModelId} onModelSelect={model.selectModel} customApiEnabled={ownerCustomApi} endpoints={model.endpoints} activeEndpointId={model.activeId} onEndpointSelect={model.select} onEndpointCreated={model.created} onEndpointUpdated={model.updated} onEndpointDeleted={model.deleted} /></ScreenPanel>
 }
 
 function ProjectsPanel({ stack, project, conversations, onBack, onOpenProject }: SidebarScreensProps) {
