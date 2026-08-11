@@ -1,3 +1,9 @@
+import type {
+  CustomModelTransport,
+  CustomReasoningMode,
+  ReasoningEffort,
+} from '@/lib/model-reasoning'
+
 export type EndpointAuthType = "bearer" | "x-api-key" | "api-key" | "none"
 
 export type DiscoveredModel = {
@@ -15,6 +21,11 @@ export type ModelEndpointSummary = {
   outputKind: ModelOutputKind
   authType: EndpointAuthType
   needsReconnect: boolean
+  transport: CustomModelTransport
+  reasoningMode: CustomReasoningMode
+  reasoningEfforts: ReasoningEffort[]
+  reasoningMandatory: boolean
+  defaultReasoningEffort: ReasoningEffort | null
   createdAt?: string
   updatedAt?: string
 }
