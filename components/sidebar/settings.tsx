@@ -4,7 +4,9 @@ import { useState } from "react"
 import { Brain, Check, Pencil, Plus, Trash2, X } from "lucide-react"
 
 import { ModelCatalogList } from "@/components/model-catalog-list"
+import { ModelEndpointSettings } from "@/components/model-endpoint-settings"
 import type { ModelCatalogItem } from "@/lib/model-catalog"
+import type { ModelEndpointSummary } from "@/lib/model-endpoints"
 import type { Memory } from "@/lib/memory-data"
 import { cn } from "@/lib/utils"
 import { Switch } from "./primitives"
@@ -48,7 +50,7 @@ function MemoryScreen({ memories, enabled, onEnabledChange, onAdd, onEdit, onDel
   )
 }
 
-export function SettingsScreen({ memories, memoryEnabled, onMemoryEnabledChange, onMemoryAdd, onMemoryEdit, onMemoryDelete, onDeleteAllConversations, models, activeModelId, onModelSelect }: {
+export function SettingsScreen({ memories, memoryEnabled, onMemoryEnabledChange, onMemoryAdd, onMemoryEdit, onMemoryDelete, onDeleteAllConversations, models, activeModelId, onModelSelect, endpointSettings }: {
   memories: Memory[]
   memoryEnabled: boolean
   onMemoryEnabledChange: (value: boolean) => void
@@ -59,6 +61,14 @@ export function SettingsScreen({ memories, memoryEnabled, onMemoryEnabledChange,
   models: ModelCatalogItem[]
   activeModelId: string | null
   onModelSelect: (model: ModelCatalogItem) => void
+  endpointSettings?: {
+    endpoints: ModelEndpointSummary[]
+    activeEndpointId: string | null
+    onSelect: (id: string) => void
+    onCreated: (endpoint: ModelEndpointSummary) => void
+    onUpdated: (endpoint: ModelEndpointSummary) => void
+    onDeleted: (id: string) => void
+  }
 }) {
   const [tab, setTab] = useState<'general' | 'models' | 'prompt' | 'quota'>('general')
   const [deletingAll, setDeletingAll] = useState(false)
@@ -72,7 +82,7 @@ export function SettingsScreen({ memories, memoryEnabled, onMemoryEnabledChange,
   return (
     <div>
       <div className="mb-1 flex gap-1.5 overflow-x-auto px-4 pb-1"><button onClick={() => setTab('general')} className={pill(tab === 'general')}>记忆</button><button onClick={() => setTab('models')} className={pill(tab === 'models')}>模型</button><button onClick={() => setTab('prompt')} className={pill(tab === 'prompt')}>系统提示词</button><button onClick={() => setTab('quota')} className={pill(tab === 'quota')}>使用额度</button></div>
-      {tab === 'general' ? <div className="pt-2"><MemoryScreen memories={memories} enabled={memoryEnabled} onEnabledChange={onMemoryEnabledChange} onAdd={onMemoryAdd} onEdit={onMemoryEdit} onDelete={onMemoryDelete} /><div className="mx-4 mt-5 border-t border-sidebar-border pt-4"><button type="button" onClick={() => void deleteAll()} disabled={deletingAll} className="fluid-press flex min-h-11 w-full items-center justify-center rounded-xl border border-destructive/35 px-3 text-sm text-destructive hover:bg-destructive/10 disabled:opacity-50">{deletingAll ? '删除中…' : '删除全部对话'}</button>{deleteError && <p role="alert" className="mt-2 text-[11px] leading-relaxed text-destructive">{deleteError}</p>}</div></div> : tab === 'models' ? <div className="px-3 pb-5 pt-2"><ModelCatalogList models={models} activeModelId={activeModelId} onSelect={onModelSelect} /></div> : tab === 'prompt' ? <div className="pt-2"><SystemPromptSettings /></div> : <div className="pt-2"><QuotaScreen /></div>}
+      {tab === 'general' ? <div className="pt-2"><MemoryScreen memories={memories} enabled={memoryEnabled} onEnabledChange={onMemoryEnabledChange} onAdd={onMemoryAdd} onEdit={onMemoryEdit} onDelete={onMemoryDelete} /><div className="mx-4 mt-5 border-t border-sidebar-border pt-4"><button type="button" onClick={() => void deleteAll()} disabled={deletingAll} className="fluid-press flex min-h-11 w-full items-center justify-center rounded-xl border border-destructive/35 px-3 text-sm text-destructive hover:bg-destructive/10 disabled:opacity-50">{deletingAll ? '删除中…' : '删除全部对话'}</button>{deleteError && <p role="alert" className="mt-2 text-[11px] leading-relaxed text-destructive">{deleteError}</p>}</div></div> : tab === 'models' ? <div className="px-3 pb-5 pt-2"><ModelCatalogList models={models} activeModelId={activeModelId} onSelect={onModelSelect} />{endpointSettings && <div className="mt-5 border-t border-sidebar-border pt-4"><ModelEndpointSettings {...endpointSettings} /></div>}</div> : tab === 'prompt' ? <div className="pt-2"><SystemPromptSettings /></div> : <div className="pt-2"><QuotaScreen /></div>}
     </div>
   )
 }
