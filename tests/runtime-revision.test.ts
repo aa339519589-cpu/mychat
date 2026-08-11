@@ -7,6 +7,7 @@ const staleBuildRevision = 'ed49f093b47aefcc5239ddf2587d3f69953f2f71'
 
 test('Render runtime commit is authoritative over a stale build revision marker', () => {
   assert.equal(safeRevision({
+    RENDER: 'true',
     RENDER_GIT_COMMIT: renderRevision,
     MYCHAT_BUILD_REVISION: staleBuildRevision,
   }), '61b43b027fe6')
