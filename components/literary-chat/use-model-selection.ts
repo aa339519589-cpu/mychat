@@ -17,6 +17,8 @@ type CatalogPayload = {
 }
 
 const MODEL_QUOTA_CHANGED_EVENT = "mychat:model-quota-changed"
+const CUSTOM_REASONING_STORAGE_KEY = "chat_custom_reasoning_effort"
+const CUSTOM_REASONING_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max"])
 
 function modelList(value: unknown): ModelCatalogItem[] {
   if (!Array.isArray(value)) return []
@@ -49,6 +51,15 @@ function preferredEffort(model: ModelCatalogItem, saved?: string | null): string
     return model.defaultReasoningEffort
   }
   return model.reasoningEfforts[0] ?? null
+}
+
+function savedCustomReasoningEffort(): string | null {
+  try {
+    const saved = localStorage.getItem(CUSTOM_REASONING_STORAGE_KEY)
+    return saved && CUSTOM_REASONING_EFFORTS.has(saved) ? saved : null
+  } catch {
+    return null
+  }
 }
 
 export function useModelSelection(options: UseModelSelectionOptions) {
@@ -134,6 +145,13 @@ export function useModelSelection(options: UseModelSelectionOptions) {
   }
 
   function setReasoningEffort(value: string) {
+    if (activeEndpointId) {
+      const endpoint = modelEndpoints.find(item => item.id === activeEndpointId)
+      if (!endpoint || endpoint.outputKind !== "chat" || !CUSTOM_REASONING_EFFORTS.has(value)) return
+      setReasoningEffortState(value)
+      try { localStorage.setItem(CUSTOM_REASONING_STORAGE_KEY, value) } catch {}
+      return
+    }
     const model = catalog.find(item => item.id === activeModelId)
     if (!model || !model.reasoningEfforts.includes(value)) return
     setReasoningEffortState(value)
@@ -147,7 +165,7 @@ export function useModelSelection(options: UseModelSelectionOptions) {
     setSearchMode("off")
     setHistoryRetrieval(false)
     setRenderEnabled(false)
-    setReasoningEffortState(null)
+    setReasoningEffortState(endpoint.outputKind === "chat" ? savedCustomReasoningEffort() : null)
   }
   function handleEndpointCreated(endpoint: ModelEndpointSummary) {
     setModelEndpoints(previous => [endpoint, ...previous.filter(item => item.id !== endpoint.id)])
