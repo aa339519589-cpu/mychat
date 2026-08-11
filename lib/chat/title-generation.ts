@@ -4,7 +4,7 @@ import { chatCompletionsUrl } from '@/lib/llm/openai'
 import { customModelReasoningProfile, type ReasoningEffort } from '@/lib/model-reasoning'
 import type { ChatModelSelection } from './model-selection'
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const MAX_SOURCE_CHARS = 2_000
 const MAX_TITLE_CHARS = 20
 
