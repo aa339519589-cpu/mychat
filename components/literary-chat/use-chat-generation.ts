@@ -93,7 +93,10 @@ export function useChatGeneration(options: UseChatGenerationOptions) {
 
   async function startStream(history: HistoryMessage[], assistantMessageId: string, conversationId: string, controller: AbortController, attachments?: AttachedFile[], projectContext?: ProjectContext, generationId?: string, turn?: ChatTurnAuthority, onAccepted?: () => void) {
     if (!user) { markGeneration(conversationId, { status: "error", generationId, assistantMessageId }); return { content: "", status: "error", accepted: false } satisfies RunChatStreamResult }
-    return runChatStream({ userId: user.id, messages: history, assistantMessageId, conversationId, controller, attachments, projectContext, generationId, tier: activeTier, endpoint: activeEndpoint, endpointId: activeEndpointId, modelId: activeEndpoint ? null : activeModelId, reasoningEffort: activeEndpoint ? null : reasoningEffort, memories, memoryEnabled, searchMode, historyRetrieval, renderEnabled, showTokenUsage, turn, onAccepted, setConversations, setMemories, markGeneration, clearAbort })
+    const endpointReasoningEffort = activeEndpoint?.outputKind === "chat" && reasoningEffort !== "none"
+      ? reasoningEffort
+      : null
+    return runChatStream({ userId: user.id, messages: history, assistantMessageId, conversationId, controller, attachments, projectContext, generationId, tier: activeTier, endpoint: activeEndpoint, endpointId: activeEndpointId, modelId: activeEndpoint ? null : activeModelId, reasoningEffort: activeEndpoint ? endpointReasoningEffort : reasoningEffort, memories, memoryEnabled, searchMode, historyRetrieval, renderEnabled, showTokenUsage, turn, onAccepted, setConversations, setMemories, markGeneration, clearAbort })
   }
 
   async function handleStop() {
