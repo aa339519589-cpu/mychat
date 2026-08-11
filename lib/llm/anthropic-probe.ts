@@ -28,13 +28,22 @@ function probeSignal(signal?: AbortSignal): AbortSignal {
   return signal ? AbortSignal.any([signal, timeout]) : timeout
 }
 
-function probeReasoning(model: string): Record<string, unknown> {
+function probeGenerationConfig(model: string): Record<string, unknown> {
   const profile = customModelReasoningProfile(model)
-  if (profile.reasoningMode !== 'adaptive') return {}
-  return {
-    thinking: { type: 'adaptive' },
-    output_config: { effort: 'low' },
+  if (profile.reasoningMode === 'adaptive') {
+    return {
+      max_tokens: 2_048,
+      thinking: { type: 'adaptive' },
+      output_config: { effort: 'low' },
+    }
   }
+  if (profile.reasoningMode === 'budget') {
+    return {
+      max_tokens: 2_048,
+      thinking: { type: 'enabled', budget_tokens: 1_024 },
+    }
+  }
+  return { max_tokens: 256 }
 }
 
 async function requestProbe(options: ProbeOptions, baseUrl: string, model: string): Promise<Response> {
@@ -49,10 +58,9 @@ async function requestProbe(options: ProbeOptions, baseUrl: string, model: strin
       },
       body: JSON.stringify({
         model,
-        max_tokens: 256,
         stream: false,
         messages: [{ role: 'user', content: 'Reply with exactly OK' }],
-        ...probeReasoning(model),
+        ...probeGenerationConfig(model),
       }),
       redirect: 'manual',
       signal: probeSignal(options.signal),
