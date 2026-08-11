@@ -70,8 +70,8 @@ const RUNTIME_HEALTHCHECK_RPC = 'verify_schema_contract_v3'
 const WORKER_READINESS_RPC = 'read_job_worker_readiness_v3'
 
 export function safeRevision(environment: HealthEnvironment = process.env): string {
-  const raw = environment.MYCHAT_BUILD_REVISION?.trim()
-    || environment.RENDER_GIT_COMMIT?.trim()
+  const raw = environment.RENDER_GIT_COMMIT?.trim()
+    || environment.MYCHAT_BUILD_REVISION?.trim()
     || environment.VERCEL_GIT_COMMIT_SHA?.trim()
   return raw && /^[a-f0-9]{7,64}$/i.test(raw) ? raw.slice(0, 12).toLowerCase() : 'unknown'
 }
