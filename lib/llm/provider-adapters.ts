@@ -1,8 +1,10 @@
 import type { EndpointAuthType } from '@/lib/model-endpoints'
+import type { ReasoningEffort } from '@/lib/model-reasoning'
+import { buildAnthropicMessagesRequest } from './anthropic-messages'
 import type { ModelMessage, ModelToolDefinition } from './types'
 
-export type ProviderAdapterId = 'deepseek-openai' | 'mimo-openai' | 'generic-openai' | 'openrouter-openai'
-export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+export type ProviderAdapterId = 'deepseek-openai' | 'mimo-openai' | 'generic-openai' | 'openrouter-openai' | 'anthropic-messages'
+export type { ReasoningEffort } from '@/lib/model-reasoning'
 
 type RequestOptions = {
   model: string
@@ -25,9 +27,8 @@ function applyOpenRouterOptions(
   effort: ReasoningEffort | null | undefined,
 ): void {
   if (requestedOutputTokens !== undefined) body.max_completion_tokens = requestedOutputTokens
-  // OpenRouter models with default_enabled=true (e.g. Claude Sonnet/Opus 5)
-  // keep reasoning ON at default_effort when the field is omitted. Explicitly
-  // send effort:"none" to turn it off; omit only when effort is unset.
+  // OpenRouter models with default_enabled=true keep reasoning ON at their
+  // default effort when omitted. Explicit none is required to turn it off.
   if (effort === 'none') body.reasoning = { effort: 'none' }
   else if (effort) body.reasoning = { effort }
   body.stream_options = { include_usage: true }
@@ -49,6 +50,18 @@ function applyGenericOptions(
 }
 
 export function buildProviderRequest(adapter: ProviderAdapterId, opts: RequestOptions) {
+  if (adapter === 'anthropic-messages') {
+    return buildAnthropicMessagesRequest({
+      model: opts.model,
+      messages: opts.messages,
+      tools: opts.tools,
+      apiKey: opts.apiKey,
+      authType: opts.authType,
+      reasoningEffort: opts.reasoningEffort,
+      maxOutputTokens: opts.maxOutputTokens,
+    })
+  }
+
   const body: Record<string, unknown> = { model: opts.model, messages: opts.messages, stream: true }
   const requestedOutputTokens = outputTokenLimit(opts.maxOutputTokens)
   if (adapter === 'openrouter-openai') {
