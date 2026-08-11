@@ -71,10 +71,10 @@ function savedCustomReasoningEffort(endpoint: ModelEndpointSummary): string | nu
 function preferredEndpointEffort(endpoint: ModelEndpointSummary, saved?: string | null): string | null {
   if (endpoint.outputKind !== "chat" || endpoint.reasoningEfforts.length === 0) return null
   if (saved && endpointSupportsReasoning(endpoint, saved)) return saved
-  if (!endpoint.reasoningMandatory && endpointSupportsReasoning(endpoint, "none")) return "none"
   if (endpoint.defaultReasoningEffort && endpointSupportsReasoning(endpoint, endpoint.defaultReasoningEffort)) {
     return endpoint.defaultReasoningEffort
   }
+  if (!endpoint.reasoningMandatory && endpointSupportsReasoning(endpoint, "none")) return "none"
   return endpoint.reasoningEfforts[0] ?? null
 }
 
