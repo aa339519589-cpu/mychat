@@ -1,11 +1,17 @@
 import { RequestError } from '@/lib/api/request'
 import { runAgentLoop, type AgentLoopOpts } from '@/lib/llm/agent-loop'
 import { chatCompletionsUrl } from '@/lib/llm/openai'
+import { customModelReasoningProfile, type ReasoningEffort } from '@/lib/model-reasoning'
 import type { ChatModelSelection } from './model-selection'
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const MAX_SOURCE_CHARS = 2_000
 const MAX_TITLE_CHARS = 20
+
+type TitleReasoning = {
+  reasoningEffort: ReasoningEffort | null
+  maxOutputTokens: number
+}
 
 export type TitleGenerationRequest = {
   conversationId: string
@@ -45,6 +51,18 @@ export function normalizeGeneratedTitle(value: string): string {
     .slice(0, MAX_TITLE_CHARS)
 }
 
+function titleReasoning(selection: ChatModelSelection): TitleReasoning {
+  if (!selection.customEndpoint) return { reasoningEffort: null, maxOutputTokens: 64 }
+  const profile = customModelReasoningProfile(selection.model)
+  if (profile.reasoningMandatory) {
+    return { reasoningEffort: 'low', maxOutputTokens: 2_048 }
+  }
+  if (profile.reasoningEfforts.includes('none')) {
+    return { reasoningEffort: 'none', maxOutputTokens: 64 }
+  }
+  return { reasoningEffort: null, maxOutputTokens: 64 }
+}
+
 type TitleDependencies = {
   runAgentLoop: (options: AgentLoopOpts) => Promise<{ totalTokens: number }>
 }
@@ -59,6 +77,7 @@ export async function generateTitleText(options: {
   if (options.selection.outputKind !== 'chat') {
     throw new RequestError(400, '标题生成只支持聊天模型')
   }
+  const titleConfig = titleReasoning(options.selection)
   let output = ''
   const { totalTokens } = await dependencies.runAgentLoop({
     url: chatCompletionsUrl(options.selection.capability.provider.baseUrl),
@@ -66,6 +85,7 @@ export async function generateTitleText(options: {
     model: options.selection.model,
     adapter: options.selection.capability.provider.adapter,
     thinking: false,
+    reasoningEffort: titleConfig.reasoningEffort,
     messages: [
       { role: 'system', content: '你只负责生成简短对话标题。不得调用工具，只输出标题本身，不要引号、解释或标点。' },
       {
@@ -84,7 +104,7 @@ export async function generateTitleText(options: {
       signal: options.signal,
       timeoutMs: 30_000,
       authType: options.selection.authType,
-      maxOutputTokens: 64,
+      maxOutputTokens: titleConfig.maxOutputTokens,
       idempotencyNamespace: options.idempotencyNamespace,
     },
   })
