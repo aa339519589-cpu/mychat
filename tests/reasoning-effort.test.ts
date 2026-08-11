@@ -90,8 +90,8 @@ test('Claude Fable 5 effort controls native adaptive thinking', () => {
   assert.deepEqual(body.output_config, { effort: 'max' })
 })
 
-test('Claude Haiku 4.5 maps UI depth to real thinking budget tokens', () => {
-  const { body } = buildProviderRequest('anthropic-messages', {
+test('Claude Haiku 4.5 maps token-budget presets to extended thinking', () => {
+  const high = buildProviderRequest('anthropic-messages', {
     model: 'claude-haiku-4-5',
     messages: [{ role: 'user', content: 'hi' }],
     tools: [],
@@ -99,9 +99,20 @@ test('Claude Haiku 4.5 maps UI depth to real thinking budget tokens', () => {
     apiKey: 'sk-test',
     reasoningEffort: 'high',
     maxOutputTokens: 40_000,
-  })
-  assert.deepEqual(body.thinking, { type: 'enabled', budget_tokens: 8_192 })
-  assert.equal(body.output_config, undefined)
+  }).body
+  assert.deepEqual(high.thinking, { type: 'enabled', budget_tokens: 8_192 })
+  assert.equal(high.output_config, undefined)
+
+  const maximum = buildProviderRequest('anthropic-messages', {
+    model: 'claude-haiku-4-5',
+    messages: [{ role: 'user', content: 'hi' }],
+    tools: [],
+    thinking: false,
+    apiKey: 'sk-test',
+    reasoningEffort: 'max',
+    maxOutputTokens: 40_000,
+  }).body
+  assert.deepEqual(maximum.thinking, { type: 'enabled', budget_tokens: 32_768 })
 })
 
 test('Claude Haiku 4.5 Off omits extended thinking', () => {
