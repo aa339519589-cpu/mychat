@@ -9,7 +9,9 @@ import { SettingsScreen } from "@/components/sidebar/settings"
 import { ScreenPanel } from "@/components/sidebar/screen-panel"
 import { sidebarScreenStyle, type SidebarAnchor, type SidebarScreen } from "./shared"
 
-type ScreenData = Pick<AppSidebarProps, "conversation" | "memory" | "project" | "model">
+const INTERNAL_OWNER_EMAIL = "339519589@qq.com"
+
+type ScreenData = Pick<AppSidebarProps, "conversation" | "memory" | "project" | "model" | "session">
 
 export type SidebarScreensProps = ScreenData & {
   stack: SidebarScreen[]
@@ -31,8 +33,18 @@ export function SidebarScreens(props: SidebarScreensProps) {
   return <><SettingsPanel {...props} /><ProjectsPanel {...props} /><ProjectDetailPanel {...props} /></>
 }
 
-function SettingsPanel({ stack, memory, model, conversation, onBack }: SidebarScreensProps) {
-  return <ScreenPanel open={stack.includes("settings")} style={sidebarScreenStyle(stack, "settings")} title="设置" onBack={onBack}><SettingsScreen memories={memory.items} memoryEnabled={memory.enabled} onMemoryEnabledChange={memory.setEnabled} onMemoryAdd={memory.add} onMemoryEdit={memory.edit} onMemoryDelete={memory.delete} onDeleteAllConversations={conversation.deleteAll} models={model.catalog} activeModelId={model.activeModelId} onModelSelect={model.selectModel} /></ScreenPanel>
+function SettingsPanel({ stack, memory, model, conversation, session, onBack }: SidebarScreensProps) {
+  const endpointSettings = session.email.trim().toLowerCase() === INTERNAL_OWNER_EMAIL
+    ? {
+        endpoints: model.endpoints,
+        activeEndpointId: model.activeId,
+        onSelect: model.select,
+        onCreated: model.created,
+        onUpdated: model.updated,
+        onDeleted: model.deleted,
+      }
+    : undefined
+  return <ScreenPanel open={stack.includes("settings")} style={sidebarScreenStyle(stack, "settings")} title="设置" onBack={onBack}><SettingsScreen memories={memory.items} memoryEnabled={memory.enabled} onMemoryEnabledChange={memory.setEnabled} onMemoryAdd={memory.add} onMemoryEdit={memory.edit} onMemoryDelete={memory.delete} onDeleteAllConversations={conversation.deleteAll} models={model.catalog} activeModelId={model.activeModelId} onModelSelect={model.selectModel} endpointSettings={endpointSettings} /></ScreenPanel>
 }
 
 function ProjectsPanel({ stack, project, conversations, onBack, onOpenProject }: SidebarScreensProps) {
