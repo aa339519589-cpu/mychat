@@ -2,11 +2,12 @@
 
 import { useEffect } from "react"
 import { AnimatePresence, motion, useDragControls, useReducedMotion } from "motion/react"
-import { X } from "lucide-react"
+import { Check, ChevronRight, Server, X } from "lucide-react"
 
 import { ModelCatalogList } from "@/components/model-catalog-list"
 import { MOMENTUM_SPRING, shouldDismissGesture, transitionFor } from "@/components/motion/fluid"
 import type { ModelCatalogItem } from "@/lib/model-catalog"
+import type { ModelEndpointSummary } from "@/lib/model-endpoints"
 import { cn } from "@/lib/utils"
 
 function ModelGroupDivider({ models, baseCount }: { models: ModelCatalogItem[]; baseCount: number }) {
@@ -41,13 +42,66 @@ function ModelGroupDivider({ models, baseCount }: { models: ModelCatalogItem[]; 
   )
 }
 
-export function ModelPickerSheet({ open, mobile, models, activeModelId, onClose, onSelect }: {
+function EndpointList({ endpoints, activeEndpointId, onSelect }: {
+  endpoints: ModelEndpointSummary[]
+  activeEndpointId: string | null
+  onSelect: (endpoint: ModelEndpointSummary) => void
+}) {
+  if (endpoints.length === 0) return null
+  return (
+    <div className="mb-2">
+      <div className="px-3.5 pb-1.5 pt-2 text-[11px] font-semibold tracking-[0.08em] text-muted-foreground">自定义 API</div>
+      <div className="divide-y divide-border/55 dark:divide-white/8">
+        {endpoints.map(endpoint => {
+          const active = endpoint.id === activeEndpointId
+          const disabled = endpoint.needsReconnect
+          return (
+            <button
+              key={endpoint.id}
+              type="button"
+              disabled={disabled}
+              onClick={() => { if (!disabled) onSelect(endpoint) }}
+              aria-current={active ? "true" : undefined}
+              className={cn(
+                "group flex min-h-[4.85rem] w-full min-w-0 items-center gap-3 px-3.5 py-3 text-left transition-colors",
+                !disabled && "hover:bg-secondary/45 active:bg-secondary/65",
+                active && "bg-secondary/55",
+                disabled && "cursor-not-allowed opacity-45",
+              )}
+            >
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-border/70 bg-secondary/35 dark:border-white/10 dark:bg-white/5">
+                <Server className="size-4 text-muted-foreground" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="truncate text-[15px] font-medium tracking-[-0.01em] text-foreground">{endpoint.name}</span>
+                  {disabled && <span className="shrink-0 rounded-md bg-secondary/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">需重连</span>}
+                </div>
+                <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-1.5">
+                  <span className="max-w-[15rem] truncate rounded-md bg-secondary/65 px-1.5 py-0.5 text-[10px] text-muted-foreground">{endpoint.model}</span>
+                  <span className="rounded-md bg-secondary/65 px-1.5 py-0.5 text-[10px] text-muted-foreground">API</span>
+                </div>
+              </div>
+              {active ? <Check className="size-4 shrink-0 text-foreground" /> : <ChevronRight className="size-4 shrink-0 text-muted-foreground/45" />}
+            </button>
+          )
+        })}
+      </div>
+      <div className="mx-3.5 my-2 h-px bg-border/60 dark:bg-white/10" />
+    </div>
+  )
+}
+
+export function ModelPickerSheet({ open, mobile, models, endpoints, activeModelId, activeEndpointId, onClose, onSelect, onEndpointSelect }: {
   open: boolean
   mobile: boolean
   models: ModelCatalogItem[]
+  endpoints: ModelEndpointSummary[]
   activeModelId: string | null
+  activeEndpointId: string | null
   onClose: () => void
   onSelect: (model: ModelCatalogItem) => void
+  onEndpointSelect: (endpoint: ModelEndpointSummary) => void
 }) {
   const dragControls = useDragControls()
   const reducedMotion = useReducedMotion()
@@ -91,9 +145,10 @@ export function ModelPickerSheet({ open, mobile, models, activeModelId, onClose,
               <button onClick={onClose} className="fluid-press fluid-icon-press absolute right-2.5 flex size-11 items-center justify-center rounded-full border border-border/55 bg-background/85 text-muted-foreground hover:text-foreground dark:border-white/10 dark:bg-white/5" aria-label="关闭模型选择"><X className="size-4" /></button>
             </div>
             <div className="fluid-scroll min-h-0 flex-1 overflow-y-auto px-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-1.5 md:px-3">
-              <ModelCatalogList models={baseModels} activeModelId={activeModelId} onSelect={model => { onSelect(model); onClose() }} compact />
+              <EndpointList endpoints={endpoints} activeEndpointId={activeEndpointId} onSelect={endpoint => { onEndpointSelect(endpoint); onClose() }} />
+              <ModelCatalogList models={baseModels} activeModelId={activeEndpointId ? null : activeModelId} onSelect={model => { onSelect(model); onClose() }} compact />
               {otherModels.length > 0 && <ModelGroupDivider models={otherModels} baseCount={baseModels.length} />}
-              {otherModels.length > 0 && <ModelCatalogList models={otherModels} activeModelId={activeModelId} onSelect={model => { onSelect(model); onClose() }} compact />}
+              {otherModels.length > 0 && <ModelCatalogList models={otherModels} activeModelId={activeEndpointId ? null : activeModelId} onSelect={model => { onSelect(model); onClose() }} compact />}
             </div>
           </motion.section>
         </motion.div>
