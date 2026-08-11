@@ -83,7 +83,7 @@ function logRequestTiming(
 
 export async function openTurnResponse(input: TurnTransportInput): Promise<OpenTurnResponse> {
   const options = input.options ?? {}
-  const generic = options.adapter === 'generic-openai'
+  const generic = options.adapter === 'generic-openai' || options.adapter === 'anthropic-messages'
   const request = providerRequest(input, options)
   const signal = requestSignal(options.signal, options.timeoutMs)
   const key = idempotencyKey(options.idempotencyNamespace, request.body)
