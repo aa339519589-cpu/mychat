@@ -14,6 +14,8 @@ import { ComposerBar } from "@/components/chat-input-bar"
 import { ComposerTools } from "@/components/chat-input-tools"
 import { useComposerState } from "@/components/chat-input-state"
 
+const CUSTOM_ENDPOINT_REASONING_OPTIONS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+
 export type ChatInputProps = {
   onSend: (text: string, images?: string[], files?: AttachedFile[]) => void
   activeTier: string
@@ -60,6 +62,9 @@ export function ChatInput({
   const activeModelLabel = activeEndpoint?.name ?? activeModel?.name ?? "模型"
   const activeProvider = activeEndpoint ? "API" : activeModel?.provider
   const activeOutputKind = activeEndpoint?.outputKind ?? activeModel?.outputKind
+  const reasoningOptions = activeEndpoint
+    ? activeEndpoint.outputKind === "chat" ? CUSTOM_ENDPOINT_REASONING_OPTIONS : []
+    : activeModel?.reasoningEfforts ?? []
   const hasActiveTools = searchMode !== "off" || historyRetrieval || renderEnabled
   const canSend = !disabled && !isLoading && !state.sendPending && Boolean(activeEndpoint || activeModel) && (!!state.value.trim() || state.images.length > 0 || state.files.length > 0)
 
@@ -68,7 +73,7 @@ export function ChatInput({
       <input ref={state.addInputRef} type="file" accept="image/*,.pdf,.txt,.md,.csv,.json,.log,.xml,.html,.yaml,.yml,text/*,application/pdf" multiple className="hidden" onChange={event => { state.handleAddFiles(event.target.files); event.currentTarget.value = "" }} />
       <AttachmentPreview images={state.images} files={state.files} fileLoading={state.fileLoading} fileError={state.fileError} onRemoveImage={index => state.setImages(previous => previous.filter((_, current) => current !== index))} onRemoveFile={index => state.setFiles(previous => previous.filter((_, current) => current !== index))} />
       <div className="flex min-w-0 flex-wrap items-center gap-x-0.5 rounded-[1.15rem] border border-[var(--chat-surface-border)] bg-[var(--chat-surface)] px-2.5 pb-1.5 pt-2 text-card-foreground shadow-[0_2px_10px_rgba(8,8,8,0.025)] transition-[border-color,box-shadow] duration-150 focus-within:border-[color-mix(in_srgb,var(--chat-surface-border)_72%,var(--foreground))] focus-within:shadow-[0_3px_13px_rgba(8,8,8,0.04)] sm:gap-x-1 sm:px-3">
-        <ComposerTools open={plusOpen} onOpenChange={setPlusOpen} inputRef={state.addInputRef} containerRef={state.plusMenuRef} searchMode={searchMode} onSearchModeChange={onSearchModeChange} historyRetrieval={historyRetrieval} onHistoryRetrievalChange={onHistoryRetrievalChange} renderEnabled={renderEnabled} onRenderEnabledChange={onRenderEnabledChange} hasActiveTools={hasActiveTools} reducedMotion={reducedMotion} reasoningEffort={reasoningEffort} reasoningOptions={activeEndpoint ? [] : activeModel?.reasoningEfforts ?? []} onReasoningChange={onReasoningChange} />
+        <ComposerTools open={plusOpen} onOpenChange={setPlusOpen} inputRef={state.addInputRef} containerRef={state.plusMenuRef} searchMode={searchMode} onSearchModeChange={onSearchModeChange} historyRetrieval={historyRetrieval} onHistoryRetrievalChange={setHistoryRetrieval} renderEnabled={renderEnabled} onRenderEnabledChange={onRenderEnabledChange} hasActiveTools={hasActiveTools} reducedMotion={reducedMotion} reasoningEffort={reasoningEffort} reasoningOptions={reasoningOptions} onReasoningChange={onReasoningChange} />
         <ComposerBar
           mobile={mobile}
           value={state.value}
