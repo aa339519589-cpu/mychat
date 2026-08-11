@@ -14,7 +14,7 @@ import { ComposerBar } from "@/components/chat-input-bar"
 import { ComposerTools } from "@/components/chat-input-tools"
 import { useComposerState } from "@/components/chat-input-state"
 
-const CUSTOM_ENDPOINT_REASONING_OPTIONS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+const CUSTOM_ENDPOINT_REASONING_OPTIONS = ["none", "low", "medium", "high", "max"]
 
 export type ChatInputProps = {
   onSend: (text: string, images?: string[], files?: AttachedFile[]) => void
