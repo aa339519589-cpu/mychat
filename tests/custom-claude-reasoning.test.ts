@@ -47,7 +47,7 @@ test('custom model profiles exactly match the supported Claude controls', () => 
 
   const haiku = customModelReasoningProfile('claude-haiku-4-5')
   assert.equal(haiku.reasoningMode, 'budget')
-  assert.deepEqual(haiku.reasoningEfforts, ['none', 'low', 'medium', 'high', 'max'])
+  assert.deepEqual(haiku.reasoningEfforts, ['none', 'low', 'medium', 'high', 'xhigh', 'max'])
 })
 
 test('Sonnet 5 defaults to native high effort and uses Messages transport', async () => {
@@ -76,15 +76,12 @@ test('Fable 5 rejects Off and defaults to high adaptive thinking', async () => {
   )
 })
 
-test('Haiku 4.5 accepts budget-backed levels but rejects xhigh', async () => {
-  const enabled = await selection('claude-haiku-4-5', 'high')
-  assert.equal(enabled.reasoningEffort, 'high')
-  assert.equal(enabled.thinking, true)
-  await assert.rejects(
-    selection('claude-haiku-4-5', 'xhigh'),
-    (error: unknown) => error instanceof ChatModelSelectionError
-      && error.status === 409,
-  )
+test('Haiku 4.5 accepts every explicit token-budget preset', async () => {
+  for (const effort of ['low', 'medium', 'high', 'xhigh', 'max']) {
+    const enabled = await selection('claude-haiku-4-5', effort)
+    assert.equal(enabled.reasoningEffort, effort)
+    assert.equal(enabled.thinking, true)
+  }
 })
 
 test('unknown custom models do not expose fabricated reasoning controls', async () => {
