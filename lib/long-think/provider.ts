@@ -52,14 +52,18 @@ function usageFrom(value: unknown): LongThinkCompletion['usage'] {
   }
 }
 
+function safeText(value: string): string {
+  return value.replaceAll('\u0000', '')
+}
+
 function textPart(value: unknown): string {
-  if (typeof value === 'string') return value
+  if (typeof value === 'string') return safeText(value)
   if (!Array.isArray(value)) return ''
   return value.map(entry => {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return ''
     const row = entry as Record<string, unknown>
-    if (typeof row.text === 'string') return row.text
-    return typeof row.content === 'string' ? row.content : ''
+    if (typeof row.text === 'string') return safeText(row.text)
+    return typeof row.content === 'string' ? safeText(row.content) : ''
   }).join('')
 }
 
