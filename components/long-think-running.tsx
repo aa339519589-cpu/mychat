@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { BrainCircuit, CircleStop, LoaderCircle, Plus } from "lucide-react"
-import { LONG_THINK_ACTIVE as ACTIVE, formatLongThinkElapsed as formatElapsed, longThinkContinuation, longThinkInteger as integer, longThinkNullableInteger as nullableInteger, longThinkResultAnswer as resultAnswer, type JobSnapshot } from "@/components/long-think-support"
+import { LONG_THINK_ACTIVE as ACTIVE, formatLongThinkElapsed as formatElapsed, longThinkInteger as integer, longThinkNullableInteger as nullableInteger, longThinkResultAnswer as resultAnswer, type JobSnapshot } from "@/components/long-think-support"
 import { continueLongThinkTask, stopLongThinkTask } from "@/components/use-long-think"
 import { LongThinkProgress } from "@/components/long-think-progress"
 
@@ -17,6 +17,7 @@ function title(status: string, active: boolean): string {
   if (active) return "深度处理中"
   if (status === "completed") return "已闭环"
   if (status === "cancelled") return "已停止"
+  if (status === "failed") return "失败"
   return "任务结束"
 }
 
@@ -35,7 +36,6 @@ export function LongThinkRunning({ jobId, job, onNew, onContinued }: { jobId: st
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(timer) }, [])
   const view = viewOf(job, now)
-  const canContinue = Boolean(job && longThinkContinuation(job.result))
 
   const stop = async () => {
     setBusy(true); setError("")
@@ -45,21 +45,20 @@ export function LongThinkRunning({ jobId, job, onNew, onContinued }: { jobId: st
   }
 
   const continueTask = async () => {
-    if (!job) return
     setContinueBusy(true); setError("")
     try {
-      const nextJobId = await continueLongThinkTask(job, followUp)
+      const nextJobId = await continueLongThinkTask(jobId, followUp)
       setFollowUp("")
       onContinued(nextJobId)
     } catch (cause) { setError(cause instanceof Error ? cause.message : "继续任务失败") }
     finally { setContinueBusy(false) }
   }
 
-  return <section className="mt-5 rounded-[30px] border border-border/70 bg-card/50 p-5 sm:p-7">
-    <div className="flex items-start gap-3"><div className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full border border-border bg-background">{view.active ? <LoaderCircle className="size-4 animate-spin" /> : <BrainCircuit className="size-4" />}</div><div className="min-w-0 flex-1"><h2 className="text-base font-semibold">{view.title}</h2><div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground"><span>轮次 <b className="font-medium text-foreground">{view.round}</b></span><span>API 调用 <b className="font-medium text-foreground">{view.apiCalls}</b></span><span>运行 <b className="font-medium text-foreground">{view.elapsed}</b></span><span>输入 Token <b className="font-medium text-foreground">{view.inputTokens}</b></span><span>输出 Token <b className="font-medium text-foreground">{view.outputTokens}</b></span></div></div><div className="flex shrink-0 gap-2"><button onClick={onNew} className="fluid-press flex h-10 items-center gap-1.5 rounded-xl border border-border px-3 text-xs hover:bg-muted/50"><Plus className="size-4" />新任务</button>{view.active && <button disabled={busy} onClick={() => void stop()} className="fluid-press flex h-10 items-center gap-1.5 rounded-xl border border-border px-3 text-xs text-muted-foreground hover:bg-muted/50 disabled:opacity-50"><CircleStop className="size-4" />停止</button>}</div></div>
+  return <section className="mt-5 min-w-0 rounded-[30px] border border-border/70 bg-card/50 p-5 sm:p-7">
+    <div className="flex min-w-0 flex-wrap items-start gap-3"><div className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full border border-border bg-background">{view.active ? <LoaderCircle className="size-4 animate-spin" /> : <BrainCircuit className="size-4" />}</div><div className="min-w-[12rem] flex-1"><h2 className="text-base font-semibold">{view.title}</h2><div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground"><span>轮次 <b className="font-medium text-foreground">{view.round}</b></span><span>API 调用 <b className="font-medium text-foreground">{view.apiCalls}</b></span><span>运行 <b className="font-medium text-foreground">{view.elapsed}</b></span><span>输入 Token <b className="font-medium text-foreground">{view.inputTokens}</b></span><span>输出 Token <b className="font-medium text-foreground">{view.outputTokens}</b></span></div></div><div className="flex shrink-0 gap-2"><button onClick={onNew} className="fluid-press flex h-10 items-center gap-1.5 rounded-xl border border-border px-3 text-xs hover:bg-muted/50"><Plus className="size-4" />新任务</button>{view.active && <button disabled={busy} onClick={() => void stop()} className="fluid-press flex h-10 items-center gap-1.5 rounded-xl border border-border px-3 text-xs text-muted-foreground hover:bg-muted/50 disabled:opacity-50"><CircleStop className="size-4" />停止</button>}</div></div>
     <LongThinkProgress job={job} />
-    {view.completed && view.finalAnswer && <div className="mt-6 whitespace-pre-wrap break-words rounded-2xl border border-border/70 bg-background p-4 text-[15px] leading-7 sm:p-6">{view.finalAnswer}</div>}
-    {!view.active && canContinue && <div className="mt-5 rounded-2xl border border-border/70 bg-background/55 p-4"><div className="text-sm font-medium">继续这个任务</div><textarea value={followUp} onChange={event => setFollowUp(event.target.value)} rows={4} placeholder="补充要求、提高目标、纠正方向，然后从现有 checkpoint 继续" className="mt-3 w-full resize-y rounded-xl border border-border bg-background p-3 text-sm leading-6 outline-none" /><button disabled={continueBusy || !followUp.trim()} onClick={() => void continueTask()} className="fluid-press mt-3 flex h-10 items-center justify-center gap-2 rounded-xl bg-foreground px-4 text-xs font-medium text-background disabled:opacity-50">{continueBusy && <LoaderCircle className="size-4 animate-spin" />}继续处理</button></div>}
+    {view.completed && view.finalAnswer && <div className="mt-6 overflow-x-auto whitespace-pre-wrap break-words rounded-2xl border border-border/70 bg-background p-4 text-[15px] leading-7 sm:p-6">{view.finalAnswer}</div>}
+    {!view.active && <div className="mt-5 rounded-2xl border border-border/70 bg-background/55 p-4"><div className="text-sm font-medium">继续这个任务</div><p className="mt-1 text-xs text-muted-foreground">会从这个任务最后保存的 checkpoint 接着做，不会从头开始。</p><textarea value={followUp} onChange={event => setFollowUp(event.target.value)} rows={4} placeholder="继续要求，例如：保持现有成果，继续把下界推进到 75%" className="mt-3 w-full resize-y rounded-xl border border-border bg-background p-3 text-sm leading-6 outline-none" /><button disabled={continueBusy || !followUp.trim()} onClick={() => void continueTask()} className="fluid-press mt-3 flex h-10 items-center justify-center gap-2 rounded-xl bg-foreground px-4 text-xs font-medium text-background disabled:opacity-50">{continueBusy && <LoaderCircle className="size-4 animate-spin" />}继续处理</button></div>}
     {view.failed && <div className="mt-5 rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">任务失败：{view.errorCode}</div>}
     {error && <p className="mt-4 text-sm text-destructive">{error}</p>}
   </section>
