@@ -16,7 +16,7 @@ import { MAESTRO_WIDGET_HTML, MAESTRO_WIDGET_URI } from "@/lib/maestro/widget"
 
 export const MAESTRO_PROTOCOL_VERSION = "2025-06-18"
 export const MAESTRO_SERVER_NAME = "mychat-maestro-runner"
-export const MAESTRO_SERVER_VERSION = "1.2.0"
+export const MAESTRO_SERVER_VERSION = "1.2.1"
 
 const MAX_CHECKPOINT = 36_000
 const MAX_ANSWER = 120_000
@@ -43,7 +43,6 @@ type GateInput = {
   finalAnswer: string
   done: boolean
 }
-
 type StartRoundInput = { startCode: string; round: number }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -197,6 +196,7 @@ function storedState(row: AgentTaskRow): MaestroReportState {
     history: task.history,
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
+    launchGranted: false,
   }
 }
 
@@ -266,6 +266,7 @@ export function evaluateMaestroGate(row: AgentTaskRow, input: GateInput): Maestr
     history: meta.history,
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
+    launchGranted: false,
   }
 }
 
@@ -314,8 +315,9 @@ function stateOutputSchema() {
       history: { type: "array", items: roundSchema(), maxItems: 100 },
       createdAt: { type: "string" },
       updatedAt: { type: "string" },
+      launchGranted: { type: "boolean" },
     },
-    required: ["kind", "jobId", "startCode", "objective", "status", "round", "phase", "action", "checkpoint", "unresolved", "nextActions", "evidence", "candidateAnswer", "finalAnswer", "nextPrompt", "currentInput", "currentRoundStartedAt", "totalElapsedMs", "lastOutput", "history", "createdAt", "updatedAt"],
+    required: ["kind", "jobId", "startCode", "objective", "status", "round", "phase", "action", "checkpoint", "unresolved", "nextActions", "evidence", "candidateAnswer", "finalAnswer", "nextPrompt", "currentInput", "currentRoundStartedAt", "totalElapsedMs", "lastOutput", "history", "createdAt", "updatedAt", "launchGranted"],
     additionalProperties: false,
   }
 }
@@ -404,7 +406,7 @@ export const MAESTRO_TOOLS = [
   {
     name: "maestro_round_started",
     title: "Mark Maestro round started",
-    description: "Widget-only internal telemetry marker. Records the exact wall-clock start of the next Maestro round and its input prompt.",
+    description: "Widget-only internal telemetry marker. Records the exact wall-clock start of the next Maestro round and its input prompt. Exactly one widget receives launchGranted=true and may post the next follow-up turn.",
     inputSchema: {
       type: "object",
       properties: {
@@ -488,8 +490,10 @@ async function callRoundStarted(args: unknown) {
   const row = await findMaestroTaskByStartCode(admin, input.startCode)
   if (!row) throw new Error("Maestro start code not found")
   const pending = storedState(row)
-  const updated = await markMaestroRoundStarted(admin, row.user_id, row.id, input.round, pending.currentInput || pending.nextPrompt)
-  return textResult(storedState(updated))
+  const claimed = await markMaestroRoundStarted(admin, row.user_id, row.id, input.round, pending.currentInput || pending.nextPrompt)
+  const state = storedState(claimed.row)
+  state.launchGranted = claimed.started
+  return textResult(state)
 }
 
 function elapsedMs(startedAt: string | null, fallback: string): number {
@@ -529,6 +533,7 @@ async function callGate(args: unknown) {
   state.currentInput = state.nextPrompt
   state.currentRoundStartedAt = null
   state.updatedAt = now
+  state.launchGranted = false
 
   await applyMaestroReport(admin, row.user_id, row.id, state)
   return textResult(state)
@@ -564,7 +569,7 @@ export async function handleMaestroRpc(body: JsonRpcRequest, _options: { origin:
         protocolVersion: MAESTRO_PROTOCOL_VERSION,
         capabilities: { tools: {}, resources: {} },
         serverInfo: { name: MAESTRO_SERVER_NAME, version: MAESTRO_SERVER_VERSION },
-        instructions: "For every NEW user request that should run through Maestro, call maestro_create_task with the objective. It creates a fresh unique internal startCode and starts the runner immediately. Never ask the user for a start code and never display one. maestro_start exists only to recover an old task when the code was already supplied. Every active worker/review turn must end with maestro_round_gate using the internal startCode from Maestro tool state and must include roundOutput containing the user-visible work product. The gate persists checkpoint, phase, visible input/output, round timing, total elapsed runtime, and history before returning. The widget uses widget-only maestro_status and maestro_round_started calls to keep one card synchronized without cross-origin fetches.",
+        instructions: "For every NEW user request that should run through Maestro, call maestro_create_task with the objective. It creates a fresh unique internal startCode and starts the runner immediately. Never ask the user for a start code and never display one. maestro_start exists only to recover an old task when the code was already supplied. Every active worker/review turn must end with maestro_round_gate using the internal startCode from Maestro tool state and must include roundOutput containing the user-visible work product. The gate persists checkpoint, phase, visible input/output, round timing, total elapsed runtime, and history before returning. The widget uses widget-only maestro_status and maestro_round_started calls to keep one card synchronized without cross-origin fetches; exactly one card is granted permission to launch each next turn.",
       },
     }
   }
