@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server"
 import { enforceLimits, resolveAuth } from "@/lib/api/guard"
 import { readJson, requestErrorResponse } from "@/lib/api/request"
-import { createMaestroTask, listMaestroTasks, publicMaestroTask, type MaestroPublicTask } from "@/lib/maestro/store"
+import { clientMaestroTask, createMaestroTask, listMaestroTasks, type MaestroClientTask } from "@/lib/maestro/store"
 import { maestroRunnerConfigured } from "@/lib/maestro/tokens"
 
 const MAX_OBJECTIVE = 100_000
@@ -22,7 +22,7 @@ export async function GET(request: Request): Promise<Response> {
   if (!auth.supabase || !auth.userId) return Response.json({ error: "请先登录" }, { status: 401 })
   try {
     const rows = await listMaestroTasks(auth.supabase, auth.userId)
-    return Response.json({ tasks: rows.map(publicMaestroTask).filter((task): task is MaestroPublicTask => task !== null) })
+    return Response.json({ tasks: rows.map(clientMaestroTask).filter((task): task is MaestroClientTask => task !== null) })
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Maestro 任务读取失败" }, { status: 500 })
   }
@@ -48,7 +48,7 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   try {
     const row = await createMaestroTask(auth.supabase, auth.userId, objective, rawMaxRounds)
-    const task = publicMaestroTask(row)
+    const task = clientMaestroTask(row)
     if (!task) throw new Error("Maestro task metadata is invalid")
     return Response.json({ task, launchUrl: directLaunchUrl() }, { status: 201 })
   } catch (error) {
