@@ -3,13 +3,21 @@ import { jobMaintenanceMode } from '../jobs/maintenance'
 
 const CONTINUOUS_CHAT_PATHS = new Set(['/api/chat', '/api/chat/title'])
 
+function isContinuousPath(pathname: string): boolean {
+  return CONTINUOUS_CHAT_PATHS.has(pathname)
+    || pathname === '/api/long-think/jobs'
+    || pathname.startsWith('/api/long-think/jobs/')
+}
+
 /**
  * Drain blocks high-risk Agent and publication writes, but must not turn an
- * ordinary application rollout into a chat outage. Chat queues stay serviced
- * by the maintenance Worker pool and can therefore continue accepting turns.
+ * ordinary application rollout into a chat or Long Think outage. Chat and
+ * long-think queues stay serviced by the maintenance Worker pool and can
+ * therefore continue accepting turns and continuations.
  */
 export function expensiveWriteMaintenanceResponse(request: Request): Response | null {
-  if (jobMaintenanceMode() !== 'drain' || CONTINUOUS_CHAT_PATHS.has(new URL(request.url).pathname)) {
+  const pathname = new URL(request.url).pathname
+  if (jobMaintenanceMode() !== 'drain' || isContinuousPath(pathname)) {
     return null
   }
   return apiErrorResponseV1(request, {
