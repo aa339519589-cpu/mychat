@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server"
 import { createAdminClient } from "@/lib/supabase/admin"
 import { applyMaestroReport, getMaestroTask, maestroMeta, type MaestroReportState } from "@/lib/maestro/store"
-import { maestroStateHash, verifyMaestroReportToken } from "@/lib/maestro/tokens"
+import { maestroStateHash, verifyMaestroReportToken, verifyMaestroTaskToken } from "@/lib/maestro/tokens"
 
 const MAX_BODY_BYTES = 512 * 1024
 const CORS = {
@@ -24,7 +24,7 @@ function isReportState(value: unknown): value is MaestroReportState {
   const row = value as Record<string, unknown>
   return row.kind === "maestro-runner-state"
     && typeof row.jobId === "string"
-    && typeof row.startCode === "string"
+    && typeof row.taskToken === "string" && row.taskToken.length <= 4_096
     && typeof row.objective === "string"
     && Number.isSafeInteger(row.round) && Number(row.round) >= 0
     && (row.phase === "work" || row.phase === "review" || row.phase === "done")
@@ -57,13 +57,17 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (token.jobId !== state.jobId || token.round !== state.round || token.stateHash !== maestroStateHash(state)) {
     return json({ error: "report state does not match signed tool result" }, 403)
   }
+  const taskAccess = verifyMaestroTaskToken(state.taskToken)
+  if (!taskAccess || taskAccess.userId !== token.userId || taskAccess.jobId !== token.jobId) {
+    return json({ error: "task access does not match report" }, 403)
+  }
 
   const admin = createAdminClient()
   if (!admin) return json({ error: "Maestro storage unavailable" }, 503)
   try {
     const existing = await getMaestroTask(admin, token.userId, token.jobId)
     const meta = existing ? maestroMeta(existing) : null
-    if (!existing || !meta || meta.startCode !== state.startCode || existing.goal !== state.objective) {
+    if (!existing || !meta || existing.goal !== state.objective) {
       return json({ error: "Maestro task mismatch" }, 403)
     }
     if (existing.status === "cancelled") return json({ ok: true, stop: true, status: "cancelled" })

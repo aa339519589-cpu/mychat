@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto"
 import type { Database } from "@/lib/supabase/database.types"
 import { jsonRecord, toJson } from "@/lib/supabase/json"
 import type { SupabaseClient } from "@/lib/supabase/types"
@@ -25,7 +24,6 @@ export type MaestroRoundRecord = {
 export type MaestroMeta = {
   kind: typeof MAESTRO_META_KIND
   version: 1
-  startCode: string
   maxRounds: number
   round: number
   phase: MaestroPhase
@@ -47,7 +45,7 @@ export type MaestroMeta = {
 export type MaestroReportState = {
   kind: "maestro-runner-state"
   jobId: string
-  startCode: string
+  taskToken: string
   objective: string
   status: string
   round: number
@@ -89,7 +87,6 @@ export type MaestroPublicTask = {
   updatedAt: string
   startedAt: string | null
   finishedAt: string | null
-  startCode: string
   currentInput: string
   currentRoundStartedAt: string | null
   totalElapsedMs: number
@@ -97,7 +94,7 @@ export type MaestroPublicTask = {
   history: MaestroRoundRecord[]
 }
 
-export type MaestroClientTask = Omit<MaestroPublicTask, "startCode">
+export type MaestroClientTask = MaestroPublicTask
 
 function text(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback
@@ -147,12 +144,9 @@ function rounds(value: unknown): MaestroRoundRecord[] {
 export function maestroMeta(row: Pick<AgentTaskRow, "meta">): MaestroMeta | null {
   const record = jsonRecord(row.meta)
   if (!record || record.kind !== MAESTRO_META_KIND) return null
-  const startCode = text(record.startCode)
-  if (!startCode) return null
   return {
     kind: MAESTRO_META_KIND,
     version: 1,
-    startCode,
     maxRounds: Math.max(1, integer(record.maxRounds, 1000)),
     round: integer(record.round, 0),
     phase: phase(record.phase),
@@ -194,7 +188,6 @@ export function publicMaestroTask(row: AgentTaskRow): MaestroPublicTask | null {
     updatedAt: row.updated_at,
     startedAt: row.started_at,
     finishedAt: row.finished_at,
-    startCode: meta.startCode,
     currentInput: meta.currentInput,
     currentRoundStartedAt: meta.currentRoundStartedAt,
     totalElapsedMs: meta.totalElapsedMs,
@@ -204,26 +197,16 @@ export function publicMaestroTask(row: AgentTaskRow): MaestroPublicTask | null {
 }
 
 export function clientMaestroTask(row: AgentTaskRow): MaestroClientTask | null {
-  const task = publicMaestroTask(row)
-  if (!task) return null
-  const { startCode: internalStartCode, ...clientTask } = task
-  void internalStartCode
-  return clientTask
+  return publicMaestroTask(row)
 }
 
 const TASK_SELECT = "id,user_id,goal,mode,repo,branch,status,error,created_at,updated_at,started_at,finished_at,meta,agent_branch,pull_request_url,pull_request_number,commit_sha"
 
-export async function createMaestroTask(
-  client: SupabaseClient,
-  userId: string,
-  objective: string,
-  maxRounds: number,
-): Promise<AgentTaskRow> {
+export async function createMaestroTask(client: SupabaseClient, userId: string, objective: string, maxRounds: number): Promise<AgentTaskRow> {
   const now = new Date().toISOString()
   const meta: MaestroMeta = {
     kind: MAESTRO_META_KIND,
     version: 1,
-    startCode: randomBytes(18).toString("base64url"),
     maxRounds,
     round: 0,
     phase: "work",
@@ -241,82 +224,33 @@ export async function createMaestroTask(
     lastOutput: "",
     history: [],
   }
-  const { data, error } = await client.from("agent_tasks").insert({
-    user_id: userId,
-    goal: objective,
-    mode: "plan",
-    branch: MAESTRO_BRANCH,
-    status: "queued",
-    meta: toJson(meta),
-    updated_at: now,
-  }).select(TASK_SELECT).single()
+  const { data, error } = await client.from("agent_tasks").insert({ user_id: userId, goal: objective, mode: "plan", branch: MAESTRO_BRANCH, status: "queued", meta: toJson(meta), updated_at: now }).select(TASK_SELECT).single()
   if (error || !data) throw new Error(error?.message ?? "Maestro task creation failed")
   return data as AgentTaskRow
 }
 
 export async function listMaestroTasks(client: SupabaseClient, userId: string): Promise<AgentTaskRow[]> {
-  const { data, error } = await client.from("agent_tasks")
-    .select(TASK_SELECT)
-    .eq("user_id", userId)
-    .eq("branch", MAESTRO_BRANCH)
-    .order("created_at", { ascending: false })
-    .limit(100)
+  const { data, error } = await client.from("agent_tasks").select(TASK_SELECT).eq("user_id", userId).eq("branch", MAESTRO_BRANCH).order("created_at", { ascending: false }).limit(100)
   if (error) throw new Error(error.message)
   return (data ?? []) as AgentTaskRow[]
 }
 
 export async function getMaestroTask(client: SupabaseClient, userId: string, jobId: string): Promise<AgentTaskRow | null> {
-  const { data, error } = await client.from("agent_tasks")
-    .select(TASK_SELECT)
-    .eq("id", jobId)
-    .eq("user_id", userId)
-    .eq("branch", MAESTRO_BRANCH)
-    .maybeSingle()
+  const { data, error } = await client.from("agent_tasks").select(TASK_SELECT).eq("id", jobId).eq("user_id", userId).eq("branch", MAESTRO_BRANCH).maybeSingle()
   if (error) throw new Error(error.message)
   return data as AgentTaskRow | null
 }
 
-export async function findMaestroTaskByStartCode(client: SupabaseClient, startCode: string): Promise<AgentTaskRow | null> {
-  const { data, error } = await client.from("agent_tasks")
-    .select(TASK_SELECT)
-    .eq("branch", MAESTRO_BRANCH)
-    .filter("meta->>kind", "eq", MAESTRO_META_KIND)
-    .filter("meta->>startCode", "eq", startCode)
-    .limit(1)
-    .maybeSingle()
-  if (error) throw new Error(error.message)
-  return data as AgentTaskRow | null
-}
-
-export async function markMaestroRoundStarted(
-  client: SupabaseClient,
-  userId: string,
-  jobId: string,
-  round: number,
-  input: string,
-): Promise<{ row: AgentTaskRow; started: boolean }> {
+export async function markMaestroRoundStarted(client: SupabaseClient, userId: string, jobId: string, round: number, input: string): Promise<{ row: AgentTaskRow; started: boolean }> {
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const row = await getMaestroTask(client, userId, jobId)
     if (!row) throw new Error("Maestro task not found")
     const meta = maestroMeta(row)
     if (!meta) throw new Error("Maestro task metadata is invalid")
     if (row.status === "cancelled" || row.status === "completed") return { row, started: false }
-    if (round !== meta.round + 1) return { row, started: false }
-    if (meta.currentRoundStartedAt) return { row, started: false }
-
+    if (round !== meta.round + 1 || meta.currentRoundStartedAt) return { row, started: false }
     const now = new Date().toISOString()
-    const { data, error } = await client.from("agent_tasks").update({
-      status: "running",
-      started_at: row.started_at ?? now,
-      updated_at: now,
-      meta: toJson({ ...meta, currentInput: input, currentRoundStartedAt: now }),
-    })
-      .eq("id", row.id)
-      .eq("user_id", userId)
-      .eq("branch", MAESTRO_BRANCH)
-      .eq("updated_at", row.updated_at)
-      .select(TASK_SELECT)
-      .maybeSingle()
+    const { data, error } = await client.from("agent_tasks").update({ status: "running", started_at: row.started_at ?? now, updated_at: now, meta: toJson({ ...meta, currentInput: input, currentRoundStartedAt: now }) }).eq("id", row.id).eq("user_id", userId).eq("branch", MAESTRO_BRANCH).eq("updated_at", row.updated_at).select(TASK_SELECT).maybeSingle()
     if (error) throw new Error(error.message)
     if (data) return { row: data as AgentTaskRow, started: true }
   }
@@ -329,32 +263,19 @@ export async function cancelMaestroTask(client: SupabaseClient, userId: string, 
   const meta = maestroMeta(row)
   if (!meta) return false
   const now = new Date().toISOString()
-  const { error } = await client.from("agent_tasks").update({
-    status: "cancelled",
-    finished_at: now,
-    updated_at: now,
-    meta: toJson({ ...meta, lastAction: "stop", lastReportedAt: now, currentRoundStartedAt: null }),
-  }).eq("id", jobId).eq("user_id", userId).eq("branch", MAESTRO_BRANCH)
+  const { error } = await client.from("agent_tasks").update({ status: "cancelled", finished_at: now, updated_at: now, meta: toJson({ ...meta, lastAction: "stop", lastReportedAt: now, currentRoundStartedAt: null }) }).eq("id", jobId).eq("user_id", userId).eq("branch", MAESTRO_BRANCH)
   if (error) throw new Error(error.message)
   return true
 }
 
-export async function applyMaestroReport(
-  client: SupabaseClient,
-  userId: string,
-  jobId: string,
-  state: MaestroReportState,
-): Promise<MaestroPublicTask> {
+export async function applyMaestroReport(client: SupabaseClient, userId: string, jobId: string, state: MaestroReportState): Promise<MaestroPublicTask> {
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const row = await getMaestroTask(client, userId, jobId)
     if (!row) throw new Error("Maestro task not found")
     const meta = maestroMeta(row)
-    if (!meta) throw new Error("Maestro task metadata is invalid")
     const existing = publicMaestroTask(row)
-    if (!existing) throw new Error("Maestro task is invalid")
-    if (row.status === "cancelled" || row.status === "completed") return existing
-    if (state.round < meta.round) return existing
-
+    if (!meta || !existing) throw new Error("Maestro task metadata is invalid")
+    if (row.status === "cancelled" || row.status === "completed" || state.round < meta.round) return existing
     const now = new Date().toISOString()
     const nextMeta: MaestroMeta = {
       ...meta,
@@ -375,20 +296,8 @@ export async function applyMaestroReport(
       history: state.history.slice(-100),
     }
     const completed = state.action === "finish" && state.phase === "done" && Boolean(state.finalAnswer.trim())
-    const patch = {
-      status: completed ? "completed" : "running",
-      started_at: row.started_at ?? now,
-      finished_at: completed ? now : null,
-      updated_at: now,
-      meta: toJson(nextMeta),
-    }
-    const { data, error } = await client.from("agent_tasks").update(patch)
-      .eq("id", row.id)
-      .eq("user_id", userId)
-      .eq("branch", MAESTRO_BRANCH)
-      .eq("updated_at", row.updated_at)
-      .select(TASK_SELECT)
-      .maybeSingle()
+    const patch = { status: completed ? "completed" : "running", started_at: row.started_at ?? now, finished_at: completed ? now : null, updated_at: now, meta: toJson(nextMeta) }
+    const { data, error } = await client.from("agent_tasks").update(patch).eq("id", row.id).eq("user_id", userId).eq("branch", MAESTRO_BRANCH).eq("updated_at", row.updated_at).select(TASK_SELECT).maybeSingle()
     if (error) throw new Error(error.message)
     if (data) {
       const result = publicMaestroTask(data as AgentTaskRow)
