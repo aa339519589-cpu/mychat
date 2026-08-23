@@ -1,5 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin"
 import {
+  applyMaestroReport,
+  createMaestroTask,
   findMaestroTaskByStartCode,
   maestroMeta,
   publicMaestroTask,
@@ -8,21 +10,27 @@ import {
   type MaestroPhase,
   type MaestroReportState,
 } from "@/lib/maestro/store"
-import { issueMaestroReportToken, maestroStateHash } from "@/lib/maestro/tokens"
 import { MAESTRO_WIDGET_HTML, MAESTRO_WIDGET_URI } from "@/lib/maestro/widget"
 
 export const MAESTRO_PROTOCOL_VERSION = "2025-06-18"
 export const MAESTRO_SERVER_NAME = "mychat-maestro-runner"
-export const MAESTRO_SERVER_VERSION = "1.0.0"
+export const MAESTRO_SERVER_VERSION = "1.1.0"
 
 const MAX_CHECKPOINT = 36_000
 const MAX_ANSWER = 120_000
 const MAX_LIST = 64
 const MAX_ITEM = 4_000
+const MAX_OBJECTIVE = 100_000
+const DEFAULT_MAX_ROUNDS = 10_000
 
 type JsonRpcId = string | number | null
 type JsonRpcRequest = { jsonrpc?: unknown; id?: JsonRpcId; method?: unknown; params?: unknown }
 type JsonRpcResponse = { jsonrpc: "2.0"; id: JsonRpcId; result?: unknown; error?: { code: number; message: string; data?: unknown } }
+
+type CreateInput = {
+  objective: string
+  maxRounds: number
+}
 
 type GateInput = {
   startCode: string
@@ -48,6 +56,15 @@ function cleanText(value: unknown, maximum: number): string {
 function cleanList(value: unknown): string[] {
   if (!Array.isArray(value)) return []
   return value.slice(0, MAX_LIST).map(item => cleanText(item, MAX_ITEM)).filter(Boolean)
+}
+
+function createInput(value: unknown): CreateInput | null {
+  const row = record(value)
+  if (!row) return null
+  const objective = cleanText(row.objective, MAX_OBJECTIVE)
+  const maxRounds = row.maxRounds === undefined ? DEFAULT_MAX_ROUNDS : Number(row.maxRounds)
+  if (!objective || !Number.isSafeInteger(maxRounds) || maxRounds < 2 || maxRounds > 100_000) return null
+  return { objective, maxRounds }
 }
 
 function gateInput(value: unknown): GateInput | null {
@@ -77,7 +94,6 @@ function startInput(value: unknown): { startCode: string } | null {
 }
 
 function continuationPrompt(options: {
-  startCode: string
   objective: string
   nextRound: number
   phase: MaestroPhase
@@ -94,21 +110,26 @@ function continuationPrompt(options: {
     evidence: options.evidence,
     candidateAnswer: options.candidateAnswer,
   })
+  const credentialInstruction = "本任务的 startCode 是 Maestro 内部凭证，已存在于上一条 Maestro 工具结果中。调用 maestro_round_gate 时直接使用该内部值；绝对不要向用户索取、展示或要求用户复制 startCode。"
+
   if (options.phase === "review") {
     return [
-      `继续 Maestro Runner 任务，启动码 ${options.startCode}，第 ${options.nextRound} 轮，阶段 review。`,
+      `继续 Maestro Runner 任务，第 ${options.nextRound} 轮，阶段 review。`,
       `目标：${options.objective}`,
       `上一阶段候选答案与检查点：${state}`,
+      credentialInstruction,
       "这是独立复核轮。主动寻找错误、遗漏、未经证明的跳步和没有闭环的要求，不要默认候选答案正确。",
       "若发现实质问题，修正并把 phase=review、done=false、未解决项和下一步交给 maestro_round_gate；系统随后会重新进入工作轮。",
       "若确认所有要求均已闭环，给出经过复核的完整 finalAnswer，并在本轮结束前调用 maestro_round_gate，phase=review、done=true、unresolved=[]、nextActions=[]。",
       "调用工具后结束这一轮，不要等待用户手动说继续。不要输出隐藏思维链；检查点只写结论、证据、计算和未决事项。",
     ].join("\n\n")
   }
+
   return [
-    `继续 Maestro Runner 任务，启动码 ${options.startCode}，第 ${options.nextRound} 轮，阶段 work。`,
+    `继续 Maestro Runner 任务，第 ${options.nextRound} 轮，阶段 work。`,
     `目标：${options.objective}`,
     `上一轮持久检查点：${state}`,
+    credentialInstruction,
     "现在直接推进尚未闭环的工作。不要把“需要继续”“之后再做”当作完成。尽可能完成实质工作。",
     "本轮真正结束前必须调用 maestro_round_gate 一次，phase=work，并提交自包含 checkpoint、unresolved、nextActions、evidence、done。只有目标已经完整闭环时才把 done=true，同时提交完整 finalAnswer。",
     "调用工具后结束这一轮。工具界面会自动创建下一轮，不需要用户手动发送“继续”。不要输出隐藏思维链；检查点只写继续工作必需的结论、证据、计算和未决事项。",
@@ -137,7 +158,6 @@ function storedState(row: AgentTaskRow): MaestroReportState {
     candidateAnswer: task.candidateAnswer,
     finalAnswer: task.finalAnswer,
     nextPrompt: action === "finish" || action === "stop" ? "" : continuationPrompt({
-      startCode: task.startCode,
       objective: task.objective,
       nextRound: task.round + 1,
       phase,
@@ -200,7 +220,6 @@ export function evaluateMaestroGate(row: AgentTaskRow, input: GateInput): Maestr
   }
   if (action === "continue" || action === "review") {
     state.nextPrompt = continuationPrompt({
-      startCode: task.startCode,
       objective: task.objective,
       nextRound: input.round + 1,
       phase,
@@ -220,7 +239,7 @@ function stateOutputSchema() {
     properties: {
       kind: { type: "string", const: "maestro-runner-state" },
       jobId: { type: "string" },
-      startCode: { type: "string" },
+      startCode: { type: "string", description: "Internal Maestro task capability. Never ask the user for it or display it to the user." },
       objective: { type: "string" },
       round: { type: "integer", minimum: 0 },
       phase: { type: "string", enum: ["work", "review", "done"] },
@@ -240,9 +259,31 @@ function stateOutputSchema() {
 
 export const MAESTRO_TOOLS = [
   {
+    name: "maestro_create_task",
+    title: "Run a new Maestro task",
+    description: "Create and immediately start a new Maestro Runner task from the user's objective. A fresh unique startCode is generated internally for every task and is carried by Maestro tool state. For a new task, use this tool directly and NEVER ask the user to generate, find, copy, paste, or provide a start code.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        objective: { type: "string", minLength: 1, maxLength: MAX_OBJECTIVE, description: "Complete objective for the multi-turn task." },
+        maxRounds: { type: "integer", minimum: 2, maximum: 100_000, default: DEFAULT_MAX_ROUNDS },
+      },
+      required: ["objective"],
+      additionalProperties: false,
+    },
+    outputSchema: stateOutputSchema(),
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
+    _meta: {
+      ui: { resourceUri: MAESTRO_WIDGET_URI, visibility: ["model", "app"] },
+      "openai/outputTemplate": MAESTRO_WIDGET_URI,
+      "openai/toolInvocation/invoking": "Starting Maestro task…",
+      "openai/toolInvocation/invoked": "Maestro task started",
+    },
+  },
+  {
     name: "maestro_start",
-    title: "Start Maestro Runner",
-    description: "Read a queued My Chat Maestro task by its start code and mount the Maestro Runner UI. Call this exactly once when the user supplies a Maestro start code. This tool is read-only: it only retrieves task state and computes the next prompt. After it returns, do not solve the task in the same turn; the UI will automatically post the first worker turn.",
+    title: "Resume Maestro task by code",
+    description: "Legacy recovery path for an EXISTING Maestro task when a start code has already been explicitly supplied. Never ask a user for a start code. For every new task call maestro_create_task instead.",
     inputSchema: {
       type: "object",
       properties: { startCode: { type: "string", minLength: 12, maxLength: 128 } },
@@ -261,11 +302,11 @@ export const MAESTRO_TOOLS = [
   {
     name: "maestro_round_gate",
     title: "Maestro round gate",
-    description: "Pure read-only completion gate for a My Chat Maestro Runner task. At the end of EVERY Maestro worker or review turn, call this exactly once before ending the turn. It reads the authoritative task state, evaluates the supplied compact checkpoint, and returns continue/review/finish without modifying external data. The attached UI synchronizes the result and automatically posts the next ChatGPT turn. Never omit this call while a Maestro task is active.",
+    description: "Persist and evaluate the checkpoint at the end of every Maestro worker or review turn. Use the internal startCode from the most recent Maestro tool state; never ask the user for it and never display it. The tool decides continue/review/finish and the attached UI automatically posts the next turn.",
     inputSchema: {
       type: "object",
       properties: {
-        startCode: { type: "string", minLength: 12, maxLength: 128 },
+        startCode: { type: "string", minLength: 12, maxLength: 128, description: "Internal value from Maestro tool state. Never obtain this from the user." },
         round: { type: "integer", minimum: 1, maximum: 1000000 },
         phase: { type: "string", enum: ["work", "review"] },
         checkpoint: { type: "string", description: "Self-contained continuation state: conclusions, evidence, calculations, decisions and current progress. Never include hidden chain-of-thought." },
@@ -279,78 +320,104 @@ export const MAESTRO_TOOLS = [
       additionalProperties: false,
     },
     outputSchema: stateOutputSchema(),
-    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: true },
     _meta: {
       ui: { resourceUri: MAESTRO_WIDGET_URI, visibility: ["model", "app"] },
       "openai/outputTemplate": MAESTRO_WIDGET_URI,
-      "openai/toolInvocation/invoking": "Checking Maestro round…",
-      "openai/toolInvocation/invoked": "Maestro round checked",
+      "openai/toolInvocation/invoking": "Saving Maestro round…",
+      "openai/toolInvocation/invoked": "Maestro round saved",
     },
   },
 ] as const
 
-function textResult(state: MaestroReportState, origin: string, userId: string) {
-  const stateHash = maestroStateHash(state)
-  const reportToken = issueMaestroReportToken({ userId, jobId: state.jobId, round: state.round, stateHash })
+function textResult(state: MaestroReportState) {
   return {
     structuredContent: state,
     content: [{ type: "text", text: state.action === "finish"
-      ? "Maestro independent review accepted closure. The runner will stop after syncing the final result."
+      ? "Maestro independent review accepted closure. The runner will stop."
       : state.action === "stop"
         ? "Maestro task is stopped."
         : state.action === "review"
           ? "Candidate answer reached closure criteria. The Maestro UI will automatically start a separate review turn."
-          : "Round checkpoint accepted. The Maestro UI will automatically start the next ChatGPT turn." }],
-    _meta: {
-      reportToken,
-      reportUrl: `${origin}/api/maestro/widget/report`,
-      jobId: state.jobId,
-    },
+          : "Maestro state is ready. The UI will automatically start the next ChatGPT turn." }],
+    _meta: { jobId: state.jobId },
   }
 }
 
-async function callStart(args: unknown, origin: string) {
+async function resolveMaestroOwnerUserId(): Promise<string> {
+  const configured = process.env.MAESTRO_OWNER_USER_ID?.trim()
+  if (configured) return configured
+
+  const admin = createAdminClient()
+  if (!admin) throw new Error("Maestro storage is unavailable")
+
+  const recent = await admin.from("agent_tasks")
+    .select("user_id")
+    .order("created_at", { ascending: false })
+    .limit(100)
+  if (recent.error) throw new Error(recent.error.message)
+
+  const userIds = new Set((recent.data ?? []).map(row => row.user_id).filter(Boolean))
+  if (userIds.size === 1) return [...userIds][0]
+  if (userIds.size > 1) throw new Error("MAESTRO_OWNER_USER_ID must be configured when more than one My Chat user exists")
+
+  const users = await admin.auth.admin.listUsers({ page: 1, perPage: 2 })
+  if (users.error) throw new Error(users.error.message)
+  if (users.data.users.length === 1) return users.data.users[0].id
+  throw new Error("Unable to resolve Maestro owner; configure MAESTRO_OWNER_USER_ID")
+}
+
+async function callCreate(args: unknown) {
+  const input = createInput(args)
+  if (!input) throw new Error("objective is required and maxRounds must be an integer from 2 to 100000")
+  const admin = createAdminClient()
+  if (!admin) throw new Error("Maestro storage is unavailable")
+  const userId = await resolveMaestroOwnerUserId()
+  const row = await createMaestroTask(admin, userId, input.objective, input.maxRounds)
+  return textResult(storedState(row))
+}
+
+async function callStart(args: unknown) {
   const input = startInput(args)
   if (!input) throw new Error("startCode is required")
   const admin = createAdminClient()
   if (!admin) throw new Error("Maestro storage is unavailable")
   const row = await findMaestroTaskByStartCode(admin, input.startCode)
   if (!row) throw new Error("Maestro start code not found")
-  return textResult(storedState(row), origin, row.user_id)
+  return textResult(storedState(row))
 }
 
-async function callGate(args: unknown, origin: string) {
+async function callGate(args: unknown) {
   const input = gateInput(args)
   if (!input) throw new Error("Invalid Maestro round checkpoint")
   const admin = createAdminClient()
   if (!admin) throw new Error("Maestro storage is unavailable")
   const row = await findMaestroTaskByStartCode(admin, input.startCode)
   if (!row) throw new Error("Maestro start code not found")
-  return textResult(evaluateMaestroGate(row, input), origin, row.user_id)
+  const state = evaluateMaestroGate(row, input)
+  await applyMaestroReport(admin, row.user_id, row.id, state)
+  return textResult(state)
 }
 
 function rpcError(id: JsonRpcId, code: number, message: string): JsonRpcResponse {
   return { jsonrpc: "2.0", id, error: { code, message } }
 }
 
-function resource(origin: string) {
+function resource() {
   return {
     uri: MAESTRO_WIDGET_URI,
     mimeType: "text/html;profile=mcp-app",
     text: MAESTRO_WIDGET_HTML,
     _meta: {
-      ui: {
-        prefersBorder: true,
-        csp: { connectDomains: [origin], resourceDomains: [] },
-      },
-      "openai/widgetDescription": "Maestro Runner controls automatic cross-turn continuation and reports durable progress to My Chat.",
+      ui: { prefersBorder: true, csp: { connectDomains: [], resourceDomains: [] } },
+      "openai/widgetDescription": "Maestro Runner automatically continues a durable multi-turn task. Internal task codes are never user input.",
       "openai/widgetPrefersBorder": true,
-      "openai/widgetCSP": { connect_domains: [origin], resource_domains: [] },
+      "openai/widgetCSP": { connect_domains: [], resource_domains: [] },
     },
   }
 }
 
-export async function handleMaestroRpc(body: JsonRpcRequest, options: { origin: string }): Promise<JsonRpcResponse | null> {
+export async function handleMaestroRpc(body: JsonRpcRequest, _options: { origin: string }): Promise<JsonRpcResponse | null> {
   const id = body.id ?? null
   if (body.jsonrpc !== "2.0" || typeof body.method !== "string") return rpcError(id, -32600, "Invalid Request")
   if (body.method.startsWith("notifications/")) return null
@@ -362,7 +429,7 @@ export async function handleMaestroRpc(body: JsonRpcRequest, options: { origin: 
         protocolVersion: MAESTRO_PROTOCOL_VERSION,
         capabilities: { tools: {}, resources: {} },
         serverInfo: { name: MAESTRO_SERVER_NAME, version: MAESTRO_SERVER_VERSION },
-        instructions: "Maestro Runner is a cross-turn orchestrator. Use maestro_start for a supplied start code. During an active job, every worker/review turn must end with maestro_round_gate. Its UI posts the next ChatGPT message automatically until a separate review turn reaches finish.",
+        instructions: "For every NEW user request that should run through Maestro, call maestro_create_task with the objective. It creates a fresh unique internal startCode and starts the runner immediately. Never ask the user for a start code and never display one. maestro_start exists only to recover an old task when the code was already supplied. Every active worker/review turn must end with maestro_round_gate using the internal startCode from Maestro tool state. The gate persists the checkpoint server-side before returning, and the UI posts the next ChatGPT turn automatically.",
       },
     }
   }
@@ -375,14 +442,15 @@ export async function handleMaestroRpc(body: JsonRpcRequest, options: { origin: 
   if (body.method === "resources/read") {
     const params = record(body.params)
     if (params?.uri !== MAESTRO_WIDGET_URI) return rpcError(id, -32002, "Resource not found")
-    return { jsonrpc: "2.0", id, result: { contents: [resource(options.origin)] } }
+    return { jsonrpc: "2.0", id, result: { contents: [resource()] } }
   }
   if (body.method === "tools/call") {
     const params = record(body.params)
     const name = params?.name
     try {
-      if (name === "maestro_start") return { jsonrpc: "2.0", id, result: await callStart(params?.arguments, options.origin) }
-      if (name === "maestro_round_gate") return { jsonrpc: "2.0", id, result: await callGate(params?.arguments, options.origin) }
+      if (name === "maestro_create_task") return { jsonrpc: "2.0", id, result: await callCreate(params?.arguments) }
+      if (name === "maestro_start") return { jsonrpc: "2.0", id, result: await callStart(params?.arguments) }
+      if (name === "maestro_round_gate") return { jsonrpc: "2.0", id, result: await callGate(params?.arguments) }
       return rpcError(id, -32602, "Unknown Maestro tool")
     } catch (error) {
       return {
