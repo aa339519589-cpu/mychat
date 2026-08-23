@@ -1,6 +1,6 @@
 import { hostname } from 'node:os'
 import { assertProductionAgentSandbox } from '@/lib/agent/execution-policy'
-import { handleChatGeneration } from '@/lib/jobs/handlers/chat'
+import { handleChatGeneration, handleLongThinkJob } from '@/lib/jobs/handlers/chat'
 import { handleChatTitle } from '@/lib/jobs/handlers/title'
 import { runAgentTaskJob } from '@/lib/jobs/handlers/agent'
 import { loadAgentJob } from '@/lib/jobs/handlers/agent-input'
@@ -73,6 +73,7 @@ const handlers: Record<string, JobHandler> = {
   'chat.title': measured(handleChatTitle),
   'agent.task': measured(handleAgentTaskWithoutPlanGitHub),
   'agent.operation': measured(handleAgentOperation),
+  'reasoning.long': measured(handleLongThinkJob),
 }
 const finalized: NonNullable<ConstructorParameters<typeof JobWorker>[0]['onFinalized']> = (
   { job, status, durationMs },
@@ -131,6 +132,16 @@ const workers = workerSpecs.flatMap(spec => {
     ? [hotWorker, createWorker(spec, 'chat-bulk', remainingConcurrency)]
     : [hotWorker]
 })
+const longThinkWorker = new JobWorker({
+  repository,
+  workerId: `${baseWorkerId}:long-think`,
+  queues: ['longthink'],
+  handlers,
+  concurrency: 1,
+  leaseSeconds: 120,
+  shutdownGraceMs: 240_000,
+  onFinalized: finalized,
+})
 const outbox = new JobOutboxDispatcher({
   repository: new SupabaseJobOutboxRepository(),
   workerId: `${baseWorkerId}:outbox`,
@@ -149,10 +160,12 @@ async function main(): Promise<void> {
   log.info('jobs', 'Worker pool started', {
     workerId: baseWorkerId,
     workers: workerSpecs.filter(spec => maintenanceMode !== 'drain' || spec.queue !== 'agent'),
+    longThink: { queue: 'longthink', concurrency: 1 },
   })
   await Promise.all([
     heartbeat.run(shutdown.signal),
     ...workers.map(worker => worker.run(shutdown.signal)),
+    longThinkWorker.run(shutdown.signal),
     ...(maintenanceMode === 'drain' ? [] : [
       outbox.run(shutdown.signal),
       lifecycleSweeper.run(shutdown.signal),

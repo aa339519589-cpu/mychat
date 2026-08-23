@@ -4,6 +4,8 @@ import { loadChatJob } from './chat-input'
 import { runChatMediaJob } from './chat-media'
 import { runChatTextJob } from './chat-text'
 
+export { handleLongThinkJob } from '@/lib/long-think/handler'
+
 /**
  * Emit job.started before loadChatJob so connected SSE clients leave the
  * silent prep window immediately. loadChatJob + prepareChat can take hundreds
