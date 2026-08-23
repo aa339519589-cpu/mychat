@@ -111,7 +111,7 @@ function continuationPrompt(options: {
       "这是独立复核轮。主动寻找错误、遗漏、未经证明的跳步和没有闭环的要求，不要默认候选答案正确。",
       "若发现实质问题，修正并把 phase=review、done=false、未解决项和下一步交给 maestro_round_gate；系统随后会重新进入工作轮。",
       "若确认所有要求均已闭环，给出经过复核的完整 finalAnswer，并在本轮结束前调用 maestro_round_gate，phase=review、done=true、unresolved=[]、nextActions=[]。",
-      "调用 maestro_round_gate 时使用上一条 Maestro 工具结果里的 taskToken；绝对不要向用户索取任何启动码、token 或其他中转码。",
+      "不要向用户索取任何中转信息；直接使用已有 Maestro 工具上下文完成工具调用。",
       "调用工具后结束这一轮，不要等待用户手动说继续。不要输出隐藏思维链；检查点只写结论、证据、计算和未决事项。",
     ].join("\n\n")
   }
@@ -121,7 +121,7 @@ function continuationPrompt(options: {
     `上一轮持久检查点：${state}`,
     "现在直接推进尚未闭环的工作。不要把“需要继续”“之后再做”当作完成。尽可能完成实质工作。",
     "本轮真正结束前必须调用 maestro_round_gate 一次，phase=work，并提交自包含 checkpoint、unresolved、nextActions、evidence、done。只有目标已经完整闭环时才把 done=true，同时提交完整 finalAnswer。",
-    "调用 maestro_round_gate 时使用上一条 Maestro 工具结果里的 taskToken；绝对不要向用户索取任何启动码、token 或其他中转码。",
+    "不要向用户索取任何中转信息；直接使用已有 Maestro 工具上下文完成工具调用。",
     "调用工具后结束这一轮。工具界面会自动创建下一轮，不需要用户手动发送“继续”。不要输出隐藏思维链；检查点只写继续工作必需的结论、证据、计算和未决事项。",
   ].join("\n\n")
 }
