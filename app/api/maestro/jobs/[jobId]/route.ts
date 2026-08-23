@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server"
 import { enforceRequestRateLimit, resolveAuth } from "@/lib/api/guard"
-import { cancelMaestroTask, getMaestroTask, publicMaestroTask } from "@/lib/maestro/store"
+import { cancelMaestroTask, clientMaestroTask, getMaestroTask } from "@/lib/maestro/store"
 import { isUuid } from "@/lib/validation"
 
 export async function GET(request: NextRequest, context: { params: Promise<{ jobId: string }> }): Promise<Response> {
@@ -10,7 +10,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ job
   if (!isUuid(jobId)) return Response.json({ error: "任务 ID 无效" }, { status: 400 })
   try {
     const row = await getMaestroTask(auth.supabase, auth.userId, jobId)
-    const task = row ? publicMaestroTask(row) : null
+    const task = row ? clientMaestroTask(row) : null
     return task ? Response.json({ task }) : Response.json({ error: "Maestro 任务不存在" }, { status: 404 })
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Maestro 任务读取失败" }, { status: 500 })
