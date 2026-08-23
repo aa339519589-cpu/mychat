@@ -1,18 +1,27 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto"
 
 const TOKEN_PREFIX = "maestro1"
-const TOKEN_KIND = "widget-report"
+const REPORT_KIND = "widget-report"
+const TASK_KIND = "task"
 const MIN_SECRET_LENGTH = 32
-const DEFAULT_TTL_SECONDS = 24 * 60 * 60
+const DAY_SECONDS = 24 * 60 * 60
+const MAX_TTL_SECONDS = 7 * DAY_SECONDS
 
-type ReportTokenPayload = {
+type BasePayload = {
   v: 1
-  kind: typeof TOKEN_KIND
   userId: string
   jobId: string
+  exp: number
+}
+
+type ReportTokenPayload = BasePayload & {
+  kind: typeof REPORT_KIND
   round: number
   stateHash: string
-  exp: number
+}
+
+type TaskTokenPayload = BasePayload & {
+  kind: typeof TASK_KIND
 }
 
 function secret(): string {
@@ -39,16 +48,31 @@ function sameSignature(left: string, right: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b)
 }
 
-function isPayload(value: unknown): value is ReportTokenPayload {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false
-  const row = value as Record<string, unknown>
-  return row.v === 1
-    && row.kind === TOKEN_KIND
-    && typeof row.userId === "string" && row.userId.length > 0
-    && typeof row.jobId === "string" && row.jobId.length > 0
-    && Number.isSafeInteger(row.round) && Number(row.round) >= 0
-    && typeof row.stateHash === "string" && row.stateHash.length === 64
-    && Number.isSafeInteger(row.exp) && Number(row.exp) > 0
+function parseSignedToken(token: string): Record<string, unknown> | null {
+  const [prefix, payload, suppliedSignature, extra] = token.trim().split(".")
+  if (prefix !== TOKEN_PREFIX || !payload || !suppliedSignature || extra !== undefined) return null
+  let expected: string
+  try { expected = signature(payload) } catch { return null }
+  if (!sameSignature(suppliedSignature, expected)) return null
+  let parsed: unknown
+  try { parsed = decode(payload) } catch { return null }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null
+  const row = parsed as Record<string, unknown>
+  if (row.v !== 1
+    || typeof row.userId !== "string" || !row.userId
+    || typeof row.jobId !== "string" || !row.jobId
+    || !Number.isSafeInteger(row.exp)
+    || Number(row.exp) < Math.floor(Date.now() / 1000)) return null
+  return row
+}
+
+function signedToken(payload: BasePayload & { kind: string } & Record<string, unknown>): string {
+  const encoded = encode(payload)
+  return `${TOKEN_PREFIX}.${encoded}.${signature(encoded)}`
+}
+
+function expiry(ttlSeconds: number): number {
+  return Math.floor(Date.now() / 1000) + Math.max(60, Math.min(ttlSeconds, MAX_TTL_SECONDS))
 }
 
 export function maestroRunnerConfigured(): boolean {
@@ -59,6 +83,26 @@ export function maestroStateHash(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex")
 }
 
+export function issueMaestroTaskToken(options: {
+  userId: string
+  jobId: string
+  ttlSeconds?: number
+}): string {
+  return signedToken({
+    v: 1,
+    kind: TASK_KIND,
+    userId: options.userId,
+    jobId: options.jobId,
+    exp: expiry(options.ttlSeconds ?? MAX_TTL_SECONDS),
+  })
+}
+
+export function verifyMaestroTaskToken(token: string): TaskTokenPayload | null {
+  const row = parseSignedToken(token)
+  if (!row || row.kind !== TASK_KIND) return null
+  return row as TaskTokenPayload
+}
+
 export function issueMaestroReportToken(options: {
   userId: string
   jobId: string
@@ -66,27 +110,21 @@ export function issueMaestroReportToken(options: {
   stateHash: string
   ttlSeconds?: number
 }): string {
-  const ttl = Math.max(60, Math.min(options.ttlSeconds ?? DEFAULT_TTL_SECONDS, 7 * DEFAULT_TTL_SECONDS))
-  const payload = encode({
+  return signedToken({
     v: 1,
-    kind: TOKEN_KIND,
+    kind: REPORT_KIND,
     userId: options.userId,
     jobId: options.jobId,
     round: options.round,
     stateHash: options.stateHash,
-    exp: Math.floor(Date.now() / 1000) + ttl,
-  } satisfies ReportTokenPayload)
-  return `${TOKEN_PREFIX}.${payload}.${signature(payload)}`
+    exp: expiry(options.ttlSeconds ?? DAY_SECONDS),
+  })
 }
 
 export function verifyMaestroReportToken(token: string): ReportTokenPayload | null {
-  const [prefix, payload, suppliedSignature, extra] = token.trim().split(".")
-  if (prefix !== TOKEN_PREFIX || !payload || !suppliedSignature || extra !== undefined) return null
-  let expected: string
-  try { expected = signature(payload) } catch { return null }
-  if (!sameSignature(suppliedSignature, expected)) return null
-  let parsed: unknown
-  try { parsed = decode(payload) } catch { return null }
-  if (!isPayload(parsed) || parsed.exp < Math.floor(Date.now() / 1000)) return null
-  return parsed
+  const row = parseSignedToken(token)
+  if (!row || row.kind !== REPORT_KIND) return null
+  if (!Number.isSafeInteger(row.round) || Number(row.round) < 0) return null
+  if (typeof row.stateHash !== "string" || row.stateHash.length !== 64) return null
+  return row as ReportTokenPayload
 }

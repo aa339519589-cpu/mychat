@@ -230,7 +230,7 @@ export const MAESTRO_WIDGET_HTML = String.raw`<!doctype html>
         launchBusy = true;
         try {
           const targetRound = Number(current.round || 0) + 1;
-          const result = await callTool("maestro_round_started", { startCode: current.startCode, round: targetRound });
+          const result = await callTool("maestro_round_started", { taskToken: current.taskToken, round: targetRound });
           const next = extractStructured(result);
           if (next) render(next, "poll");
           if (!next?.launchGranted) return;
@@ -254,10 +254,10 @@ export const MAESTRO_WIDGET_HTML = String.raw`<!doctype html>
       }
 
       async function refreshStatus() {
-        if (!state?.startCode || pollBusy) return;
+        if (!state?.taskToken || pollBusy) return;
         pollBusy = true;
         try {
-          const result = await callTool("maestro_status", { startCode: state.startCode });
+          const result = await callTool("maestro_status", { taskToken: state.taskToken });
           const next = extractStructured(result);
           if (next) {
             pollFailures = 0;
