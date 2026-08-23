@@ -68,7 +68,7 @@ export const MAESTRO_WIDGET_HTML = String.raw`<!doctype html>
         const reportUrl = meta?.reportUrl;
         if (!reportToken || !reportUrl) return;
         handledKey = key;
-        title.textContent = structured.action === "finish" ? "Maestro Runner · 已闭环" : `Maestro Runner · 第 ${structured.round} 轮`;
+        title.textContent = structured.action === "finish" ? "Maestro Runner · 已闭环" : "Maestro Runner · 第 " + structured.round + " 轮";
         detail.textContent = "正在同步这一轮检查点…";
 
         try {
@@ -78,7 +78,7 @@ export const MAESTRO_WIDGET_HTML = String.raw`<!doctype html>
             body: JSON.stringify({ token: reportToken, state: structured }),
           });
           const result = await response.json().catch(() => ({}));
-          if (!response.ok) throw new Error(result?.error || `HTTP ${response.status}`);
+          if (!response.ok) throw new Error(result?.error || "HTTP " + response.status);
           if (result?.stop || structured.action === "finish" || structured.action === "stop") {
             detail.textContent = structured.action === "finish" ? "独立复核已通过，连续推理结束。" : "任务已停止。";
             return;
@@ -97,7 +97,7 @@ export const MAESTRO_WIDGET_HTML = String.raw`<!doctype html>
           }
         } catch (error) {
           handledKey = "";
-          detail.textContent = `同步失败：${error instanceof Error ? error.message : String(error)}`;
+          detail.textContent = "同步失败：" + (error instanceof Error ? error.message : String(error));
         }
       }
 
