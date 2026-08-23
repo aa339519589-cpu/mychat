@@ -7,6 +7,8 @@ import { MAESTRO_BRANCH, MAESTRO_META_KIND, type AgentTaskRow } from "../lib/mae
 
 process.env.MAESTRO_RUNNER_KEY = "test-maestro-runner-key-0123456789-abcdefghijklmnopqrstuvwxyz"
 
+const INTERNAL_START_CODE = "abcdefghijklmnopqrstuvwx"
+
 function row(overrides: Partial<AgentTaskRow> = {}): AgentTaskRow {
   const now = "2026-08-24T00:00:00.000Z"
   return {
@@ -25,7 +27,7 @@ function row(overrides: Partial<AgentTaskRow> = {}): AgentTaskRow {
     meta: {
       kind: MAESTRO_META_KIND,
       version: 1,
-      startCode: "abcdefghijklmnopqrstuvwx",
+      startCode: INTERNAL_START_CODE,
       maxRounds: 100,
       round: 0,
       phase: "work",
@@ -46,23 +48,32 @@ function row(overrides: Partial<AgentTaskRow> = {}): AgentTaskRow {
   }
 }
 
-test("Maestro MCP exposes only read-only start and round-gate tools", async () => {
-  assert.deepEqual(MAESTRO_TOOLS.map(tool => tool.name), ["maestro_start", "maestro_round_gate"])
-  assert.ok(MAESTRO_TOOLS.every(tool => tool.annotations.readOnlyHint === true))
+test("Maestro exposes automatic task creation as the primary entry point", async () => {
+  assert.deepEqual(MAESTRO_TOOLS.map(tool => tool.name), [
+    "maestro_create_task",
+    "maestro_start",
+    "maestro_round_gate",
+  ])
+  assert.equal(MAESTRO_TOOLS[0].annotations.readOnlyHint, false)
+  assert.equal(MAESTRO_TOOLS[1].annotations.readOnlyHint, true)
+  assert.equal(MAESTRO_TOOLS[2].annotations.readOnlyHint, false)
   assert.ok(MAESTRO_TOOLS.every(tool => tool._meta["openai/outputTemplate"] === MAESTRO_WIDGET_URI))
 
   const initialized = await handleMaestroRpc({ jsonrpc: "2.0", id: 1, method: "initialize" }, { origin: "https://example.com" })
-  const initResult = initialized?.result as Record<string, unknown>
+  const initResult = initialized?.result as { capabilities: unknown; instructions: string }
   assert.deepEqual(initResult.capabilities, { tools: {}, resources: {} })
+  assert.match(initResult.instructions, /maestro_create_task/)
+  assert.match(initResult.instructions, /Never ask the user for a start code/)
 
   const listed = await handleMaestroRpc({ jsonrpc: "2.0", id: 2, method: "tools/list" }, { origin: "https://example.com" })
   const tools = (listed?.result as { tools: typeof MAESTRO_TOOLS }).tools
-  assert.deepEqual(tools.map(tool => tool.name), ["maestro_start", "maestro_round_gate"])
+  assert.deepEqual(tools.map(tool => tool.name), ["maestro_create_task", "maestro_start", "maestro_round_gate"])
 })
 
-test("Maestro widget uses the supported follow-up bridge and never scrapes ChatGPT DOM", async () => {
+test("Maestro widget only sends follow-up messages and performs no network sync fetch", async () => {
   assert.match(MAESTRO_WIDGET_HTML, /sendFollowUpMessage/)
   assert.match(MAESTRO_WIDGET_HTML, /ui\/notifications\/tool-result/)
+  assert.doesNotMatch(MAESTRO_WIDGET_HTML, /fetch\s*\(/)
   assert.doesNotMatch(MAESTRO_WIDGET_HTML, /document\.querySelector/)
   assert.doesNotMatch(MAESTRO_WIDGET_HTML, /chat\.openai\.com\/backend-api/)
 
@@ -77,9 +88,9 @@ test("Maestro widget uses the supported follow-up bridge and never scrapes ChatG
   assert.match(content.text, /sendFollowUpMessage/)
 })
 
-test("unfinished work always becomes another work turn", () => {
+test("unfinished work always becomes another work turn without exposing the internal code", () => {
   const state = evaluateMaestroGate(row(), {
-    startCode: "abcdefghijklmnopqrstuvwx",
+    startCode: INTERNAL_START_CODE,
     round: 1,
     phase: "work",
     checkpoint: "Reduced the problem to one missing lemma.",
@@ -92,13 +103,16 @@ test("unfinished work always becomes another work turn", () => {
   assert.equal(state.action, "continue")
   assert.equal(state.phase, "work")
   assert.equal(state.round, 1)
+  assert.equal(state.startCode, INTERNAL_START_CODE)
   assert.match(state.nextPrompt, /第 2 轮/)
   assert.match(state.nextPrompt, /Lemma B/)
+  assert.match(state.nextPrompt, /绝对不要向用户索取/)
+  assert.doesNotMatch(state.nextPrompt, new RegExp(INTERNAL_START_CODE))
 })
 
 test("a candidate answer must go through a separate review turn", () => {
   const state = evaluateMaestroGate(row(), {
-    startCode: "abcdefghijklmnopqrstuvwx",
+    startCode: INTERNAL_START_CODE,
     round: 1,
     phase: "work",
     checkpoint: "All requested work appears complete.",
@@ -113,6 +127,7 @@ test("a candidate answer must go through a separate review turn", () => {
   assert.equal(state.finalAnswer, "")
   assert.equal(state.candidateAnswer, "Candidate answer")
   assert.match(state.nextPrompt, /独立复核/)
+  assert.doesNotMatch(state.nextPrompt, new RegExp(INTERNAL_START_CODE))
 })
 
 test("only a clean review turn can finish the Maestro task", () => {
@@ -120,7 +135,7 @@ test("only a clean review turn can finish the Maestro task", () => {
     meta: {
       kind: MAESTRO_META_KIND,
       version: 1,
-      startCode: "abcdefghijklmnopqrstuvwx",
+      startCode: INTERNAL_START_CODE,
       maxRounds: 100,
       round: 1,
       phase: "review",
@@ -135,7 +150,7 @@ test("only a clean review turn can finish the Maestro task", () => {
     },
   })
   const state = evaluateMaestroGate(previous, {
-    startCode: "abcdefghijklmnopqrstuvwx",
+    startCode: INTERNAL_START_CODE,
     round: 2,
     phase: "review",
     checkpoint: "Independent review found no material gap.",
@@ -151,7 +166,7 @@ test("only a clean review turn can finish the Maestro task", () => {
   assert.equal(state.nextPrompt, "")
 })
 
-test("signed widget report tokens bind the exact task, round and structured state", () => {
+test("signed legacy widget report tokens still bind the exact task, round and state", () => {
   const state = { jobId: "job-a", round: 7, phase: "work", action: "continue" }
   const stateHash = maestroStateHash(state)
   const token = issueMaestroReportToken({ userId: "user-a", jobId: "job-a", round: 7, stateHash })
