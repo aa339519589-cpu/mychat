@@ -32,17 +32,25 @@ export type ListedJob = {
   terminal_at: string | null
 }
 
+export type LongThinkContinuation = {
+  endpointId: string
+  seedCheckpoint: Record<string, unknown>
+}
+
 export const LONG_THINK_ACTIVE = new Set(["queued", "leased", "running", "awaiting_input", "cancelling"])
 export const LONG_THINK_STORAGE_KEY = "mychat.longThink.activeJob"
 
+function record(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : null
+}
+
 function messageOf(value: unknown, fallback: string): string {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return fallback
-  const row = value as Record<string, unknown>
+  const row = record(value)
+  if (!row) return fallback
   if (typeof row.error === "string") return row.error
-  if (row.error && typeof row.error === "object" && !Array.isArray(row.error)) {
-    const error = row.error as Record<string, unknown>
-    if (typeof error.message === "string") return error.message
-  }
+  const nestedError = record(row.error)
+  if (nestedError && typeof nestedError.message === "string") return nestedError.message
   if (typeof row.message === "string") return row.message
   return fallback
 }
@@ -63,9 +71,15 @@ export function longThinkNullableInteger(value: unknown): number | null {
 }
 
 export function longThinkResultAnswer(value: unknown): string {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return ""
-  const row = value as Record<string, unknown>
-  return typeof row.finalAnswer === "string" ? row.finalAnswer : ""
+  const row = record(value)
+  return row && typeof row.finalAnswer === "string" ? row.finalAnswer : ""
+}
+
+export function longThinkContinuation(value: unknown): LongThinkContinuation | null {
+  const row = record(value)
+  if (!row || typeof row.endpointId !== "string") return null
+  const checkpoint = record(row.continuationCheckpoint)
+  return checkpoint ? { endpointId: row.endpointId, seedCheckpoint: checkpoint } : null
 }
 
 export function formatLongThinkElapsed(seconds: number): string {
