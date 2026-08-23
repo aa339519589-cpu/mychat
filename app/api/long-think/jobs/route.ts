@@ -7,7 +7,7 @@ import { endpointOutputKind, getOwnedModelEndpoint } from '@/lib/model-endpoint-
 import { SupabaseJobRepository } from '@/lib/jobs/supabase-repository'
 import { sha256JobValue } from '@/lib/jobs/canonical'
 import { isUuid } from '@/lib/validation'
-import type { JsonObject } from '@/lib/jobs/contracts'
+import type { JsonObject, JobAuthClass } from '@/lib/jobs/contracts'
 
 const MAX_PROBLEM_CHARS = 1_000_000
 
@@ -16,6 +16,34 @@ function integer(value: unknown, fallback: number, minimum: number, maximum: num
   return Number.isSafeInteger(value) && Number(value) >= minimum && Number(value) <= maximum
     ? Number(value)
     : null
+}
+
+function parseCreateInput(body: Record<string, unknown>): JsonObject | null {
+  const endpointId = typeof body.endpointId === 'string' ? body.endpointId : ''
+  const problem = typeof body.problem === 'string' ? body.problem.trim() : ''
+  const maxTokens = integer(body.maxTokens, 32_768, 512, 262_144)
+  const minRounds = integer(body.minRounds, 4, 1, 100_000)
+  const verifyEvery = integer(body.verifyEvery, 6, 1, 10_000)
+  if (!isUuid(endpointId) || !problem || problem.length > MAX_PROBLEM_CHARS
+    || maxTokens === null || minRounds === null || verifyEvery === null) return null
+  return { endpointId, problem, maxTokens, minRounds, verifyEvery }
+}
+
+async function enqueueLongThink(input: JsonObject, principalId: string, authClass: JobAuthClass) {
+  const endpointId = String(input.endpointId)
+  const jobId = crypto.randomUUID()
+  return new SupabaseJobRepository().enqueue({
+    jobId,
+    type: 'reasoning.long',
+    queue: 'longthink',
+    principal: { id: principalId, authClass },
+    subject: { feature: 'long-think', endpointId },
+    idempotencyKey: `longthink:${jobId}`,
+    inputHash: sha256JobValue(input),
+    input,
+    maxAttempts: 100,
+    priority: -10,
+  })
 }
 
 export async function POST(request: NextRequest) {
@@ -40,19 +68,12 @@ export async function POST(request: NextRequest) {
       code: 'INVALID_REQUEST', message: error instanceof Error ? error.message : '请求体无效', retryable: false,
     })
   }
+  const input = parseCreateInput(body)
+  if (!input) return apiErrorResponseV1(request, {
+    status: 400, code: 'INVALID_REQUEST', message: '长期任务参数无效', retryable: false,
+  })
 
-  const endpointId = typeof body.endpointId === 'string' ? body.endpointId : ''
-  const problem = typeof body.problem === 'string' ? body.problem.trim() : ''
-  const maxTokens = integer(body.maxTokens, 32_768, 512, 262_144)
-  const minRounds = integer(body.minRounds, 4, 1, 100_000)
-  const verifyEvery = integer(body.verifyEvery, 6, 1, 10_000)
-  if (!isUuid(endpointId) || !problem || problem.length > MAX_PROBLEM_CHARS
-    || maxTokens === null || minRounds === null || verifyEvery === null) {
-    return apiErrorResponseV1(request, {
-      status: 400, code: 'INVALID_REQUEST', message: '长期任务参数无效', retryable: false,
-    })
-  }
-
+  const endpointId = String(input.endpointId)
   let endpoint
   try { endpoint = await getOwnedModelEndpoint(auth.supabase, auth.userId, endpointId) }
   catch {
@@ -65,21 +86,8 @@ export async function POST(request: NextRequest) {
     status: 404, code: 'NOT_FOUND', message: '模型端点不存在或不是对话模型', retryable: false,
   })
 
-  const input: JsonObject = { endpointId, problem, maxTokens, minRounds, verifyEvery }
-  const jobId = crypto.randomUUID()
   try {
-    const enqueued = await new SupabaseJobRepository().enqueue({
-      jobId,
-      type: 'reasoning.long',
-      queue: 'longthink',
-      principal: { id: auth.userId, authClass: auth.isAnonymous ? 'anonymous' : 'registered' },
-      subject: { feature: 'long-think', endpointId },
-      idempotencyKey: `longthink:${jobId}`,
-      inputHash: sha256JobValue(input),
-      input,
-      maxAttempts: 100,
-      priority: -10,
-    })
+    const enqueued = await enqueueLongThink(input, auth.userId, auth.isAnonymous ? 'anonymous' : 'registered')
     return Response.json({
       jobId: enqueued.job.id,
       status: enqueued.job.status,
@@ -88,18 +96,12 @@ export async function POST(request: NextRequest) {
       cancelUrl: `/api/v1/jobs/${enqueued.job.id}/cancel`,
     }, {
       status: 202,
-      headers: {
-        'Cache-Control': 'no-store',
-        Location: `/api/v1/jobs/${enqueued.job.id}`,
-        'X-Request-Id': requestId(request),
-      },
+      headers: { 'Cache-Control': 'no-store', Location: `/api/v1/jobs/${enqueued.job.id}`, 'X-Request-Id': requestId(request) },
     })
   } catch (error) {
     return apiErrorResponseV1(request, {
-      status: 503,
-      code: 'DEPENDENCY_UNAVAILABLE',
-      message: error instanceof Error ? error.message : '长期任务入队失败',
-      retryable: true,
+      status: 503, code: 'DEPENDENCY_UNAVAILABLE',
+      message: error instanceof Error ? error.message : '长期任务入队失败', retryable: true,
       headers: { 'Retry-After': '2' },
     })
   }
@@ -115,10 +117,7 @@ export async function GET(request: NextRequest) {
   })
   const { data, error } = await auth.supabase.from('jobs')
     .select('id,status,progress,result,error_class,error_code,created_at,updated_at,started_at,terminal_at')
-    .eq('principal_id', auth.userId)
-    .eq('type', 'reasoning.long')
-    .order('created_at', { ascending: false })
-    .limit(50)
+    .eq('principal_id', auth.userId).eq('type', 'reasoning.long').order('created_at', { ascending: false }).limit(50)
   if (error) return apiErrorResponseV1(request, {
     status: 503, code: 'DEPENDENCY_UNAVAILABLE', message: '长期任务列表暂时不可用', retryable: true,
   })
