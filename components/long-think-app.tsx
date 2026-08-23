@@ -1,158 +1,32 @@
 "use client"
 
 import Link from "next/link"
-import { useEffect, useState } from "react"
-import { ArrowLeft, BrainCircuit, CircleStop, LoaderCircle } from "lucide-react"
-import { LONG_THINK_ACTIVE as ACTIVE, formatLongThinkElapsed as formatElapsed, longThinkInteger as integer, longThinkNullableInteger as nullableInteger, longThinkResultAnswer as resultAnswer, type JobSnapshot } from "@/components/long-think-support"
-import { startLongThinkTask, stopLongThinkTask, useLongThinkJob } from "@/components/use-long-think"
-
-type RunningView = {
-  active: boolean
-  title: string
-  round: number
-  apiCalls: number
-  elapsed: string
-  inputTokens: string
-  outputTokens: string
-  completed: boolean
-  failed: boolean
-  finalAnswer: string
-  errorCode: string
-}
-
-function statusTitle(status: string, active: boolean): string {
-  if (active) return "深度处理中"
-  if (status === "completed") return "已闭环"
-  if (status === "cancelled") return "已停止"
-  return "任务结束"
-}
-
-function tokenText(value: unknown): string {
-  const parsed = nullableInteger(value)
-  return parsed === null ? "未知" : parsed.toLocaleString()
-}
-
-function runningView(job: JobSnapshot | null, now: number): RunningView {
-  if (!job) return { active: true, title: "深度处理中", round: 0, apiCalls: 0, elapsed: "0秒", inputTokens: "未知", outputTokens: "未知", completed: false, failed: false, finalAnswer: "", errorCode: "UNKNOWN" }
-  const active = ACTIVE.has(job.status)
-  const progress = job.progress
-  const started = job.startedAt === null ? job.createdAt : job.startedAt
-  return {
-    active,
-    title: statusTitle(job.status, active),
-    round: integer(progress.round),
-    apiCalls: integer(progress.apiCalls),
-    elapsed: formatElapsed((now - Date.parse(started)) / 1000),
-    inputTokens: tokenText(progress.inputTokens),
-    outputTokens: tokenText(progress.outputTokens),
-    completed: job.status === "completed",
-    failed: job.status === "failed",
-    finalAnswer: resultAnswer(job.result),
-    errorCode: job.errorCode === null ? "UNKNOWN" : job.errorCode,
-  }
-}
-
-function parseIntegerField(value: string, label: string, minimum: number, maximum: number): number {
-  const parsed = Number(value)
-  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
-    throw new Error(`${label}必须是 ${minimum} 到 ${maximum} 之间的整数`)
-  }
-  return parsed
-}
+import { ArrowLeft, BrainCircuit } from "lucide-react"
+import { LongThinkSetup } from "@/components/long-think-setup"
+import { LongThinkRunning } from "@/components/long-think-running"
+import { LongThinkTaskList } from "@/components/long-think-task-list"
+import { useLongThinkJob } from "@/components/use-long-think"
 
 function Header() {
   return <header className="flex items-center gap-3 py-3">
     <Link href="/" aria-label="返回 MyChat" className="fluid-press flex size-10 items-center justify-center rounded-full border border-border/70 text-muted-foreground hover:bg-muted/60 hover:text-foreground"><ArrowLeft className="size-4" /></Link>
-    <div><div className="flex items-center gap-2"><BrainCircuit className="size-4" /><h1 className="font-heading text-xl font-semibold tracking-[-0.02em]">Long Think</h1></div><p className="mt-0.5 text-xs text-muted-foreground">后台连续处理，闭环后再交付最终答案</p></div>
+    <div><div className="flex items-center gap-2"><BrainCircuit className="size-4" /><h1 className="font-heading text-xl font-semibold tracking-[-0.02em]">Long Think</h1></div><p className="mt-0.5 text-xs text-muted-foreground">多个任务后台并行，持续续接，闭环后交付答案</p></div>
   </header>
 }
 
-function Setup({ onStarted }: { onStarted: (jobId: string) => void }) {
-  const [baseUrl, setBaseUrl] = useState("https://api.b.ai/v1")
-  const [apiKey, setApiKey] = useState("")
-  const [model, setModel] = useState("deepseek-v4-flash")
-  const [problem, setProblem] = useState("")
-  const [maxTokens, setMaxTokens] = useState("32768")
-  const [minRounds, setMinRounds] = useState("4")
-  const [verifyEvery, setVerifyEvery] = useState("6")
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState("")
-
-  const start = async () => {
-    setBusy(true); setError("")
-    try {
-      const jobId = await startLongThinkTask({
-        baseUrl,
-        apiKey,
-        model,
-        problem,
-        maxTokens: parseIntegerField(maxTokens, "单轮最大输出 Token", 512, 262144),
-        minRounds: parseIntegerField(minRounds, "最少处理轮数", 1, 100000),
-        verifyEvery: parseIntegerField(verifyEvery, "闭环审查间隔", 1, 10000),
-      })
-      setApiKey("")
-      onStarted(jobId)
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "任务创建失败")
-    } finally { setBusy(false) }
-  }
-
-  return <section className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
-    <div className="rounded-[28px] border border-border/70 bg-card/55 p-4 sm:p-6">
-      <label className="mb-2 block text-xs text-muted-foreground">API URL</label><input value={baseUrl} onChange={event => setBaseUrl(event.target.value)} className="h-11 w-full rounded-xl border border-border bg-background px-3 text-sm outline-none" />
-      <label className="mb-2 mt-4 block text-xs text-muted-foreground">API Key</label><input value={apiKey} onChange={event => setApiKey(event.target.value)} type="password" autoComplete="off" placeholder="sk-..." className="h-11 w-full rounded-xl border border-border bg-background px-3 text-sm outline-none" />
-      <label className="mb-2 mt-4 block text-xs text-muted-foreground">模型</label><input value={model} onChange={event => setModel(event.target.value)} className="h-11 w-full rounded-xl border border-border bg-background px-3 text-sm outline-none" />
-      <label className="mb-2 mt-5 block text-xs text-muted-foreground">问题</label><textarea value={problem} onChange={event => setProblem(event.target.value)} rows={12} placeholder="把需要真正闭环的问题完整写在这里" className="w-full resize-y rounded-2xl border border-border bg-background p-4 text-[15px] leading-6 outline-none" />
-      {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
-      <button disabled={busy} onClick={() => void start()} className="fluid-press mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-foreground px-5 text-sm font-medium text-background disabled:opacity-50">{busy ? <LoaderCircle className="size-4 animate-spin" /> : <BrainCircuit className="size-4" />}开始连续处理</button>
-    </div>
-    <aside className="rounded-[28px] border border-border/70 bg-card/40 p-4 sm:p-5">
-      <div className="text-xs font-medium text-muted-foreground">参数</div>
-      <label className="mt-4 block text-xs text-muted-foreground">单轮最大输出 Token</label><input type="number" inputMode="numeric" min={512} max={262144} value={maxTokens} onChange={event => setMaxTokens(event.target.value)} className="mt-1.5 h-10 w-full rounded-xl border border-border bg-background px-3 text-sm" />
-      <label className="mt-4 block text-xs text-muted-foreground">最少处理轮数</label><input type="number" inputMode="numeric" min={1} max={100000} value={minRounds} onChange={event => setMinRounds(event.target.value)} className="mt-1.5 h-10 w-full rounded-xl border border-border bg-background px-3 text-sm" />
-      <label className="mt-4 block text-xs text-muted-foreground">闭环审查间隔</label><input type="number" inputMode="numeric" min={1} max={10000} value={verifyEvery} onChange={event => setVerifyEvery(event.target.value)} className="mt-1.5 h-10 w-full rounded-xl border border-border bg-background px-3 text-sm" />
-      <p className="mt-5 text-xs leading-5 text-muted-foreground">关闭网页不会停止任务。每轮成果写入持久化 checkpoint 后再进入下一轮。</p>
-    </aside>
-  </section>
-}
-
-function RunningResult({ view }: { view: RunningView }) {
-  if (view.completed && view.finalAnswer) return <div className="mt-6 whitespace-pre-wrap break-words rounded-2xl border border-border/70 bg-background p-4 text-[15px] leading-7 sm:p-6">{view.finalAnswer}</div>
-  if (view.failed) return <div className="mt-5 rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">任务失败：{view.errorCode}</div>
-  return null
-}
-
-function RunningAction({ view, busy, onStop, onNew }: { view: RunningView; busy: boolean; onStop: () => void; onNew: () => void }) {
-  if (view.active) return <button disabled={busy} onClick={onStop} className="fluid-press flex h-10 items-center gap-2 rounded-xl border border-border px-3 text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground disabled:opacity-50"><CircleStop className="size-4" />停止</button>
-  return <button onClick={onNew} className="fluid-press h-11 rounded-xl border border-border px-4 text-sm hover:bg-muted/50">新任务</button>
-}
-
-function Running({ jobId, job, onNew }: { jobId: string; job: JobSnapshot | null; onNew: () => void }) {
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState("")
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(timer) }, [])
-  const view = runningView(job, now)
-  const stop = async () => {
-    setBusy(true); setError("")
-    try { await stopLongThinkTask(jobId) }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "停止失败") }
-    finally { setBusy(false) }
-  }
-
-  return <section className="mt-5 rounded-[30px] border border-border/70 bg-card/50 p-5 sm:p-7">
-    <div className="flex items-start gap-3">
-      <div className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full border border-border bg-background"><LoaderCircle className={view.active ? "size-4 animate-spin" : "hidden"} /><BrainCircuit className={view.active ? "hidden" : "size-4"} /></div>
-      <div className="min-w-0 flex-1"><h2 className="text-base font-semibold">{view.title}</h2><div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground"><span>轮次 <b className="font-medium text-foreground">{view.round}</b></span><span>API 调用 <b className="font-medium text-foreground">{view.apiCalls}</b></span><span>运行 <b className="font-medium text-foreground">{view.elapsed}</b></span><span>输入 Token <b className="font-medium text-foreground">{view.inputTokens}</b></span><span>输出 Token <b className="font-medium text-foreground">{view.outputTokens}</b></span></div></div>
-      <RunningAction view={view} busy={busy} onStop={() => void stop()} onNew={onNew} />
-    </div>
-    <RunningResult view={view} />
-    {error && <p className="mt-4 text-sm text-destructive">{error}</p>}
-  </section>
-}
-
 export function LongThinkApp() {
-  const { activeJobId, job, selectJob } = useLongThinkJob()
-  if (activeJobId) return <main className="min-h-dvh bg-background text-foreground"><div className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col px-4 pb-16 pt-[max(1rem,env(safe-area-inset-top))] sm:px-6"><Header /><Running jobId={activeJobId} job={job} onNew={() => selectJob("")} /></div></main>
-  return <main className="min-h-dvh bg-background text-foreground"><div className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col px-4 pb-16 pt-[max(1rem,env(safe-area-inset-top))] sm:px-6"><Header /><Setup onStarted={selectJob} /></div></main>
+  const { activeJobId, job, jobs, endpoints, selectJob, refreshJobs, refreshEndpoints } = useLongThinkJob()
+  const newTask = () => selectJob("")
+  const started = (jobId: string) => {
+    selectJob(jobId)
+    void refreshJobs().catch(() => undefined)
+  }
+
+  return <main className="min-h-dvh bg-background text-foreground"><div className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col px-4 pb-16 pt-[max(1rem,env(safe-area-inset-top))] sm:px-6">
+    <Header />
+    {activeJobId
+      ? <LongThinkRunning jobId={activeJobId} job={job} onNew={newTask} />
+      : <LongThinkSetup endpoints={endpoints} onStarted={started} onEndpointCreated={() => { void refreshEndpoints().catch(() => undefined) }} />}
+    <LongThinkTaskList jobs={jobs} selectedId={activeJobId} onSelect={selectJob} onNew={newTask} />
+  </div></main>
 }
