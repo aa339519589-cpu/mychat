@@ -1,0 +1,50 @@
+name: Maestro Verify
+
+on:
+  pull_request:
+    paths:
+      - "app/api/maestro/**"
+      - "app/maestro/**"
+      - "components/maestro-runner.tsx"
+      - "lib/maestro/**"
+      - "tests/maestro-runner.test.ts"
+      - ".github/workflows/maestro-verify.yml"
+  push:
+    branches:
+      - maestro-runner-v1
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maestro-verify-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  maestro:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --legacy-peer-deps
+
+      - name: Typecheck repository
+        run: npm run check
+
+      - name: Lint Maestro only
+        run: npx eslint --max-warnings 0 app/api/maestro app/maestro components/maestro-runner.tsx lib/maestro tests/maestro-runner.test.ts
+
+      - name: Test Maestro only
+        run: npx tsx --test tests/maestro-runner.test.ts
+
+      - name: Build production app
+        run: npm run build
