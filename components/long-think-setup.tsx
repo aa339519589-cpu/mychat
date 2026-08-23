@@ -5,6 +5,8 @@ import { BrainCircuit, LoaderCircle } from "lucide-react"
 import type { Endpoint } from "@/components/long-think-support"
 import { startLongThinkTask } from "@/components/use-long-think"
 
+const NEW_ENDPOINT = "__new__"
+
 function integer(value: string, label: string, minimum: number, maximum: number): number {
   const parsed = Number(value)
   if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) throw new Error(`${label}必须是 ${minimum} 到 ${maximum} 之间的整数`)
@@ -16,7 +18,7 @@ export function LongThinkSetup({ endpoints, onStarted, onEndpointCreated }: {
   onStarted: (jobId: string) => void
   onEndpointCreated: () => void
 }) {
-  const [endpointId, setEndpointId] = useState("")
+  const [endpointId, setEndpointId] = useState<string | null>(null)
   const [baseUrl, setBaseUrl] = useState("https://api.b.ai/v1")
   const [apiKey, setApiKey] = useState("")
   const [model, setModel] = useState("deepseek-v4-flash")
@@ -27,14 +29,15 @@ export function LongThinkSetup({ endpoints, onStarted, onEndpointCreated }: {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
 
-  useEffect(() => { if (!endpointId && endpoints[0]) setEndpointId(endpoints[0].id) }, [endpointId, endpoints])
-  const usingSaved = Boolean(endpointId)
+  useEffect(() => { if (endpointId === null && endpoints[0]) setEndpointId(endpoints[0].id) }, [endpointId, endpoints])
+  const selectedEndpointId = endpointId ?? (endpoints[0]?.id ?? NEW_ENDPOINT)
+  const usingSaved = selectedEndpointId !== NEW_ENDPOINT
 
   const start = async () => {
     setBusy(true); setError("")
     try {
       const jobId = await startLongThinkTask({
-        endpointId,
+        endpointId: usingSaved ? selectedEndpointId : "",
         baseUrl,
         apiKey,
         model,
@@ -53,9 +56,9 @@ export function LongThinkSetup({ endpoints, onStarted, onEndpointCreated }: {
   return <section className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
     <div className="rounded-[28px] border border-border/70 bg-card/55 p-4 sm:p-6">
       <label className="mb-2 block text-xs text-muted-foreground">模型连接</label>
-      <select value={endpointId} onChange={event => setEndpointId(event.target.value)} className="h-11 w-full rounded-xl border border-border bg-background px-3 text-sm outline-none">
+      <select value={selectedEndpointId} onChange={event => setEndpointId(event.target.value)} className="h-11 w-full rounded-xl border border-border bg-background px-3 text-sm outline-none">
         {endpoints.map(endpoint => <option key={endpoint.id} value={endpoint.id}>{endpoint.name} · {endpoint.model}</option>)}
-        <option value="">+ 添加新的 API 连接</option>
+        <option value={NEW_ENDPOINT}>+ 添加新的 API 连接</option>
       </select>
       {!usingSaved && <div className="mt-3 grid gap-3"><input value={baseUrl} onChange={event => setBaseUrl(event.target.value)} placeholder="API URL" className="h-11 rounded-xl border border-border bg-background px-3 text-sm outline-none" /><input value={apiKey} onChange={event => setApiKey(event.target.value)} type="password" autoComplete="off" placeholder="API Key（只需配置一次）" className="h-11 rounded-xl border border-border bg-background px-3 text-sm outline-none" /><input value={model} onChange={event => setModel(event.target.value)} placeholder="模型 ID" className="h-11 rounded-xl border border-border bg-background px-3 text-sm outline-none" /></div>}
       {usingSaved && <p className="mt-2 text-xs text-muted-foreground">使用已保存的加密连接，不需要再次输入 API Key。</p>}
