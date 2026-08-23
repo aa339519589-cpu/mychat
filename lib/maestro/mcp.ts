@@ -4,20 +4,23 @@ import {
   createMaestroTask,
   findMaestroTaskByStartCode,
   maestroMeta,
+  markMaestroRoundStarted,
   publicMaestroTask,
   type AgentTaskRow,
   type MaestroAction,
   type MaestroPhase,
   type MaestroReportState,
+  type MaestroRoundRecord,
 } from "@/lib/maestro/store"
 import { MAESTRO_WIDGET_HTML, MAESTRO_WIDGET_URI } from "@/lib/maestro/widget"
 
 export const MAESTRO_PROTOCOL_VERSION = "2025-06-18"
 export const MAESTRO_SERVER_NAME = "mychat-maestro-runner"
-export const MAESTRO_SERVER_VERSION = "1.1.0"
+export const MAESTRO_SERVER_VERSION = "1.2.0"
 
 const MAX_CHECKPOINT = 36_000
 const MAX_ANSWER = 120_000
+const MAX_ROUND_OUTPUT = 120_000
 const MAX_LIST = 64
 const MAX_ITEM = 4_000
 const MAX_OBJECTIVE = 100_000
@@ -27,22 +30,21 @@ type JsonRpcId = string | number | null
 type JsonRpcRequest = { jsonrpc?: unknown; id?: JsonRpcId; method?: unknown; params?: unknown }
 type JsonRpcResponse = { jsonrpc: "2.0"; id: JsonRpcId; result?: unknown; error?: { code: number; message: string; data?: unknown } }
 
-type CreateInput = {
-  objective: string
-  maxRounds: number
-}
-
+type CreateInput = { objective: string; maxRounds: number }
 type GateInput = {
   startCode: string
   round: number
-  phase: MaestroPhase
+  phase: Exclude<MaestroPhase, "done">
   checkpoint: string
   unresolved: string[]
   nextActions: string[]
   evidence: string[]
+  roundOutput: string
   finalAnswer: string
   done: boolean
 }
+
+type StartRoundInput = { startCode: string; round: number }
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null
@@ -82,6 +84,7 @@ function gateInput(value: unknown): GateInput | null {
     unresolved: cleanList(row.unresolved),
     nextActions: cleanList(row.nextActions),
     evidence: cleanList(row.evidence),
+    roundOutput: cleanText(row.roundOutput, MAX_ROUND_OUTPUT),
     finalAnswer: cleanText(row.finalAnswer, MAX_ANSWER),
     done: row.done === true,
   }
@@ -91,6 +94,14 @@ function startInput(value: unknown): { startCode: string } | null {
   const row = record(value)
   const startCode = cleanText(row?.startCode, 128)
   return startCode ? { startCode } : null
+}
+
+function startRoundInput(value: unknown): StartRoundInput | null {
+  const row = record(value)
+  if (!row) return null
+  const startCode = cleanText(row.startCode, 128)
+  const round = Number(row.round)
+  return startCode && Number.isSafeInteger(round) && round >= 1 ? { startCode, round } : null
 }
 
 function continuationPrompt(options: {
@@ -111,6 +122,7 @@ function continuationPrompt(options: {
     candidateAnswer: options.candidateAnswer,
   })
   const credentialInstruction = "本任务的 startCode 是 Maestro 内部凭证，已存在于上一条 Maestro 工具结果中。调用 maestro_round_gate 时直接使用该内部值；绝对不要向用户索取、展示或要求用户复制 startCode。"
+  const telemetryInstruction = "调用 maestro_round_gate 时，roundOutput 必须填写本轮可向用户展示的完整工作产物或结果摘要，不得包含隐藏思维链。卡片会把它作为本轮输出展示。"
 
   if (options.phase === "review") {
     return [
@@ -118,6 +130,7 @@ function continuationPrompt(options: {
       `目标：${options.objective}`,
       `上一阶段候选答案与检查点：${state}`,
       credentialInstruction,
+      telemetryInstruction,
       "这是独立复核轮。主动寻找错误、遗漏、未经证明的跳步和没有闭环的要求，不要默认候选答案正确。",
       "若发现实质问题，修正并把 phase=review、done=false、未解决项和下一步交给 maestro_round_gate；系统随后会重新进入工作轮。",
       "若确认所有要求均已闭环，给出经过复核的完整 finalAnswer，并在本轮结束前调用 maestro_round_gate，phase=review、done=true、unresolved=[]、nextActions=[]。",
@@ -130,10 +143,27 @@ function continuationPrompt(options: {
     `目标：${options.objective}`,
     `上一轮持久检查点：${state}`,
     credentialInstruction,
+    telemetryInstruction,
     "现在直接推进尚未闭环的工作。不要把“需要继续”“之后再做”当作完成。尽可能完成实质工作。",
-    "本轮真正结束前必须调用 maestro_round_gate 一次，phase=work，并提交自包含 checkpoint、unresolved、nextActions、evidence、done。只有目标已经完整闭环时才把 done=true，同时提交完整 finalAnswer。",
+    "本轮真正结束前必须调用 maestro_round_gate 一次，phase=work，并提交自包含 checkpoint、unresolved、nextActions、evidence、roundOutput、done。只有目标已经完整闭环时才把 done=true，同时提交完整 finalAnswer。",
     "调用工具后结束这一轮。工具界面会自动创建下一轮，不需要用户手动发送“继续”。不要输出隐藏思维链；检查点只写继续工作必需的结论、证据、计算和未决事项。",
   ].join("\n\n")
+}
+
+function nextPromptForTask(row: AgentTaskRow): string {
+  const task = publicMaestroTask(row)
+  if (!task) throw new Error("Maestro task metadata is invalid")
+  if (task.status === "completed" || task.status === "cancelled" || task.status === "failed" || task.phase === "done") return ""
+  return continuationPrompt({
+    objective: task.objective,
+    nextRound: task.round + 1,
+    phase: task.phase,
+    checkpoint: task.checkpoint,
+    unresolved: task.unresolved,
+    nextActions: task.nextActions,
+    evidence: task.evidence,
+    candidateAnswer: task.candidateAnswer,
+  })
 }
 
 function storedState(row: AgentTaskRow): MaestroReportState {
@@ -143,11 +173,13 @@ function storedState(row: AgentTaskRow): MaestroReportState {
   const completed = task.status === "completed" && Boolean(task.finalAnswer)
   const phase: MaestroPhase = completed ? "done" : task.phase
   const action: MaestroAction = completed ? "finish" : stopped ? "stop" : phase === "review" ? "review" : "continue"
+  const nextPrompt = action === "finish" || action === "stop" ? "" : nextPromptForTask(row)
   return {
     kind: "maestro-runner-state",
     jobId: task.id,
     startCode: task.startCode,
     objective: task.objective,
+    status: task.status,
     round: task.round,
     phase,
     action,
@@ -157,16 +189,14 @@ function storedState(row: AgentTaskRow): MaestroReportState {
     evidence: task.evidence,
     candidateAnswer: task.candidateAnswer,
     finalAnswer: task.finalAnswer,
-    nextPrompt: action === "finish" || action === "stop" ? "" : continuationPrompt({
-      objective: task.objective,
-      nextRound: task.round + 1,
-      phase,
-      checkpoint: task.checkpoint,
-      unresolved: task.unresolved,
-      nextActions: task.nextActions,
-      evidence: task.evidence,
-      candidateAnswer: task.candidateAnswer,
-    }),
+    nextPrompt,
+    currentInput: task.currentInput || nextPrompt,
+    currentRoundStartedAt: task.currentRoundStartedAt,
+    totalElapsedMs: task.totalElapsedMs,
+    lastOutput: task.lastOutput,
+    history: task.history,
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
   }
 }
 
@@ -202,11 +232,23 @@ export function evaluateMaestroGate(row: AgentTaskRow, input: GateInput): Maestr
     action = "continue"
   }
 
-  const state: MaestroReportState = {
+  const nextPrompt = action === "continue" || action === "review" ? continuationPrompt({
+    objective: task.objective,
+    nextRound: input.round + 1,
+    phase,
+    checkpoint: input.checkpoint,
+    unresolved: input.unresolved,
+    nextActions: input.nextActions,
+    evidence: input.evidence,
+    candidateAnswer,
+  }) : ""
+
+  return {
     kind: "maestro-runner-state",
     jobId: task.id,
     startCode: task.startCode,
     objective: task.objective,
+    status: action === "finish" ? "completed" : "running",
     round: input.round,
     phase,
     action,
@@ -216,21 +258,34 @@ export function evaluateMaestroGate(row: AgentTaskRow, input: GateInput): Maestr
     evidence: input.evidence,
     candidateAnswer,
     finalAnswer,
-    nextPrompt: "",
+    nextPrompt,
+    currentInput: nextPrompt,
+    currentRoundStartedAt: null,
+    totalElapsedMs: meta.totalElapsedMs,
+    lastOutput: meta.lastOutput,
+    history: meta.history,
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
   }
-  if (action === "continue" || action === "review") {
-    state.nextPrompt = continuationPrompt({
-      objective: task.objective,
-      nextRound: input.round + 1,
-      phase,
-      checkpoint: input.checkpoint,
-      unresolved: input.unresolved,
-      nextActions: input.nextActions,
-      evidence: input.evidence,
-      candidateAnswer,
-    })
+}
+
+function roundSchema() {
+  return {
+    type: "object",
+    properties: {
+      round: { type: "integer", minimum: 1 },
+      phase: { type: "string", enum: ["work", "review"] },
+      input: { type: "string" },
+      output: { type: "string" },
+      checkpoint: { type: "string" },
+      action: { type: "string", enum: ["continue", "review", "finish", "stop"] },
+      startedAt: { type: "string" },
+      finishedAt: { type: "string" },
+      elapsedMs: { type: "integer", minimum: 0 },
+    },
+    required: ["round", "phase", "input", "output", "checkpoint", "action", "startedAt", "finishedAt", "elapsedMs"],
+    additionalProperties: false,
   }
-  return state
 }
 
 function stateOutputSchema() {
@@ -241,6 +296,7 @@ function stateOutputSchema() {
       jobId: { type: "string" },
       startCode: { type: "string", description: "Internal Maestro task capability. Never ask the user for it or display it to the user." },
       objective: { type: "string" },
+      status: { type: "string" },
       round: { type: "integer", minimum: 0 },
       phase: { type: "string", enum: ["work", "review", "done"] },
       action: { type: "string", enum: ["continue", "review", "finish", "stop"] },
@@ -251,11 +307,20 @@ function stateOutputSchema() {
       candidateAnswer: { type: "string" },
       finalAnswer: { type: "string" },
       nextPrompt: { type: "string" },
+      currentInput: { type: "string" },
+      currentRoundStartedAt: { type: ["string", "null"] },
+      totalElapsedMs: { type: "integer", minimum: 0 },
+      lastOutput: { type: "string" },
+      history: { type: "array", items: roundSchema(), maxItems: 100 },
+      createdAt: { type: "string" },
+      updatedAt: { type: "string" },
     },
-    required: ["kind", "jobId", "startCode", "objective", "round", "phase", "action", "checkpoint", "unresolved", "nextActions", "evidence", "candidateAnswer", "finalAnswer", "nextPrompt"],
+    required: ["kind", "jobId", "startCode", "objective", "status", "round", "phase", "action", "checkpoint", "unresolved", "nextActions", "evidence", "candidateAnswer", "finalAnswer", "nextPrompt", "currentInput", "currentRoundStartedAt", "totalElapsedMs", "lastOutput", "history", "createdAt", "updatedAt"],
     additionalProperties: false,
   }
 }
+
+const WIDGET_ACCESSIBLE = { "openai/widgetAccessible": true } as const
 
 export const MAESTRO_TOOLS = [
   {
@@ -274,6 +339,7 @@ export const MAESTRO_TOOLS = [
     outputSchema: stateOutputSchema(),
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
     _meta: {
+      ...WIDGET_ACCESSIBLE,
       ui: { resourceUri: MAESTRO_WIDGET_URI, visibility: ["model", "app"] },
       "openai/outputTemplate": MAESTRO_WIDGET_URI,
       "openai/toolInvocation/invoking": "Starting Maestro task…",
@@ -284,15 +350,11 @@ export const MAESTRO_TOOLS = [
     name: "maestro_start",
     title: "Resume Maestro task by code",
     description: "Legacy recovery path for an EXISTING Maestro task when a start code has already been explicitly supplied. Never ask a user for a start code. For every new task call maestro_create_task instead.",
-    inputSchema: {
-      type: "object",
-      properties: { startCode: { type: "string", minLength: 12, maxLength: 128 } },
-      required: ["startCode"],
-      additionalProperties: false,
-    },
+    inputSchema: { type: "object", properties: { startCode: { type: "string", minLength: 12, maxLength: 128 } }, required: ["startCode"], additionalProperties: false },
     outputSchema: stateOutputSchema(),
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
     _meta: {
+      ...WIDGET_ACCESSIBLE,
       ui: { resourceUri: MAESTRO_WIDGET_URI, visibility: ["model", "app"] },
       "openai/outputTemplate": MAESTRO_WIDGET_URI,
       "openai/toolInvocation/invoking": "Loading Maestro task…",
@@ -302,7 +364,7 @@ export const MAESTRO_TOOLS = [
   {
     name: "maestro_round_gate",
     title: "Maestro round gate",
-    description: "Persist and evaluate the checkpoint at the end of every Maestro worker or review turn. Use the internal startCode from the most recent Maestro tool state; never ask the user for it and never display it. The tool decides continue/review/finish and the attached UI automatically posts the next turn.",
+    description: "Persist and evaluate the checkpoint at the end of every Maestro worker or review turn. Use the internal startCode from the most recent Maestro tool state; never ask the user for it and never display it. Include roundOutput as the complete user-visible work product or result summary for this round, excluding hidden chain-of-thought. The tool decides continue/review/finish and persists all telemetry before returning.",
     inputSchema: {
       type: "object",
       properties: {
@@ -313,20 +375,48 @@ export const MAESTRO_TOOLS = [
         unresolved: { type: "array", items: { type: "string" }, maxItems: MAX_LIST },
         nextActions: { type: "array", items: { type: "string" }, maxItems: MAX_LIST },
         evidence: { type: "array", items: { type: "string" }, maxItems: MAX_LIST },
+        roundOutput: { type: "string", description: "User-visible work product or result summary produced in this round. Never include hidden chain-of-thought." },
         finalAnswer: { type: "string", description: "Complete candidate/final answer only when done=true; otherwise use an empty string." },
         done: { type: "boolean" },
       },
-      required: ["startCode", "round", "phase", "checkpoint", "unresolved", "nextActions", "evidence", "finalAnswer", "done"],
+      required: ["startCode", "round", "phase", "checkpoint", "unresolved", "nextActions", "evidence", "roundOutput", "finalAnswer", "done"],
       additionalProperties: false,
     },
     outputSchema: stateOutputSchema(),
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: true },
     _meta: {
+      ...WIDGET_ACCESSIBLE,
       ui: { resourceUri: MAESTRO_WIDGET_URI, visibility: ["model", "app"] },
       "openai/outputTemplate": MAESTRO_WIDGET_URI,
       "openai/toolInvocation/invoking": "Saving Maestro round…",
       "openai/toolInvocation/invoked": "Maestro round saved",
     },
+  },
+  {
+    name: "maestro_status",
+    title: "Read Maestro live status",
+    description: "Widget-only read of authoritative Maestro task state and telemetry using the internal startCode.",
+    inputSchema: { type: "object", properties: { startCode: { type: "string", minLength: 12, maxLength: 128 } }, required: ["startCode"], additionalProperties: false },
+    outputSchema: stateOutputSchema(),
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
+    _meta: { ...WIDGET_ACCESSIBLE, ui: { visibility: ["app"] } },
+  },
+  {
+    name: "maestro_round_started",
+    title: "Mark Maestro round started",
+    description: "Widget-only internal telemetry marker. Records the exact wall-clock start of the next Maestro round and its input prompt.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        startCode: { type: "string", minLength: 12, maxLength: 128 },
+        round: { type: "integer", minimum: 1, maximum: 1000000 },
+      },
+      required: ["startCode", "round"],
+      additionalProperties: false,
+    },
+    outputSchema: stateOutputSchema(),
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: true },
+    _meta: { ...WIDGET_ACCESSIBLE, ui: { visibility: ["app"] } },
   },
 ] as const
 
@@ -339,7 +429,7 @@ function textResult(state: MaestroReportState) {
         ? "Maestro task is stopped."
         : state.action === "review"
           ? "Candidate answer reached closure criteria. The Maestro UI will automatically start a separate review turn."
-          : "Maestro state is ready. The UI will automatically start the next ChatGPT turn." }],
+          : "Maestro state is ready. The UI will automatically start or track the next ChatGPT turn." }],
     _meta: { jobId: state.jobId },
   }
 }
@@ -347,20 +437,13 @@ function textResult(state: MaestroReportState) {
 async function resolveMaestroOwnerUserId(): Promise<string> {
   const configured = process.env.MAESTRO_OWNER_USER_ID?.trim()
   if (configured) return configured
-
   const admin = createAdminClient()
   if (!admin) throw new Error("Maestro storage is unavailable")
-
-  const recent = await admin.from("agent_tasks")
-    .select("user_id")
-    .order("created_at", { ascending: false })
-    .limit(100)
+  const recent = await admin.from("agent_tasks").select("user_id").order("created_at", { ascending: false }).limit(100)
   if (recent.error) throw new Error(recent.error.message)
-
   const userIds = new Set((recent.data ?? []).map(row => row.user_id).filter(Boolean))
   if (userIds.size === 1) return [...userIds][0]
   if (userIds.size > 1) throw new Error("MAESTRO_OWNER_USER_ID must be configured when more than one My Chat user exists")
-
   const users = await admin.auth.admin.listUsers({ page: 1, perPage: 2 })
   if (users.error) throw new Error(users.error.message)
   if (users.data.users.length === 1) return users.data.users[0].id
@@ -387,6 +470,33 @@ async function callStart(args: unknown) {
   return textResult(storedState(row))
 }
 
+async function callStatus(args: unknown) {
+  const input = startInput(args)
+  if (!input) throw new Error("startCode is required")
+  const admin = createAdminClient()
+  if (!admin) throw new Error("Maestro storage is unavailable")
+  const row = await findMaestroTaskByStartCode(admin, input.startCode)
+  if (!row) throw new Error("Maestro start code not found")
+  return textResult(storedState(row))
+}
+
+async function callRoundStarted(args: unknown) {
+  const input = startRoundInput(args)
+  if (!input) throw new Error("Invalid Maestro round start")
+  const admin = createAdminClient()
+  if (!admin) throw new Error("Maestro storage is unavailable")
+  const row = await findMaestroTaskByStartCode(admin, input.startCode)
+  if (!row) throw new Error("Maestro start code not found")
+  const pending = storedState(row)
+  const updated = await markMaestroRoundStarted(admin, row.user_id, row.id, input.round, pending.currentInput || pending.nextPrompt)
+  return textResult(storedState(updated))
+}
+
+function elapsedMs(startedAt: string | null, fallback: string): number {
+  const start = Date.parse(startedAt || fallback)
+  return Number.isFinite(start) ? Math.max(0, Date.now() - start) : 0
+}
+
 async function callGate(args: unknown) {
   const input = gateInput(args)
   if (!input) throw new Error("Invalid Maestro round checkpoint")
@@ -394,7 +504,32 @@ async function callGate(args: unknown) {
   if (!admin) throw new Error("Maestro storage is unavailable")
   const row = await findMaestroTaskByStartCode(admin, input.startCode)
   if (!row) throw new Error("Maestro start code not found")
+  const meta = maestroMeta(row)
+  if (!meta) throw new Error("Maestro task metadata is invalid")
+  if (input.round <= meta.round) return textResult(storedState(row))
+
+  const prior = storedState(row)
   const state = evaluateMaestroGate(row, input)
+  const now = new Date().toISOString()
+  const roundElapsed = elapsedMs(meta.currentRoundStartedAt, row.updated_at || row.created_at)
+  const roundRecord: MaestroRoundRecord = {
+    round: input.round,
+    phase: input.phase,
+    input: meta.currentInput || prior.currentInput || prior.nextPrompt,
+    output: input.roundOutput || input.checkpoint,
+    checkpoint: input.checkpoint,
+    action: state.action,
+    startedAt: meta.currentRoundStartedAt || row.updated_at || row.created_at,
+    finishedAt: now,
+    elapsedMs: roundElapsed,
+  }
+  state.history = [...meta.history.filter(item => item.round < input.round), roundRecord].slice(-100)
+  state.totalElapsedMs = meta.totalElapsedMs + roundElapsed
+  state.lastOutput = roundRecord.output
+  state.currentInput = state.nextPrompt
+  state.currentRoundStartedAt = null
+  state.updatedAt = now
+
   await applyMaestroReport(admin, row.user_id, row.id, state)
   return textResult(state)
 }
@@ -410,7 +545,7 @@ function resource() {
     text: MAESTRO_WIDGET_HTML,
     _meta: {
       ui: { prefersBorder: true, csp: { connectDomains: [], resourceDomains: [] } },
-      "openai/widgetDescription": "Maestro Runner automatically continues a durable multi-turn task. Internal task codes are never user input.",
+      "openai/widgetDescription": "Live Maestro Runner dashboard with synchronized round, visible input/output, phase, and elapsed runtime. Internal task codes are never user input.",
       "openai/widgetPrefersBorder": true,
       "openai/widgetCSP": { connect_domains: [], resource_domains: [] },
     },
@@ -429,15 +564,13 @@ export async function handleMaestroRpc(body: JsonRpcRequest, _options: { origin:
         protocolVersion: MAESTRO_PROTOCOL_VERSION,
         capabilities: { tools: {}, resources: {} },
         serverInfo: { name: MAESTRO_SERVER_NAME, version: MAESTRO_SERVER_VERSION },
-        instructions: "For every NEW user request that should run through Maestro, call maestro_create_task with the objective. It creates a fresh unique internal startCode and starts the runner immediately. Never ask the user for a start code and never display one. maestro_start exists only to recover an old task when the code was already supplied. Every active worker/review turn must end with maestro_round_gate using the internal startCode from Maestro tool state. The gate persists the checkpoint server-side before returning, and the UI posts the next ChatGPT turn automatically.",
+        instructions: "For every NEW user request that should run through Maestro, call maestro_create_task with the objective. It creates a fresh unique internal startCode and starts the runner immediately. Never ask the user for a start code and never display one. maestro_start exists only to recover an old task when the code was already supplied. Every active worker/review turn must end with maestro_round_gate using the internal startCode from Maestro tool state and must include roundOutput containing the user-visible work product. The gate persists checkpoint, phase, visible input/output, round timing, total elapsed runtime, and history before returning. The widget uses widget-only maestro_status and maestro_round_started calls to keep one card synchronized without cross-origin fetches.",
       },
     }
   }
   if (body.method === "ping") return { jsonrpc: "2.0", id, result: {} }
   if (body.method === "tools/list") return { jsonrpc: "2.0", id, result: { tools: MAESTRO_TOOLS } }
-  if (body.method === "resources/list") {
-    return { jsonrpc: "2.0", id, result: { resources: [{ uri: MAESTRO_WIDGET_URI, name: "Maestro Runner", mimeType: "text/html;profile=mcp-app" }] } }
-  }
+  if (body.method === "resources/list") return { jsonrpc: "2.0", id, result: { resources: [{ uri: MAESTRO_WIDGET_URI, name: "Maestro Runner", mimeType: "text/html;profile=mcp-app" }] } }
   if (body.method === "resources/templates/list") return { jsonrpc: "2.0", id, result: { resourceTemplates: [] } }
   if (body.method === "resources/read") {
     const params = record(body.params)
@@ -451,16 +584,11 @@ export async function handleMaestroRpc(body: JsonRpcRequest, _options: { origin:
       if (name === "maestro_create_task") return { jsonrpc: "2.0", id, result: await callCreate(params?.arguments) }
       if (name === "maestro_start") return { jsonrpc: "2.0", id, result: await callStart(params?.arguments) }
       if (name === "maestro_round_gate") return { jsonrpc: "2.0", id, result: await callGate(params?.arguments) }
+      if (name === "maestro_status") return { jsonrpc: "2.0", id, result: await callStatus(params?.arguments) }
+      if (name === "maestro_round_started") return { jsonrpc: "2.0", id, result: await callRoundStarted(params?.arguments) }
       return rpcError(id, -32602, "Unknown Maestro tool")
     } catch (error) {
-      return {
-        jsonrpc: "2.0",
-        id,
-        result: {
-          isError: true,
-          content: [{ type: "text", text: error instanceof Error ? error.message : "Maestro tool failed" }],
-        },
-      }
+      return { jsonrpc: "2.0", id, result: { isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : "Maestro tool failed" }] } }
     }
   }
   return rpcError(id, -32601, "Method not found")
