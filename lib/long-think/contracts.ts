@@ -46,6 +46,19 @@ function integer(value: unknown, minimum: number, maximum: number): number | nul
     : null
 }
 
+function sanitizeJson(value: JsonValue): JsonValue {
+  if (typeof value === 'string') return value.replaceAll('\u0000', '')
+  if (Array.isArray(value)) return value.map(sanitizeJson)
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, sanitizeJson(entry)]))
+  }
+  return value
+}
+
+export function sanitizeLongThinkJsonObject(value: JsonObject): JsonObject {
+  return sanitizeJson(value) as JsonObject
+}
+
 export function parseLongThinkJobInput(value: JsonValue): LongThinkJobInput {
   const row = object(value)
   if (!row) throw new TypeError('Long-think job input is invalid')
@@ -102,10 +115,10 @@ export function parseLongThinkCheckpoint(value: JsonObject | null | undefined): 
   }
   return {
     round,
-    state: state as JsonObject,
-    candidateAnswer: typeof row.candidateAnswer === 'string' ? row.candidateAnswer : '',
-    lastReasoning: typeof row.lastReasoning === 'string' ? row.lastReasoning : '',
-    lastStreamText: typeof row.lastStreamText === 'string' ? row.lastStreamText : '',
+    state: sanitizeLongThinkJsonObject(state as JsonObject),
+    candidateAnswer: typeof row.candidateAnswer === 'string' ? row.candidateAnswer.replaceAll('\u0000', '') : '',
+    lastReasoning: typeof row.lastReasoning === 'string' ? row.lastReasoning.replaceAll('\u0000', '') : '',
+    lastStreamText: typeof row.lastStreamText === 'string' ? row.lastStreamText.replaceAll('\u0000', '') : '',
     usage: { apiCalls, inputTokens, outputTokens },
     verifierRuns,
     reviewerRuns,
@@ -115,5 +128,5 @@ export function parseLongThinkCheckpoint(value: JsonObject | null | undefined): 
 }
 
 export function checkpointJson(value: LongThinkRuntimeCheckpoint): JsonObject {
-  return value as unknown as JsonObject
+  return sanitizeLongThinkJsonObject(value as unknown as JsonObject)
 }
