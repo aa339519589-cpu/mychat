@@ -106,7 +106,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ jo
   const oldInput = sourceInput(row.input)
   const seed = checkpointData(row.checkpoint) ?? resultCheckpoint(row.result)
   if (!oldInput || !seed) return apiErrorResponseV1(request, {
-    status: 409, code: 'LONG_THINK_NOT_RESUMABLE', message: '这个任务还没有可续接的 checkpoint', retryable: false,
+    status: 409, code: 'CONFLICT', message: '这个任务还没有可续接的 checkpoint', retryable: false,
   })
 
   const maxTokens = integer(body.maxTokens, Number(oldInput.maxTokens) || 32_768, 512, 262_144)
