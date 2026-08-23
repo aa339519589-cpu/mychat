@@ -199,7 +199,7 @@ export async function findMaestroTaskByStartCode(client: SupabaseClient, startCo
   const { data, error } = await client.from("agent_tasks")
     .select(TASK_SELECT)
     .eq("branch", MAESTRO_BRANCH)
-    .contains("meta", toJson({ kind: MAESTRO_META_KIND, startCode }))
+    .contains("meta", { kind: MAESTRO_META_KIND, startCode })
     .limit(1)
     .maybeSingle()
   if (error) throw new Error(error.message)
