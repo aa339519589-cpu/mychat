@@ -24,6 +24,7 @@ const baseWorkerId = runtimeConfiguration.workerId
   || `${hostname()}:${process.pid}:${crypto.randomUUID()}`
 const shutdown = new AbortController()
 const maintenanceMode = runtimeConfiguration.maintenanceMode
+const LONG_THINK_CONCURRENCY = 3
 
 function metricType(job: { type: string; input: unknown }): JobMetricType {
   if (job.type === 'chat.title') return 'title'
@@ -137,7 +138,7 @@ const longThinkWorker = new JobWorker({
   workerId: `${baseWorkerId}:long-think`,
   queues: ['longthink'],
   handlers,
-  concurrency: 1,
+  concurrency: LONG_THINK_CONCURRENCY,
   leaseSeconds: 120,
   shutdownGraceMs: 240_000,
   onFinalized: finalized,
@@ -160,7 +161,7 @@ async function main(): Promise<void> {
   log.info('jobs', 'Worker pool started', {
     workerId: baseWorkerId,
     workers: workerSpecs.filter(spec => maintenanceMode !== 'drain' || spec.queue !== 'agent'),
-    longThink: { queue: 'longthink', concurrency: 1 },
+    longThink: { queue: 'longthink', concurrency: LONG_THINK_CONCURRENCY },
   })
   await Promise.all([
     heartbeat.run(shutdown.signal),
