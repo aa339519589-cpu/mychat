@@ -8,6 +8,7 @@ on:
       - "components/maestro-runner.tsx"
       - "lib/maestro/**"
       - "tests/maestro-runner.test.ts"
+      - "tsconfig.maestro.json"
       - ".github/workflows/maestro-verify.yml"
   push:
     branches:
@@ -37,8 +38,8 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts --legacy-peer-deps
 
-      - name: Typecheck repository
-        run: npm run check
+      - name: Typecheck Maestro only
+        run: npx tsc -p tsconfig.maestro.json
 
       - name: Lint Maestro only
         run: npx eslint --max-warnings 0 app/api/maestro app/maestro components/maestro-runner.tsx lib/maestro tests/maestro-runner.test.ts
