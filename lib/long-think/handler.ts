@@ -2,13 +2,12 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { endpointAuthType, endpointOutputKind, getOwnedModelEndpoint, resolveModelEndpointKey } from '@/lib/model-endpoint-server'
 import { isJsonValue, type JsonObject } from '@/lib/jobs/contracts'
 import type { JobExecutionContext, JobHandler } from '@/lib/jobs/worker'
-import { checkpointJson, parseLongThinkCheckpoint, parseLongThinkJobInput, type LongThinkRuntimeCheckpoint } from './contracts'
+import { checkpointJson, parseLongThinkCheckpoint, parseLongThinkJobInput, type LongThinkJobInput, type LongThinkRuntimeCheckpoint } from './contracts'
 import { LongThinkProviderError, longThinkCompletion, type LongThinkCompletion, type LongThinkMessage } from './provider'
 
 const SOLVER_SYSTEM = [
   '你是一个长期任务执行器。目标不是尽快结束，而是把用户的问题真正闭环。每次调用只完成下一段最有价值的工作，然后输出一个可被下一次调用直接继承的状态快照。',
-  '',
-  '规则：',
+  '', '规则：',
   '1. 不要复述任务，不要写流程说明。',
   '2. 状态必须自包含：下一轮只拿到原问题和这份状态也能继续。',
   '3. 保留已验证结果、失败路线及失败原因、未解决缺口、下一步动作、必要公式/代码/数据/引用。',
@@ -16,11 +15,9 @@ const SOLVER_SYSTEM = [
   '5. 只有关键缺口全部关闭时 done 才能为 true。',
   '6. 如果已经有候选答案，优先审查最脆弱部分。',
   '7. 只输出一个 JSON 对象，不要 Markdown 围栏。',
-  '',
-  '格式：',
+  '', '格式：',
   '{"done":false,"progress_summary":"","established":[],"failed_routes":[{"route":"","reason":""}],"unresolved":[],"next_actions":[],"working_material":"","candidate_answer":""}',
-  '',
-  '这里保存的是跨轮可续接工作状态。',
+  '', '这里保存的是跨轮可续接工作状态。',
 ].join('\n')
 
 const VERIFIER_SYSTEM = [
@@ -33,44 +30,47 @@ const REVIEWER_SYSTEM = [
   '只输出 JSON：{"done":false,"gaps":[],"directive":"","final_answer":""}。只有确认闭环时 done 才能为 true，并在 final_answer 给出可直接展示给用户的最终回复。',
 ].join('\n')
 
+type OwnedEndpoint = NonNullable<Awaited<ReturnType<typeof getOwnedModelEndpoint>>>
+type HandlerResult = Awaited<ReturnType<JobHandler>>
+
 function asJsonObject(value: unknown): JsonObject | null {
   return isJsonValue(value) && value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? value as JsonObject
-    : null
+    ? value as JsonObject : null
+}
+
+function parseJsonCandidate(value: string): JsonObject | null {
+  try { return asJsonObject(JSON.parse(value)) } catch { return null }
+}
+
+function scanJsonObject(text: string, start: number): JsonObject | null {
+  let depth = 0
+  let quoted = false
+  let escaped = false
+  for (let index = start; index < text.length; index++) {
+    const char = text[index]
+    if (quoted) {
+      if (escaped) escaped = false
+      else if (char === '\\') escaped = true
+      else if (char === '"') quoted = false
+      continue
+    }
+    if (char === '"') { quoted = true; continue }
+    if (char === '{') depth++
+    if (char !== '}') continue
+    depth--
+    if (depth === 0) return parseJsonCandidate(text.slice(start, index + 1))
+  }
+  return null
 }
 
 function extractJsonObject(text: string): JsonObject | null {
   const trimmed = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
-  try {
-    const direct = asJsonObject(JSON.parse(trimmed))
-    if (direct) return direct
-  } catch { /* scan below */ }
-
+  const direct = parseJsonCandidate(trimmed)
+  if (direct) return direct
   for (let start = 0; start < trimmed.length; start++) {
     if (trimmed[start] !== '{') continue
-    let depth = 0
-    let quoted = false
-    let escaped = false
-    for (let index = start; index < trimmed.length; index++) {
-      const char = trimmed[index]
-      if (quoted) {
-        if (escaped) escaped = false
-        else if (char === '\\') escaped = true
-        else if (char === '"') quoted = false
-        continue
-      }
-      if (char === '"') { quoted = true; continue }
-      if (char === '{') depth++
-      else if (char === '}') {
-        depth--
-        if (depth === 0) {
-          try {
-            const parsed = asJsonObject(JSON.parse(trimmed.slice(start, index + 1)))
-            if (parsed) return parsed
-          } catch { break }
-        }
-      }
-    }
+    const parsed = scanJsonObject(trimmed, start)
+    if (parsed) return parsed
   }
   return null
 }
@@ -87,24 +87,17 @@ function account(runtime: LongThinkRuntimeCheckpoint, completion: LongThinkCompl
 
 function progress(runtime: LongThinkRuntimeCheckpoint): JsonObject {
   return {
-    feature: 'long-think',
-    state: 'thinking',
-    round: runtime.round,
-    apiCalls: runtime.usage.apiCalls,
-    inputTokens: runtime.usage.inputTokens,
-    outputTokens: runtime.usage.outputTokens,
-    verifierRuns: runtime.verifierRuns,
+    feature: 'long-think', state: 'thinking', round: runtime.round,
+    apiCalls: runtime.usage.apiCalls, inputTokens: runtime.usage.inputTokens,
+    outputTokens: runtime.usage.outputTokens, verifierRuns: runtime.verifierRuns,
     reviewerRuns: runtime.reviewerRuns,
   }
 }
 
 async function persist(context: JobExecutionContext, runtime: LongThinkRuntimeCheckpoint, phase: string): Promise<void> {
   await context.checkpoint({
-    phase,
-    checkpoint: checkpointJson(runtime),
-    progress: progress(runtime),
-    resumable: true,
-    status: 'running',
+    phase, checkpoint: checkpointJson(runtime), progress: progress(runtime),
+    resumable: true, status: 'running',
   })
 }
 
@@ -123,73 +116,185 @@ function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
   })
 }
 
+function doneOf(state: JsonObject): boolean { return state.done === true }
+function directiveOf(value: JsonObject): string { return typeof value.directive === 'string' ? value.directive : '' }
 function candidateOf(state: JsonObject, fallback: string): string {
-  const value = state.candidate_answer
-  return typeof value === 'string' ? value : fallback
+  return typeof state.candidate_answer === 'string' ? state.candidate_answer : fallback
 }
-
-function doneOf(state: JsonObject): boolean {
-  return state.done === true
+function finalAnswerOf(value: JsonObject, fallback: string): string {
+  return typeof value.final_answer === 'string' && value.final_answer.trim() ? value.final_answer : fallback
 }
-
 function gapsOf(value: JsonObject): string[] {
   if (!Array.isArray(value.gaps)) return []
   return value.gaps.map(gap => typeof gap === 'string' ? gap : JSON.stringify(gap)).slice(0, 256)
 }
 
-function directiveOf(value: JsonObject): string {
-  return typeof value.directive === 'string' ? value.directive : ''
-}
-
-function finalAnswerOf(value: JsonObject, fallback: string): string {
-  return typeof value.final_answer === 'string' && value.final_answer.trim()
-    ? value.final_answer
-    : fallback
-}
-
 function solverUserMessage(problem: string, previous: string, round: number): string {
-  return [
-    '原始问题：',
-    problem,
-    '',
-    '上一轮续接状态：',
-    previous,
-    '',
-    '当前轮次：' + String(round),
-    '',
-    '继续工作。不要重新开始，优先处理 unresolved 和审查器留下的缺口。',
-  ].join('\n')
+  return ['原始问题：', problem, '', '上一轮续接状态：', previous, '', '当前轮次：' + String(round), '',
+    '继续工作。不要重新开始，优先处理 unresolved 和审查器留下的缺口。'].join('\n')
 }
-
 function verifierUserMessage(problem: string, runtime: LongThinkRuntimeCheckpoint): string {
-  return [
-    '原始问题：',
-    problem,
-    '',
-    '当前续接状态：',
-    JSON.stringify(runtime.state),
-    '',
-    '候选答案：',
-    runtime.candidateAnswer || '（尚未形成完整候选答案）',
-    '',
-    '已完成轮数：' + String(runtime.round),
-  ].join('\n')
+  return ['原始问题：', problem, '', '当前续接状态：', JSON.stringify(runtime.state), '', '候选答案：',
+    runtime.candidateAnswer || '（尚未形成完整候选答案）', '', '已完成轮数：' + String(runtime.round)].join('\n')
+}
+function reviewerUserMessage(problem: string, runtime: LongThinkRuntimeCheckpoint, answer: string, verdict: JsonObject): string {
+  return ['原始问题：', problem, '', '最终状态：', JSON.stringify(runtime.state), '', '候选答案：', answer,
+    '', 'Verifier：', JSON.stringify(verdict)].join('\n')
 }
 
-function reviewerUserMessage(problem: string, runtime: LongThinkRuntimeCheckpoint, answer: string, verdict: JsonObject): string {
-  return [
-    '原始问题：',
-    problem,
-    '',
-    '最终状态：',
-    JSON.stringify(runtime.state),
-    '',
-    '候选答案：',
-    answer,
-    '',
-    'Verifier：',
-    JSON.stringify(verdict),
-  ].join('\n')
+class LongThinkSession {
+  private consecutiveErrors = 0
+
+  constructor(
+    private readonly context: JobExecutionContext,
+    private readonly input: LongThinkJobInput,
+    private readonly endpoint: OwnedEndpoint,
+    private readonly apiKey: string,
+    private readonly runtime: LongThinkRuntimeCheckpoint,
+  ) {}
+
+  private async complete(messages: readonly LongThinkMessage[], maxTokens = this.input.maxTokens): Promise<LongThinkCompletion> {
+    const result = await longThinkCompletion({
+      baseUrl: this.endpoint.base_url, apiKey: this.apiKey,
+      authType: endpointAuthType(this.endpoint.auth_type), model: this.endpoint.model,
+      messages, maxTokens, signal: this.context.signal,
+    })
+    account(this.runtime, result)
+    return result
+  }
+
+  private async requestJson(messages: readonly LongThinkMessage[], maxTokens = this.input.maxTokens): Promise<JsonObject> {
+    const first = await this.complete(messages, maxTokens)
+    const parsed = extractJsonObject(first.text)
+    if (parsed) return parsed
+    this.runtime.formatFailures += 1
+    const repaired = await this.complete([
+      { role: 'system', content: '把下面的模型工作结果转换成一个合法、完整、可续接的 JSON 对象。保留所有有用成果和未解决缺口。只输出 JSON，不要继续扩展答案。' },
+      { role: 'user', content: (first.text || first.reasoning).slice(0, 500_000) },
+    ], Math.min(maxTokens, 65_536))
+    const repairedState = extractJsonObject(repaired.text)
+    if (repairedState) return repairedState
+    throw new LongThinkProviderError('模型连续返回无法解析的状态 JSON', { retryable: true })
+  }
+
+  private async solveRound(): Promise<JsonObject> {
+    const previous = this.runtime.round === 0 ? '（第一轮，没有旧状态）' : JSON.stringify(this.runtime.state)
+    const state = await this.requestJson([
+      { role: 'system', content: SOLVER_SYSTEM },
+      { role: 'user', content: solverUserMessage(this.input.problem, previous, this.runtime.round + 1) },
+    ])
+    this.runtime.round += 1
+    this.runtime.state = state
+    this.runtime.candidateAnswer = candidateOf(state, this.runtime.candidateAnswer)
+    await persist(this.context, this.runtime, 'solving')
+    return state
+  }
+
+  private shouldVerify(state: JsonObject): boolean {
+    if (this.runtime.round < this.input.minRounds) return false
+    return doneOf(state) || this.runtime.round % this.input.verifyEvery === 0
+  }
+
+  private async verify(): Promise<JsonObject> {
+    const verdict = await this.requestJson([
+      { role: 'system', content: VERIFIER_SYSTEM },
+      { role: 'user', content: verifierUserMessage(this.input.problem, this.runtime) },
+    ], Math.min(this.input.maxTokens, 32_768))
+    this.runtime.verifierRuns += 1
+    return verdict
+  }
+
+  private async review(answer: string, verdict: JsonObject): Promise<JsonObject> {
+    const review = await this.requestJson([
+      { role: 'system', content: REVIEWER_SYSTEM },
+      { role: 'user', content: reviewerUserMessage(this.input.problem, this.runtime, answer, verdict) },
+    ], Math.min(this.input.maxTokens, 32_768))
+    this.runtime.reviewerRuns += 1
+    return review
+  }
+
+  private async recordGap(key: '_closure_review' | '_final_review', value: JsonObject, phase: string): Promise<void> {
+    this.runtime.state = {
+      ...this.runtime.state,
+      [key]: { gaps: gapsOf(value), directive: directiveOf(value) },
+    }
+    await persist(this.context, this.runtime, phase)
+  }
+
+  private async tryClosure(): Promise<string | null> {
+    const verdict = await this.verify()
+    if (!doneOf(verdict)) {
+      await this.recordGap('_closure_review', verdict, 'closure-review')
+      return null
+    }
+    const verifiedAnswer = finalAnswerOf(verdict, this.runtime.candidateAnswer)
+    const review = await this.review(verifiedAnswer, verdict)
+    if (!doneOf(review)) {
+      this.runtime.candidateAnswer = verifiedAnswer
+      await this.recordGap('_final_review', review, 'final-review')
+      return null
+    }
+    const finalAnswer = finalAnswerOf(review, verifiedAnswer)
+    if (finalAnswer.trim()) return finalAnswer
+    this.runtime.state = {
+      ...this.runtime.state,
+      _final_review: { gaps: ['最终答案为空'], directive: '形成可直接交付给用户的最终答案' },
+    }
+    await persist(this.context, this.runtime, 'final-review')
+    return null
+  }
+
+  private completed(finalAnswer: string): HandlerResult {
+    return {
+      status: 'completed',
+      result: {
+        feature: 'long-think', finalAnswer, round: this.runtime.round,
+        apiCalls: this.runtime.usage.apiCalls, inputTokens: this.runtime.usage.inputTokens,
+        outputTokens: this.runtime.usage.outputTokens, verifierRuns: this.runtime.verifierRuns,
+        reviewerRuns: this.runtime.reviewerRuns,
+      },
+    }
+  }
+
+  private failure(error: LongThinkProviderError): HandlerResult {
+    return {
+      status: 'failed',
+      error: {
+        code: 'LONG_THINK_PROVIDER_REJECTED', message: error.message, retryable: false,
+        class: 'provider', details: error.status === null ? {} : { status: error.status },
+      },
+    }
+  }
+
+  private async recover(error: unknown): Promise<HandlerResult | null> {
+    if (this.context.signal.aborted) throw this.context.signal.reason
+    const providerError = error instanceof LongThinkProviderError
+      ? error : new LongThinkProviderError('长期任务模型调用失败', { retryable: true, cause: error })
+    if (!providerError.retryable) return this.failure(providerError)
+    this.runtime.transientErrors += 1
+    this.consecutiveErrors += 1
+    await persist(this.context, this.runtime, 'solving')
+    const delay = Math.min(300_000, 2_000 * (2 ** Math.min(this.consecutiveErrors - 1, 8)))
+    await sleep(delay, this.context.signal)
+    return null
+  }
+
+  async run(): Promise<HandlerResult> {
+    while (true) {
+      this.context.assertAuthority()
+      try {
+        const state = await this.solveRound()
+        this.consecutiveErrors = 0
+        if (!this.shouldVerify(state)) continue
+        const finalAnswer = await this.tryClosure()
+        if (finalAnswer === null) continue
+        return this.completed(finalAnswer)
+      } catch (error) {
+        const failure = await this.recover(error)
+        if (failure) return failure
+      }
+    }
+  }
 }
 
 export const handleLongThinkJob: JobHandler = async context => {
@@ -205,139 +310,13 @@ export const handleLongThinkJob: JobHandler = async context => {
     error: { code: 'LONG_THINK_ENDPOINT_NOT_FOUND', message: '长期任务使用的模型端点不存在', retryable: false, class: 'user', details: {} },
   }
   let apiKey: string
-  try { apiKey = resolveModelEndpointKey(endpoint, context.job.principal.id) } catch {
+  try { apiKey = resolveModelEndpointKey(endpoint, context.job.principal.id) }
+  catch {
     return {
       status: 'failed',
       error: { code: 'LONG_THINK_ENDPOINT_KEY', message: '模型端点凭据无法读取，请重新连接该端点', retryable: false, class: 'user', details: {} },
     }
   }
-
   const runtime = parseLongThinkCheckpoint(context.job.checkpoint?.data)
-  let consecutiveErrors = 0
-
-  const complete = async (messages: readonly LongThinkMessage[], maxTokens = input.maxTokens): Promise<LongThinkCompletion> => {
-    const result = await longThinkCompletion({
-      baseUrl: endpoint.base_url,
-      apiKey,
-      authType: endpointAuthType(endpoint.auth_type),
-      model: endpoint.model,
-      messages,
-      maxTokens,
-      signal: context.signal,
-    })
-    account(runtime, result)
-    return result
-  }
-
-  const requestJson = async (messages: readonly LongThinkMessage[], maxTokens = input.maxTokens): Promise<JsonObject> => {
-    const first = await complete(messages, maxTokens)
-    let parsed = extractJsonObject(first.text)
-    if (parsed) return parsed
-
-    runtime.formatFailures += 1
-    const repairSource = (first.text || first.reasoning).slice(0, 500_000)
-    const repaired = await complete([
-      { role: 'system', content: '把下面的模型工作结果转换成一个合法、完整、可续接的 JSON 对象。保留所有有用成果和未解决缺口。只输出 JSON，不要继续扩展答案。' },
-      { role: 'user', content: repairSource },
-    ], Math.min(maxTokens, 65_536))
-    parsed = extractJsonObject(repaired.text)
-    if (parsed) return parsed
-    throw new LongThinkProviderError('模型连续返回无法解析的状态 JSON', { retryable: true })
-  }
-
-  while (true) {
-    context.assertAuthority()
-    try {
-      const previous = runtime.round === 0 ? '（第一轮，没有旧状态）' : JSON.stringify(runtime.state)
-      const state = await requestJson([
-        { role: 'system', content: SOLVER_SYSTEM },
-        { role: 'user', content: solverUserMessage(input.problem, previous, runtime.round + 1) },
-      ])
-      consecutiveErrors = 0
-      runtime.round += 1
-      runtime.state = state
-      runtime.candidateAnswer = candidateOf(state, runtime.candidateAnswer)
-      await persist(context, runtime, 'solving')
-
-      const shouldVerify = runtime.round >= input.minRounds
-        && (doneOf(state) || runtime.round % input.verifyEvery === 0)
-      if (!shouldVerify) continue
-
-      const verdict = await requestJson([
-        { role: 'system', content: VERIFIER_SYSTEM },
-        { role: 'user', content: verifierUserMessage(input.problem, runtime) },
-      ], Math.min(input.maxTokens, 32_768))
-      runtime.verifierRuns += 1
-
-      if (!doneOf(verdict)) {
-        runtime.state = {
-          ...runtime.state,
-          _closure_review: { gaps: gapsOf(verdict), directive: directiveOf(verdict) },
-        }
-        await persist(context, runtime, 'closure-review')
-        continue
-      }
-
-      const verifiedAnswer = finalAnswerOf(verdict, runtime.candidateAnswer)
-      const review = await requestJson([
-        { role: 'system', content: REVIEWER_SYSTEM },
-        { role: 'user', content: reviewerUserMessage(input.problem, runtime, verifiedAnswer, verdict) },
-      ], Math.min(input.maxTokens, 32_768))
-      runtime.reviewerRuns += 1
-
-      if (!doneOf(review)) {
-        runtime.state = {
-          ...runtime.state,
-          _final_review: { gaps: gapsOf(review), directive: directiveOf(review) },
-        }
-        runtime.candidateAnswer = verifiedAnswer
-        await persist(context, runtime, 'final-review')
-        continue
-      }
-
-      const finalAnswer = finalAnswerOf(review, verifiedAnswer)
-      if (!finalAnswer.trim()) {
-        runtime.state = {
-          ...runtime.state,
-          _final_review: { gaps: ['最终答案为空'], directive: '形成可直接交付给用户的最终答案' },
-        }
-        await persist(context, runtime, 'final-review')
-        continue
-      }
-
-      return {
-        status: 'completed',
-        result: {
-          feature: 'long-think',
-          finalAnswer,
-          round: runtime.round,
-          apiCalls: runtime.usage.apiCalls,
-          inputTokens: runtime.usage.inputTokens,
-          outputTokens: runtime.usage.outputTokens,
-          verifierRuns: runtime.verifierRuns,
-          reviewerRuns: runtime.reviewerRuns,
-        },
-      }
-    } catch (error) {
-      if (context.signal.aborted) throw context.signal.reason
-      const providerError = error instanceof LongThinkProviderError
-        ? error
-        : new LongThinkProviderError('长期任务模型调用失败', { retryable: true, cause: error })
-      if (!providerError.retryable) return {
-        status: 'failed',
-        error: {
-          code: 'LONG_THINK_PROVIDER_REJECTED',
-          message: providerError.message,
-          retryable: false,
-          class: 'provider',
-          details: providerError.status === null ? {} : { status: providerError.status },
-        },
-      }
-      runtime.transientErrors += 1
-      consecutiveErrors += 1
-      await persist(context, runtime, 'solving')
-      const delay = Math.min(300_000, 2_000 * (2 ** Math.min(consecutiveErrors - 1, 8)))
-      await sleep(delay, context.signal)
-    }
-  }
+  return new LongThinkSession(context, input, endpoint, apiKey, runtime).run()
 }
