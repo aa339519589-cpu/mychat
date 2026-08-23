@@ -67,6 +67,7 @@ export type MaestroReportState = {
   history: MaestroRoundRecord[]
   createdAt: string
   updatedAt: string
+  launchGranted: boolean
 }
 
 export type MaestroPublicTask = {
@@ -293,15 +294,15 @@ export async function markMaestroRoundStarted(
   jobId: string,
   round: number,
   input: string,
-): Promise<AgentTaskRow> {
+): Promise<{ row: AgentTaskRow; started: boolean }> {
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const row = await getMaestroTask(client, userId, jobId)
     if (!row) throw new Error("Maestro task not found")
     const meta = maestroMeta(row)
     if (!meta) throw new Error("Maestro task metadata is invalid")
-    if (row.status === "cancelled" || row.status === "completed") return row
-    if (round !== meta.round + 1) return row
-    if (meta.currentRoundStartedAt) return row
+    if (row.status === "cancelled" || row.status === "completed") return { row, started: false }
+    if (round !== meta.round + 1) return { row, started: false }
+    if (meta.currentRoundStartedAt) return { row, started: false }
 
     const now = new Date().toISOString()
     const { data, error } = await client.from("agent_tasks").update({
@@ -317,7 +318,7 @@ export async function markMaestroRoundStarted(
       .select(TASK_SELECT)
       .maybeSingle()
     if (error) throw new Error(error.message)
-    if (data) return data as AgentTaskRow
+    if (data) return { row: data as AgentTaskRow, started: true }
   }
   throw new Error("Maestro task changed concurrently; retry round start")
 }
