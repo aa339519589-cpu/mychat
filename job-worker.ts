@@ -5,6 +5,7 @@ import { handleChatTitle } from '@/lib/jobs/handlers/title'
 import { runAgentTaskJob } from '@/lib/jobs/handlers/agent'
 import { loadAgentJob } from '@/lib/jobs/handlers/agent-input'
 import { handleAgentOperation } from '@/lib/jobs/handlers/agent-operation'
+import { handleLongThinkJob } from '@/lib/long-think/handler'
 import { SupabaseJobRepository } from '@/lib/jobs/supabase-repository'
 import { SupabaseJobOutboxRepository } from '@/lib/jobs/supabase-outbox'
 import { JobOutboxDispatcher } from '@/lib/jobs/outbox-dispatcher'
@@ -73,6 +74,7 @@ const handlers: Record<string, JobHandler> = {
   'chat.title': measured(handleChatTitle),
   'agent.task': measured(handleAgentTaskWithoutPlanGitHub),
   'agent.operation': measured(handleAgentOperation),
+  'reasoning.long': measured(handleLongThinkJob),
 }
 const finalized: NonNullable<ConstructorParameters<typeof JobWorker>[0]['onFinalized']> = (
   { job, status, durationMs },
@@ -86,6 +88,7 @@ const workerSpecs = [
   { name: 'media', queue: 'media', concurrency: runtimeConfiguration.workerConcurrency.media },
   { name: 'title', queue: 'title', concurrency: runtimeConfiguration.workerConcurrency.title },
   { name: 'agent', queue: 'agent', concurrency: runtimeConfiguration.workerConcurrency.agent },
+  { name: 'long-think', queue: 'longthink', concurrency: 1 },
 ] as const
 
 function createWorker(
