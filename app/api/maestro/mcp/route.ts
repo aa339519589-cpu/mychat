@@ -1,91 +1,15 @@
 import { NextRequest } from "next/server"
 import { handleMaestroRpc } from "@/lib/maestro/mcp"
-import { createAdminClient } from "@/lib/supabase/admin"
-import {
-  applyMaestroReport,
-  createMaestroTask,
-  getMaestroTask,
-  MAESTRO_BRANCH,
-  publicMaestroTask,
-  type MaestroReportState,
-} from "@/lib/maestro/store"
-import { issueMaestroLaunchToken, verifyMaestroTaskToken } from "@/lib/maestro/tokens"
-import { MAESTRO_WIDGET_URI } from "@/lib/maestro/widget"
 
 const MAX_BODY_BYTES = 512 * 1024
-const MAX_OBJECTIVE = 100_000
-const DEFAULT_MAX_ROUNDS = 10_000
 
 type RpcResponse = Awaited<ReturnType<typeof handleMaestroRpc>>
-type JsonRpcId = string | number | null
-
-type RpcEnvelope = {
-  jsonrpc?: unknown
-  id?: JsonRpcId
-  method?: unknown
-  params?: unknown
-}
-
-const MAESTRO_CREATE_TOOL = {
-  name: "maestro_create_task",
-  title: "Create and start Maestro Runner",
-  description: "Create a new My Chat Maestro Runner task from the user's objective, mount the Maestro Runner UI, and begin automatic cross-turn execution. Use this when the user asks My che che. to do a new long-running task. Never ask the user for a start code, token, task id, or relay value.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      objective: {
-        type: "string",
-        minLength: 1,
-        maxLength: MAX_OBJECTIVE,
-        description: "The complete task objective to execute across Maestro turns.",
-      },
-      maxRounds: {
-        type: "integer",
-        minimum: 2,
-        maximum: 100_000,
-        default: DEFAULT_MAX_ROUNDS,
-        description: "Maximum automatic worker/review turns. Defaults to 10000.",
-      },
-    },
-    required: ["objective"],
-    additionalProperties: false,
-  },
-  annotations: {
-    readOnlyHint: false,
-    destructiveHint: false,
-    openWorldHint: false,
-    idempotentHint: false,
-  },
-  _meta: {
-    ui: { resourceUri: MAESTRO_WIDGET_URI, visibility: ["model", "app"] },
-    "openai/outputTemplate": MAESTRO_WIDGET_URI,
-    "openai/toolInvocation/invoking": "Creating Maestro task…",
-    "openai/toolInvocation/invoked": "Maestro task created",
-  },
-} as const
 
 function json(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), {
     status,
     headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
   })
-}
-
-function record(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null
-}
-
-function toolError(id: JsonRpcId, message: string): NonNullable<RpcResponse> {
-  return {
-    jsonrpc: "2.0",
-    id,
-    result: {
-      isError: true,
-      content: [{ type: "text", text: message }],
-    },
-  }
 }
 
 async function body(request: NextRequest): Promise<unknown> {
@@ -96,141 +20,11 @@ async function body(request: NextRequest): Promise<unknown> {
   return raw ? JSON.parse(raw) : null
 }
 
-async function resolveMaestroOwnerUserId(): Promise<string> {
-  const configured = process.env.MAESTRO_OWNER_USER_ID?.trim()
-  if (configured) return configured
-
-  const admin = createAdminClient()
-  if (!admin) throw new Error("Maestro storage is unavailable")
-
-  const latestMaestro = await admin.from("agent_tasks")
-    .select("user_id")
-    .eq("branch", MAESTRO_BRANCH)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle()
-  if (latestMaestro.error) throw new Error(latestMaestro.error.message)
-  if (latestMaestro.data?.user_id) return latestMaestro.data.user_id
-
-  const latestTask = await admin.from("agent_tasks")
-    .select("user_id")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle()
-  if (latestTask.error) throw new Error(latestTask.error.message)
-  if (latestTask.data?.user_id) return latestTask.data.user_id
-
-  const users = await admin.auth.admin.listUsers({ page: 1, perPage: 2 })
-  if (users.error) throw new Error(users.error.message)
-  if (users.data.users.length === 1) return users.data.users[0].id
-
-  throw new Error("Unable to resolve the Maestro owner. Set MAESTRO_OWNER_USER_ID once on the server.")
-}
-
-async function createAndStartMaestro(rpc: RpcEnvelope, origin: string): Promise<RpcResponse> {
-  const id = rpc.id ?? null
-  const params = record(rpc.params)
-  const args = record(params?.arguments)
-  const objective = typeof args?.objective === "string" ? args.objective.trim() : ""
-  const rawMaxRounds = args?.maxRounds === undefined ? DEFAULT_MAX_ROUNDS : Number(args.maxRounds)
-
-  if (!objective || objective.length > MAX_OBJECTIVE) {
-    return toolError(id, `objective must contain 1 to ${MAX_OBJECTIVE} characters`)
-  }
-  if (!Number.isSafeInteger(rawMaxRounds) || rawMaxRounds < 2 || rawMaxRounds > 100_000) {
-    return toolError(id, "maxRounds must be an integer from 2 to 100000")
-  }
-
-  try {
-    const admin = createAdminClient()
-    if (!admin) throw new Error("Maestro storage is unavailable")
-    const userId = await resolveMaestroOwnerUserId()
-    const row = await createMaestroTask(admin, userId, objective, rawMaxRounds)
-    const task = publicMaestroTask(row)
-    if (!task) throw new Error("Maestro task metadata is invalid")
-    const launchToken = issueMaestroLaunchToken({ userId, jobId: task.id })
-
-    return handleMaestroRpc({
-      jsonrpc: "2.0",
-      id,
-      method: "tools/call",
-      params: {
-        name: "maestro_start",
-        arguments: { launchToken },
-      },
-    }, { origin })
-  } catch (error) {
-    return toolError(id, error instanceof Error ? error.message : "Maestro task creation failed")
-  }
-}
-
-function augmentResponse(rpc: RpcEnvelope, response: RpcResponse): RpcResponse {
-  if (!response || !response.result || typeof response.result !== "object" || Array.isArray(response.result)) return response
-
-  if (rpc.method === "tools/list") {
-    const result = response.result as { tools?: unknown[] }
-    if (Array.isArray(result.tools) && !result.tools.some(tool => record(tool)?.name === MAESTRO_CREATE_TOOL.name)) {
-      result.tools = [MAESTRO_CREATE_TOOL, ...result.tools]
-    }
-  }
-
-  if (rpc.method === "initialize") {
-    const result = response.result as { instructions?: unknown }
-    const current = typeof result.instructions === "string" ? result.instructions : ""
-    result.instructions = [
-      "Maestro Runner is a cross-turn orchestrator.",
-      "For a NEW task requested inside ChatGPT, call maestro_create_task directly with the user's objective. It creates and starts the task without any user relay step.",
-      "For a task launched from My Chat, My Chat supplies the launch ticket automatically; call maestro_start with that launchToken. Never ask the user for a start code, token, task id, or other relay value.",
-      "During an active job, every worker/review turn must end with maestro_round_gate using taskToken from the most recent Maestro tool result. The gate persists the authoritative checkpoint before it returns, and the UI posts the next ChatGPT message automatically until a separate review turn reaches finish.",
-      current,
-    ].filter(Boolean).join(" ")
-  }
-
-  return response
-}
-
-async function persistRoundGate(rpc: RpcEnvelope, response: RpcResponse): Promise<void> {
-  if (rpc.method !== "tools/call" || !response?.result) return
-  const params = record(rpc.params)
-  if (params?.name !== "maestro_round_gate") return
-
-  const result = record(response.result)
-  if (!result || result.isError === true) return
-  const stateRecord = record(result.structuredContent)
-  if (!stateRecord || stateRecord.kind !== "maestro-runner-state") {
-    throw new Error("Maestro round gate returned no structured state")
-  }
-
-  const taskToken = typeof stateRecord.taskToken === "string" ? stateRecord.taskToken : ""
-  const taskAccess = taskToken ? verifyMaestroTaskToken(taskToken) : null
-  if (!taskAccess) throw new Error("Maestro round gate state has no valid task access")
-
-  const admin = createAdminClient()
-  if (!admin) throw new Error("Maestro storage is unavailable")
-  const row = await getMaestroTask(admin, taskAccess.userId, taskAccess.jobId)
-  if (!row) throw new Error("Maestro task not found")
-
-  await applyMaestroReport(admin, row.user_id, row.id, stateRecord as unknown as MaestroReportState)
-}
-
 async function handleOne(value: unknown, origin: string): Promise<RpcResponse> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid Request" } }
   }
-
-  const rpc = value as RpcEnvelope
-  if (rpc.method === "tools/call") {
-    const params = record(rpc.params)
-    if (params?.name === MAESTRO_CREATE_TOOL.name) return createAndStartMaestro(rpc, origin)
-  }
-
-  const response = await handleMaestroRpc(rpc, { origin })
-  try {
-    await persistRoundGate(rpc, response)
-  } catch (error) {
-    return toolError(rpc.id ?? null, error instanceof Error ? error.message : "Maestro round persistence failed")
-  }
-  return augmentResponse(rpc, response)
+  return handleMaestroRpc(value, { origin })
 }
 
 export async function POST(request: NextRequest): Promise<Response> {

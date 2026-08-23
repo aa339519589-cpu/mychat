@@ -3,11 +3,9 @@ import assert from "node:assert/strict"
 import { MAESTRO_TOOLS, evaluateMaestroGate, handleMaestroRpc } from "../lib/maestro/mcp"
 import { MAESTRO_WIDGET_HTML, MAESTRO_WIDGET_URI } from "../lib/maestro/widget"
 import {
-  issueMaestroLaunchToken,
   issueMaestroReportToken,
   issueMaestroTaskToken,
   maestroStateHash,
-  verifyMaestroLaunchToken,
   verifyMaestroReportToken,
   verifyMaestroTaskToken,
 } from "../lib/maestro/tokens"
@@ -53,43 +51,37 @@ function row(overrides: Partial<AgentTaskRow> = {}): AgentTaskRow {
   }
 }
 
-test("Maestro MCP exposes direct-launch tools without any startCode field", async () => {
-  assert.deepEqual(MAESTRO_TOOLS.map(tool => tool.name), ["maestro_start", "maestro_round_gate"])
-  assert.ok(MAESTRO_TOOLS.every(tool => tool.annotations.readOnlyHint === true))
+test("Maestro has automatic creation and zero-argument My Chat start with no startCode schema", async () => {
+  assert.deepEqual(MAESTRO_TOOLS.map(tool => tool.name), ["maestro_create_task", "maestro_start", "maestro_round_gate"])
+  assert.equal(MAESTRO_TOOLS[0].annotations.readOnlyHint, false)
+  assert.equal(MAESTRO_TOOLS[1].annotations.readOnlyHint, true)
+  assert.equal(MAESTRO_TOOLS[2].annotations.readOnlyHint, false)
   assert.ok(MAESTRO_TOOLS.every(tool => tool._meta["openai/outputTemplate"] === MAESTRO_WIDGET_URI))
-  const toolJson = JSON.stringify(MAESTRO_TOOLS)
-  assert.doesNotMatch(toolJson, /startCode/)
-  assert.match(toolJson, /never ask the user/i)
+  assert.doesNotMatch(JSON.stringify(MAESTRO_TOOLS), /startCode/)
+  assert.deepEqual(MAESTRO_TOOLS[1].inputSchema, { type: "object", properties: {}, additionalProperties: false })
 
   const initialized = await handleMaestroRpc({ jsonrpc: "2.0", id: 1, method: "initialize" }, { origin: "https://example.com" })
-  const initResult = initialized?.result as Record<string, unknown>
+  const initResult = initialized?.result as { capabilities: unknown; instructions: string }
   assert.deepEqual(initResult.capabilities, { tools: {}, resources: {} })
-  assert.doesNotMatch(String(initResult.instructions), /supplied start code/i)
-  assert.match(String(initResult.instructions), /Never ask the user/i)
-
-  const listed = await handleMaestroRpc({ jsonrpc: "2.0", id: 2, method: "tools/list" }, { origin: "https://example.com" })
-  const tools = (listed?.result as { tools: typeof MAESTRO_TOOLS }).tools
-  assert.deepEqual(tools.map(tool => tool.name), ["maestro_start", "maestro_round_gate"])
+  assert.match(initResult.instructions, /maestro_create_task/)
+  assert.match(initResult.instructions, /zero-argument maestro_start/)
+  assert.doesNotMatch(initResult.instructions, /startCode/)
 })
 
-test("Maestro widget uses the supported follow-up bridge and never scrapes ChatGPT DOM", async () => {
+test("Maestro widget only sends follow-up messages and performs no network sync fetch", async () => {
   assert.match(MAESTRO_WIDGET_HTML, /sendFollowUpMessage/)
   assert.match(MAESTRO_WIDGET_HTML, /ui\/notifications\/tool-result/)
+  assert.doesNotMatch(MAESTRO_WIDGET_HTML, /fetch\s*\(/)
   assert.doesNotMatch(MAESTRO_WIDGET_HTML, /document\.querySelector/)
   assert.doesNotMatch(MAESTRO_WIDGET_HTML, /chat\.openai\.com\/backend-api/)
 
-  const response = await handleMaestroRpc({
-    jsonrpc: "2.0",
-    id: 3,
-    method: "resources/read",
-    params: { uri: MAESTRO_WIDGET_URI },
-  }, { origin: "https://mychat.example" })
-  const content = (response?.result as { contents: Array<{ uri: string; text: string; _meta?: unknown }> }).contents[0]
+  const response = await handleMaestroRpc({ jsonrpc: "2.0", id: 3, method: "resources/read", params: { uri: MAESTRO_WIDGET_URI } }, { origin: "https://mychat.example" })
+  const content = (response?.result as { contents: Array<{ uri: string; text: string }> }).contents[0]
   assert.equal(content.uri, MAESTRO_WIDGET_URI)
   assert.match(content.text, /sendFollowUpMessage/)
 })
 
-test("unfinished work always becomes another work turn", () => {
+test("unfinished work becomes another work turn without relay instructions", () => {
   const state = evaluateMaestroGate(row(), {
     round: 1,
     phase: "work",
@@ -99,14 +91,14 @@ test("unfinished work always becomes another work turn", () => {
     evidence: ["Lemma A verified"],
     finalAnswer: "",
     done: false,
-  }, "task-token")
+  }, "internal-task-capability")
   assert.equal(state.action, "continue")
   assert.equal(state.phase, "work")
   assert.equal(state.round, 1)
-  assert.equal(state.taskToken, "task-token")
+  assert.equal(state.taskToken, "internal-task-capability")
   assert.match(state.nextPrompt, /第 2 轮/)
   assert.match(state.nextPrompt, /Lemma B/)
-  assert.doesNotMatch(state.nextPrompt, /启动码/)
+  assert.doesNotMatch(state.nextPrompt, /启动码|token|taskToken|任务 ID|中转/)
 })
 
 test("a candidate answer must go through a separate review turn", () => {
@@ -119,7 +111,7 @@ test("a candidate answer must go through a separate review turn", () => {
     evidence: ["All cases checked"],
     finalAnswer: "Candidate answer",
     done: true,
-  }, "task-token")
+  }, "internal-task-capability")
   assert.equal(state.action, "review")
   assert.equal(state.phase, "review")
   assert.equal(state.finalAnswer, "")
@@ -154,28 +146,22 @@ test("only a clean review turn can finish the Maestro task", () => {
     evidence: ["review verified every requirement"],
     finalAnswer: "Reviewed final answer",
     done: true,
-  }, "task-token-2")
+  }, "internal-task-capability")
   assert.equal(state.action, "finish")
   assert.equal(state.phase, "done")
   assert.equal(state.finalAnswer, "Reviewed final answer")
   assert.equal(state.nextPrompt, "")
 })
 
-test("launch and task capabilities are signed and bound to one My Chat task", () => {
-  const launchToken = issueMaestroLaunchToken({ userId: "user-a", jobId: "job-a" })
-  const launch = verifyMaestroLaunchToken(launchToken)
-  assert.equal(launch?.userId, "user-a")
-  assert.equal(launch?.jobId, "job-a")
-  assert.equal(verifyMaestroLaunchToken(`${launchToken}x`), null)
-
-  const taskToken = issueMaestroTaskToken({ userId: "user-a", jobId: "job-a" })
-  const task = verifyMaestroTaskToken(taskToken)
-  assert.equal(task?.userId, "user-a")
-  assert.equal(task?.jobId, "job-a")
-  assert.equal(verifyMaestroTaskToken(`${taskToken}x`), null)
+test("internal task capability is signed and bound to one task", () => {
+  const token = issueMaestroTaskToken({ userId: "user-a", jobId: "job-a" })
+  const verified = verifyMaestroTaskToken(token)
+  assert.equal(verified?.userId, "user-a")
+  assert.equal(verified?.jobId, "job-a")
+  assert.equal(verifyMaestroTaskToken(`${token}x`), null)
 })
 
-test("signed widget report tokens bind the exact task, round and structured state", () => {
+test("signed legacy widget report tokens still bind exact task, round and state", () => {
   const state = { jobId: "job-a", round: 7, phase: "work", action: "continue" }
   const stateHash = maestroStateHash(state)
   const token = issueMaestroReportToken({ userId: "user-a", jobId: "job-a", round: 7, stateHash })

@@ -2,30 +2,25 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto"
 
 const TOKEN_PREFIX = "maestro1"
 const REPORT_KIND = "widget-report"
-const LAUNCH_KIND = "launch"
 const TASK_KIND = "task"
 const MIN_SECRET_LENGTH = 32
-const DEFAULT_TTL_SECONDS = 24 * 60 * 60
-const MAX_TTL_SECONDS = 7 * DEFAULT_TTL_SECONDS
+const DAY_SECONDS = 24 * 60 * 60
+const MAX_TTL_SECONDS = 7 * DAY_SECONDS
 
-type BaseTokenPayload = {
+type BasePayload = {
   v: 1
   userId: string
   jobId: string
   exp: number
 }
 
-type ReportTokenPayload = BaseTokenPayload & {
+type ReportTokenPayload = BasePayload & {
   kind: typeof REPORT_KIND
   round: number
   stateHash: string
 }
 
-type LaunchTokenPayload = BaseTokenPayload & {
-  kind: typeof LAUNCH_KIND
-}
-
-type TaskTokenPayload = BaseTokenPayload & {
+type TaskTokenPayload = BasePayload & {
   kind: typeof TASK_KIND
 }
 
@@ -53,13 +48,6 @@ function sameSignature(left: string, right: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b)
 }
 
-function isBasePayload(row: Record<string, unknown>): boolean {
-  return row.v === 1
-    && typeof row.userId === "string" && row.userId.length > 0
-    && typeof row.jobId === "string" && row.jobId.length > 0
-    && Number.isSafeInteger(row.exp) && Number(row.exp) > 0
-}
-
 function parseSignedToken(token: string): Record<string, unknown> | null {
   const [prefix, payload, suppliedSignature, extra] = token.trim().split(".")
   if (prefix !== TOKEN_PREFIX || !payload || !suppliedSignature || extra !== undefined) return null
@@ -70,17 +58,21 @@ function parseSignedToken(token: string): Record<string, unknown> | null {
   try { parsed = decode(payload) } catch { return null }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null
   const row = parsed as Record<string, unknown>
-  if (!isBasePayload(row) || Number(row.exp) < Math.floor(Date.now() / 1000)) return null
+  if (row.v !== 1
+    || typeof row.userId !== "string" || !row.userId
+    || typeof row.jobId !== "string" || !row.jobId
+    || !Number.isSafeInteger(row.exp)
+    || Number(row.exp) < Math.floor(Date.now() / 1000)) return null
   return row
 }
 
-function ttlSeconds(value: number | undefined, fallback: number): number {
-  return Math.max(60, Math.min(value ?? fallback, MAX_TTL_SECONDS))
-}
-
-function signedToken(payload: BaseTokenPayload & { kind: string } & Record<string, unknown>): string {
+function signedToken(payload: BasePayload & { kind: string } & Record<string, unknown>): string {
   const encoded = encode(payload)
   return `${TOKEN_PREFIX}.${encoded}.${signature(encoded)}`
+}
+
+function expiry(ttlSeconds: number): number {
+  return Math.floor(Date.now() / 1000) + Math.max(60, Math.min(ttlSeconds, MAX_TTL_SECONDS))
 }
 
 export function maestroRunnerConfigured(): boolean {
@@ -89,26 +81,6 @@ export function maestroRunnerConfigured(): boolean {
 
 export function maestroStateHash(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex")
-}
-
-export function issueMaestroLaunchToken(options: {
-  userId: string
-  jobId: string
-  ttlSeconds?: number
-}): string {
-  return signedToken({
-    v: 1,
-    kind: LAUNCH_KIND,
-    userId: options.userId,
-    jobId: options.jobId,
-    exp: Math.floor(Date.now() / 1000) + ttlSeconds(options.ttlSeconds, 60 * 60),
-  })
-}
-
-export function verifyMaestroLaunchToken(token: string): LaunchTokenPayload | null {
-  const row = parseSignedToken(token)
-  if (!row || row.kind !== LAUNCH_KIND) return null
-  return row as LaunchTokenPayload
 }
 
 export function issueMaestroTaskToken(options: {
@@ -121,7 +93,7 @@ export function issueMaestroTaskToken(options: {
     kind: TASK_KIND,
     userId: options.userId,
     jobId: options.jobId,
-    exp: Math.floor(Date.now() / 1000) + ttlSeconds(options.ttlSeconds, MAX_TTL_SECONDS),
+    exp: expiry(options.ttlSeconds ?? MAX_TTL_SECONDS),
   })
 }
 
@@ -145,7 +117,7 @@ export function issueMaestroReportToken(options: {
     jobId: options.jobId,
     round: options.round,
     stateHash: options.stateHash,
-    exp: Math.floor(Date.now() / 1000) + ttlSeconds(options.ttlSeconds, DEFAULT_TTL_SECONDS),
+    exp: expiry(options.ttlSeconds ?? DAY_SECONDS),
   })
 }
 
