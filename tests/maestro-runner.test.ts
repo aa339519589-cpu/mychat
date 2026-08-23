@@ -3,11 +3,36 @@ import assert from "node:assert/strict"
 import { MAESTRO_TOOLS, evaluateMaestroGate, handleMaestroRpc } from "../lib/maestro/mcp"
 import { MAESTRO_WIDGET_HTML, MAESTRO_WIDGET_URI } from "../lib/maestro/widget"
 import { issueMaestroReportToken, maestroStateHash, verifyMaestroReportToken } from "../lib/maestro/tokens"
-import { MAESTRO_BRANCH, MAESTRO_META_KIND, type AgentTaskRow } from "../lib/maestro/store"
+import { clientMaestroTask, MAESTRO_BRANCH, MAESTRO_META_KIND, type AgentTaskRow } from "../lib/maestro/store"
 
 process.env.MAESTRO_RUNNER_KEY = "test-maestro-runner-key-0123456789-abcdefghijklmnopqrstuvwxyz"
 
 const INTERNAL_START_CODE = "abcdefghijklmnopqrstuvwx"
+
+function meta(overrides: Record<string, unknown> = {}) {
+  return {
+    kind: MAESTRO_META_KIND,
+    version: 1,
+    startCode: INTERNAL_START_CODE,
+    maxRounds: 100,
+    round: 0,
+    phase: "work",
+    checkpoint: "",
+    unresolved: [],
+    nextActions: [],
+    evidence: [],
+    candidateAnswer: "",
+    finalAnswer: "",
+    lastAction: "queued",
+    lastReportedAt: null,
+    currentInput: "",
+    currentRoundStartedAt: null,
+    totalElapsedMs: 0,
+    lastOutput: "",
+    history: [],
+    ...overrides,
+  }
+}
 
 function row(overrides: Partial<AgentTaskRow> = {}): AgentTaskRow {
   const now = "2026-08-24T00:00:00.000Z"
@@ -24,22 +49,7 @@ function row(overrides: Partial<AgentTaskRow> = {}): AgentTaskRow {
     updated_at: now,
     started_at: now,
     finished_at: null,
-    meta: {
-      kind: MAESTRO_META_KIND,
-      version: 1,
-      startCode: INTERNAL_START_CODE,
-      maxRounds: 100,
-      round: 0,
-      phase: "work",
-      checkpoint: "",
-      unresolved: [],
-      nextActions: [],
-      evidence: [],
-      candidateAnswer: "",
-      finalAnswer: "",
-      lastAction: "queued",
-      lastReportedAt: null,
-    },
+    meta: meta(),
     agent_branch: null,
     pull_request_url: null,
     pull_request_number: null,
@@ -48,31 +58,41 @@ function row(overrides: Partial<AgentTaskRow> = {}): AgentTaskRow {
   }
 }
 
-test("Maestro exposes automatic task creation as the primary entry point", async () => {
+test("Maestro exposes automatic creation plus widget-only live telemetry tools", async () => {
   assert.deepEqual(MAESTRO_TOOLS.map(tool => tool.name), [
     "maestro_create_task",
     "maestro_start",
     "maestro_round_gate",
+    "maestro_status",
+    "maestro_round_started",
   ])
   assert.equal(MAESTRO_TOOLS[0].annotations.readOnlyHint, false)
   assert.equal(MAESTRO_TOOLS[1].annotations.readOnlyHint, true)
   assert.equal(MAESTRO_TOOLS[2].annotations.readOnlyHint, false)
-  assert.ok(MAESTRO_TOOLS.every(tool => tool._meta["openai/outputTemplate"] === MAESTRO_WIDGET_URI))
+  assert.equal(MAESTRO_TOOLS[3].annotations.readOnlyHint, true)
+  assert.equal(MAESTRO_TOOLS[4].annotations.readOnlyHint, false)
+  assert.equal(MAESTRO_TOOLS[3]._meta["openai/widgetAccessible"], true)
+  assert.equal(MAESTRO_TOOLS[4]._meta["openai/widgetAccessible"], true)
 
   const initialized = await handleMaestroRpc({ jsonrpc: "2.0", id: 1, method: "initialize" }, { origin: "https://example.com" })
   const initResult = initialized?.result as { capabilities: unknown; instructions: string }
   assert.deepEqual(initResult.capabilities, { tools: {}, resources: {} })
   assert.match(initResult.instructions, /maestro_create_task/)
   assert.match(initResult.instructions, /Never ask the user for a start code/)
+  assert.match(initResult.instructions, /visible input\/output/)
 
   const listed = await handleMaestroRpc({ jsonrpc: "2.0", id: 2, method: "tools/list" }, { origin: "https://example.com" })
   const tools = (listed?.result as { tools: typeof MAESTRO_TOOLS }).tools
-  assert.deepEqual(tools.map(tool => tool.name), ["maestro_create_task", "maestro_start", "maestro_round_gate"])
+  assert.deepEqual(tools.map(tool => tool.name), MAESTRO_TOOLS.map(tool => tool.name))
 })
 
-test("Maestro widget only sends follow-up messages and performs no network sync fetch", async () => {
+test("Maestro widget polls through the host bridge and never uses network fetch", async () => {
   assert.match(MAESTRO_WIDGET_HTML, /sendFollowUpMessage/)
-  assert.match(MAESTRO_WIDGET_HTML, /ui\/notifications\/tool-result/)
+  assert.match(MAESTRO_WIDGET_HTML, /callTool\("maestro_status"/)
+  assert.match(MAESTRO_WIDGET_HTML, /callTool\("maestro_round_started"/)
+  assert.match(MAESTRO_WIDGET_HTML, /累计推理墙钟/)
+  assert.match(MAESTRO_WIDGET_HTML, /本轮输入/)
+  assert.match(MAESTRO_WIDGET_HTML, /本轮输出/)
   assert.doesNotMatch(MAESTRO_WIDGET_HTML, /fetch\s*\(/)
   assert.doesNotMatch(MAESTRO_WIDGET_HTML, /document\.querySelector/)
   assert.doesNotMatch(MAESTRO_WIDGET_HTML, /chat\.openai\.com\/backend-api/)
@@ -85,10 +105,17 @@ test("Maestro widget only sends follow-up messages and performs no network sync 
   }, { origin: "https://mychat.example" })
   const content = (response?.result as { contents: Array<{ uri: string; text: string; _meta?: unknown }> }).contents[0]
   assert.equal(content.uri, MAESTRO_WIDGET_URI)
-  assert.match(content.text, /sendFollowUpMessage/)
+  assert.match(content.text, /maestro_status/)
 })
 
-test("unfinished work always becomes another work turn without exposing the internal code", () => {
+test("public My Chat task projection never contains the internal start code", () => {
+  const task = clientMaestroTask(row())
+  assert.ok(task)
+  assert.equal("startCode" in task, false)
+  assert.equal(JSON.stringify(task).includes(INTERNAL_START_CODE), false)
+})
+
+test("unfinished work produces the next input without exposing the internal code", () => {
   const state = evaluateMaestroGate(row(), {
     startCode: INTERNAL_START_CODE,
     round: 1,
@@ -97,6 +124,7 @@ test("unfinished work always becomes another work turn without exposing the inte
     unresolved: ["Lemma B"],
     nextActions: ["Prove Lemma B"],
     evidence: ["Lemma A verified"],
+    roundOutput: "Established Lemma A and reduced the task to Lemma B.",
     finalAnswer: "",
     done: false,
   })
@@ -106,8 +134,10 @@ test("unfinished work always becomes another work turn without exposing the inte
   assert.equal(state.startCode, INTERNAL_START_CODE)
   assert.match(state.nextPrompt, /第 2 轮/)
   assert.match(state.nextPrompt, /Lemma B/)
+  assert.match(state.nextPrompt, /roundOutput/)
   assert.match(state.nextPrompt, /绝对不要向用户索取/)
   assert.doesNotMatch(state.nextPrompt, new RegExp(INTERNAL_START_CODE))
+  assert.equal(state.launchGranted, false)
 })
 
 test("a candidate answer must go through a separate review turn", () => {
@@ -119,6 +149,7 @@ test("a candidate answer must go through a separate review turn", () => {
     unresolved: [],
     nextActions: [],
     evidence: ["All cases checked"],
+    roundOutput: "Candidate answer produced.",
     finalAnswer: "Candidate answer",
     done: true,
   })
@@ -132,22 +163,28 @@ test("a candidate answer must go through a separate review turn", () => {
 
 test("only a clean review turn can finish the Maestro task", () => {
   const previous = row({
-    meta: {
-      kind: MAESTRO_META_KIND,
-      version: 1,
-      startCode: INTERNAL_START_CODE,
-      maxRounds: 100,
+    meta: meta({
       round: 1,
       phase: "review",
       checkpoint: "Candidate produced",
-      unresolved: [],
-      nextActions: [],
       evidence: ["candidate evidence"],
       candidateAnswer: "Candidate answer",
-      finalAnswer: "",
       lastAction: "review",
       lastReportedAt: "2026-08-24T00:01:00.000Z",
-    },
+      totalElapsedMs: 60000,
+      lastOutput: "Candidate answer",
+      history: [{
+        round: 1,
+        phase: "work",
+        input: "Work input",
+        output: "Candidate answer",
+        checkpoint: "Candidate produced",
+        action: "review",
+        startedAt: "2026-08-24T00:00:00.000Z",
+        finishedAt: "2026-08-24T00:01:00.000Z",
+        elapsedMs: 60000,
+      }],
+    }),
   })
   const state = evaluateMaestroGate(previous, {
     startCode: INTERNAL_START_CODE,
@@ -157,6 +194,7 @@ test("only a clean review turn can finish the Maestro task", () => {
     unresolved: [],
     nextActions: [],
     evidence: ["review verified every requirement"],
+    roundOutput: "Independent review accepted the candidate.",
     finalAnswer: "Reviewed final answer",
     done: true,
   })
@@ -166,7 +204,7 @@ test("only a clean review turn can finish the Maestro task", () => {
   assert.equal(state.nextPrompt, "")
 })
 
-test("signed legacy widget report tokens still bind the exact task, round and state", () => {
+test("signed legacy widget report tokens still bind exact task state", () => {
   const state = { jobId: "job-a", round: 7, phase: "work", action: "continue" }
   const stateHash = maestroStateHash(state)
   const token = issueMaestroReportToken({ userId: "user-a", jobId: "job-a", round: 7, stateHash })
