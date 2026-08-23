@@ -3,7 +3,6 @@ import { apiErrorResponseV1 } from '@/lib/api/errors'
 import { enforceRequestRateLimit, resolveAuth } from '@/lib/api/guard'
 import { isTerminalJobStatus } from '@/lib/jobs/contracts'
 import { SupabaseJobRepository } from '@/lib/jobs/supabase-repository'
-import { createAdminClient } from '@/lib/supabase/admin'
 import { isUuid } from '@/lib/validation'
 
 export async function DELETE(request: NextRequest, context: { params: Promise<{ jobId: string }> }) {
@@ -54,20 +53,10 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
     }
   }
 
-  const admin = createAdminClient()
-  if (!admin) return apiErrorResponseV1(request, {
-    status: 503, code: 'DEPENDENCY_UNAVAILABLE', message: '删除服务暂时不可用', retryable: true,
+  // Job events and ledger rows are intentionally append-only systems of record.
+  // User-facing deletion is therefore a visibility tombstone maintained by the
+  // Long Think client after this endpoint confirms the task is terminal.
+  return Response.json({ deleted: true, jobId, retainedInLedger: true }, {
+    headers: { 'Cache-Control': 'no-store' },
   })
-
-  const events = await admin.from('job_events').delete().eq('job_id', jobId).eq('principal_id', auth.userId)
-  if (events.error) return apiErrorResponseV1(request, {
-    status: 503, code: 'DEPENDENCY_UNAVAILABLE', message: '任务事件删除失败', retryable: true,
-  })
-
-  const removed = await admin.from('jobs').delete().eq('id', jobId).eq('principal_id', auth.userId)
-  if (removed.error) return apiErrorResponseV1(request, {
-    status: 503, code: 'DEPENDENCY_UNAVAILABLE', message: '任务删除失败', retryable: true,
-  })
-
-  return Response.json({ deleted: true, jobId }, { headers: { 'Cache-Control': 'no-store' } })
 }
