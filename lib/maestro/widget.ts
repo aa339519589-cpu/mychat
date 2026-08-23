@@ -93,11 +93,11 @@ export const MAESTRO_WIDGET_HTML = String.raw`<!doctype html>
 
       let state = null;
       let pollBusy = false;
-      let launchBusy = false;
       let followupBusy = false;
       let pendingPrompt = "";
       let pollFailures = 0;
       let lastSyncAt = 0;
+      let launchedKey = "";
 
       const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
       const esc = value => String(value ?? "").replace(/[&<>\"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"}[ch]));
@@ -224,32 +224,23 @@ export const MAESTRO_WIDGET_HTML = String.raw`<!doctype html>
         }
       }
 
-      async function claimAndLaunch(current) {
-        if (!current || launchBusy || current.currentRoundStartedAt || !current.nextPrompt) return;
+      async function maybeLaunch(current) {
+        if (!current?.launchGranted || !current.currentInput) return;
         if (current.action === "finish" || current.action === "stop" || current.status === "completed" || current.status === "cancelled") return;
-        launchBusy = true;
-        try {
-          const targetRound = Number(current.round || 0) + 1;
-          const result = await callTool("maestro_round_started", { startCode: current.startCode, round: targetRound });
-          const next = extractStructured(result);
-          if (next) render(next, "poll");
-          if (!next?.launchGranted) return;
-          const prompt = next.currentInput || next.nextPrompt || current.nextPrompt;
-          pendingPrompt = prompt;
-          sync.textContent = "已锁定第 " + targetRound + " 轮\n正在启动…";
-          const sent = await sendFollowUp(prompt);
-          if (sent) {
-            pendingPrompt = "";
-            manual.style.display = "none";
-            sync.textContent = "第 " + targetRound + " 轮已启动\n状态持续同步";
-          } else {
-            sync.textContent = "自动续跑未启动\n可手动重试";
-            manual.style.display = "inline-block";
-          }
-        } catch (error) {
-          sync.textContent = "启动同步异常\n" + (error instanceof Error ? error.message : String(error));
-        } finally {
-          launchBusy = false;
+        const targetRound = Number(current.round || 0) + 1;
+        const key = current.jobId + ":" + targetRound + ":" + (current.currentRoundStartedAt || "");
+        if (launchedKey === key) return;
+        launchedKey = key;
+        pendingPrompt = current.currentInput || current.nextPrompt;
+        sync.textContent = "已锁定第 " + targetRound + " 轮\n正在启动…";
+        const sent = await sendFollowUp(pendingPrompt);
+        if (sent) {
+          pendingPrompt = "";
+          manual.style.display = "none";
+          sync.textContent = "第 " + targetRound + " 轮已启动\n状态持续同步";
+        } else {
+          sync.textContent = "自动续跑未启动\n可手动重试";
+          manual.style.display = "inline-block";
         }
       }
 
@@ -257,12 +248,12 @@ export const MAESTRO_WIDGET_HTML = String.raw`<!doctype html>
         if (!state?.startCode || pollBusy) return;
         pollBusy = true;
         try {
-          const result = await callTool("maestro_status", { startCode: state.startCode });
+          const result = await callTool("maestro_start", { startCode: state.startCode });
           const next = extractStructured(result);
           if (next) {
             pollFailures = 0;
             render(next, "poll");
-            await claimAndLaunch(next);
+            await maybeLaunch(next);
           }
         } catch (error) {
           pollFailures += 1;
@@ -275,7 +266,7 @@ export const MAESTRO_WIDGET_HTML = String.raw`<!doctype html>
       function acceptHostState(candidate) {
         if (!candidate || candidate.kind !== "maestro-runner-state") return;
         render(candidate, "tool");
-        void claimAndLaunch(candidate);
+        void maybeLaunch(candidate);
       }
 
       function readHostGlobals(event) {
@@ -292,10 +283,7 @@ export const MAESTRO_WIDGET_HTML = String.raw`<!doctype html>
       }, { passive: true });
 
       manual.addEventListener("click", async () => {
-        if (!pendingPrompt) {
-          if (state) await claimAndLaunch(state);
-          return;
-        }
+        if (!pendingPrompt) return;
         manual.disabled = true;
         if (await sendFollowUp(pendingPrompt)) {
           pendingPrompt = "";
