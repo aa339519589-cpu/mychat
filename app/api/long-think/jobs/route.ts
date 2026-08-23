@@ -7,7 +7,7 @@ import { endpointOutputKind, getOwnedModelEndpoint } from '@/lib/model-endpoint-
 import { SupabaseJobRepository } from '@/lib/jobs/supabase-repository'
 import { sha256JobValue } from '@/lib/jobs/canonical'
 import { isUuid } from '@/lib/validation'
-import type { JsonObject, JobAuthClass } from '@/lib/jobs/contracts'
+import { isJsonValue, type JsonObject, type JobAuthClass } from '@/lib/jobs/contracts'
 
 const MAX_PROBLEM_CHARS = 1_000_000
 
@@ -20,15 +20,28 @@ function integer(value: unknown, fallback: number, minimum: number, maximum: num
     : null
 }
 
+function jsonObject(value: unknown): JsonObject | null {
+  return isJsonValue(value) && value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as JsonObject : null
+}
+
 function parseCreateInput(body: Record<string, unknown>): JsonObject | null {
   const endpointId = typeof body.endpointId === 'string' ? body.endpointId : ''
   const problem = typeof body.problem === 'string' ? body.problem.trim() : ''
   const maxTokens = integer(body.maxTokens, 32_768, 512, 262_144)
   const minRounds = integer(body.minRounds, 4, 1, 100_000)
   const verifyEvery = integer(body.verifyEvery, 6, 1, 10_000)
+  const seedCheckpoint = body.seedCheckpoint == null ? null : jsonObject(body.seedCheckpoint)
+  const continuedFrom = typeof body.continuedFrom === 'string' ? body.continuedFrom : null
   if (!isUuid(endpointId) || !problem || problem.length > MAX_PROBLEM_CHARS
-    || maxTokens === null || minRounds === null || verifyEvery === null) return null
-  return { endpointId, problem, maxTokens, minRounds, verifyEvery }
+    || maxTokens === null || minRounds === null || verifyEvery === null
+    || (body.seedCheckpoint != null && seedCheckpoint === null)
+    || (continuedFrom !== null && !isUuid(continuedFrom))) return null
+  return {
+    endpointId, problem, maxTokens, minRounds, verifyEvery,
+    ...(seedCheckpoint ? { seedCheckpoint } : {}),
+    ...(continuedFrom ? { continuedFrom } : {}),
+  }
 }
 
 async function checkEndpoint(supabase: NonNullable<Awaited<ReturnType<typeof resolveAuth>>['supabase']>, userId: string, endpointId: string): Promise<EndpointCheck> {
@@ -49,7 +62,10 @@ async function enqueueLongThink(input: JsonObject, principalId: string, authClas
     type: 'reasoning.long',
     queue: 'longthink',
     principal: { id: principalId, authClass },
-    subject: { feature: 'long-think', endpointId },
+    subject: {
+      feature: 'long-think', endpointId,
+      ...(typeof input.continuedFrom === 'string' ? { continuedFrom: input.continuedFrom } : {}),
+    },
     idempotencyKey: `longthink:${jobId}`,
     inputHash: sha256JobValue(input),
     input,
