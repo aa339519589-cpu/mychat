@@ -21,12 +21,18 @@ export function LongThinkApp() {
     selectJob(jobId)
     void refreshJobs().catch(() => undefined)
   }
+  const continued = (jobId: string) => {
+    selectJob(jobId)
+    void refreshJobs().catch(() => undefined)
+  }
 
-  return <main className="min-h-dvh bg-background text-foreground"><div className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col px-4 pb-16 pt-[max(1rem,env(safe-area-inset-top))] sm:px-6">
-    <Header />
-    {activeJobId
-      ? <LongThinkRunning jobId={activeJobId} job={job} onNew={newTask} />
-      : <LongThinkSetup endpoints={endpoints} onStarted={started} onEndpointCreated={() => { void refreshEndpoints().catch(() => undefined) }} />}
-    <LongThinkTaskList jobs={jobs} selectedId={activeJobId} onSelect={selectJob} onNew={newTask} />
-  </div></main>
+  return <main className="h-dvh w-full overflow-y-auto overscroll-y-contain touch-pan-y bg-background text-foreground [-webkit-overflow-scrolling:touch]">
+    <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col px-4 pb-[max(4rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] sm:px-6">
+      <Header />
+      {activeJobId
+        ? <LongThinkRunning jobId={activeJobId} job={job} onNew={newTask} onContinued={continued} />
+        : <LongThinkSetup endpoints={endpoints} onStarted={started} onEndpointCreated={() => { void refreshEndpoints().catch(() => undefined) }} />}
+      <LongThinkTaskList jobs={jobs} selectedId={activeJobId} onSelect={selectJob} onNew={newTask} />
+    </div>
+  </main>
 }
