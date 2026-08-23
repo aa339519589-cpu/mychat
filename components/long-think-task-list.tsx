@@ -1,3 +1,7 @@
+"use client"
+
+import { useState } from "react"
+import { LoaderCircle, Trash2 } from "lucide-react"
 import { LONG_THINK_ACTIVE, longThinkInteger, type ListedJob } from "@/components/long-think-support"
 
 function statusText(status: string): string {
@@ -13,12 +17,28 @@ function timeText(value: string): string {
   return Number.isFinite(date.getTime()) ? date.toLocaleString() : ""
 }
 
-export function LongThinkTaskList({ jobs, selectedId, onSelect, onNew }: {
+export function LongThinkTaskList({ jobs, selectedId, onSelect, onNew, onDelete }: {
   jobs: ListedJob[]
   selectedId: string
   onSelect: (id: string) => void
   onNew: () => void
+  onDelete: (id: string) => Promise<void>
 }) {
+  const [deletingId, setDeletingId] = useState("")
+  const [error, setError] = useState("")
+
+  const remove = async (item: ListedJob) => {
+    const active = LONG_THINK_ACTIVE.has(item.status)
+    const message = active
+      ? "删除这个任务？正在运行的任务会先停止，然后永久删除。"
+      : "永久删除这个任务？此操作无法撤销。"
+    if (!window.confirm(message)) return
+    setDeletingId(item.id); setError("")
+    try { await onDelete(item.id) }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "删除失败") }
+    finally { setDeletingId("") }
+  }
+
   return <section className="mt-5 rounded-[26px] border border-border/70 bg-card/35 p-4 sm:p-5">
     <div className="flex items-center justify-between gap-3"><div><h2 className="text-sm font-semibold">长期任务</h2><p className="mt-1 text-xs text-muted-foreground">切换页面不会停止其他任务。</p></div><button onClick={onNew} className="fluid-press h-9 rounded-xl border border-border px-3 text-xs hover:bg-muted/50">+ 新任务</button></div>
     <div className="mt-4 grid gap-2">
@@ -27,11 +47,18 @@ export function LongThinkTaskList({ jobs, selectedId, onSelect, onNew }: {
         const progress = item.progress ?? {}
         const round = longThinkInteger(progress.round)
         const active = LONG_THINK_ACTIVE.has(item.status)
-        return <button key={item.id} onClick={() => onSelect(item.id)} className={`fluid-press flex w-full items-center gap-3 rounded-2xl border p-3 text-left ${item.id === selectedId ? "border-foreground/35 bg-background" : "border-border/60 hover:bg-background/55"}`}>
-          <span className={`size-2 shrink-0 rounded-full ${active ? "bg-foreground" : "bg-muted-foreground/35"}`} />
-          <span className="min-w-0 flex-1"><span className="block text-sm font-medium">{statusText(item.status)} · 第 {round} 轮</span><span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{timeText(item.created_at)} · {item.id.slice(0, 8)}</span></span>
-        </button>
+        const deleting = deletingId === item.id
+        return <div key={item.id} className={`flex w-full items-center gap-1 rounded-2xl border p-1 ${item.id === selectedId ? "border-foreground/35 bg-background" : "border-border/60 hover:bg-background/55"}`}>
+          <button onClick={() => onSelect(item.id)} className="fluid-press flex min-w-0 flex-1 items-center gap-3 rounded-xl p-2 text-left">
+            <span className={`size-2 shrink-0 rounded-full ${active ? "bg-foreground" : "bg-muted-foreground/35"}`} />
+            <span className="min-w-0 flex-1"><span className="block text-sm font-medium">{statusText(item.status)} · 第 {round} 轮</span><span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{timeText(item.created_at)} · {item.id.slice(0, 8)}</span></span>
+          </button>
+          <button disabled={Boolean(deletingId)} onClick={() => void remove(item)} aria-label="删除任务" title="删除任务" className="fluid-press flex size-10 shrink-0 items-center justify-center rounded-xl text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:opacity-40">
+            {deleting ? <LoaderCircle className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+          </button>
+        </div>
       })}
     </div>
+    {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
   </section>
 }
