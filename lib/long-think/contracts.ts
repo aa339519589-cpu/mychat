@@ -6,6 +6,8 @@ export type LongThinkJobInput = {
   maxTokens: number
   minRounds: number
   verifyEvery: number
+  seedCheckpoint: JsonObject | null
+  continuedFrom: string | null
 }
 
 export type LongThinkUsage = {
@@ -33,6 +35,11 @@ function object(value: unknown): Record<string, unknown> | null {
     : null
 }
 
+function jsonObject(value: unknown): JsonObject | null {
+  const row = object(value)
+  return row ? row as JsonObject : null
+}
+
 function integer(value: unknown, minimum: number, maximum: number): number | null {
   return Number.isSafeInteger(value) && Number(value) >= minimum && Number(value) <= maximum
     ? Number(value)
@@ -47,10 +54,14 @@ export function parseLongThinkJobInput(value: JsonValue): LongThinkJobInput {
   const maxTokens = integer(row.maxTokens, 512, 262_144)
   const minRounds = integer(row.minRounds, 1, 100_000)
   const verifyEvery = integer(row.verifyEvery, 1, 10_000)
-  if (!endpointId || !problem || problem.length > 1_000_000 || maxTokens === null || minRounds === null || verifyEvery === null) {
+  const seedCheckpoint = row.seedCheckpoint === undefined || row.seedCheckpoint === null
+    ? null : jsonObject(row.seedCheckpoint)
+  const continuedFrom = typeof row.continuedFrom === 'string' ? row.continuedFrom : null
+  if (!endpointId || !problem || problem.length > 1_000_000 || maxTokens === null || minRounds === null || verifyEvery === null
+    || (row.seedCheckpoint !== undefined && row.seedCheckpoint !== null && seedCheckpoint === null)) {
     throw new TypeError('Long-think job input is invalid')
   }
-  return { endpointId, problem, maxTokens, minRounds, verifyEvery }
+  return { endpointId, problem, maxTokens, minRounds, verifyEvery, seedCheckpoint, continuedFrom }
 }
 
 function nullableTokenCount(value: unknown): number | null {
