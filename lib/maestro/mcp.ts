@@ -16,7 +16,7 @@ import { MAESTRO_WIDGET_HTML, MAESTRO_WIDGET_URI } from "@/lib/maestro/widget"
 
 export const MAESTRO_PROTOCOL_VERSION = "2025-06-18"
 export const MAESTRO_SERVER_NAME = "mychat-maestro-runner"
-export const MAESTRO_SERVER_VERSION = "1.2.1"
+export const MAESTRO_SERVER_VERSION = "1.3.0"
 
 const MAX_CHECKPOINT = 36_000
 const MAX_ANSWER = 120_000
@@ -43,7 +43,6 @@ type GateInput = {
   finalAnswer: string
   done: boolean
 }
-type StartRoundInput = { startCode: string; round: number }
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null
@@ -93,14 +92,6 @@ function startInput(value: unknown): { startCode: string } | null {
   const row = record(value)
   const startCode = cleanText(row?.startCode, 128)
   return startCode ? { startCode } : null
-}
-
-function startRoundInput(value: unknown): StartRoundInput | null {
-  const row = record(value)
-  if (!row) return null
-  const startCode = cleanText(row.startCode, 128)
-  const round = Number(row.round)
-  return startCode && Number.isSafeInteger(round) && round >= 1 ? { startCode, round } : null
 }
 
 function continuationPrompt(options: {
@@ -350,17 +341,17 @@ export const MAESTRO_TOOLS = [
   },
   {
     name: "maestro_start",
-    title: "Resume Maestro task by code",
-    description: "Legacy recovery path for an EXISTING Maestro task when a start code has already been explicitly supplied. Never ask a user for a start code. For every new task call maestro_create_task instead.",
+    title: "Sync or resume Maestro task",
+    description: "Internal live-status and continuation synchronizer for an existing Maestro task. The widget calls this with the internal startCode to refresh authoritative state and atomically claim the next round launch. A user should never be asked to provide a start code. For new tasks use maestro_create_task.",
     inputSchema: { type: "object", properties: { startCode: { type: "string", minLength: 12, maxLength: 128 } }, required: ["startCode"], additionalProperties: false },
     outputSchema: stateOutputSchema(),
-    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: true },
     _meta: {
       ...WIDGET_ACCESSIBLE,
       ui: { resourceUri: MAESTRO_WIDGET_URI, visibility: ["model", "app"] },
       "openai/outputTemplate": MAESTRO_WIDGET_URI,
-      "openai/toolInvocation/invoking": "Loading Maestro task…",
-      "openai/toolInvocation/invoked": "Maestro task loaded",
+      "openai/toolInvocation/invoking": "Syncing Maestro task…",
+      "openai/toolInvocation/invoked": "Maestro task synced",
     },
   },
   {
@@ -394,32 +385,6 @@ export const MAESTRO_TOOLS = [
       "openai/toolInvocation/invoked": "Maestro round saved",
     },
   },
-  {
-    name: "maestro_status",
-    title: "Read Maestro live status",
-    description: "Widget-only read of authoritative Maestro task state and telemetry using the internal startCode.",
-    inputSchema: { type: "object", properties: { startCode: { type: "string", minLength: 12, maxLength: 128 } }, required: ["startCode"], additionalProperties: false },
-    outputSchema: stateOutputSchema(),
-    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
-    _meta: { ...WIDGET_ACCESSIBLE, ui: { visibility: ["app"] } },
-  },
-  {
-    name: "maestro_round_started",
-    title: "Mark Maestro round started",
-    description: "Widget-only internal telemetry marker. Records the exact wall-clock start of the next Maestro round and its input prompt. Exactly one widget receives launchGranted=true and may post the next follow-up turn.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        startCode: { type: "string", minLength: 12, maxLength: 128 },
-        round: { type: "integer", minimum: 1, maximum: 1000000 },
-      },
-      required: ["startCode", "round"],
-      additionalProperties: false,
-    },
-    outputSchema: stateOutputSchema(),
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: true },
-    _meta: { ...WIDGET_ACCESSIBLE, ui: { visibility: ["app"] } },
-  },
 ] as const
 
 function textResult(state: MaestroReportState) {
@@ -431,7 +396,7 @@ function textResult(state: MaestroReportState) {
         ? "Maestro task is stopped."
         : state.action === "review"
           ? "Candidate answer reached closure criteria. The Maestro UI will automatically start a separate review turn."
-          : "Maestro state is ready. The UI will automatically start or track the next ChatGPT turn." }],
+          : "Maestro state is synchronized. The UI will automatically launch or track the current round." }],
     _meta: { jobId: state.jobId },
   }
 }
@@ -452,6 +417,15 @@ async function resolveMaestroOwnerUserId(): Promise<string> {
   throw new Error("Unable to resolve Maestro owner; configure MAESTRO_OWNER_USER_ID")
 }
 
+async function claimNextRound(admin: NonNullable<ReturnType<typeof createAdminClient>>, row: AgentTaskRow): Promise<MaestroReportState> {
+  const pending = storedState(row)
+  if (!pending.nextPrompt || pending.status === "completed" || pending.status === "cancelled" || pending.status === "failed") return pending
+  const claimed = await markMaestroRoundStarted(admin, row.user_id, row.id, pending.round + 1, pending.currentInput || pending.nextPrompt)
+  const state = storedState(claimed.row)
+  state.launchGranted = claimed.started
+  return state
+}
+
 async function callCreate(args: unknown) {
   const input = createInput(args)
   if (!input) throw new Error("objective is required and maxRounds must be an integer from 2 to 100000")
@@ -459,7 +433,7 @@ async function callCreate(args: unknown) {
   if (!admin) throw new Error("Maestro storage is unavailable")
   const userId = await resolveMaestroOwnerUserId()
   const row = await createMaestroTask(admin, userId, input.objective, input.maxRounds)
-  return textResult(storedState(row))
+  return textResult(await claimNextRound(admin, row))
 }
 
 async function callStart(args: unknown) {
@@ -469,31 +443,7 @@ async function callStart(args: unknown) {
   if (!admin) throw new Error("Maestro storage is unavailable")
   const row = await findMaestroTaskByStartCode(admin, input.startCode)
   if (!row) throw new Error("Maestro start code not found")
-  return textResult(storedState(row))
-}
-
-async function callStatus(args: unknown) {
-  const input = startInput(args)
-  if (!input) throw new Error("startCode is required")
-  const admin = createAdminClient()
-  if (!admin) throw new Error("Maestro storage is unavailable")
-  const row = await findMaestroTaskByStartCode(admin, input.startCode)
-  if (!row) throw new Error("Maestro start code not found")
-  return textResult(storedState(row))
-}
-
-async function callRoundStarted(args: unknown) {
-  const input = startRoundInput(args)
-  if (!input) throw new Error("Invalid Maestro round start")
-  const admin = createAdminClient()
-  if (!admin) throw new Error("Maestro storage is unavailable")
-  const row = await findMaestroTaskByStartCode(admin, input.startCode)
-  if (!row) throw new Error("Maestro start code not found")
-  const pending = storedState(row)
-  const claimed = await markMaestroRoundStarted(admin, row.user_id, row.id, input.round, pending.currentInput || pending.nextPrompt)
-  const state = storedState(claimed.row)
-  state.launchGranted = claimed.started
-  return textResult(state)
+  return textResult(await claimNextRound(admin, row))
 }
 
 function elapsedMs(startedAt: string | null, fallback: string): number {
@@ -569,7 +519,7 @@ export async function handleMaestroRpc(body: JsonRpcRequest, _options: { origin:
         protocolVersion: MAESTRO_PROTOCOL_VERSION,
         capabilities: { tools: {}, resources: {} },
         serverInfo: { name: MAESTRO_SERVER_NAME, version: MAESTRO_SERVER_VERSION },
-        instructions: "For every NEW user request that should run through Maestro, call maestro_create_task with the objective. It creates a fresh unique internal startCode and starts the runner immediately. Never ask the user for a start code and never display one. maestro_start exists only to recover an old task when the code was already supplied. Every active worker/review turn must end with maestro_round_gate using the internal startCode from Maestro tool state and must include roundOutput containing the user-visible work product. The gate persists checkpoint, phase, visible input/output, round timing, total elapsed runtime, and history before returning. The widget uses widget-only maestro_status and maestro_round_started calls to keep one card synchronized without cross-origin fetches; exactly one card is granted permission to launch each next turn.",
+        instructions: "For every NEW user request that should run through Maestro, call maestro_create_task with the objective. It creates a fresh unique internal startCode and immediately claims round 1. Never ask the user for a start code and never display one. maestro_start is used internally by the widget to synchronize authoritative state and atomically claim each next round; it may also recover an old task when a code was already supplied, but the assistant must never ask for that code. Every active worker/review turn must end with maestro_round_gate using the internal startCode from Maestro tool state and must include roundOutput containing the user-visible work product. The gate persists checkpoint, phase, visible input/output, round timing, total elapsed runtime, and history before returning. The widget polls through maestro_start, never through cross-origin fetches, and only a call with launchGranted=true may post the next ChatGPT turn.",
       },
     }
   }
@@ -589,8 +539,6 @@ export async function handleMaestroRpc(body: JsonRpcRequest, _options: { origin:
       if (name === "maestro_create_task") return { jsonrpc: "2.0", id, result: await callCreate(params?.arguments) }
       if (name === "maestro_start") return { jsonrpc: "2.0", id, result: await callStart(params?.arguments) }
       if (name === "maestro_round_gate") return { jsonrpc: "2.0", id, result: await callGate(params?.arguments) }
-      if (name === "maestro_status") return { jsonrpc: "2.0", id, result: await callStatus(params?.arguments) }
-      if (name === "maestro_round_started") return { jsonrpc: "2.0", id, result: await callRoundStarted(params?.arguments) }
       return rpcError(id, -32602, "Unknown Maestro tool")
     } catch (error) {
       return { jsonrpc: "2.0", id, result: { isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : "Maestro tool failed" }] } }
