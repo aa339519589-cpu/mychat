@@ -178,7 +178,7 @@ export function evaluateMaestroGate(row: AgentTaskRow, input: GateInput): Maestr
     finalAnswer = input.finalAnswer
     candidateAnswer = meta.candidateAnswer || input.finalAnswer
   } else {
-    phase = expectedPhase === "review" ? "work" : "work"
+    phase = "work"
     action = "continue"
   }
 
@@ -198,7 +198,7 @@ export function evaluateMaestroGate(row: AgentTaskRow, input: GateInput): Maestr
     finalAnswer,
     nextPrompt: "",
   }
-  if (action !== "finish" && action !== "stop") {
+  if (action === "continue" || action === "review") {
     state.nextPrompt = continuationPrompt({
       startCode: task.startCode,
       objective: task.objective,
