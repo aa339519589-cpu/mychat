@@ -90,6 +90,34 @@ export async function stopLongThinkTask(jobId: string): Promise<void> {
   })
 }
 
+function errorMessage(value: unknown, fallback: string): string {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return fallback
+  const row = value as Record<string, unknown>
+  if (typeof row.message === "string") return row.message
+  if (row.error && typeof row.error === "object" && !Array.isArray(row.error)) {
+    const error = row.error as Record<string, unknown>
+    if (typeof error.message === "string") return error.message
+  }
+  return fallback
+}
+
+export async function deleteLongThinkTask(jobId: string): Promise<void> {
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const response = await fetch(`/api/long-think/jobs/${encodeURIComponent(jobId)}`, {
+      method: "DELETE",
+      cache: "no-store",
+    })
+    const body = await response.json().catch(() => null) as { deleted?: boolean } | null
+    if (response.ok && body?.deleted === true) return
+    if (response.status === 202) {
+      await new Promise(resolve => window.setTimeout(resolve, 500))
+      continue
+    }
+    throw new Error(errorMessage(body, `删除失败（${response.status}）`))
+  }
+  throw new Error("任务正在停止，删除超时，请稍后再点一次删除")
+}
+
 export function useLongThinkJob() {
   const [activeJobId, setActiveJobId] = useState("")
   const [job, setJob] = useState<JobSnapshot | null>(null)
