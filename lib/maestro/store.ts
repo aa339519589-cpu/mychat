@@ -10,6 +10,18 @@ export type MaestroPhase = "work" | "review" | "done"
 export type MaestroAction = "continue" | "review" | "finish" | "stop"
 export type AgentTaskRow = Database["public"]["Tables"]["agent_tasks"]["Row"]
 
+export type MaestroRoundRecord = {
+  round: number
+  phase: Exclude<MaestroPhase, "done">
+  input: string
+  output: string
+  checkpoint: string
+  action: MaestroAction
+  startedAt: string
+  finishedAt: string
+  elapsedMs: number
+}
+
 export type MaestroMeta = {
   kind: typeof MAESTRO_META_KIND
   version: 1
@@ -25,6 +37,11 @@ export type MaestroMeta = {
   finalAnswer: string
   lastAction: MaestroAction | "queued"
   lastReportedAt: string | null
+  currentInput: string
+  currentRoundStartedAt: string | null
+  totalElapsedMs: number
+  lastOutput: string
+  history: MaestroRoundRecord[]
 }
 
 export type MaestroReportState = {
@@ -32,6 +49,7 @@ export type MaestroReportState = {
   jobId: string
   startCode: string
   objective: string
+  status: string
   round: number
   phase: MaestroPhase
   action: MaestroAction
@@ -42,6 +60,13 @@ export type MaestroReportState = {
   candidateAnswer: string
   finalAnswer: string
   nextPrompt: string
+  currentInput: string
+  currentRoundStartedAt: string | null
+  totalElapsedMs: number
+  lastOutput: string
+  history: MaestroRoundRecord[]
+  createdAt: string
+  updatedAt: string
 }
 
 export type MaestroPublicTask = {
@@ -64,6 +89,11 @@ export type MaestroPublicTask = {
   startedAt: string | null
   finishedAt: string | null
   startCode: string
+  currentInput: string
+  currentRoundStartedAt: string | null
+  totalElapsedMs: number
+  lastOutput: string
+  history: MaestroRoundRecord[]
 }
 
 export type MaestroClientTask = Omit<MaestroPublicTask, "startCode">
@@ -88,6 +118,31 @@ function action(value: unknown): MaestroMeta["lastAction"] {
   return value === "continue" || value === "review" || value === "finish" || value === "stop" ? value : "queued"
 }
 
+function rounds(value: unknown): MaestroRoundRecord[] {
+  if (!Array.isArray(value)) return []
+  const result: MaestroRoundRecord[] = []
+  for (const item of value) {
+    const row = jsonRecord(item)
+    if (!row) continue
+    const round = integer(row.round, 0)
+    const recordPhase = row.phase === "review" ? "review" : row.phase === "work" ? "work" : null
+    const recordAction = action(row.action)
+    if (round < 1 || !recordPhase || recordAction === "queued") continue
+    result.push({
+      round,
+      phase: recordPhase,
+      input: text(row.input),
+      output: text(row.output),
+      checkpoint: text(row.checkpoint),
+      action: recordAction,
+      startedAt: text(row.startedAt),
+      finishedAt: text(row.finishedAt),
+      elapsedMs: integer(row.elapsedMs, 0),
+    })
+  }
+  return result.slice(-100)
+}
+
 export function maestroMeta(row: Pick<AgentTaskRow, "meta">): MaestroMeta | null {
   const record = jsonRecord(row.meta)
   if (!record || record.kind !== MAESTRO_META_KIND) return null
@@ -108,6 +163,11 @@ export function maestroMeta(row: Pick<AgentTaskRow, "meta">): MaestroMeta | null
     finalAnswer: text(record.finalAnswer),
     lastAction: action(record.lastAction),
     lastReportedAt: typeof record.lastReportedAt === "string" ? record.lastReportedAt : null,
+    currentInput: text(record.currentInput),
+    currentRoundStartedAt: typeof record.currentRoundStartedAt === "string" ? record.currentRoundStartedAt : null,
+    totalElapsedMs: integer(record.totalElapsedMs, 0),
+    lastOutput: text(record.lastOutput),
+    history: rounds(record.history),
   }
 }
 
@@ -134,6 +194,11 @@ export function publicMaestroTask(row: AgentTaskRow): MaestroPublicTask | null {
     startedAt: row.started_at,
     finishedAt: row.finished_at,
     startCode: meta.startCode,
+    currentInput: meta.currentInput,
+    currentRoundStartedAt: meta.currentRoundStartedAt,
+    totalElapsedMs: meta.totalElapsedMs,
+    lastOutput: meta.lastOutput,
+    history: meta.history,
   }
 }
 
@@ -169,6 +234,11 @@ export async function createMaestroTask(
     finalAnswer: "",
     lastAction: "queued",
     lastReportedAt: null,
+    currentInput: "",
+    currentRoundStartedAt: null,
+    totalElapsedMs: 0,
+    lastOutput: "",
+    history: [],
   }
   const { data, error } = await client.from("agent_tasks").insert({
     user_id: userId,
@@ -217,6 +287,41 @@ export async function findMaestroTaskByStartCode(client: SupabaseClient, startCo
   return data as AgentTaskRow | null
 }
 
+export async function markMaestroRoundStarted(
+  client: SupabaseClient,
+  userId: string,
+  jobId: string,
+  round: number,
+  input: string,
+): Promise<AgentTaskRow> {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const row = await getMaestroTask(client, userId, jobId)
+    if (!row) throw new Error("Maestro task not found")
+    const meta = maestroMeta(row)
+    if (!meta) throw new Error("Maestro task metadata is invalid")
+    if (row.status === "cancelled" || row.status === "completed") return row
+    if (round !== meta.round + 1) return row
+    if (meta.currentRoundStartedAt) return row
+
+    const now = new Date().toISOString()
+    const { data, error } = await client.from("agent_tasks").update({
+      status: "running",
+      started_at: row.started_at ?? now,
+      updated_at: now,
+      meta: toJson({ ...meta, currentInput: input, currentRoundStartedAt: now }),
+    })
+      .eq("id", row.id)
+      .eq("user_id", userId)
+      .eq("branch", MAESTRO_BRANCH)
+      .eq("updated_at", row.updated_at)
+      .select(TASK_SELECT)
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    if (data) return data as AgentTaskRow
+  }
+  throw new Error("Maestro task changed concurrently; retry round start")
+}
+
 export async function cancelMaestroTask(client: SupabaseClient, userId: string, jobId: string): Promise<boolean> {
   const row = await getMaestroTask(client, userId, jobId)
   if (!row) return false
@@ -227,7 +332,7 @@ export async function cancelMaestroTask(client: SupabaseClient, userId: string, 
     status: "cancelled",
     finished_at: now,
     updated_at: now,
-    meta: toJson({ ...meta, lastAction: "stop", lastReportedAt: now }),
+    meta: toJson({ ...meta, lastAction: "stop", lastReportedAt: now, currentRoundStartedAt: null }),
   }).eq("id", jobId).eq("user_id", userId).eq("branch", MAESTRO_BRANCH)
   if (error) throw new Error(error.message)
   return true
@@ -262,6 +367,11 @@ export async function applyMaestroReport(
       finalAnswer: state.finalAnswer,
       lastAction: state.action,
       lastReportedAt: now,
+      currentInput: state.currentInput,
+      currentRoundStartedAt: state.currentRoundStartedAt,
+      totalElapsedMs: state.totalElapsedMs,
+      lastOutput: state.lastOutput,
+      history: state.history.slice(-100),
     }
     const completed = state.action === "finish" && state.phase === "done" && Boolean(state.finalAnswer.trim())
     const patch = {
