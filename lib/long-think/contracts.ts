@@ -19,6 +19,7 @@ export type LongThinkRuntimeCheckpoint = {
   state: JsonObject
   candidateAnswer: string
   lastReasoning: string
+  lastStreamText: string
   usage: LongThinkUsage
   verifierRuns: number
   reviewerRuns: number
@@ -62,6 +63,7 @@ export function initialLongThinkCheckpoint(): LongThinkRuntimeCheckpoint {
     state: {},
     candidateAnswer: '',
     lastReasoning: '',
+    lastStreamText: '',
     usage: { apiCalls: 0, inputTokens: 0, outputTokens: 0 },
     verifierRuns: 0,
     reviewerRuns: 0,
@@ -92,6 +94,7 @@ export function parseLongThinkCheckpoint(value: JsonObject | null | undefined): 
     state: state as JsonObject,
     candidateAnswer: typeof row.candidateAnswer === 'string' ? row.candidateAnswer : '',
     lastReasoning: typeof row.lastReasoning === 'string' ? row.lastReasoning : '',
+    lastStreamText: typeof row.lastStreamText === 'string' ? row.lastStreamText : '',
     usage: { apiCalls, inputTokens, outputTokens },
     verifierRuns,
     reviewerRuns,
