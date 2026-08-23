@@ -2,6 +2,7 @@ import { endpointAuthHeaders, normalizeOpenAIBaseUrl, safeModelEndpointFetch } f
 import type { EndpointAuthType } from '@/lib/model-endpoints'
 
 export type LongThinkMessage = { role: 'system' | 'user' | 'assistant'; content: string }
+export type LongThinkProgressSnapshot = { text: string; reasoning: string }
 export type LongThinkCompletion = {
   text: string
   reasoning: string
@@ -19,6 +20,7 @@ type CompletionOptions = {
   messages: readonly LongThinkMessage[]
   maxTokens: number
   signal: AbortSignal
+  onProgress?: (snapshot: LongThinkProgressSnapshot) => void | Promise<void>
 }
 
 export class LongThinkProviderError extends Error {
@@ -126,21 +128,32 @@ function drainLines(buffer: string, aggregate: Aggregate): string {
   return remaining
 }
 
-async function parseEventStream(response: Response, signal: AbortSignal): Promise<LongThinkCompletion> {
+async function emitProgress(options: CompletionOptions, aggregate: Aggregate): Promise<void> {
+  if (!options.onProgress) return
+  await options.onProgress({ text: aggregate.text, reasoning: aggregate.reasoning })
+}
+
+async function parseEventStream(response: Response, options: CompletionOptions, signal: AbortSignal): Promise<LongThinkCompletion> {
   if (!response.body) throw new LongThinkProviderError('模型流式响应为空', { retryable: true })
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   const aggregate: Aggregate = { text: '', reasoning: '', finishReason: null, usage: { inputTokens: null, outputTokens: null } }
   let buffer = ''
+  let lastEmit = Date.now()
   try {
     while (true) {
       if (signal.aborted) throw signal.reason
       const chunk = await reader.read()
       if (chunk.done) break
       buffer = drainLines(buffer + decoder.decode(chunk.value, { stream: true }), aggregate)
+      if (Date.now() - lastEmit >= 2_500) {
+        await emitProgress(options, aggregate)
+        lastEmit = Date.now()
+      }
     }
     buffer += decoder.decode()
     if (buffer.trim()) consumeSseLine(buffer, aggregate)
+    await emitProgress(options, aggregate)
   } finally { reader.releaseLock() }
   if (!aggregate.text.trim() && !aggregate.reasoning.trim()) {
     throw new LongThinkProviderError('模型流式响应没有可用内容', { retryable: true })
@@ -184,11 +197,14 @@ async function assertSuccess(response: Response): Promise<void> {
   throw new LongThinkProviderError(message, { status, retryable: retryableStatus(status) })
 }
 
-async function decodeResponse(response: Response, signal: AbortSignal): Promise<LongThinkCompletion> {
+async function decodeResponse(response: Response, options: CompletionOptions, signal: AbortSignal): Promise<LongThinkCompletion> {
   const type = response.headers.get('content-type')?.toLowerCase() ?? ''
-  if (type.includes('text/event-stream')) return parseEventStream(response, signal)
-  try { return parseWholeResponse(await response.json()) }
-  catch (error) {
+  if (type.includes('text/event-stream')) return parseEventStream(response, options, signal)
+  try {
+    const result = parseWholeResponse(await response.json())
+    await emitProgress(options, result)
+    return result
+  } catch (error) {
     if (error instanceof LongThinkProviderError) throw error
     throw new LongThinkProviderError('模型服务返回的 JSON 无法解析', { retryable: true, cause: error })
   }
@@ -198,5 +214,5 @@ export async function longThinkCompletion(options: CompletionOptions): Promise<L
   const signal = AbortSignal.any([options.signal, AbortSignal.timeout(30 * 60 * 1000)])
   const response = await performRequest(options, signal)
   await assertSuccess(response)
-  return decodeResponse(response, signal)
+  return decodeResponse(response, options, signal)
 }
