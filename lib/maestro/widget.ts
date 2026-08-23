@@ -30,17 +30,8 @@ export const MAESTRO_WIDGET_HTML = String.raw`<!doctype html>
       let handledKey = "";
       let pendingPrompt = "";
       let latestStructured = null;
-      let latestMeta = null;
 
       const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
-      function compatibilityMeta() {
-        const metadata = window.openai?.toolResponseMetadata;
-        return metadata?.mcp_tool_result?._meta
-          || metadata?.call_tool_result?._meta
-          || metadata?._meta
-          || null;
-      }
 
       function stateKey(state) {
         return [state?.jobId, state?.round, state?.phase, state?.action].join(":");
@@ -60,53 +51,51 @@ export const MAESTRO_WIDGET_HTML = String.raw`<!doctype html>
         return false;
       }
 
-      async function handle(structured, meta) {
+      async function handle(structured) {
         if (!structured || structured.kind !== "maestro-runner-state") return;
         const key = stateKey(structured);
         if (!key || handledKey === key) return;
-        const reportToken = meta?.reportToken;
-        const reportUrl = meta?.reportUrl;
-        if (!reportToken || !reportUrl) return;
         handledKey = key;
-        title.textContent = structured.action === "finish" ? "Maestro Runner · 已闭环" : "Maestro Runner · 第 " + structured.round + " 轮";
-        detail.textContent = "正在同步这一轮检查点…";
 
-        try {
-          const response = await fetch(reportUrl, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ token: reportToken, state: structured }),
-          });
-          const result = await response.json().catch(() => ({}));
-          if (!response.ok) throw new Error(result?.error || "HTTP " + response.status);
-          if (result?.stop || structured.action === "finish" || structured.action === "stop") {
-            detail.textContent = structured.action === "finish" ? "独立复核已通过，连续推理结束。" : "任务已停止。";
-            return;
-          }
+        title.textContent = structured.action === "finish"
+          ? "Maestro Runner · 已闭环"
+          : "Maestro Runner · 第 " + structured.round + " 轮";
 
-          pendingPrompt = structured.nextPrompt || "";
-          detail.textContent = structured.action === "review" ? "候选答案完成，正在自动开启独立复核…" : "这一轮已结束，正在自动开启下一轮…";
-          await sleep(1200);
-          const sent = await sendFollowUp(pendingPrompt);
-          if (sent) {
-            pendingPrompt = "";
-            detail.textContent = structured.action === "review" ? "独立复核已启动。" : "下一轮已启动。";
-          } else {
-            detail.textContent = "自动续跑未能启动，点一次即可继续。";
-            manual.style.display = "inline-block";
-          }
-        } catch (error) {
+        if (structured.action === "finish" || structured.action === "stop") {
+          detail.textContent = structured.action === "finish"
+            ? "独立复核已通过，连续推理结束。"
+            : "任务已停止。";
+          return;
+        }
+
+        pendingPrompt = structured.nextPrompt || "";
+        if (!pendingPrompt) {
           handledKey = "";
-          detail.textContent = "同步失败：" + (error instanceof Error ? error.message : String(error));
+          detail.textContent = "缺少下一轮提示，无法续跑。";
+          return;
+        }
+
+        detail.textContent = structured.action === "review"
+          ? "候选答案完成，正在自动开启独立复核…"
+          : "这一轮已持久化，正在自动开启下一轮…";
+
+        await sleep(900);
+        const sent = await sendFollowUp(pendingPrompt);
+        if (sent) {
+          pendingPrompt = "";
+          detail.textContent = structured.action === "review"
+            ? "独立复核已启动。"
+            : "下一轮已启动。";
+        } else {
+          detail.textContent = "自动续跑未能启动，点一次即可继续。";
+          manual.style.display = "inline-block";
         }
       }
 
       function tryCompatibilityGlobals() {
         const structured = window.openai?.toolOutput;
-        const meta = compatibilityMeta();
         if (structured) latestStructured = structured;
-        if (meta) latestMeta = meta;
-        if (latestStructured && latestMeta) void handle(latestStructured, latestMeta);
+        if (latestStructured) void handle(latestStructured);
       }
 
       window.addEventListener("openai:set_globals", tryCompatibilityGlobals, { passive: true });
@@ -116,8 +105,7 @@ export const MAESTRO_WIDGET_HTML = String.raw`<!doctype html>
         if (!message || message.jsonrpc !== "2.0") return;
         if (message.method === "ui/notifications/tool-result") {
           latestStructured = message.params?.structuredContent || latestStructured;
-          latestMeta = message.params?._meta || latestMeta;
-          if (latestStructured && latestMeta) void handle(latestStructured, latestMeta);
+          if (latestStructured) void handle(latestStructured);
         }
       }, { passive: true });
 
