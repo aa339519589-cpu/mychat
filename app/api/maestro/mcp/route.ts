@@ -4,11 +4,12 @@ import { createAdminClient } from "@/lib/supabase/admin"
 import {
   applyMaestroReport,
   createMaestroTask,
-  findMaestroTaskByStartCode,
+  getMaestroTask,
   MAESTRO_BRANCH,
   publicMaestroTask,
   type MaestroReportState,
 } from "@/lib/maestro/store"
+import { issueMaestroLaunchToken, verifyMaestroTaskToken } from "@/lib/maestro/tokens"
 import { MAESTRO_WIDGET_URI } from "@/lib/maestro/widget"
 
 const MAX_BODY_BYTES = 512 * 1024
@@ -28,7 +29,7 @@ type RpcEnvelope = {
 const MAESTRO_CREATE_TOOL = {
   name: "maestro_create_task",
   title: "Create and start Maestro Runner",
-  description: "Create a new My Chat Maestro Runner task from the user's objective, generate its start code automatically, mount the Maestro Runner UI, and begin automatic cross-turn execution. Use this when the user asks My che che. to do a new long-running task and has not supplied a start code. Do not ask the user for a start code first.",
+  description: "Create a new My Chat Maestro Runner task from the user's objective, mount the Maestro Runner UI, and begin automatic cross-turn execution. Use this when the user asks My che che. to do a new long-running task. Never ask the user for a start code, token, task id, or relay value.",
   inputSchema: {
     type: "object",
     properties: {
@@ -147,6 +148,7 @@ async function createAndStartMaestro(rpc: RpcEnvelope, origin: string): Promise<
     const row = await createMaestroTask(admin, userId, objective, rawMaxRounds)
     const task = publicMaestroTask(row)
     if (!task) throw new Error("Maestro task metadata is invalid")
+    const launchToken = issueMaestroLaunchToken({ userId, jobId: task.id })
 
     return handleMaestroRpc({
       jsonrpc: "2.0",
@@ -154,7 +156,7 @@ async function createAndStartMaestro(rpc: RpcEnvelope, origin: string): Promise<
       method: "tools/call",
       params: {
         name: "maestro_start",
-        arguments: { startCode: task.startCode },
+        arguments: { launchToken },
       },
     }, { origin })
   } catch (error) {
@@ -177,9 +179,9 @@ function augmentResponse(rpc: RpcEnvelope, response: RpcResponse): RpcResponse {
     const current = typeof result.instructions === "string" ? result.instructions : ""
     result.instructions = [
       "Maestro Runner is a cross-turn orchestrator.",
-      "For a NEW task, call maestro_create_task directly with the user's objective. It creates the task, generates the start code internally, mounts the Runner UI, and starts the first worker turn. Never ask the user to provide a start code for a new task.",
-      "Use maestro_start only when the user already supplied an existing start code.",
-      "During an active job, every worker/review turn must end with maestro_round_gate. The gate persists the authoritative checkpoint before it returns, and the UI posts the next ChatGPT message automatically until a separate review turn reaches finish.",
+      "For a NEW task requested inside ChatGPT, call maestro_create_task directly with the user's objective. It creates and starts the task without any user relay step.",
+      "For a task launched from My Chat, My Chat supplies the launch ticket automatically; call maestro_start with that launchToken. Never ask the user for a start code, token, task id, or other relay value.",
+      "During an active job, every worker/review turn must end with maestro_round_gate using taskToken from the most recent Maestro tool result. The gate persists the authoritative checkpoint before it returns, and the UI posts the next ChatGPT message automatically until a separate review turn reaches finish.",
       current,
     ].filter(Boolean).join(" ")
   }
@@ -199,13 +201,14 @@ async function persistRoundGate(rpc: RpcEnvelope, response: RpcResponse): Promis
     throw new Error("Maestro round gate returned no structured state")
   }
 
-  const startCode = typeof stateRecord.startCode === "string" ? stateRecord.startCode : ""
-  if (!startCode) throw new Error("Maestro round gate state has no start code")
+  const taskToken = typeof stateRecord.taskToken === "string" ? stateRecord.taskToken : ""
+  const taskAccess = taskToken ? verifyMaestroTaskToken(taskToken) : null
+  if (!taskAccess) throw new Error("Maestro round gate state has no valid task access")
 
   const admin = createAdminClient()
   if (!admin) throw new Error("Maestro storage is unavailable")
-  const row = await findMaestroTaskByStartCode(admin, startCode)
-  if (!row) throw new Error("Maestro start code not found")
+  const row = await getMaestroTask(admin, taskAccess.userId, taskAccess.jobId)
+  if (!row) throw new Error("Maestro task not found")
 
   await applyMaestroReport(admin, row.user_id, row.id, stateRecord as unknown as MaestroReportState)
 }
