@@ -2,11 +2,13 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { endpointAuthType, endpointOutputKind, getOwnedModelEndpoint, resolveModelEndpointKey } from '@/lib/model-endpoint-server'
 import { isJsonValue, type JsonObject } from '@/lib/jobs/contracts'
 import type { JobExecutionContext, JobHandler } from '@/lib/jobs/worker'
+import type { SupabaseClient } from '@/lib/supabase/types'
 import { checkpointJson, parseLongThinkCheckpoint, parseLongThinkJobInput, type LongThinkJobInput, type LongThinkRuntimeCheckpoint } from './contracts'
-import { LongThinkProviderError, longThinkCompletion, type LongThinkCompletion, type LongThinkMessage } from './provider'
+import { loadLongThinkSharedContext, runLongThinkCapabilities, type LongThinkSharedContext } from './capabilities'
+import { LongThinkProviderError, longThinkCompletion, type LongThinkCompletion, type LongThinkMessage, type LongThinkProgressSnapshot } from './provider'
 
 const SOLVER_SYSTEM = [
-  '你是一个长期任务执行器。目标不是尽快结束，而是把用户的问题真正闭环。每次调用只完成下一段最有价值的工作，然后输出一个可被下一次调用直接继承的状态快照。',
+  '你是一个长期任务执行器。目标不是尽快结束，而是把用户的问题真正闭环。每次调用完成下一段最有价值的工作，然后输出一个可被下一次调用直接继承的状态快照。',
   '', '规则：',
   '1. 不要复述任务，不要写流程说明。',
   '2. 状态必须自包含：下一轮只拿到原问题和这份状态也能继续。',
@@ -14,14 +16,20 @@ const SOLVER_SYSTEM = [
   '4. 不要因为单轮停止、输出长度或上下文压力草率结束。',
   '5. 只有关键缺口全部关闭时 done 才能为 true。',
   '6. 如果已经有候选答案，优先审查最脆弱部分。',
-  '7. 只输出一个 JSON 对象，不要 Markdown 围栏。',
+  '7. 联网已经可用。需要最新资料、文献、事实核验或外部证据时，把检索词放进 web_queries。看到搜索结果后，如需阅读全文，把 URL 放进 fetch_urls。禁止凭记忆假装已经联网。',
+  '8. MyChat 的共享长期记忆和相关历史对话会随请求提供。需要新增、更新或删除真正长期有用的全局记忆时，把操作放进 memory_actions；一次性研究过程不要写入全局记忆。',
+  '9. 只输出一个 JSON 对象，不要 Markdown 围栏。',
   '', '格式：',
-  '{"done":false,"progress_summary":"","established":[],"failed_routes":[{"route":"","reason":""}],"unresolved":[],"next_actions":[],"working_material":"","candidate_answer":""}',
-  '', '这里保存的是跨轮可续接工作状态。',
+  '{"done":false,"progress_summary":"","established":[],"failed_routes":[{"route":"","reason":""}],"unresolved":[],"next_actions":[],"working_material":"","candidate_answer":"","web_queries":[],"fetch_urls":[],"memory_actions":[]}',
+  '', 'web_queries 示例：["Riemann zeta simple critical line zeros latest unconditional proportion"]。',
+  'fetch_urls 示例：["https://example.com/paper"]。',
+  'memory_actions 示例：[{"name":"remember","arguments":{"content":"用户长期研究某问题"}}]。',
+  '工具结果会写入 _capability_results，下一轮必须读取并使用。',
 ].join('\n')
 
 const VERIFIER_SYSTEM = [
   '你是长期任务的独立闭环审查器。你的职责是阻止未完成的问题被过早判定为完成。基于原问题、当前状态和候选答案，逐项检查用户要求、逻辑缺口、关键计算或事实验证、未处理的 unresolved，以及仍能改变最终结论的下一步。',
+  '如果关键事实仍需要联网核验，或者 state 中存在尚未消化的工具结果，不得判定完成。',
   '只输出 JSON：{"done":false,"gaps":[],"directive":"","final_answer":""}。存在任何影响结论的核心缺口时 done 必须为 false。',
 ].join('\n')
 
@@ -32,6 +40,7 @@ const REVIEWER_SYSTEM = [
 
 type OwnedEndpoint = NonNullable<Awaited<ReturnType<typeof getOwnedModelEndpoint>>>
 type HandlerResult = Awaited<ReturnType<JobHandler>>
+type SolveRoundResult = { state: JsonObject; capabilitiesRan: boolean }
 
 function asJsonObject(value: unknown): JsonObject | null {
   return isJsonValue(value) && value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -107,6 +116,8 @@ function progress(runtime: LongThinkRuntimeCheckpoint, phase: string): JsonObjec
     nextActions: visibleStrings(state.next_actions),
     workingMaterial: visibleText(state.working_material, 20_000),
     providerReasoning: runtime.lastReasoning.slice(-40_000),
+    providerStreamText: runtime.lastStreamText.slice(-40_000),
+    capabilityActivity: visibleStrings(state._capability_activity),
   }
 }
 
@@ -145,22 +156,39 @@ function gapsOf(value: JsonObject): string[] {
   return value.gaps.map(gap => typeof gap === 'string' ? gap : JSON.stringify(gap)).slice(0, 256)
 }
 
-function solverUserMessage(problem: string, previous: string, round: number): string {
-  return ['原始问题：', problem, '', '上一轮续接状态：', previous, '', '当前轮次：' + String(round), '',
-    '继续工作。不要重新开始，优先处理 unresolved 和审查器留下的缺口。'].join('\n')
+function solverUserMessage(problem: string, previous: string, round: number, sharedContext: string): string {
+  return [
+    '原始问题：', problem,
+    '', 'MyChat 共享记忆 / 历史上下文：', sharedContext,
+    '', '上一轮续接状态：', previous,
+    '', '当前轮次：' + String(round),
+    '', '继续工作。不要重新开始。优先处理 unresolved、审查器留下的缺口和 _capability_results。需要外部资料时主动请求联网工具。',
+  ].join('\n')
 }
+
 function verifierUserMessage(problem: string, runtime: LongThinkRuntimeCheckpoint): string {
   return ['原始问题：', problem, '', '当前续接状态：', JSON.stringify(runtime.state), '', '候选答案：',
     runtime.candidateAnswer || '（尚未形成完整候选答案）', '', '已完成轮数：' + String(runtime.round)].join('\n')
 }
+
 function reviewerUserMessage(problem: string, runtime: LongThinkRuntimeCheckpoint, answer: string, verdict: JsonObject): string {
   return ['原始问题：', problem, '', '最终状态：', JSON.stringify(runtime.state), '', '候选答案：', answer,
     '', 'Verifier：', JSON.stringify(verdict)].join('\n')
 }
 
+function continuationCheckpoint(runtime: LongThinkRuntimeCheckpoint): JsonObject {
+  return checkpointJson({
+    ...runtime,
+    state: { ...runtime.state, done: false },
+    lastReasoning: '',
+    lastStreamText: '',
+  })
+}
+
 class LongThinkSession {
   private consecutiveErrors = 0
   private lastLiveCheckpointAt = 0
+  private shared: LongThinkSharedContext = { memoryEnabled: true, text: '共享上下文正在载入。' }
 
   constructor(
     private readonly context: JobExecutionContext,
@@ -168,13 +196,24 @@ class LongThinkSession {
     private readonly endpoint: OwnedEndpoint,
     private readonly apiKey: string,
     private readonly runtime: LongThinkRuntimeCheckpoint,
+    private readonly client: SupabaseClient,
+    private readonly userId: string,
   ) {}
 
-  private async publishLiveReasoning(reasoning: string): Promise<void> {
-    if (!reasoning.trim()) return
-    this.runtime.lastReasoning = reasoning.slice(-120_000)
+  private async initialize(): Promise<void> {
+    try {
+      this.shared = await loadLongThinkSharedContext(this.client, this.userId, this.input.problem, this.context.signal)
+    } catch {
+      this.shared = { memoryEnabled: true, text: '共享记忆读取暂时失败；任务继续执行。' }
+    }
+  }
+
+  private async publishLive(snapshot: LongThinkProgressSnapshot): Promise<void> {
+    if (snapshot.reasoning.trim()) this.runtime.lastReasoning = snapshot.reasoning.slice(-120_000)
+    if (snapshot.text.trim()) this.runtime.lastStreamText = snapshot.text.slice(-120_000)
+    if (!snapshot.reasoning.trim() && !snapshot.text.trim()) return
     const now = Date.now()
-    if (now - this.lastLiveCheckpointAt < 5_000) return
+    if (now - this.lastLiveCheckpointAt < 3_000) return
     this.lastLiveCheckpointAt = now
     await persist(this.context, this.runtime, 'model-stream')
   }
@@ -184,10 +223,11 @@ class LongThinkSession {
       baseUrl: this.endpoint.base_url, apiKey: this.apiKey,
       authType: endpointAuthType(this.endpoint.auth_type), model: this.endpoint.model,
       messages, maxTokens, signal: this.context.signal,
-      onProgress: snapshot => this.publishLiveReasoning(snapshot.reasoning),
+      onProgress: snapshot => this.publishLive(snapshot),
     })
     account(this.runtime, result)
     if (result.reasoning.trim()) this.runtime.lastReasoning = result.reasoning.slice(-120_000)
+    if (result.text.trim()) this.runtime.lastStreamText = result.text.slice(-120_000)
     return result
   }
 
@@ -197,7 +237,7 @@ class LongThinkSession {
     if (parsed) return parsed
     this.runtime.formatFailures += 1
     const repaired = await this.complete([
-      { role: 'system', content: '把下面的模型工作结果转换成一个合法、完整、可续接的 JSON 对象。保留所有有用成果和未解决缺口。只输出 JSON，不要继续扩展答案。' },
+      { role: 'system', content: '把下面的模型工作结果转换成一个合法、完整、可续接的 JSON 对象。保留所有有用成果、工具请求和未解决缺口。只输出 JSON，不要继续扩展答案。' },
       { role: 'user', content: (first.text || first.reasoning).slice(0, 500_000) },
     ], Math.min(maxTokens, 65_536))
     const repairedState = extractJsonObject(repaired.text)
@@ -205,19 +245,27 @@ class LongThinkSession {
     throw new LongThinkProviderError('模型连续返回无法解析的状态 JSON', { retryable: true })
   }
 
-  private async solveRound(): Promise<JsonObject> {
-    const previous = this.runtime.round === 0 ? '（第一轮，没有旧状态）' : JSON.stringify(this.runtime.state)
+  private async solveRound(): Promise<SolveRoundResult> {
+    const previous = Object.keys(this.runtime.state).length
+      ? JSON.stringify(this.runtime.state)
+      : '（第一轮，没有旧状态）'
     this.runtime.lastReasoning = ''
+    this.runtime.lastStreamText = ''
     await persist(this.context, this.runtime, 'model-call')
     const state = await this.requestJson([
       { role: 'system', content: SOLVER_SYSTEM },
-      { role: 'user', content: solverUserMessage(this.input.problem, previous, this.runtime.round + 1) },
+      { role: 'user', content: solverUserMessage(this.input.problem, previous, this.runtime.round + 1, this.shared.text) },
     ])
     this.runtime.round += 1
-    this.runtime.state = state
     this.runtime.candidateAnswer = candidateOf(state, this.runtime.candidateAnswer)
-    await persist(this.context, this.runtime, 'solving')
-    return state
+    await persist(this.context, { ...this.runtime, state }, 'solving')
+
+    const capability = await runLongThinkCapabilities(
+      state, this.client, this.userId, this.shared.memoryEnabled, this.context.signal,
+    )
+    this.runtime.state = capability.state
+    await persist(this.context, this.runtime, capability.ran ? 'tools' : 'solving')
+    return { state: this.runtime.state, capabilitiesRan: capability.ran }
   }
 
   private shouldVerify(state: JsonObject): boolean {
@@ -268,11 +316,7 @@ class LongThinkSession {
     }
     const finalAnswer = finalAnswerOf(review, verifiedAnswer)
     if (finalAnswer.trim()) return finalAnswer
-    this.runtime.state = {
-      ...this.runtime.state,
-      _final_review: { gaps: ['最终答案为空'], directive: '形成可直接交付给用户的最终答案' },
-    }
-    await persist(this.context, this.runtime, 'final-review')
+    await this.recordGap('_final_review', { gaps: ['最终答案为空'], directive: '形成可直接交付给用户的最终答案' }, 'final-review')
     return null
   }
 
@@ -284,6 +328,8 @@ class LongThinkSession {
         apiCalls: this.runtime.usage.apiCalls, inputTokens: this.runtime.usage.inputTokens,
         outputTokens: this.runtime.usage.outputTokens, verifierRuns: this.runtime.verifierRuns,
         reviewerRuns: this.runtime.reviewerRuns,
+        endpointId: this.input.endpointId,
+        continuationCheckpoint: continuationCheckpoint(this.runtime),
       },
     }
   }
@@ -312,12 +358,13 @@ class LongThinkSession {
   }
 
   async run(): Promise<HandlerResult> {
+    await this.initialize()
     while (true) {
       this.context.assertAuthority()
       try {
-        const state = await this.solveRound()
+        const round = await this.solveRound()
         this.consecutiveErrors = 0
-        if (!this.shouldVerify(state)) continue
+        if (round.capabilitiesRan || !this.shouldVerify(round.state)) continue
         const finalAnswer = await this.tryClosure()
         if (finalAnswer === null) continue
         return this.completed(finalAnswer)
@@ -327,6 +374,23 @@ class LongThinkSession {
       }
     }
   }
+}
+
+function seededRuntime(input: LongThinkJobInput, checkpoint: JsonObject | null | undefined): LongThinkRuntimeCheckpoint {
+  const runtime = parseLongThinkCheckpoint(checkpoint ?? input.seedCheckpoint)
+  if (!checkpoint && input.seedCheckpoint) {
+    runtime.state = {
+      ...runtime.state,
+      done: false,
+      _continuation: {
+        fromJobId: input.continuedFrom ?? '',
+        instruction: input.problem,
+      },
+    }
+    runtime.lastReasoning = ''
+    runtime.lastStreamText = ''
+  }
+  return runtime
 }
 
 export const handleLongThinkJob: JobHandler = async context => {
@@ -349,6 +413,6 @@ export const handleLongThinkJob: JobHandler = async context => {
       error: { code: 'LONG_THINK_ENDPOINT_KEY', message: '模型端点凭据无法读取，请重新连接该端点', retryable: false, class: 'user', details: {} },
     }
   }
-  const runtime = parseLongThinkCheckpoint(context.job.checkpoint?.data)
-  return new LongThinkSession(context, input, endpoint, apiKey, runtime).run()
+  const runtime = seededRuntime(input, context.job.checkpoint?.data)
+  return new LongThinkSession(context, input, endpoint, apiKey, runtime, admin, context.job.principal.id).run()
 }
