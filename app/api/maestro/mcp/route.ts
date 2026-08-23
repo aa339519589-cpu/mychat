@@ -1,7 +1,14 @@
 import { NextRequest } from "next/server"
 import { handleMaestroRpc } from "@/lib/maestro/mcp"
 import { createAdminClient } from "@/lib/supabase/admin"
-import { createMaestroTask, MAESTRO_BRANCH, publicMaestroTask } from "@/lib/maestro/store"
+import {
+  applyMaestroReport,
+  createMaestroTask,
+  findMaestroTaskByStartCode,
+  MAESTRO_BRANCH,
+  publicMaestroTask,
+  type MaestroReportState,
+} from "@/lib/maestro/store"
 import { MAESTRO_WIDGET_URI } from "@/lib/maestro/widget"
 
 const MAX_BODY_BYTES = 512 * 1024
@@ -172,12 +179,35 @@ function augmentResponse(rpc: RpcEnvelope, response: RpcResponse): RpcResponse {
       "Maestro Runner is a cross-turn orchestrator.",
       "For a NEW task, call maestro_create_task directly with the user's objective. It creates the task, generates the start code internally, mounts the Runner UI, and starts the first worker turn. Never ask the user to provide a start code for a new task.",
       "Use maestro_start only when the user already supplied an existing start code.",
-      "During an active job, every worker/review turn must end with maestro_round_gate. The UI posts the next ChatGPT message automatically until a separate review turn reaches finish.",
+      "During an active job, every worker/review turn must end with maestro_round_gate. The gate persists the authoritative checkpoint before it returns, and the UI posts the next ChatGPT message automatically until a separate review turn reaches finish.",
       current,
     ].filter(Boolean).join(" ")
   }
 
   return response
+}
+
+async function persistRoundGate(rpc: RpcEnvelope, response: RpcResponse): Promise<void> {
+  if (rpc.method !== "tools/call" || !response?.result) return
+  const params = record(rpc.params)
+  if (params?.name !== "maestro_round_gate") return
+
+  const result = record(response.result)
+  if (!result || result.isError === true) return
+  const stateRecord = record(result.structuredContent)
+  if (!stateRecord || stateRecord.kind !== "maestro-runner-state") {
+    throw new Error("Maestro round gate returned no structured state")
+  }
+
+  const startCode = typeof stateRecord.startCode === "string" ? stateRecord.startCode : ""
+  if (!startCode) throw new Error("Maestro round gate state has no start code")
+
+  const admin = createAdminClient()
+  if (!admin) throw new Error("Maestro storage is unavailable")
+  const row = await findMaestroTaskByStartCode(admin, startCode)
+  if (!row) throw new Error("Maestro start code not found")
+
+  await applyMaestroReport(admin, row.user_id, row.id, stateRecord as unknown as MaestroReportState)
 }
 
 async function handleOne(value: unknown, origin: string): Promise<RpcResponse> {
@@ -192,6 +222,11 @@ async function handleOne(value: unknown, origin: string): Promise<RpcResponse> {
   }
 
   const response = await handleMaestroRpc(rpc, { origin })
+  try {
+    await persistRoundGate(rpc, response)
+  } catch (error) {
+    return toolError(rpc.id ?? null, error instanceof Error ? error.message : "Maestro round persistence failed")
+  }
   return augmentResponse(rpc, response)
 }
 
