@@ -27,12 +27,6 @@ const VERIFIER_SYSTEM = `你是长期任务的独立闭环审查器。你的职�
 const REVIEWER_SYSTEM = `你是最终审查器。你只在独立 verifier 已认为任务完成后出现。重新检查原问题、最终状态、候选答案和 verifier 结论，寻找遗漏、自相矛盾、错误计算、错误引用、没有覆盖的用户要求或仍会改变结论的缺口。
 只输出 JSON：{"done":false,"gaps":[],"directive":"","final_answer":""}。只有确认闭环时 done 才能为 true，并在 final_answer 给出可直接展示给用户的最终回复。`
 
-function object(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null
-}
-
 function asJsonObject(value: unknown): JsonObject | null {
   return isJsonValue(value) && value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as JsonObject
@@ -132,8 +126,9 @@ function doneOf(state: JsonObject): boolean {
   return state.done === true
 }
 
-function gapsOf(value: JsonObject): unknown[] {
-  return Array.isArray(value.gaps) ? value.gaps : []
+function gapsOf(value: JsonObject): string[] {
+  if (!Array.isArray(value.gaps)) return []
+  return value.gaps.map(gap => typeof gap === 'string' ? gap : JSON.stringify(gap)).slice(0, 256)
 }
 
 function directiveOf(value: JsonObject): string {
