@@ -1,11 +1,10 @@
 import { hostname } from 'node:os'
 import { assertProductionAgentSandbox } from '@/lib/agent/execution-policy'
-import { handleChatGeneration } from '@/lib/jobs/handlers/chat'
+import { handleChatGeneration, handleLongThinkJob } from '@/lib/jobs/handlers/chat'
 import { handleChatTitle } from '@/lib/jobs/handlers/title'
 import { runAgentTaskJob } from '@/lib/jobs/handlers/agent'
 import { loadAgentJob } from '@/lib/jobs/handlers/agent-input'
 import { handleAgentOperation } from '@/lib/jobs/handlers/agent-operation'
-import { handleLongThinkJob } from '@/lib/long-think/handler'
 import { SupabaseJobRepository } from '@/lib/jobs/supabase-repository'
 import { SupabaseJobOutboxRepository } from '@/lib/jobs/supabase-outbox'
 import { JobOutboxDispatcher } from '@/lib/jobs/outbox-dispatcher'
@@ -88,7 +87,6 @@ const workerSpecs = [
   { name: 'media', queue: 'media', concurrency: runtimeConfiguration.workerConcurrency.media },
   { name: 'title', queue: 'title', concurrency: runtimeConfiguration.workerConcurrency.title },
   { name: 'agent', queue: 'agent', concurrency: runtimeConfiguration.workerConcurrency.agent },
-  { name: 'long-think', queue: 'longthink', concurrency: 1 },
 ] as const
 
 function createWorker(
@@ -134,6 +132,16 @@ const workers = workerSpecs.flatMap(spec => {
     ? [hotWorker, createWorker(spec, 'chat-bulk', remainingConcurrency)]
     : [hotWorker]
 })
+const longThinkWorker = new JobWorker({
+  repository,
+  workerId: `${baseWorkerId}:long-think`,
+  queues: ['longthink'],
+  handlers,
+  concurrency: 1,
+  leaseSeconds: 120,
+  shutdownGraceMs: 240_000,
+  onFinalized: finalized,
+})
 const outbox = new JobOutboxDispatcher({
   repository: new SupabaseJobOutboxRepository(),
   workerId: `${baseWorkerId}:outbox`,
@@ -152,10 +160,12 @@ async function main(): Promise<void> {
   log.info('jobs', 'Worker pool started', {
     workerId: baseWorkerId,
     workers: workerSpecs.filter(spec => maintenanceMode !== 'drain' || spec.queue !== 'agent'),
+    longThink: { queue: 'longthink', concurrency: 1 },
   })
   await Promise.all([
     heartbeat.run(shutdown.signal),
     ...workers.map(worker => worker.run(shutdown.signal)),
+    longThinkWorker.run(shutdown.signal),
     ...(maintenanceMode === 'drain' ? [] : [
       outbox.run(shutdown.signal),
       lifecycleSweeper.run(shutdown.signal),
