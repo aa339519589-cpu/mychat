@@ -58,21 +58,16 @@ function row(overrides: Partial<AgentTaskRow> = {}): AgentTaskRow {
   }
 }
 
-test("Maestro exposes automatic creation plus widget-only live telemetry tools", async () => {
+test("Maestro exposes automatic creation, sync/start, and round gate", async () => {
   assert.deepEqual(MAESTRO_TOOLS.map(tool => tool.name), [
     "maestro_create_task",
     "maestro_start",
     "maestro_round_gate",
-    "maestro_status",
-    "maestro_round_started",
   ])
   assert.equal(MAESTRO_TOOLS[0].annotations.readOnlyHint, false)
-  assert.equal(MAESTRO_TOOLS[1].annotations.readOnlyHint, true)
+  assert.equal(MAESTRO_TOOLS[1].annotations.readOnlyHint, false)
   assert.equal(MAESTRO_TOOLS[2].annotations.readOnlyHint, false)
-  assert.equal(MAESTRO_TOOLS[3].annotations.readOnlyHint, true)
-  assert.equal(MAESTRO_TOOLS[4].annotations.readOnlyHint, false)
-  assert.equal(MAESTRO_TOOLS[3]._meta["openai/widgetAccessible"], true)
-  assert.equal(MAESTRO_TOOLS[4]._meta["openai/widgetAccessible"], true)
+  assert.equal(MAESTRO_TOOLS[1]._meta["openai/widgetAccessible"], true)
 
   const initialized = await handleMaestroRpc({ jsonrpc: "2.0", id: 1, method: "initialize" }, { origin: "https://example.com" })
   const initResult = initialized?.result as { capabilities: unknown; instructions: string }
@@ -80,19 +75,21 @@ test("Maestro exposes automatic creation plus widget-only live telemetry tools",
   assert.match(initResult.instructions, /maestro_create_task/)
   assert.match(initResult.instructions, /Never ask the user for a start code/)
   assert.match(initResult.instructions, /visible input\/output/)
+  assert.match(initResult.instructions, /maestro_start/)
 
   const listed = await handleMaestroRpc({ jsonrpc: "2.0", id: 2, method: "tools/list" }, { origin: "https://example.com" })
   const tools = (listed?.result as { tools: typeof MAESTRO_TOOLS }).tools
   assert.deepEqual(tools.map(tool => tool.name), MAESTRO_TOOLS.map(tool => tool.name))
 })
 
-test("Maestro widget polls through the host bridge and never uses network fetch", async () => {
+test("Maestro widget polls through maestro_start and never uses network fetch", async () => {
   assert.match(MAESTRO_WIDGET_HTML, /sendFollowUpMessage/)
-  assert.match(MAESTRO_WIDGET_HTML, /callTool\("maestro_status"/)
-  assert.match(MAESTRO_WIDGET_HTML, /callTool\("maestro_round_started"/)
+  assert.match(MAESTRO_WIDGET_HTML, /callTool\("maestro_start"/)
   assert.match(MAESTRO_WIDGET_HTML, /累计推理墙钟/)
   assert.match(MAESTRO_WIDGET_HTML, /本轮输入/)
   assert.match(MAESTRO_WIDGET_HTML, /本轮输出/)
+  assert.doesNotMatch(MAESTRO_WIDGET_HTML, /maestro_status/)
+  assert.doesNotMatch(MAESTRO_WIDGET_HTML, /maestro_round_started/)
   assert.doesNotMatch(MAESTRO_WIDGET_HTML, /fetch\s*\(/)
   assert.doesNotMatch(MAESTRO_WIDGET_HTML, /document\.querySelector/)
   assert.doesNotMatch(MAESTRO_WIDGET_HTML, /chat\.openai\.com\/backend-api/)
@@ -105,7 +102,7 @@ test("Maestro widget polls through the host bridge and never uses network fetch"
   }, { origin: "https://mychat.example" })
   const content = (response?.result as { contents: Array<{ uri: string; text: string; _meta?: unknown }> }).contents[0]
   assert.equal(content.uri, MAESTRO_WIDGET_URI)
-  assert.match(content.text, /maestro_status/)
+  assert.match(content.text, /maestro_start/)
 })
 
 test("public My Chat task projection never contains the internal start code", () => {
