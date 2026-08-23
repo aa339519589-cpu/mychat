@@ -85,18 +85,34 @@ function account(runtime: LongThinkRuntimeCheckpoint, completion: LongThinkCompl
   runtime.usage.outputTokens = mergeTokenTotal(runtime.usage.outputTokens, completion.usage.outputTokens)
 }
 
-function progress(runtime: LongThinkRuntimeCheckpoint): JsonObject {
+function visibleText(value: unknown, maximum: number): string {
+  return typeof value === 'string' ? value.slice(0, maximum) : ''
+}
+
+function visibleStrings(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.slice(0, 12).map(item => (typeof item === 'string' ? item : JSON.stringify(item)).slice(0, 2_000))
+}
+
+function progress(runtime: LongThinkRuntimeCheckpoint, phase: string): JsonObject {
+  const state = runtime.state
   return {
-    feature: 'long-think', state: 'thinking', round: runtime.round,
+    feature: 'long-think', state: 'thinking', phase, round: runtime.round,
     apiCalls: runtime.usage.apiCalls, inputTokens: runtime.usage.inputTokens,
     outputTokens: runtime.usage.outputTokens, verifierRuns: runtime.verifierRuns,
     reviewerRuns: runtime.reviewerRuns,
+    progressSummary: visibleText(state.progress_summary, 8_000),
+    established: visibleStrings(state.established),
+    unresolved: visibleStrings(state.unresolved),
+    nextActions: visibleStrings(state.next_actions),
+    workingMaterial: visibleText(state.working_material, 20_000),
+    providerReasoning: runtime.lastReasoning.slice(-40_000),
   }
 }
 
 async function persist(context: JobExecutionContext, runtime: LongThinkRuntimeCheckpoint, phase: string): Promise<void> {
   await context.checkpoint({
-    phase, checkpoint: checkpointJson(runtime), progress: progress(runtime),
+    phase, checkpoint: checkpointJson(runtime), progress: progress(runtime, phase),
     resumable: true, status: 'running',
   })
 }
@@ -144,6 +160,7 @@ function reviewerUserMessage(problem: string, runtime: LongThinkRuntimeCheckpoin
 
 class LongThinkSession {
   private consecutiveErrors = 0
+  private lastLiveCheckpointAt = 0
 
   constructor(
     private readonly context: JobExecutionContext,
@@ -153,13 +170,24 @@ class LongThinkSession {
     private readonly runtime: LongThinkRuntimeCheckpoint,
   ) {}
 
+  private async publishLiveReasoning(reasoning: string): Promise<void> {
+    if (!reasoning.trim()) return
+    this.runtime.lastReasoning = reasoning.slice(-120_000)
+    const now = Date.now()
+    if (now - this.lastLiveCheckpointAt < 5_000) return
+    this.lastLiveCheckpointAt = now
+    await persist(this.context, this.runtime, 'model-stream')
+  }
+
   private async complete(messages: readonly LongThinkMessage[], maxTokens = this.input.maxTokens): Promise<LongThinkCompletion> {
     const result = await longThinkCompletion({
       baseUrl: this.endpoint.base_url, apiKey: this.apiKey,
       authType: endpointAuthType(this.endpoint.auth_type), model: this.endpoint.model,
       messages, maxTokens, signal: this.context.signal,
+      onProgress: snapshot => this.publishLiveReasoning(snapshot.reasoning),
     })
     account(this.runtime, result)
+    if (result.reasoning.trim()) this.runtime.lastReasoning = result.reasoning.slice(-120_000)
     return result
   }
 
@@ -179,6 +207,8 @@ class LongThinkSession {
 
   private async solveRound(): Promise<JsonObject> {
     const previous = this.runtime.round === 0 ? '（第一轮，没有旧状态）' : JSON.stringify(this.runtime.state)
+    this.runtime.lastReasoning = ''
+    await persist(this.context, this.runtime, 'model-call')
     const state = await this.requestJson([
       { role: 'system', content: SOLVER_SYSTEM },
       { role: 'user', content: solverUserMessage(this.input.problem, previous, this.runtime.round + 1) },
@@ -196,6 +226,7 @@ class LongThinkSession {
   }
 
   private async verify(): Promise<JsonObject> {
+    await persist(this.context, this.runtime, 'verifying')
     const verdict = await this.requestJson([
       { role: 'system', content: VERIFIER_SYSTEM },
       { role: 'user', content: verifierUserMessage(this.input.problem, this.runtime) },
@@ -205,6 +236,7 @@ class LongThinkSession {
   }
 
   private async review(answer: string, verdict: JsonObject): Promise<JsonObject> {
+    await persist(this.context, this.runtime, 'final-reviewing')
     const review = await this.requestJson([
       { role: 'system', content: REVIEWER_SYSTEM },
       { role: 'user', content: reviewerUserMessage(this.input.problem, this.runtime, answer, verdict) },
@@ -273,7 +305,7 @@ class LongThinkSession {
     if (!providerError.retryable) return this.failure(providerError)
     this.runtime.transientErrors += 1
     this.consecutiveErrors += 1
-    await persist(this.context, this.runtime, 'solving')
+    await persist(this.context, this.runtime, 'retrying')
     const delay = Math.min(300_000, 2_000 * (2 ** Math.min(this.consecutiveErrors - 1, 8)))
     await sleep(delay, this.context.signal)
     return null
