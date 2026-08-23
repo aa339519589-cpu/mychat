@@ -10,6 +10,13 @@ import { isUuid } from '@/lib/validation'
 
 const MAX_INSTRUCTION_CHARS = 200_000
 
+type SourceLongThinkInput = {
+  endpointId: string
+  problem: string
+  maxTokens?: unknown
+  verifyEvery?: unknown
+}
+
 function object(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -38,10 +45,15 @@ function resultCheckpoint(value: unknown): JsonObject | null {
   return row ? jsonObject(row.continuationCheckpoint) : null
 }
 
-function sourceInput(value: unknown): Record<string, unknown> | null {
+function sourceInput(value: unknown): SourceLongThinkInput | null {
   const row = object(value)
   if (!row || typeof row.endpointId !== 'string' || typeof row.problem !== 'string') return null
-  return row
+  return {
+    endpointId: row.endpointId,
+    problem: row.problem,
+    maxTokens: row.maxTokens,
+    verifyEvery: row.verifyEvery,
+  }
 }
 
 async function enqueue(input: JsonObject, principalId: string, authClass: JobAuthClass, sourceJobId: string) {
@@ -116,10 +128,9 @@ export async function POST(request: NextRequest, context: { params: Promise<{ jo
     status: 400, code: 'INVALID_REQUEST', message: '继续任务参数无效', retryable: false,
   })
 
-  const originalProblem = oldInput.problem.trim()
   const nextInput: JsonObject = {
     endpointId: oldInput.endpointId,
-    problem: `${originalProblem}\n\n【用户继续要求】\n${instruction}`,
+    problem: `${oldInput.problem.trim()}\n\n【用户继续要求】\n${instruction}`,
     maxTokens,
     minRounds,
     verifyEvery,
