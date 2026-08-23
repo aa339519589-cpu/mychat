@@ -66,6 +66,8 @@ export type MaestroPublicTask = {
   startCode: string
 }
 
+export type MaestroClientTask = Omit<MaestroPublicTask, "startCode">
+
 function text(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback
 }
@@ -133,6 +135,14 @@ export function publicMaestroTask(row: AgentTaskRow): MaestroPublicTask | null {
     finishedAt: row.finished_at,
     startCode: meta.startCode,
   }
+}
+
+export function clientMaestroTask(row: AgentTaskRow): MaestroClientTask | null {
+  const task = publicMaestroTask(row)
+  if (!task) return null
+  const { startCode: internalStartCode, ...clientTask } = task
+  void internalStartCode
+  return clientTask
 }
 
 const TASK_SELECT = "id,user_id,goal,mode,repo,branch,status,error,created_at,updated_at,started_at,finished_at,meta,agent_branch,pull_request_url,pull_request_number,commit_sha"
