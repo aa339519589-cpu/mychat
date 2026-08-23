@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>MyChat ChatGPT Bridge</title>
+  <style>
+    :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { margin: 0; background: Canvas; color: CanvasText; }
+    main { width: min(680px, calc(100% - 40px)); margin: 56px auto; }
+    h1 { font-size: 24px; margin: 0 0 8px; }
+    p { color: color-mix(in srgb, CanvasText 62%, transparent); line-height: 1.6; }
+    label { display: block; margin-top: 24px; font-size: 13px; }
+    input, textarea { box-sizing: border-box; width: 100%; margin-top: 8px; border: 1px solid color-mix(in srgb, CanvasText 18%, transparent); border-radius: 12px; padding: 12px; background: Canvas; color: CanvasText; font: inherit; }
+    textarea { min-height: 130px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+    .buttons { display: flex; gap: 10px; margin-top: 20px; }
+    button, a.button { appearance: none; border: 1px solid color-mix(in srgb, CanvasText 18%, transparent); border-radius: 12px; padding: 10px 16px; background: CanvasText; color: Canvas; text-decoration: none; font: inherit; cursor: pointer; }
+    a.button { background: Canvas; color: CanvasText; }
+    #status { min-height: 24px; margin-top: 16px; font-size: 13px; }
+    .note { margin-top: 28px; padding: 16px; border: 1px solid color-mix(in srgb, CanvasText 14%, transparent); border-radius: 16px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>MyChat ChatGPT Bridge</h1>
+    <p>把 MyChat 的长任务轮次交给这个浏览器里已登录的 ChatGPT 会话执行。</p>
+
+    <label for="url">MyChat 地址</label>
+    <input id="url" type="url" placeholder="https://你的-mychat-地址">
+
+    <label for="token">配对令牌</label>
+    <textarea id="token" spellcheck="false" placeholder="在 MyChat /chatgpt-long-think 页面生成后粘贴到这里"></textarea>
+
+    <div class="buttons">
+      <button id="save" type="button">保存并启动</button>
+      <a class="button" href="https://chatgpt.com/" target="_blank" rel="noreferrer">打开 ChatGPT</a>
+    </div>
+    <div id="status"></div>
+
+    <div class="note">ChatGPT 登录 Cookie 留在 chatgpt.com。扩展只保存 MyChat 地址、MyChat 配对令牌和随机客户端 ID。</div>
+  </main>
+  <script src="options.js"></script>
+</body>
+</html>
