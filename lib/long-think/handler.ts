@@ -5,27 +5,33 @@ import type { JobExecutionContext, JobHandler } from '@/lib/jobs/worker'
 import { checkpointJson, parseLongThinkCheckpoint, parseLongThinkJobInput, type LongThinkRuntimeCheckpoint } from './contracts'
 import { LongThinkProviderError, longThinkCompletion, type LongThinkCompletion, type LongThinkMessage } from './provider'
 
-const SOLVER_SYSTEM = `你是一个长期任务执行器。目标不是尽快结束，而是把用户的问题真正闭环。每次调用只完成下一段最有价值的工作，然后输出一个可被下一次调用直接继承的状态快照。
+const SOLVER_SYSTEM = [
+  '你是一个长期任务执行器。目标不是尽快结束，而是把用户的问题真正闭环。每次调用只完成下一段最有价值的工作，然后输出一个可被下一次调用直接继承的状态快照。',
+  '',
+  '规则：',
+  '1. 不要复述任务，不要写流程说明。',
+  '2. 状态必须自包含：下一轮只拿到原问题和这份状态也能继续。',
+  '3. 保留已验证结果、失败路线及失败原因、未解决缺口、下一步动作、必要公式/代码/数据/引用。',
+  '4. 不要因为单轮停止、输出长度或上下文压力草率结束。',
+  '5. 只有关键缺口全部关闭时 done 才能为 true。',
+  '6. 如果已经有候选答案，优先审查最脆弱部分。',
+  '7. 只输出一个 JSON 对象，不要 Markdown 围栏。',
+  '',
+  '格式：',
+  '{"done":false,"progress_summary":"","established":[],"failed_routes":[{"route":"","reason":""}],"unresolved":[],"next_actions":[],"working_material":"","candidate_answer":""}',
+  '',
+  '这里保存的是跨轮可续接工作状态。',
+].join('\n')
 
-规则：
-1. 不要复述任务，不要写流程说明。
-2. 状态必须自包含：下一轮只拿到原问题和这份状态也能继续。
-3. 保留已验证结果、失败路线及失败原因、未解决缺口、下一步动作、必要公式/代码/数据/引用。
-4. 不要因为单轮停止、输出长度或上下文压力草率结束。
-5. 只有关键缺口全部关闭时 done 才能为 true。
-6. 如果已经有候选答案，优先审查最脆弱部分。
-7. 只输出一个 JSON 对象，不要 Markdown 围栏。
+const VERIFIER_SYSTEM = [
+  '你是长期任务的独立闭环审查器。你的职责是阻止未完成的问题被过早判定为完成。基于原问题、当前状态和候选答案，逐项检查用户要求、逻辑缺口、关键计算或事实验证、未处理的 unresolved，以及仍能改变最终结论的下一步。',
+  '只输出 JSON：{"done":false,"gaps":[],"directive":"","final_answer":""}。存在任何影响结论的核心缺口时 done 必须为 false。',
+].join('\n')
 
-格式：
-{"done":false,"progress_summary":"","established":[],"failed_routes":[{"route":"","reason":""}],"unresolved":[],"next_actions":[],"working_material":"","candidate_answer":""}`
-
-这里保存的是跨轮可续接工作状态。`
-
-const VERIFIER_SYSTEM = `你是长期任务的独立闭环审查器。你的职责是阻止未完成的问题被过早判定为完成。基于原问题、当前状态和候选答案，逐项检查用户要求、逻辑缺口、关键计算或事实验证、未处理的 unresolved，以及仍能改变最终结论的下一步。
-只输出 JSON：{"done":false,"gaps":[],"directive":"","final_answer":""}。存在任何影响结论的核心缺口时 done 必须为 false。`
-
-const REVIEWER_SYSTEM = `你是最终审查器。你只在独立 verifier 已认为任务完成后出现。重新检查原问题、最终状态、候选答案和 verifier 结论，寻找遗漏、自相矛盾、错误计算、错误引用、没有覆盖的用户要求或仍会改变结论的缺口。
-只输出 JSON：{"done":false,"gaps":[],"directive":"","final_answer":""}。只有确认闭环时 done 才能为 true，并在 final_answer 给出可直接展示给用户的最终回复。`
+const REVIEWER_SYSTEM = [
+  '你是最终审查器。你只在独立 verifier 已认为任务完成后出现。重新检查原问题、最终状态、候选答案和 verifier 结论，寻找遗漏、自相矛盾、错误计算、错误引用、没有覆盖的用户要求或仍会改变结论的缺口。',
+  '只输出 JSON：{"done":false,"gaps":[],"directive":"","final_answer":""}。只有确认闭环时 done 才能为 true，并在 final_answer 给出可直接展示给用户的最终回复。',
+].join('\n')
 
 function asJsonObject(value: unknown): JsonObject | null {
   return isJsonValue(value) && value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -141,6 +147,51 @@ function finalAnswerOf(value: JsonObject, fallback: string): string {
     : fallback
 }
 
+function solverUserMessage(problem: string, previous: string, round: number): string {
+  return [
+    '原始问题：',
+    problem,
+    '',
+    '上一轮续接状态：',
+    previous,
+    '',
+    '当前轮次：' + String(round),
+    '',
+    '继续工作。不要重新开始，优先处理 unresolved 和审查器留下的缺口。',
+  ].join('\n')
+}
+
+function verifierUserMessage(problem: string, runtime: LongThinkRuntimeCheckpoint): string {
+  return [
+    '原始问题：',
+    problem,
+    '',
+    '当前续接状态：',
+    JSON.stringify(runtime.state),
+    '',
+    '候选答案：',
+    runtime.candidateAnswer || '（尚未形成完整候选答案）',
+    '',
+    '已完成轮数：' + String(runtime.round),
+  ].join('\n')
+}
+
+function reviewerUserMessage(problem: string, runtime: LongThinkRuntimeCheckpoint, answer: string, verdict: JsonObject): string {
+  return [
+    '原始问题：',
+    problem,
+    '',
+    '最终状态：',
+    JSON.stringify(runtime.state),
+    '',
+    '候选答案：',
+    answer,
+    '',
+    'Verifier：',
+    JSON.stringify(verdict),
+  ].join('\n')
+}
+
 export const handleLongThinkJob: JobHandler = async context => {
   const input = parseLongThinkJobInput(context.job.input)
   const admin = createAdminClient()
@@ -200,7 +251,7 @@ export const handleLongThinkJob: JobHandler = async context => {
       const previous = runtime.round === 0 ? '（第一轮，没有旧状态）' : JSON.stringify(runtime.state)
       const state = await requestJson([
         { role: 'system', content: SOLVER_SYSTEM },
-        { role: 'user', content: `原始问题：\n${input.problem}\n\n上一轮续接状态：\n${previous}\n\n当前轮次：${runtime.round + 1}\n\n继续工作。不要重新开始，优先处理 unresolved 和审查器留下的缺口。` },
+        { role: 'user', content: solverUserMessage(input.problem, previous, runtime.round + 1) },
       ])
       consecutiveErrors = 0
       runtime.round += 1
@@ -214,7 +265,7 @@ export const handleLongThinkJob: JobHandler = async context => {
 
       const verdict = await requestJson([
         { role: 'system', content: VERIFIER_SYSTEM },
-        { role: 'user', content: `原始问题：\n${input.problem}\n\n当前续接状态：\n${JSON.stringify(runtime.state)}\n\n候选答案：\n${runtime.candidateAnswer || '（尚未形成完整候选答案）'}\n\n已完成轮数：${runtime.round}` },
+        { role: 'user', content: verifierUserMessage(input.problem, runtime) },
       ], Math.min(input.maxTokens, 32_768))
       runtime.verifierRuns += 1
 
@@ -230,7 +281,7 @@ export const handleLongThinkJob: JobHandler = async context => {
       const verifiedAnswer = finalAnswerOf(verdict, runtime.candidateAnswer)
       const review = await requestJson([
         { role: 'system', content: REVIEWER_SYSTEM },
-        { role: 'user', content: `原始问题：\n${input.problem}\n\n最终状态：\n${JSON.stringify(runtime.state)}\n\n候选答案：\n${verifiedAnswer}\n\nVerifier：\n${JSON.stringify(verdict)}` },
+        { role: 'user', content: reviewerUserMessage(input.problem, runtime, verifiedAnswer, verdict) },
       ], Math.min(input.maxTokens, 32_768))
       runtime.reviewerRuns += 1
 
