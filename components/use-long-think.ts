@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { LONG_THINK_ACTIVE as ACTIVE, LONG_THINK_STORAGE_KEY as STORAGE_KEY, longThinkJsonRequest as jsonRequest, type Endpoint, type JobSnapshot, type ListedJob } from "@/components/long-think-support"
+import { LONG_THINK_ACTIVE as ACTIVE, LONG_THINK_STORAGE_KEY as STORAGE_KEY, longThinkContinuation, longThinkJsonRequest as jsonRequest, type Endpoint, type JobSnapshot, type ListedJob } from "@/components/long-think-support"
 
 export type LongThinkStartInput = {
   endpointId?: string
@@ -12,6 +12,8 @@ export type LongThinkStartInput = {
   maxTokens: number
   minRounds: number
   verifyEvery: number
+  seedCheckpoint?: Record<string, unknown>
+  continuedFrom?: string
 }
 
 async function createEndpoint(input: LongThinkStartInput): Promise<Endpoint> {
@@ -28,7 +30,15 @@ async function createJob(endpointId: string, input: LongThinkStartInput): Promis
   const body = await jsonRequest("/api/long-think/jobs", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ endpointId, problem: input.problem.trim(), maxTokens: input.maxTokens, minRounds: input.minRounds, verifyEvery: input.verifyEvery }),
+    body: JSON.stringify({
+      endpointId,
+      problem: input.problem.trim(),
+      maxTokens: input.maxTokens,
+      minRounds: input.minRounds,
+      verifyEvery: input.verifyEvery,
+      ...(input.seedCheckpoint ? { seedCheckpoint: input.seedCheckpoint } : {}),
+      ...(input.continuedFrom ? { continuedFrom: input.continuedFrom } : {}),
+    }),
   }) as { jobId?: string }
   if (!body.jobId) throw new Error("任务创建失败")
   return body.jobId
@@ -58,6 +68,25 @@ export async function startLongThinkTask(input: LongThinkStartInput): Promise<st
     endpointId = (await createEndpoint(input)).id
   }
   return createJob(endpointId, input)
+}
+
+export async function continueLongThinkTask(job: JobSnapshot, instruction: string): Promise<string> {
+  const continuation = longThinkContinuation(job.result)
+  const followUp = instruction.trim()
+  if (!continuation) throw new Error("这个旧任务没有可续接 checkpoint")
+  if (!followUp) throw new Error("请输入继续要求")
+  return createJob(continuation.endpointId, {
+    endpointId: continuation.endpointId,
+    baseUrl: "",
+    apiKey: "",
+    model: "",
+    problem: `继续上一阶段的同一长期任务。用户追加要求：\n${followUp}`,
+    maxTokens: 32768,
+    minRounds: 1,
+    verifyEvery: 6,
+    seedCheckpoint: continuation.seedCheckpoint,
+    continuedFrom: job.id,
+  })
 }
 
 export async function stopLongThinkTask(jobId: string): Promise<void> {
