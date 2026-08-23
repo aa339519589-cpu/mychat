@@ -1,6 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin"
 import {
-  findMaestroTaskByStartCode,
+  getMaestroTask,
   maestroMeta,
   publicMaestroTask,
   type AgentTaskRow,
@@ -8,24 +8,30 @@ import {
   type MaestroPhase,
   type MaestroReportState,
 } from "@/lib/maestro/store"
-import { issueMaestroReportToken, maestroStateHash } from "@/lib/maestro/tokens"
+import {
+  issueMaestroReportToken,
+  issueMaestroTaskToken,
+  maestroStateHash,
+  verifyMaestroLaunchToken,
+  verifyMaestroTaskToken,
+} from "@/lib/maestro/tokens"
 import { MAESTRO_WIDGET_HTML, MAESTRO_WIDGET_URI } from "@/lib/maestro/widget"
 
 export const MAESTRO_PROTOCOL_VERSION = "2025-06-18"
 export const MAESTRO_SERVER_NAME = "mychat-maestro-runner"
-export const MAESTRO_SERVER_VERSION = "1.0.0"
+export const MAESTRO_SERVER_VERSION = "1.1.0"
 
 const MAX_CHECKPOINT = 36_000
 const MAX_ANSWER = 120_000
 const MAX_LIST = 64
 const MAX_ITEM = 4_000
+const MAX_TOKEN = 4_096
 
 type JsonRpcId = string | number | null
 type JsonRpcRequest = { jsonrpc?: unknown; id?: JsonRpcId; method?: unknown; params?: unknown }
 type JsonRpcResponse = { jsonrpc: "2.0"; id: JsonRpcId; result?: unknown; error?: { code: number; message: string; data?: unknown } }
 
-type GateInput = {
-  startCode: string
+type GateCheckpoint = {
   round: number
   phase: MaestroPhase
   checkpoint: string
@@ -34,6 +40,10 @@ type GateInput = {
   evidence: string[]
   finalAnswer: string
   done: boolean
+}
+
+type GateRequest = GateCheckpoint & {
+  taskToken: string
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -50,15 +60,15 @@ function cleanList(value: unknown): string[] {
   return value.slice(0, MAX_LIST).map(item => cleanText(item, MAX_ITEM)).filter(Boolean)
 }
 
-function gateInput(value: unknown): GateInput | null {
+function gateInput(value: unknown): GateRequest | null {
   const row = record(value)
   if (!row) return null
-  const startCode = cleanText(row.startCode, 128)
+  const taskToken = cleanText(row.taskToken, MAX_TOKEN)
   const round = Number(row.round)
   const phase = row.phase === "review" ? "review" : row.phase === "work" ? "work" : null
-  if (!startCode || !Number.isSafeInteger(round) || round < 1 || !phase) return null
+  if (!taskToken || !Number.isSafeInteger(round) || round < 1 || !phase) return null
   return {
-    startCode,
+    taskToken,
     round,
     phase,
     checkpoint: cleanText(row.checkpoint, MAX_CHECKPOINT),
@@ -70,14 +80,13 @@ function gateInput(value: unknown): GateInput | null {
   }
 }
 
-function startInput(value: unknown): { startCode: string } | null {
+function startInput(value: unknown): { launchToken: string } | null {
   const row = record(value)
-  const startCode = cleanText(row?.startCode, 128)
-  return startCode ? { startCode } : null
+  const launchToken = cleanText(row?.launchToken, MAX_TOKEN)
+  return launchToken ? { launchToken } : null
 }
 
 function continuationPrompt(options: {
-  startCode: string
   objective: string
   nextRound: number
   phase: MaestroPhase
@@ -96,26 +105,28 @@ function continuationPrompt(options: {
   })
   if (options.phase === "review") {
     return [
-      `继续 Maestro Runner 任务，启动码 ${options.startCode}，第 ${options.nextRound} 轮，阶段 review。`,
+      `继续 Maestro Runner 任务，第 ${options.nextRound} 轮，阶段 review。`,
       `目标：${options.objective}`,
       `上一阶段候选答案与检查点：${state}`,
       "这是独立复核轮。主动寻找错误、遗漏、未经证明的跳步和没有闭环的要求，不要默认候选答案正确。",
       "若发现实质问题，修正并把 phase=review、done=false、未解决项和下一步交给 maestro_round_gate；系统随后会重新进入工作轮。",
       "若确认所有要求均已闭环，给出经过复核的完整 finalAnswer，并在本轮结束前调用 maestro_round_gate，phase=review、done=true、unresolved=[]、nextActions=[]。",
+      "调用 maestro_round_gate 时使用上一条 Maestro 工具结果里的 taskToken；绝对不要向用户索取任何启动码、token 或其他中转码。",
       "调用工具后结束这一轮，不要等待用户手动说继续。不要输出隐藏思维链；检查点只写结论、证据、计算和未决事项。",
     ].join("\n\n")
   }
   return [
-    `继续 Maestro Runner 任务，启动码 ${options.startCode}，第 ${options.nextRound} 轮，阶段 work。`,
+    `继续 Maestro Runner 任务，第 ${options.nextRound} 轮，阶段 work。`,
     `目标：${options.objective}`,
     `上一轮持久检查点：${state}`,
     "现在直接推进尚未闭环的工作。不要把“需要继续”“之后再做”当作完成。尽可能完成实质工作。",
     "本轮真正结束前必须调用 maestro_round_gate 一次，phase=work，并提交自包含 checkpoint、unresolved、nextActions、evidence、done。只有目标已经完整闭环时才把 done=true，同时提交完整 finalAnswer。",
+    "调用 maestro_round_gate 时使用上一条 Maestro 工具结果里的 taskToken；绝对不要向用户索取任何启动码、token 或其他中转码。",
     "调用工具后结束这一轮。工具界面会自动创建下一轮，不需要用户手动发送“继续”。不要输出隐藏思维链；检查点只写继续工作必需的结论、证据、计算和未决事项。",
   ].join("\n\n")
 }
 
-function storedState(row: AgentTaskRow): MaestroReportState {
+function storedState(row: AgentTaskRow, taskToken: string): MaestroReportState {
   const task = publicMaestroTask(row)
   if (!task) throw new Error("Maestro task metadata is invalid")
   const stopped = task.status === "cancelled" || task.status === "failed"
@@ -125,7 +136,7 @@ function storedState(row: AgentTaskRow): MaestroReportState {
   return {
     kind: "maestro-runner-state",
     jobId: task.id,
-    startCode: task.startCode,
+    taskToken,
     objective: task.objective,
     round: task.round,
     phase,
@@ -137,7 +148,6 @@ function storedState(row: AgentTaskRow): MaestroReportState {
     candidateAnswer: task.candidateAnswer,
     finalAnswer: task.finalAnswer,
     nextPrompt: action === "finish" || action === "stop" ? "" : continuationPrompt({
-      startCode: task.startCode,
       objective: task.objective,
       nextRound: task.round + 1,
       phase,
@@ -150,12 +160,12 @@ function storedState(row: AgentTaskRow): MaestroReportState {
   }
 }
 
-export function evaluateMaestroGate(row: AgentTaskRow, input: GateInput): MaestroReportState {
+export function evaluateMaestroGate(row: AgentTaskRow, input: GateCheckpoint, taskToken: string): MaestroReportState {
   const task = publicMaestroTask(row)
   const meta = maestroMeta(row)
   if (!task || !meta) throw new Error("Maestro task metadata is invalid")
-  if (task.status === "cancelled" || task.status === "failed" || task.status === "completed") return storedState(row)
-  if (input.round <= meta.round) return storedState(row)
+  if (task.status === "cancelled" || task.status === "failed" || task.status === "completed") return storedState(row, taskToken)
+  if (input.round <= meta.round) return storedState(row, taskToken)
   if (input.round !== meta.round + 1) throw new Error(`Expected Maestro round ${meta.round + 1}`)
   if (input.round > meta.maxRounds) throw new Error(`Maestro max rounds reached (${meta.maxRounds})`)
 
@@ -185,7 +195,7 @@ export function evaluateMaestroGate(row: AgentTaskRow, input: GateInput): Maestr
   const state: MaestroReportState = {
     kind: "maestro-runner-state",
     jobId: task.id,
-    startCode: task.startCode,
+    taskToken,
     objective: task.objective,
     round: input.round,
     phase,
@@ -200,7 +210,6 @@ export function evaluateMaestroGate(row: AgentTaskRow, input: GateInput): Maestr
   }
   if (action === "continue" || action === "review") {
     state.nextPrompt = continuationPrompt({
-      startCode: task.startCode,
       objective: task.objective,
       nextRound: input.round + 1,
       phase,
@@ -214,13 +223,26 @@ export function evaluateMaestroGate(row: AgentTaskRow, input: GateInput): Maestr
   return state
 }
 
+function checkpointFromRequest(input: GateRequest): GateCheckpoint {
+  return {
+    round: input.round,
+    phase: input.phase,
+    checkpoint: input.checkpoint,
+    unresolved: input.unresolved,
+    nextActions: input.nextActions,
+    evidence: input.evidence,
+    finalAnswer: input.finalAnswer,
+    done: input.done,
+  }
+}
+
 function stateOutputSchema() {
   return {
     type: "object",
     properties: {
       kind: { type: "string", const: "maestro-runner-state" },
       jobId: { type: "string" },
-      startCode: { type: "string" },
+      taskToken: { type: "string" },
       objective: { type: "string" },
       round: { type: "integer", minimum: 0 },
       phase: { type: "string", enum: ["work", "review", "done"] },
@@ -233,7 +255,7 @@ function stateOutputSchema() {
       finalAnswer: { type: "string" },
       nextPrompt: { type: "string" },
     },
-    required: ["kind", "jobId", "startCode", "objective", "round", "phase", "action", "checkpoint", "unresolved", "nextActions", "evidence", "candidateAnswer", "finalAnswer", "nextPrompt"],
+    required: ["kind", "jobId", "taskToken", "objective", "round", "phase", "action", "checkpoint", "unresolved", "nextActions", "evidence", "candidateAnswer", "finalAnswer", "nextPrompt"],
     additionalProperties: false,
   }
 }
@@ -242,11 +264,11 @@ export const MAESTRO_TOOLS = [
   {
     name: "maestro_start",
     title: "Start Maestro Runner",
-    description: "Read a queued My Chat Maestro task by its start code and mount the Maestro Runner UI. Call this exactly once when the user supplies a Maestro start code. This tool is read-only: it only retrieves task state and computes the next prompt. After it returns, do not solve the task in the same turn; the UI will automatically post the first worker turn.",
+    description: "Start the My Chat Maestro task carried by an automatic launch ticket. My Chat supplies launchToken inside its direct ChatGPT launch; the user must never be asked to copy, paste, type, or provide a start code or token. If launchToken is absent, tell the user to start the task from My Chat instead of asking them for any code. This tool is read-only. After it returns, end the current turn; the UI automatically posts the first worker turn.",
     inputSchema: {
       type: "object",
-      properties: { startCode: { type: "string", minLength: 12, maxLength: 128 } },
-      required: ["startCode"],
+      properties: { launchToken: { type: "string", minLength: 32, maxLength: MAX_TOKEN } },
+      required: ["launchToken"],
       additionalProperties: false,
     },
     outputSchema: stateOutputSchema(),
@@ -261,11 +283,11 @@ export const MAESTRO_TOOLS = [
   {
     name: "maestro_round_gate",
     title: "Maestro round gate",
-    description: "Pure read-only completion gate for a My Chat Maestro Runner task. At the end of EVERY Maestro worker or review turn, call this exactly once before ending the turn. It reads the authoritative task state, evaluates the supplied compact checkpoint, and returns continue/review/finish without modifying external data. The attached UI synchronizes the result and automatically posts the next ChatGPT turn. Never omit this call while a Maestro task is active.",
+    description: "Pure read-only completion gate for a My Chat Maestro Runner task. At the end of EVERY Maestro worker or review turn, call this exactly once before ending the turn. Reuse taskToken from the most recent Maestro tool result; never ask the user for a start code, token, task id, or other relay value. It evaluates the compact checkpoint and returns continue/review/finish. The attached UI synchronizes the result and automatically posts the next ChatGPT turn.",
     inputSchema: {
       type: "object",
       properties: {
-        startCode: { type: "string", minLength: 12, maxLength: 128 },
+        taskToken: { type: "string", minLength: 32, maxLength: MAX_TOKEN },
         round: { type: "integer", minimum: 1, maximum: 1000000 },
         phase: { type: "string", enum: ["work", "review"] },
         checkpoint: { type: "string", description: "Self-contained continuation state: conclusions, evidence, calculations, decisions and current progress. Never include hidden chain-of-thought." },
@@ -275,7 +297,7 @@ export const MAESTRO_TOOLS = [
         finalAnswer: { type: "string", description: "Complete candidate/final answer only when done=true; otherwise use an empty string." },
         done: { type: "boolean" },
       },
-      required: ["startCode", "round", "phase", "checkpoint", "unresolved", "nextActions", "evidence", "finalAnswer", "done"],
+      required: ["taskToken", "round", "phase", "checkpoint", "unresolved", "nextActions", "evidence", "finalAnswer", "done"],
       additionalProperties: false,
     },
     outputSchema: stateOutputSchema(),
@@ -311,22 +333,28 @@ function textResult(state: MaestroReportState, origin: string, userId: string) {
 
 async function callStart(args: unknown, origin: string) {
   const input = startInput(args)
-  if (!input) throw new Error("startCode is required")
+  if (!input) throw new Error("Automatic Maestro launch ticket is missing; start the task from My Chat")
+  const launch = verifyMaestroLaunchToken(input.launchToken)
+  if (!launch) throw new Error("Automatic Maestro launch ticket is invalid or expired; relaunch the task from My Chat")
   const admin = createAdminClient()
   if (!admin) throw new Error("Maestro storage is unavailable")
-  const row = await findMaestroTaskByStartCode(admin, input.startCode)
-  if (!row) throw new Error("Maestro start code not found")
-  return textResult(storedState(row), origin, row.user_id)
+  const row = await getMaestroTask(admin, launch.userId, launch.jobId)
+  if (!row) throw new Error("Maestro task not found")
+  const taskToken = issueMaestroTaskToken({ userId: row.user_id, jobId: row.id })
+  return textResult(storedState(row, taskToken), origin, row.user_id)
 }
 
 async function callGate(args: unknown, origin: string) {
   const input = gateInput(args)
   if (!input) throw new Error("Invalid Maestro round checkpoint")
+  const taskAccess = verifyMaestroTaskToken(input.taskToken)
+  if (!taskAccess) throw new Error("Maestro task access expired; relaunch the task from My Chat")
   const admin = createAdminClient()
   if (!admin) throw new Error("Maestro storage is unavailable")
-  const row = await findMaestroTaskByStartCode(admin, input.startCode)
-  if (!row) throw new Error("Maestro start code not found")
-  return textResult(evaluateMaestroGate(row, input), origin, row.user_id)
+  const row = await getMaestroTask(admin, taskAccess.userId, taskAccess.jobId)
+  if (!row) throw new Error("Maestro task not found")
+  const freshTaskToken = issueMaestroTaskToken({ userId: row.user_id, jobId: row.id })
+  return textResult(evaluateMaestroGate(row, checkpointFromRequest(input), freshTaskToken), origin, row.user_id)
 }
 
 function rpcError(id: JsonRpcId, code: number, message: string): JsonRpcResponse {
@@ -362,7 +390,7 @@ export async function handleMaestroRpc(body: JsonRpcRequest, options: { origin: 
         protocolVersion: MAESTRO_PROTOCOL_VERSION,
         capabilities: { tools: {}, resources: {} },
         serverInfo: { name: MAESTRO_SERVER_NAME, version: MAESTRO_SERVER_VERSION },
-        instructions: "Maestro Runner is a cross-turn orchestrator. Use maestro_start for a supplied start code. During an active job, every worker/review turn must end with maestro_round_gate. Its UI posts the next ChatGPT message automatically until a separate review turn reaches finish.",
+        instructions: "Maestro Runner is a cross-turn orchestrator launched directly from My Chat. Never ask the user for a start code, token, task id, or relay value. My Chat supplies the launch ticket automatically. During an active job, every worker/review turn must end with maestro_round_gate using taskToken from the most recent Maestro tool result. Its UI posts the next ChatGPT message automatically until a separate review turn reaches finish.",
       },
     }
   }

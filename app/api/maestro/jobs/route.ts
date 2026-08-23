@@ -2,18 +2,25 @@ import { NextRequest } from "next/server"
 import { enforceLimits, resolveAuth } from "@/lib/api/guard"
 import { readJson, requestErrorResponse } from "@/lib/api/request"
 import { createMaestroTask, listMaestroTasks, publicMaestroTask, type MaestroPublicTask } from "@/lib/maestro/store"
-import { maestroRunnerConfigured } from "@/lib/maestro/tokens"
+import { issueMaestroLaunchToken, maestroRunnerConfigured } from "@/lib/maestro/tokens"
 
 const MAX_OBJECTIVE = 100_000
+const CHATGPT_BASE_URL = "https://chatgpt.com/"
 
-function startInstruction(task: MaestroPublicTask): string {
+function launchPrompt(launchToken: string): string {
   return [
-    "@Maestro Runner",
-    `启动码：${task.startCode}`,
-    "调用 maestro_start 读取这个 My Chat 任务。maestro_start 返回后结束当前回合。",
-    "从下一回合开始直接执行任务；每一回合真正结束前必须调用 maestro_round_gate。之后由 Maestro Runner 界面自动创建下一回合，不需要我手动发送“继续”。",
+    "@My che che.",
+    "直接启动这个 My Chat Maestro Runner 任务。不要向我询问任何启动码、token、任务 ID 或其他中转信息。",
+    `调用 maestro_start，launchToken=${launchToken}。`,
+    "maestro_start 返回后结束当前回合；随后按 Maestro Runner 自动续跑。每一回合真正结束前必须调用 maestro_round_gate，并使用上一条 Maestro 工具结果里的 taskToken。",
     "只有独立 review 回合通过并且工具返回 finish 后才停止。",
   ].join("\n")
+}
+
+function launchUrl(launchToken: string): string {
+  const url = new URL(CHATGPT_BASE_URL)
+  url.searchParams.set("q", launchPrompt(launchToken))
+  return url.toString()
 }
 
 export async function GET(request: Request): Promise<Response> {
@@ -49,7 +56,8 @@ export async function POST(request: NextRequest): Promise<Response> {
     const row = await createMaestroTask(auth.supabase, auth.userId, objective, rawMaxRounds)
     const task = publicMaestroTask(row)
     if (!task) throw new Error("Maestro task metadata is invalid")
-    return Response.json({ task, startInstruction: startInstruction(task) }, { status: 201 })
+    const token = issueMaestroLaunchToken({ userId: auth.userId, jobId: task.id })
+    return Response.json({ task, launchUrl: launchUrl(token) }, { status: 201 })
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Maestro 任务创建失败" }, { status: 500 })
   }

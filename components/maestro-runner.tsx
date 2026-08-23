@@ -21,7 +21,6 @@ type Task = {
   updatedAt: string
   startedAt: string | null
   finishedAt: string | null
-  startCode: string
 }
 
 async function requestJson(path: string, init?: RequestInit): Promise<Record<string, unknown>> {
@@ -36,7 +35,7 @@ function statusText(task: Task): string {
   if (task.status === "cancelled") return "已停止"
   if (task.status === "failed") return "失败"
   if (task.phase === "review") return "独立复核"
-  if (task.status === "queued") return "等待 ChatGPT 启动"
+  if (task.status === "queued") return "正在启动 ChatGPT"
   return "连续推理中"
 }
 
@@ -45,10 +44,8 @@ export function MaestroRunner() {
   const [activeId, setActiveId] = useState("")
   const [objective, setObjective] = useState("")
   const [maxRounds, setMaxRounds] = useState("10000")
-  const [instruction, setInstruction] = useState("")
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
-  const [copied, setCopied] = useState(false)
 
   const active = useMemo(() => tasks.find(task => task.id === activeId) ?? tasks[0] ?? null, [activeId, tasks])
 
@@ -66,8 +63,13 @@ export function MaestroRunner() {
   }, [refresh])
 
   const create = async () => {
-    setBusy(true); setError(""); setCopied(false)
+    const chatWindow = window.open("about:blank", "_blank")
+    setBusy(true); setError("")
     try {
+      if (chatWindow) {
+        chatWindow.document.title = "正在启动 ChatGPT…"
+        chatWindow.document.body.textContent = "正在启动 ChatGPT…"
+      }
       const rounds = Number(maxRounds)
       if (!Number.isSafeInteger(rounds) || rounds < 2 || rounds > 100000) throw new Error("最大轮数必须是 2 到 100000")
       const body = await requestJson("/api/maestro/jobs", {
@@ -76,20 +78,17 @@ export function MaestroRunner() {
         body: JSON.stringify({ objective, maxRounds: rounds }),
       })
       const task = body.task as Task | undefined
-      if (!task?.id || typeof body.startInstruction !== "string") throw new Error("Maestro 任务创建结果无效")
-      setInstruction(body.startInstruction)
+      const launchUrl = typeof body.launchUrl === "string" ? body.launchUrl : ""
+      if (!task?.id || !launchUrl) throw new Error("Maestro 任务创建结果无效")
       setActiveId(task.id)
       setObjective("")
       await refresh()
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "任务创建失败") }
-    finally { setBusy(false) }
-  }
-
-  const copyAndOpen = async () => {
-    if (!instruction) return
-    await navigator.clipboard.writeText(instruction)
-    setCopied(true)
-    window.open("https://chatgpt.com/", "_blank", "noopener,noreferrer")
+      if (chatWindow && !chatWindow.closed) chatWindow.location.replace(launchUrl)
+      else window.location.assign(launchUrl)
+    } catch (cause) {
+      if (chatWindow && !chatWindow.closed) chatWindow.close()
+      setError(cause instanceof Error ? cause.message : "任务创建失败")
+    } finally { setBusy(false) }
   }
 
   const stop = async () => {
@@ -105,7 +104,7 @@ export function MaestroRunner() {
   return <main className="min-h-screen bg-background text-foreground">
     <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-10">
       <header className="flex flex-wrap items-end justify-between gap-4 border-b border-border/70 pb-5">
-        <div><p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">My Chat</p><h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">Maestro Runner</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">ChatGPT 每一轮真正结束后自动开启下一轮；候选答案还要经过独立复核，复核通过才停止。</p></div>
+        <div><p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">My Chat</p><h1 className="mt-1 text-2xl font-semibold tracking-tight sm:text-3xl">Maestro Runner</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">My Chat 创建任务后直接启动 ChatGPT；每一轮真正结束后自动开启下一轮，独立复核通过才停止。</p></div>
         {active && <div className="rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground">第 {active.round} 轮 · {statusText(active)}</div>}
       </header>
 
@@ -116,9 +115,9 @@ export function MaestroRunner() {
             <textarea value={objective} onChange={event => setObjective(event.target.value)} rows={10} placeholder="把需要持续多轮闭环的问题完整写在这里" className="mt-2 w-full resize-y rounded-2xl border border-border bg-background p-4 text-sm leading-6 outline-none" />
             <div className="mt-3 flex flex-wrap items-end gap-3">
               <label className="text-xs text-muted-foreground">最大轮数<input value={maxRounds} onChange={event => setMaxRounds(event.target.value)} type="number" min={2} max={100000} className="mt-1 block h-10 w-36 rounded-xl border border-border bg-background px-3 text-sm text-foreground" /></label>
-              <button disabled={busy || !objective.trim()} onClick={() => void create()} className="h-10 rounded-xl bg-foreground px-5 text-sm font-medium text-background disabled:opacity-40">创建任务</button>
+              <button disabled={busy || !objective.trim()} onClick={() => void create()} className="h-10 rounded-xl bg-foreground px-5 text-sm font-medium text-background disabled:opacity-40">{busy ? "正在启动…" : "创建并启动 ChatGPT"}</button>
             </div>
-            {instruction && <div className="mt-5 rounded-2xl border border-border bg-background/70 p-4"><div className="text-xs font-medium text-muted-foreground">只需启动一次</div><pre className="mt-2 whitespace-pre-wrap break-words text-xs leading-5">{instruction}</pre><button onClick={() => void copyAndOpen()} className="mt-3 h-9 rounded-xl border border-border px-4 text-xs font-medium">{copied ? "已复制，ChatGPT 已打开" : "复制启动指令并打开 ChatGPT"}</button></div>}
+            <p className="mt-3 text-xs leading-5 text-muted-foreground">不需要复制启动指令，也不需要输入任何启动码。</p>
             {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
           </div>
 

@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto"
 import type { Database } from "@/lib/supabase/database.types"
 import { jsonRecord, toJson } from "@/lib/supabase/json"
 import type { SupabaseClient } from "@/lib/supabase/types"
@@ -13,7 +12,6 @@ export type AgentTaskRow = Database["public"]["Tables"]["agent_tasks"]["Row"]
 export type MaestroMeta = {
   kind: typeof MAESTRO_META_KIND
   version: 1
-  startCode: string
   maxRounds: number
   round: number
   phase: MaestroPhase
@@ -30,7 +28,7 @@ export type MaestroMeta = {
 export type MaestroReportState = {
   kind: "maestro-runner-state"
   jobId: string
-  startCode: string
+  taskToken: string
   objective: string
   round: number
   phase: MaestroPhase
@@ -63,7 +61,6 @@ export type MaestroPublicTask = {
   updatedAt: string
   startedAt: string | null
   finishedAt: string | null
-  startCode: string
 }
 
 function text(value: unknown, fallback = ""): string {
@@ -89,12 +86,9 @@ function action(value: unknown): MaestroMeta["lastAction"] {
 export function maestroMeta(row: Pick<AgentTaskRow, "meta">): MaestroMeta | null {
   const record = jsonRecord(row.meta)
   if (!record || record.kind !== MAESTRO_META_KIND) return null
-  const startCode = text(record.startCode)
-  if (!startCode) return null
   return {
     kind: MAESTRO_META_KIND,
     version: 1,
-    startCode,
     maxRounds: Math.max(1, integer(record.maxRounds, 1000)),
     round: integer(record.round, 0),
     phase: phase(record.phase),
@@ -131,7 +125,6 @@ export function publicMaestroTask(row: AgentTaskRow): MaestroPublicTask | null {
     updatedAt: row.updated_at,
     startedAt: row.started_at,
     finishedAt: row.finished_at,
-    startCode: meta.startCode,
   }
 }
 
@@ -147,7 +140,6 @@ export async function createMaestroTask(
   const meta: MaestroMeta = {
     kind: MAESTRO_META_KIND,
     version: 1,
-    startCode: randomBytes(18).toString("base64url"),
     maxRounds,
     round: 0,
     phase: "work",
@@ -190,18 +182,6 @@ export async function getMaestroTask(client: SupabaseClient, userId: string, job
     .eq("id", jobId)
     .eq("user_id", userId)
     .eq("branch", MAESTRO_BRANCH)
-    .maybeSingle()
-  if (error) throw new Error(error.message)
-  return data as AgentTaskRow | null
-}
-
-export async function findMaestroTaskByStartCode(client: SupabaseClient, startCode: string): Promise<AgentTaskRow | null> {
-  const { data, error } = await client.from("agent_tasks")
-    .select(TASK_SELECT)
-    .eq("branch", MAESTRO_BRANCH)
-    .filter("meta->>kind", "eq", MAESTRO_META_KIND)
-    .filter("meta->>startCode", "eq", startCode)
-    .limit(1)
     .maybeSingle()
   if (error) throw new Error(error.message)
   return data as AgentTaskRow | null
