@@ -245,10 +245,10 @@ export const MAESTRO_WIDGET_HTML = String.raw`<!doctype html>
       }
 
       async function refreshStatus() {
-        if (!state?.startCode || pollBusy) return;
+        if (!state?.taskToken || pollBusy) return;
         pollBusy = true;
         try {
-          const result = await callTool("maestro_start", { startCode: state.startCode });
+          const result = await callTool("maestro_start", { taskToken: state.taskToken });
           const next = extractStructured(result);
           if (next) {
             pollFailures = 0;
