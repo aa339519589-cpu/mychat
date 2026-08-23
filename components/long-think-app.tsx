@@ -5,7 +5,7 @@ import { ArrowLeft, BrainCircuit } from "lucide-react"
 import { LongThinkSetup } from "@/components/long-think-setup"
 import { LongThinkRunning } from "@/components/long-think-running"
 import { LongThinkTaskList } from "@/components/long-think-task-list"
-import { useLongThinkJob } from "@/components/use-long-think"
+import { deleteLongThinkTask, useLongThinkJob } from "@/components/use-long-think"
 
 function Header() {
   return <header className="flex items-center gap-3 py-3">
@@ -25,6 +25,11 @@ export function LongThinkApp() {
     selectJob(jobId)
     void refreshJobs().catch(() => undefined)
   }
+  const deleted = async (jobId: string) => {
+    await deleteLongThinkTask(jobId)
+    if (activeJobId === jobId) selectJob("")
+    await refreshJobs()
+  }
 
   return <main className="h-dvh w-full overflow-y-auto overscroll-y-contain touch-pan-y bg-background text-foreground [-webkit-overflow-scrolling:touch]">
     <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col px-4 pb-[max(4rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] sm:px-6">
@@ -32,7 +37,7 @@ export function LongThinkApp() {
       {activeJobId
         ? <LongThinkRunning jobId={activeJobId} job={job} onNew={newTask} onContinued={continued} />
         : <LongThinkSetup endpoints={endpoints} onStarted={started} onEndpointCreated={() => { void refreshEndpoints().catch(() => undefined) }} />}
-      <LongThinkTaskList jobs={jobs} selectedId={activeJobId} onSelect={selectJob} onNew={newTask} />
+      <LongThinkTaskList jobs={jobs} selectedId={activeJobId} onSelect={selectJob} onNew={newTask} onDelete={deleted} />
     </div>
   </main>
 }
