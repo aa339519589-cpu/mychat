@@ -11,6 +11,8 @@ import type { JsonObject, JobAuthClass } from '@/lib/jobs/contracts'
 
 const MAX_PROBLEM_CHARS = 1_000_000
 
+type EndpointCheck = 'ok' | 'missing' | 'unavailable'
+
 function integer(value: unknown, fallback: number, minimum: number, maximum: number): number | null {
   if (value === undefined) return fallback
   return Number.isSafeInteger(value) && Number(value) >= minimum && Number(value) <= maximum
@@ -29,6 +31,16 @@ function parseCreateInput(body: Record<string, unknown>): JsonObject | null {
   return { endpointId, problem, maxTokens, minRounds, verifyEvery }
 }
 
+async function checkEndpoint(supabase: NonNullable<Awaited<ReturnType<typeof resolveAuth>>['supabase']>, userId: string, endpointId: string): Promise<EndpointCheck> {
+  try {
+    const endpoint = await getOwnedModelEndpoint(supabase, userId, endpointId)
+    if (!endpoint) return 'missing'
+    return endpointOutputKind(endpoint.output_kind) === 'chat' ? 'ok' : 'missing'
+  } catch {
+    return 'unavailable'
+  }
+}
+
 async function enqueueLongThink(input: JsonObject, principalId: string, authClass: JobAuthClass) {
   const endpointId = String(input.endpointId)
   const jobId = crypto.randomUUID()
@@ -43,6 +55,17 @@ async function enqueueLongThink(input: JsonObject, principalId: string, authClas
     input,
     maxAttempts: 100,
     priority: -10,
+  })
+}
+
+function endpointError(request: NextRequest, state: EndpointCheck): Response | null {
+  if (state === 'ok') return null
+  if (state === 'unavailable') return apiErrorResponseV1(request, {
+    status: 503, code: 'DEPENDENCY_UNAVAILABLE', message: '模型端点暂时不可用', retryable: true,
+    headers: { 'Retry-After': '2' },
+  })
+  return apiErrorResponseV1(request, {
+    status: 404, code: 'NOT_FOUND', message: '模型端点不存在或不是对话模型', retryable: false,
   })
 }
 
@@ -73,18 +96,9 @@ export async function POST(request: NextRequest) {
     status: 400, code: 'INVALID_REQUEST', message: '长期任务参数无效', retryable: false,
   })
 
-  const endpointId = String(input.endpointId)
-  let endpoint
-  try { endpoint = await getOwnedModelEndpoint(auth.supabase, auth.userId, endpointId) }
-  catch {
-    return apiErrorResponseV1(request, {
-      status: 503, code: 'DEPENDENCY_UNAVAILABLE', message: '模型端点暂时不可用', retryable: true,
-      headers: { 'Retry-After': '2' },
-    })
-  }
-  if (!endpoint || endpointOutputKind(endpoint.output_kind) !== 'chat') return apiErrorResponseV1(request, {
-    status: 404, code: 'NOT_FOUND', message: '模型端点不存在或不是对话模型', retryable: false,
-  })
+  const state = await checkEndpoint(auth.supabase, auth.userId, String(input.endpointId))
+  const endpointFailure = endpointError(request, state)
+  if (endpointFailure) return endpointFailure
 
   try {
     const enqueued = await enqueueLongThink(input, auth.userId, auth.isAnonymous ? 'anonymous' : 'registered')
