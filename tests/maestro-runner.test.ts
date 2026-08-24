@@ -13,7 +13,6 @@ import {
 } from "../lib/maestro/store"
 
 process.env.MAESTRO_RUNNER_KEY = "test-maestro-runner-key-0123456789-abcdefghijklmnopqrstuvwxyz"
-process.env.NEXT_PUBLIC_SUPABASE_URL = "https://project-ref.supabase.co"
 
 const SUCCESS_CRITERION = "Prove unconditionally that kappa > 0.75"
 
@@ -127,11 +126,11 @@ test("unauthenticated callers may scan tools but cannot execute Maestro actions"
   assert.match(callResult.content?.[0]?.text ?? "", /authenticated My Chat user/)
 })
 
-test("OAuth protected-resource metadata delegates scopes to the Supabase authorization server", async () => {
+test("OAuth protected-resource metadata points to the MyChat authorization server", async () => {
   const metadata = maestroProtectedResourceMetadata("https://mychat.example")
   assert.equal(metadata.resource, "https://mychat.example/api/maestro/mcp")
-  assert.deepEqual(metadata.authorization_servers, ["https://project-ref.supabase.co/auth/v1"])
-  assert.equal("scopes_supported" in metadata, false)
+  assert.deepEqual(metadata.authorization_servers, ["https://mychat.example"])
+  assert.deepEqual(metadata.scopes_supported, ["maestro", "offline_access"])
 
   const unauthorized = maestroUnauthorized("https://mychat.example")
   assert.equal(unauthorized.status, 401)
