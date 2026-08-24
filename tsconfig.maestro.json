@@ -11,7 +11,8 @@
     "app/maestro/**/*.tsx",
     "components/maestro-runner.tsx",
     "lib/maestro/**/*.ts",
-    "tests/maestro-runner.test.ts"
+    "tests/maestro-runner.test.ts",
+    "tests/maestro-v4.test.ts"
   ],
   "exclude": [
     "node_modules"
