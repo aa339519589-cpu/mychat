@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server"
 import { resolveAuth } from "@/lib/api/guard"
 import { handleMaestroRpc } from "@/lib/maestro/mcp"
+import { maestroUnauthorized } from "@/lib/maestro/oauth"
 
 const MAX_BODY_BYTES = 512 * 1024
 
@@ -21,7 +22,7 @@ async function body(request: NextRequest): Promise<unknown> {
   return raw ? JSON.parse(raw) : null
 }
 
-async function handleOne(value: unknown, origin: string, userId: string | null): Promise<RpcResponse> {
+async function handleOne(value: unknown, origin: string, userId: string): Promise<RpcResponse> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid Request" } }
   }
@@ -29,6 +30,11 @@ async function handleOne(value: unknown, origin: string, userId: string | null):
 }
 
 export async function POST(request: NextRequest): Promise<Response> {
+  const origin = new URL(request.url).origin
+  const auth = await resolveAuth(request)
+  if (auth.authUnavailable) return json({ error: "authentication_unavailable" }, 503)
+  if (!auth.userId) return maestroUnauthorized(origin)
+
   let value: unknown
   try { value = await body(request) }
   catch (error) {
@@ -36,20 +42,20 @@ export async function POST(request: NextRequest): Promise<Response> {
     return json({ jsonrpc: "2.0", id: null, error: { code: tooLarge ? -32600 : -32700, message: tooLarge ? "Request too large" : "Parse error" } }, tooLarge ? 413 : 400)
   }
 
-  const origin = new URL(request.url).origin
-  const auth = await resolveAuth(request)
-  const userId = auth.userId ?? null
-
   if (Array.isArray(value)) {
     if (value.length === 0) return json({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid Request" } }, 400)
-    const responses = (await Promise.all(value.map(item => handleOne(item, origin, userId)))).filter((item): item is Exclude<RpcResponse, null> => item !== null)
+    const responses = (await Promise.all(value.map(item => handleOne(item, origin, auth.userId!)))).filter((item): item is Exclude<RpcResponse, null> => item !== null)
     return responses.length ? json(responses) : new Response(null, { status: 202 })
   }
-  const response = await handleOne(value, origin, userId)
+  const response = await handleOne(value, origin, auth.userId)
   return response ? json(response) : new Response(null, { status: 202 })
 }
 
-export async function GET(): Promise<Response> {
+export async function GET(request: NextRequest): Promise<Response> {
+  const origin = new URL(request.url).origin
+  const auth = await resolveAuth(request)
+  if (auth.authUnavailable) return json({ error: "authentication_unavailable" }, 503)
+  if (!auth.userId) return maestroUnauthorized(origin)
   return new Response(null, { status: 405, headers: { allow: "POST, OPTIONS", "cache-control": "no-store" } })
 }
 
