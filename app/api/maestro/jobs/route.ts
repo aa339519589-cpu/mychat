@@ -10,9 +10,9 @@ function directLaunchUrl(): string {
   const url = new URL("https://chatgpt.com/")
   url.searchParams.set("q", [
     "@My che che.",
-    "这是 My Chat 刚创建的 Maestro Runner 任务。直接调用 maestro_start，然后开始执行。",
+    "这是 My Chat 刚创建的 Maestro Runner 任务。立刻调用 maestro_begin，参数必须是空对象 {}，然后直接开始执行任务。",
+    "不要询问我任何启动码、token、任务 ID 或中转信息；这些都不是用户输入。",
     "每一轮真正结束前调用 maestro_round_gate，由 Runner 自动开启下一轮；独立 review 通过后才停止。",
-    "不要向我询问任何启动码、token、任务 ID 或其他中转信息。",
   ].join("\n"))
   return url.toString()
 }
