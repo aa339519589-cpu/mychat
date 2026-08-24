@@ -12,6 +12,7 @@ import {
   type MaestroReportState,
   type MaestroRoundRecord,
 } from "@/lib/maestro/store"
+import { maestroContinuationPrompt } from "@/lib/maestro/mcp-prompts"
 import { MAESTRO_TOOLS, MAX_LIST, MAX_OBJECTIVE, MAX_TOKEN } from "@/lib/maestro/mcp-tools"
 import { issueMaestroTaskToken, verifyMaestroTaskToken } from "@/lib/maestro/tokens"
 import { MAESTRO_WIDGET_HTML, MAESTRO_WIDGET_URI } from "@/lib/maestro/widget"
@@ -42,6 +43,9 @@ type GateInput = {
   roundOutput: string
   finalAnswer: string
   done: boolean
+  criterionSatisfied: boolean
+  reviewEvidence: string[]
+  completionVerified: boolean
 }
 type GateEvaluationInput = Omit<GateInput, "taskToken" | "roundOutput">
 
@@ -91,56 +95,35 @@ function gateInput(value: unknown): GateInput | null {
     roundOutput: cleanText(row.roundOutput, MAX_ROUND_OUTPUT),
     finalAnswer: cleanText(row.finalAnswer, MAX_ANSWER),
     done: row.done === true,
+    criterionSatisfied: row.criterionSatisfied === true,
+    reviewEvidence: cleanList(row.reviewEvidence),
+    completionVerified: row.completionVerified === true,
   }
-}
-
-function continuationPrompt(options: {
-  objective: string
-  nextRound: number
-  phase: MaestroPhase
-  checkpoint: string
-  unresolved: string[]
-  nextActions: string[]
-  evidence: string[]
-  candidateAnswer: string
-}): string {
-  const state = JSON.stringify({ checkpoint: options.checkpoint, unresolved: options.unresolved, nextActions: options.nextActions, evidence: options.evidence, candidateAnswer: options.candidateAnswer })
-  const telemetry = "调用 maestro_round_gate 时，roundOutput 必须填写本轮可向用户展示的完整工作产物或结果摘要，不得包含隐藏思维链。"
-  if (options.phase === "review") {
-    return [
-      `继续 Maestro Runner 任务，第 ${options.nextRound} 轮，阶段 review。`,
-      `目标：${options.objective}`,
-      `上一阶段候选答案与检查点：${state}`,
-      telemetry,
-      "这是独立复核轮。主动寻找错误、遗漏、未经证明的跳步和没有闭环的要求，不要默认候选答案正确。",
-      "若发现实质问题，修正并把 phase=review、done=false、未解决项和下一步交给 maestro_round_gate；系统随后会重新进入工作轮。",
-      "若确认所有要求均已闭环，给出经过复核的完整 finalAnswer，并在本轮结束前调用 maestro_round_gate，phase=review、done=true、unresolved=[]、nextActions=[]。",
-      "调用工具后结束这一轮，不要等待用户手动说继续。不要输出隐藏思维链。",
-    ].join("\n\n")
-  }
-  return [
-    `继续 Maestro Runner 任务，第 ${options.nextRound} 轮，阶段 work。`,
-    `目标：${options.objective}`,
-    `上一轮持久检查点：${state}`,
-    telemetry,
-    "现在直接推进尚未闭环的工作。不要把‘需要继续’‘之后再做’当作完成。尽可能完成实质工作。",
-    "本轮真正结束前必须调用 maestro_round_gate 一次，phase=work，并提交自包含 checkpoint、unresolved、nextActions、evidence、roundOutput、done。只有目标已经完整闭环时才把 done=true，同时提交完整 finalAnswer。",
-    "调用工具后结束这一轮。工具界面会自动创建下一轮，不需要用户手动发送‘继续’。不要输出隐藏思维链。",
-  ].join("\n\n")
 }
 
 function nextPromptForTask(row: AgentTaskRow): string {
   const task = publicMaestroTask(row)
   if (!task) throw new Error("Maestro task metadata is invalid")
   if (task.status === "completed" || task.status === "cancelled" || task.status === "failed" || task.phase === "done") return ""
-  return continuationPrompt({ objective: task.objective, nextRound: task.round + 1, phase: task.phase, checkpoint: task.checkpoint, unresolved: task.unresolved, nextActions: task.nextActions, evidence: task.evidence, candidateAnswer: task.candidateAnswer })
+  return maestroContinuationPrompt({
+    objective: task.objective,
+    successCriterion: task.successCriterion,
+    hardRules: task.hardRules,
+    nextRound: task.round + 1,
+    phase: task.phase,
+    checkpoint: task.checkpoint,
+    unresolved: task.unresolved,
+    nextActions: task.nextActions,
+    evidence: task.evidence,
+    candidateAnswer: task.candidateAnswer,
+  })
 }
 
 function storedState(row: AgentTaskRow, taskToken: string): MaestroReportState {
   const task = publicMaestroTask(row)
   if (!task) throw new Error("Maestro task metadata is invalid")
   const stopped = task.status === "cancelled" || task.status === "failed"
-  const completed = task.status === "completed" && Boolean(task.finalAnswer)
+  const completed = task.status === "completed" && task.completionVerified && Boolean(task.finalAnswer)
   const phase: MaestroPhase = completed ? "done" : task.phase
   const action: MaestroAction = completed ? "finish" : stopped ? "stop" : phase === "review" ? "review" : "continue"
   const nextPrompt = action === "finish" || action === "stop" ? "" : nextPromptForTask(row)
@@ -149,6 +132,8 @@ function storedState(row: AgentTaskRow, taskToken: string): MaestroReportState {
     jobId: task.id,
     taskToken,
     objective: task.objective,
+    successCriterion: task.successCriterion,
+    hardRules: task.hardRules,
     status: task.status,
     round: task.round,
     phase,
@@ -159,6 +144,9 @@ function storedState(row: AgentTaskRow, taskToken: string): MaestroReportState {
     evidence: task.evidence,
     candidateAnswer: task.candidateAnswer,
     finalAnswer: task.finalAnswer,
+    criterionSatisfied: task.criterionSatisfied,
+    reviewEvidence: task.reviewEvidence,
+    completionVerified: task.completionVerified,
     nextPrompt,
     currentInput: task.currentInput || nextPrompt,
     currentRoundStartedAt: task.currentRoundStartedAt,
@@ -178,28 +166,50 @@ export function evaluateMaestroGate(row: AgentTaskRow, input: GateEvaluationInpu
   if (task.status === "cancelled" || task.status === "failed" || task.status === "completed") return storedState(row, taskToken)
   if (input.round <= meta.round) return storedState(row, taskToken)
   if (input.round !== meta.round + 1) throw new Error(`Expected Maestro round ${meta.round + 1}`)
-  if (input.round > meta.maxRounds) throw new Error(`Maestro max rounds reached (${meta.maxRounds})`)
 
   const expectedPhase: MaestroPhase = meta.phase === "review" ? "review" : "work"
   const hasGaps = input.unresolved.length > 0 || input.nextActions.length > 0
-  const closure = input.done && !hasGaps && Boolean(input.finalAnswer)
+  const workClosure = input.done && input.criterionSatisfied && !hasGaps && Boolean(input.finalAnswer)
+  const reviewClosure = workClosure && expectedPhase === "review" && input.completionVerified && input.reviewEvidence.length > 0
   let phase: MaestroPhase
   let action: MaestroAction
   let candidateAnswer = meta.candidateAnswer
   let finalAnswer = ""
-  if (expectedPhase === "work" && closure) {
-    phase = "review"; action = "review"; candidateAnswer = input.finalAnswer
-  } else if (expectedPhase === "review" && closure) {
-    phase = "done"; action = "finish"; finalAnswer = input.finalAnswer; candidateAnswer = meta.candidateAnswer || input.finalAnswer
+
+  if (expectedPhase === "work" && workClosure) {
+    phase = "review"
+    action = "review"
+    candidateAnswer = input.finalAnswer
+  } else if (reviewClosure) {
+    phase = "done"
+    action = "finish"
+    finalAnswer = input.finalAnswer
+    candidateAnswer = meta.candidateAnswer || input.finalAnswer
   } else {
-    phase = "work"; action = "continue"
+    phase = "work"
+    action = "continue"
   }
-  const nextPrompt = action === "continue" || action === "review" ? continuationPrompt({ objective: task.objective, nextRound: input.round + 1, phase, checkpoint: input.checkpoint, unresolved: input.unresolved, nextActions: input.nextActions, evidence: input.evidence, candidateAnswer }) : ""
+
+  const nextPrompt = action === "continue" || action === "review" ? maestroContinuationPrompt({
+    objective: task.objective,
+    successCriterion: task.successCriterion,
+    hardRules: task.hardRules,
+    nextRound: input.round + 1,
+    phase,
+    checkpoint: input.checkpoint,
+    unresolved: input.unresolved,
+    nextActions: input.nextActions,
+    evidence: input.evidence,
+    candidateAnswer,
+  }) : ""
+
   return {
     kind: "maestro-runner-state",
     jobId: task.id,
     taskToken,
     objective: task.objective,
+    successCriterion: task.successCriterion,
+    hardRules: task.hardRules,
     status: action === "finish" ? "completed" : "running",
     round: input.round,
     phase,
@@ -210,6 +220,9 @@ export function evaluateMaestroGate(row: AgentTaskRow, input: GateEvaluationInpu
     evidence: input.evidence,
     candidateAnswer,
     finalAnswer,
+    criterionSatisfied: action === "review" || action === "finish",
+    reviewEvidence: expectedPhase === "review" ? input.reviewEvidence : [],
+    completionVerified: action === "finish",
     nextPrompt,
     currentInput: nextPrompt,
     currentRoundStartedAt: null,
@@ -223,7 +236,7 @@ export function evaluateMaestroGate(row: AgentTaskRow, input: GateEvaluationInpu
 }
 
 function textResult(state: MaestroReportState) {
-  return { structuredContent: state, content: [{ type: "text", text: state.action === "finish" ? "Maestro independent review accepted closure. The runner will stop." : state.action === "stop" ? "Maestro task is stopped." : state.action === "review" ? "Candidate answer reached closure criteria. The Maestro UI will start a separate review turn." : "Maestro state synchronized. The UI will start the next ChatGPT turn only when launchGranted is true." }], _meta: { jobId: state.jobId } }
+  return { structuredContent: state, content: [{ type: "text", text: state.action === "finish" ? "Maestro independent review verified the immutable success criterion. The runner will stop." : state.action === "stop" ? "Maestro task is stopped." : state.action === "review" ? "Candidate reached the success criterion. The Maestro UI will start a separate independent review turn." : "Maestro state synchronized. The UI will start the next ChatGPT turn only when launchGranted is true." }], _meta: { jobId: state.jobId } }
 }
 
 async function resolveMaestroOwnerUserId(): Promise<string> {
@@ -321,7 +334,20 @@ async function callGate(args: unknown) {
   const state = evaluateMaestroGate(row, input, token)
   const now = new Date().toISOString()
   const roundElapsed = elapsedMs(meta.currentRoundStartedAt, row.updated_at || row.created_at)
-  const roundRecord: MaestroRoundRecord = { round: input.round, phase: input.phase, input: meta.currentInput || prior.currentInput || prior.nextPrompt, output: input.roundOutput || input.checkpoint, checkpoint: input.checkpoint, action: state.action, startedAt: meta.currentRoundStartedAt || row.updated_at || row.created_at, finishedAt: now, elapsedMs: roundElapsed }
+  const roundRecord: MaestroRoundRecord = {
+    round: input.round,
+    phase: input.phase,
+    input: meta.currentInput || prior.currentInput || prior.nextPrompt,
+    output: input.roundOutput || input.checkpoint,
+    checkpoint: input.checkpoint,
+    action: state.action,
+    startedAt: meta.currentRoundStartedAt || row.updated_at || row.created_at,
+    finishedAt: now,
+    elapsedMs: roundElapsed,
+    criterionSatisfied: input.criterionSatisfied,
+    reviewEvidence: input.reviewEvidence,
+    completionVerified: state.completionVerified,
+  }
   state.history = [...meta.history.filter(item => item.round < input.round), roundRecord].slice(-100)
   state.totalElapsedMs = meta.totalElapsedMs + roundElapsed
   state.lastOutput = roundRecord.output
@@ -345,7 +371,7 @@ export async function handleMaestroRpc(body: JsonRpcRequest, _options: { origin:
   const id = body.id ?? null
   if (body.jsonrpc !== "2.0" || typeof body.method !== "string") return rpcError(id, -32600, "Invalid Request")
   if (body.method.startsWith("notifications/")) return null
-  if (body.method === "initialize") return { jsonrpc: "2.0", id, result: { protocolVersion: MAESTRO_PROTOCOL_VERSION, capabilities: { tools: { listChanged: true }, resources: { listChanged: true } }, serverInfo: { name: MAESTRO_SERVER_NAME, version: MAESTRO_SERVER_VERSION }, instructions: "For a new task inside ChatGPT call maestro_create_task. For a task launched from My Chat call maestro_begin immediately with an empty object and no user-supplied relay data. Never ask the user for any code, token, task id, or relay value. Every active worker/review turn must end with maestro_round_gate and include roundOutput. The attached app synchronizes later rounds through its app-only tool." } }
+  if (body.method === "initialize") return { jsonrpc: "2.0", id, result: { protocolVersion: MAESTRO_PROTOCOL_VERSION, capabilities: { tools: { listChanged: true }, resources: { listChanged: true } }, serverInfo: { name: MAESTRO_SERVER_NAME, version: MAESTRO_SERVER_VERSION }, instructions: "For a new task inside ChatGPT call maestro_create_task. For a task launched from My Chat call maestro_begin immediately with an empty object and no user-supplied relay data. Never ask the user for any code, token, task id, or relay value. The objective and success criterion are immutable. Every active worker/review turn must end with maestro_round_gate. Only a separate review with concrete reviewEvidence and completionVerified=true may finish. The attached app synchronizes later rounds through its app-only tool." } }
   if (body.method === "ping") return { jsonrpc: "2.0", id, result: {} }
   if (body.method === "tools/list") {
     console.log(`[maestro-mcp] tools/list ${MAESTRO_SERVER_NAME}@${MAESTRO_SERVER_VERSION}: ${MAESTRO_TOOLS.map(tool => tool.name).join(",")}`)
