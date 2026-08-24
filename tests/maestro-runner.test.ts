@@ -127,11 +127,11 @@ test("unauthenticated callers may scan tools but cannot execute Maestro actions"
   assert.match(callResult.content?.[0]?.text ?? "", /authenticated My Chat user/)
 })
 
-test("OAuth protected-resource metadata points to the Supabase authorization server", async () => {
+test("OAuth protected-resource metadata delegates scopes to the Supabase authorization server", async () => {
   const metadata = maestroProtectedResourceMetadata("https://mychat.example")
   assert.equal(metadata.resource, "https://mychat.example/api/maestro/mcp")
   assert.deepEqual(metadata.authorization_servers, ["https://project-ref.supabase.co/auth/v1"])
-  assert.ok(metadata.scopes_supported.includes("offline_access"))
+  assert.equal("scopes_supported" in metadata, false)
 
   const unauthorized = maestroUnauthorized("https://mychat.example")
   assert.equal(unauthorized.status, 401)
