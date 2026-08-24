@@ -26,7 +26,7 @@ export const MAESTRO_WIDGET_HTML = String.raw`<!doctype html>
     .muted { opacity: .58; }
     .lists { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; margin-top: 9px; }
     ul { margin: 0; padding-left: 16px; font-size: 10px; line-height: 1.5; max-height: 105px; overflow: auto; }
-    details.history { margin-top: 9px; border: 1px solid color-mix(in srgb, currentColor 13%, transparent); border-radius: 12px; padding: 8px 10px; }
+    details.panel, details.history { margin-top: 9px; border: 1px solid color-mix(in srgb, currentColor 13%, transparent); border-radius: 12px; padding: 8px 10px; }
     summary { cursor: pointer; font-size: 10px; font-weight: 650; opacity: .68; }
     .history-list { margin-top: 7px; display: grid; gap: 6px; max-height: 250px; overflow: auto; }
     .round { border-top: 1px solid color-mix(in srgb, currentColor 10%, transparent); padding-top: 6px; }
@@ -48,6 +48,9 @@ export const MAESTRO_WIDGET_HTML = String.raw`<!doctype html>
     </div>
     <div class="objective" id="objective"></div>
 
+    <div class="section"><h3>不可变成功条件</h3><pre class="content" id="criterion">等待任务契约…</pre></div>
+    <details class="panel"><summary>不可变硬规则</summary><ul id="hardRules"></ul></details>
+
     <div class="stats">
       <div class="stat"><strong id="currentRound">—</strong><span>当前轮</span></div>
       <div class="stat"><strong id="phase">—</strong><span>阶段</span></div>
@@ -63,6 +66,8 @@ export const MAESTRO_WIDGET_HTML = String.raw`<!doctype html>
       <div class="section" style="margin-top:0"><h3>尚未解决</h3><ul id="unresolved"></ul></div>
       <div class="section" style="margin-top:0"><h3>下一步</h3><ul id="nextActions"></ul></div>
       <div class="section" style="margin-top:0"><h3>证据</h3><ul id="evidence"></ul></div>
+      <div class="section" style="margin-top:0"><h3>独立 Review 证据</h3><ul id="reviewEvidence"></ul></div>
+      <div class="section" style="margin-top:0"><h3>完成门</h3><pre class="content" id="completionGate">未验证</pre></div>
       <div class="section" style="margin-top:0"><h3>状态</h3><pre class="content" id="statusText">等待同步…</pre></div>
     </div>
 
@@ -75,6 +80,8 @@ export const MAESTRO_WIDGET_HTML = String.raw`<!doctype html>
       const title = $("title");
       const sync = $("sync");
       const objective = $("objective");
+      const criterion = $("criterion");
+      const hardRules = $("hardRules");
       const currentRound = $("currentRound");
       const phase = $("phase");
       const roundTime = $("roundTime");
@@ -86,6 +93,8 @@ export const MAESTRO_WIDGET_HTML = String.raw`<!doctype html>
       const unresolved = $("unresolved");
       const nextActions = $("nextActions");
       const evidence = $("evidence");
+      const reviewEvidence = $("reviewEvidence");
+      const completionGate = $("completionGate");
       const statusText = $("statusText");
       const historySummary = $("historySummary");
       const history = $("history");
@@ -136,11 +145,10 @@ export const MAESTRO_WIDGET_HTML = String.raw`<!doctype html>
       }
 
       function statusLabel(current) {
-        if (current?.status === "completed" || current?.phase === "done") return "已完成";
-        if (current?.status === "cancelled" || current?.action === "stop") return "已停止";
-        if (current?.status === "failed") return "失败";
+        if (current?.completionVerified && current?.criterionSatisfied && current?.status === "completed") return "成功条件已验证";
+        if (current?.status === "cancelled" || current?.action === "stop") return "已由用户停止";
         if (current?.currentRoundStartedAt) return current.phase === "review" ? "独立复核进行中" : "推理进行中";
-        return current?.phase === "review" ? "等待独立复核" : "等待下一轮";
+        return current?.phase === "review" ? "等待独立复核" : "未完成 · 等待下一轮";
       }
 
       function renderHistory(current) {
@@ -151,12 +159,14 @@ export const MAESTRO_WIDGET_HTML = String.raw`<!doctype html>
           return;
         }
         history.innerHTML = rows.map(item => {
+          const gate = item.completionVerified ? " · 完成门通过" : item.criterionSatisfied ? " · 条件声称满足" : "";
           return '<div class="round">'
             + '<div class="round-head">第 ' + esc(item.round) + ' 轮 · ' + esc(phaseLabel(item.phase)) + '</div>'
-            + '<div class="round-meta">' + esc(formatMs(item.elapsedMs)) + ' · ' + esc(item.action) + '</div>'
+            + '<div class="round-meta">' + esc(formatMs(item.elapsedMs)) + ' · ' + esc(item.action) + esc(gate) + '</div>'
             + '<details><summary>输入</summary><pre>' + esc(item.input || "—") + '</pre></details>'
             + '<details><summary>输出</summary><pre>' + esc(item.output || "—") + '</pre></details>'
             + '<details><summary>检查点</summary><pre>' + esc(item.checkpoint || "—") + '</pre></details>'
+            + (Array.isArray(item.reviewEvidence) && item.reviewEvidence.length ? '<details><summary>Review 证据</summary><pre>' + esc(item.reviewEvidence.join("\n")) + '</pre></details>' : '')
             + '</div>';
         }).join("");
       }
@@ -168,13 +178,15 @@ export const MAESTRO_WIDGET_HTML = String.raw`<!doctype html>
         const activeRound = current.currentRoundStartedAt ? Number(current.round || 0) + 1 : Number(current.round || 0);
         title.textContent = "Maestro Runner · " + statusLabel(current);
         objective.textContent = current.objective || "";
+        criterion.textContent = current.successCriterion || current.objective || "—";
+        list(hardRules, current.hardRules, "暂无额外规则");
         currentRound.textContent = activeRound || "0";
         phase.textContent = phaseLabel(current.phase);
         input.textContent = current.currentInput || current.nextPrompt || "等待下一轮输入…";
         checkpoint.textContent = current.checkpoint || "暂无检查点";
         const running = Boolean(current.currentRoundStartedAt) && current.status !== "completed";
-        if (current.finalAnswer) {
-          outputTitle.textContent = "最终输出";
+        if (current.finalAnswer && current.completionVerified) {
+          outputTitle.textContent = "最终输出 · 已通过独立复核";
           output.textContent = current.finalAnswer;
         } else if (running) {
           outputTitle.textContent = "本轮输出 · 生成中";
@@ -186,7 +198,15 @@ export const MAESTRO_WIDGET_HTML = String.raw`<!doctype html>
         list(unresolved, current.unresolved, "无");
         list(nextActions, current.nextActions, "无");
         list(evidence, current.evidence, "暂无");
-        statusText.textContent = statusLabel(current) + "\n已完成轮次：" + Number(current.round || 0) + "\n服务端更新时间：" + (current.updatedAt || "—");
+        list(reviewEvidence, current.reviewEvidence, "尚未通过独立复核");
+        completionGate.textContent = current.completionVerified && current.criterionSatisfied
+          ? "通过\n成功条件已由独立 review 验证"
+          : "未通过\ndone=true 不能单独结束任务";
+        statusText.textContent = statusLabel(current)
+          + "\n已完成轮次：" + Number(current.round || 0)
+          + "\n成功条件：" + (current.criterionSatisfied ? "已验证" : "未验证")
+          + "\n完成门：" + (current.completionVerified ? "通过" : "锁定")
+          + "\n服务端更新时间：" + (current.updatedAt || "—");
         renderHistory(current);
         updateClock();
         sync.textContent = (source === "poll" ? "已同步" : "状态已接收") + "\n" + new Date(lastSyncAt).toLocaleTimeString();
@@ -255,7 +275,7 @@ export const MAESTRO_WIDGET_HTML = String.raw`<!doctype html>
             render(next, "poll");
             await maybeLaunch(next);
           }
-        } catch (error) {
+        } catch (_) {
           pollFailures += 1;
           sync.textContent = "状态同步暂时失败（" + pollFailures + "）\n本地计时继续";
         } finally {
