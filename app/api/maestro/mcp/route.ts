@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server"
 import { resolveAuth } from "@/lib/api/guard"
-import { maestroUnauthorized } from "@/lib/maestro/oauth"
+import { maestroResourceUrl, maestroUnauthorized } from "@/lib/maestro/oauth"
+import { verifyMaestroOAuthAccessToken } from "@/lib/maestro/oauth-server"
 import { handleMaestroV4Rpc } from "@/lib/maestro/v4"
 
 const MAX_BODY_BYTES = 512 * 1024
@@ -22,6 +23,16 @@ async function body(request: NextRequest): Promise<unknown> {
   return raw ? JSON.parse(raw) : null
 }
 
+async function resolveMaestroUser(request: NextRequest, origin: string): Promise<{ userId: string | null; unavailable: boolean }> {
+  const bearer = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim()
+  if (bearer) {
+    const oauth = verifyMaestroOAuthAccessToken(bearer, maestroResourceUrl(origin))
+    if (oauth) return { userId: oauth.userId, unavailable: false }
+  }
+  const auth = await resolveAuth(request)
+  return { userId: auth.userId, unavailable: auth.authUnavailable === true }
+}
+
 async function handleOne(value: unknown, origin: string, userId: string): Promise<RpcResponse> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid Request" } }
@@ -31,8 +42,8 @@ async function handleOne(value: unknown, origin: string, userId: string): Promis
 
 export async function POST(request: NextRequest): Promise<Response> {
   const origin = new URL(request.url).origin
-  const auth = await resolveAuth(request)
-  if (auth.authUnavailable) return json({ error: "authentication_unavailable" }, 503)
+  const auth = await resolveMaestroUser(request, origin)
+  if (auth.unavailable) return json({ error: "authentication_unavailable" }, 503)
   if (!auth.userId) return maestroUnauthorized(origin)
 
   let value: unknown
@@ -53,8 +64,8 @@ export async function POST(request: NextRequest): Promise<Response> {
 
 export async function GET(request: NextRequest): Promise<Response> {
   const origin = new URL(request.url).origin
-  const auth = await resolveAuth(request)
-  if (auth.authUnavailable) return json({ error: "authentication_unavailable" }, 503)
+  const auth = await resolveMaestroUser(request, origin)
+  if (auth.unavailable) return json({ error: "authentication_unavailable" }, 503)
   if (!auth.userId) return maestroUnauthorized(origin)
   return new Response(null, { status: 405, headers: { allow: "POST, OPTIONS", "cache-control": "no-store" } })
 }
