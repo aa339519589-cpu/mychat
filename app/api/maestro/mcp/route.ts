@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server"
+import { resolveAuth } from "@/lib/api/guard"
 import { handleMaestroRpc } from "@/lib/maestro/mcp"
 
 const MAX_BODY_BYTES = 512 * 1024
@@ -20,11 +21,11 @@ async function body(request: NextRequest): Promise<unknown> {
   return raw ? JSON.parse(raw) : null
 }
 
-async function handleOne(value: unknown, origin: string): Promise<RpcResponse> {
+async function handleOne(value: unknown, origin: string, userId: string | null): Promise<RpcResponse> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid Request" } }
   }
-  return handleMaestroRpc(value, { origin })
+  return handleMaestroRpc(value, { origin, userId })
 }
 
 export async function POST(request: NextRequest): Promise<Response> {
@@ -36,12 +37,15 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
 
   const origin = new URL(request.url).origin
+  const auth = await resolveAuth(request)
+  const userId = auth.userId ?? null
+
   if (Array.isArray(value)) {
     if (value.length === 0) return json({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid Request" } }, 400)
-    const responses = (await Promise.all(value.map(item => handleOne(item, origin)))).filter((item): item is Exclude<RpcResponse, null> => item !== null)
+    const responses = (await Promise.all(value.map(item => handleOne(item, origin, userId)))).filter((item): item is Exclude<RpcResponse, null> => item !== null)
     return responses.length ? json(responses) : new Response(null, { status: 202 })
   }
-  const response = await handleOne(value, origin)
+  const response = await handleOne(value, origin, userId)
   return response ? json(response) : new Response(null, { status: 202 })
 }
 
@@ -56,7 +60,7 @@ export async function OPTIONS(): Promise<Response> {
       allow: "POST, OPTIONS",
       "access-control-allow-origin": "*",
       "access-control-allow-methods": "POST, OPTIONS",
-      "access-control-allow-headers": "content-type, accept, mcp-protocol-version, mcp-session-id",
+      "access-control-allow-headers": "authorization, content-type, accept, mcp-protocol-version, mcp-session-id",
       "access-control-max-age": "86400",
     },
   })
