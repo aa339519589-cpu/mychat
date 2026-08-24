@@ -9,10 +9,16 @@
     "next-env.d.ts",
     "app/api/maestro/**/*.ts",
     "app/maestro/**/*.tsx",
+    "app/oauth/**/*.ts",
+    "app/oauth/**/*.tsx",
+    "app/.well-known/oauth-authorization-server/**/*.ts",
+    "app/.well-known/oauth-protected-resource/**/*.ts",
     "components/maestro-runner.tsx",
+    "components/oauth-consent.tsx",
     "lib/maestro/**/*.ts",
     "tests/maestro-runner.test.ts",
-    "tests/maestro-v4.test.ts"
+    "tests/maestro-v4.test.ts",
+    "tests/maestro-oauth-server.test.ts"
   ],
   "exclude": [
     "node_modules"
