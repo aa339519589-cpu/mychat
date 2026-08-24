@@ -28,12 +28,17 @@ function row(overrides: Partial<AgentTaskRow> = {}): AgentTaskRow {
       maxRounds: 100,
       round: 0,
       phase: "work",
+      successCriterion: "Solve a difficult problem completely",
+      hardRules: [],
       checkpoint: "",
       unresolved: [],
       nextActions: [],
       evidence: [],
       candidateAnswer: "",
       finalAnswer: "",
+      criterionSatisfied: false,
+      reviewEvidence: [],
+      completionVerified: false,
       lastAction: "queued",
       lastReportedAt: null,
       currentInput: "",
@@ -64,6 +69,7 @@ test("Maestro exposes a fresh zero-argument begin tool and no legacy start tool"
   assert.equal(result.serverInfo.name, "mychat-maestro-runner-v3")
   assert.equal(result.serverInfo.version, "3.0.0")
   assert.match(result.instructions, /maestro_begin/)
+  assert.match(result.instructions, /immutable/)
   assert.doesNotMatch(result.instructions, /maestro_start|startCode|启动码/)
 })
 
@@ -97,10 +103,14 @@ test("unfinished work continues and candidate closure requires separate review",
     evidence: ["Lemma A checked"],
     finalAnswer: "",
     done: false,
+    criterionSatisfied: false,
+    reviewEvidence: [],
+    completionVerified: false,
   }, "internal-task-token")
   assert.equal(continued.action, "continue")
   assert.equal(continued.phase, "work")
   assert.match(continued.nextPrompt, /第 2 轮/)
+  assert.match(continued.nextPrompt, /成功判据/)
   assert.doesNotMatch(continued.nextPrompt, /启动码|startCode|taskToken|任务 ID|中转/)
 
   const review = evaluateMaestroGate(row(), {
@@ -112,14 +122,37 @@ test("unfinished work continues and candidate closure requires separate review",
     evidence: ["All cases checked"],
     finalAnswer: "Candidate answer",
     done: true,
+    criterionSatisfied: true,
+    reviewEvidence: [],
+    completionVerified: false,
   }, "internal-task-token")
   assert.equal(review.action, "review")
   assert.equal(review.phase, "review")
   assert.equal(review.finalAnswer, "")
   assert.equal(review.candidateAnswer, "Candidate answer")
+  assert.equal(review.completionVerified, false)
 })
 
-test("only a clean review can finish", () => {
+test("done cannot bypass an unsatisfied success criterion", () => {
+  const state = evaluateMaestroGate(row(), {
+    round: 1,
+    phase: "work",
+    checkpoint: "Model tried to stop early.",
+    unresolved: [],
+    nextActions: [],
+    evidence: [],
+    finalAnswer: "Premature answer",
+    done: true,
+    criterionSatisfied: false,
+    reviewEvidence: [],
+    completionVerified: false,
+  }, "internal-task-token")
+  assert.equal(state.action, "continue")
+  assert.equal(state.phase, "work")
+  assert.equal(state.completionVerified, false)
+})
+
+test("only a clean independent review with evidence can finish", () => {
   const previous = row({
     meta: {
       kind: MAESTRO_META_KIND,
@@ -127,12 +160,17 @@ test("only a clean review can finish", () => {
       maxRounds: 100,
       round: 1,
       phase: "review",
+      successCriterion: "Solve a difficult problem completely",
+      hardRules: [],
       checkpoint: "Candidate produced",
       unresolved: [],
       nextActions: [],
       evidence: ["candidate evidence"],
       candidateAnswer: "Candidate answer",
       finalAnswer: "",
+      criterionSatisfied: true,
+      reviewEvidence: [],
+      completionVerified: false,
       lastAction: "review",
       lastReportedAt: "2026-08-24T00:01:00.000Z",
       currentInput: "review candidate",
@@ -151,10 +189,15 @@ test("only a clean review can finish", () => {
     evidence: ["review verified every requirement"],
     finalAnswer: "Reviewed final answer",
     done: true,
+    criterionSatisfied: true,
+    reviewEvidence: ["Every requirement checked against the immutable success criterion"],
+    completionVerified: true,
   }, "internal-task-token")
   assert.equal(finished.action, "finish")
   assert.equal(finished.phase, "done")
   assert.equal(finished.finalAnswer, "Reviewed final answer")
+  assert.equal(finished.completionVerified, true)
+  assert.ok(finished.reviewEvidence.length > 0)
   assert.equal(finished.nextPrompt, "")
 })
 
