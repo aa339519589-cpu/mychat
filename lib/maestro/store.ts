@@ -5,6 +5,13 @@ import type { SupabaseClient } from "@/lib/supabase/types"
 export const MAESTRO_BRANCH = "maestro-runner-v1"
 export const MAESTRO_META_KIND = "maestro.runner.v1"
 
+export const MAESTRO_BUILTIN_HARD_RULES = [
+  "The objective and success criterion are authoritative and immutable for the lifetime of the task.",
+  "done=true means the exact success criterion has actually been satisfied; inability, difficulty, time spent, round count, token limits, tool limits, lack of progress, or an unknown method never count as completion.",
+  "A work round can never finish the task. Only a separate independent review round may finish it after verifying the exact immutable success criterion.",
+  "If execution is interrupted or a platform/runtime boundary is reached before success, preserve the task as unfinished and resumable; never convert the interruption into success.",
+] as const
+
 export type MaestroPhase = "work" | "review" | "done"
 export type MaestroAction = "continue" | "review" | "finish" | "stop"
 export type AgentTaskRow = Database["public"]["Tables"]["agent_tasks"]["Row"]
@@ -19,6 +26,9 @@ export type MaestroRoundRecord = {
   startedAt: string
   finishedAt: string
   elapsedMs: number
+  criterionSatisfied: boolean
+  reviewEvidence: string[]
+  completionVerified: boolean
 }
 
 export type MaestroMeta = {
@@ -27,12 +37,17 @@ export type MaestroMeta = {
   maxRounds: number
   round: number
   phase: MaestroPhase
+  successCriterion: string
+  hardRules: string[]
   checkpoint: string
   unresolved: string[]
   nextActions: string[]
   evidence: string[]
   candidateAnswer: string
   finalAnswer: string
+  criterionSatisfied: boolean
+  reviewEvidence: string[]
+  completionVerified: boolean
   lastAction: MaestroAction | "queued"
   lastReportedAt: string | null
   currentInput: string
@@ -47,6 +62,8 @@ export type MaestroReportState = {
   jobId: string
   taskToken: string
   objective: string
+  successCriterion: string
+  hardRules: string[]
   status: string
   round: number
   phase: MaestroPhase
@@ -57,6 +74,9 @@ export type MaestroReportState = {
   evidence: string[]
   candidateAnswer: string
   finalAnswer: string
+  criterionSatisfied: boolean
+  reviewEvidence: string[]
+  completionVerified: boolean
   nextPrompt: string
   currentInput: string
   currentRoundStartedAt: string | null
@@ -71,6 +91,8 @@ export type MaestroReportState = {
 export type MaestroPublicTask = {
   id: string
   objective: string
+  successCriterion: string
+  hardRules: string[]
   status: string
   round: number
   phase: MaestroPhase
@@ -81,6 +103,9 @@ export type MaestroPublicTask = {
   evidence: string[]
   candidateAnswer: string
   finalAnswer: string
+  criterionSatisfied: boolean
+  reviewEvidence: string[]
+  completionVerified: boolean
   lastAction: MaestroMeta["lastAction"]
   lastReportedAt: string | null
   createdAt: string
@@ -95,6 +120,11 @@ export type MaestroPublicTask = {
 }
 
 export type MaestroClientTask = MaestroPublicTask
+
+export type MaestroContract = {
+  successCriterion?: string
+  hardRules?: string[]
+}
 
 function text(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback
@@ -114,6 +144,15 @@ function phase(value: unknown): MaestroPhase {
 
 function action(value: unknown): MaestroMeta["lastAction"] {
   return value === "continue" || value === "review" || value === "finish" || value === "stop" ? value : "queued"
+}
+
+function normalizeHardRules(value: string[]): string[] {
+  const unique = new Set<string>()
+  for (const rule of [...MAESTRO_BUILTIN_HARD_RULES, ...value]) {
+    const cleaned = rule.trim()
+    if (cleaned) unique.add(cleaned)
+  }
+  return [...unique].slice(0, 64)
 }
 
 function rounds(value: unknown): MaestroRoundRecord[] {
@@ -136,6 +175,9 @@ function rounds(value: unknown): MaestroRoundRecord[] {
       startedAt: text(row.startedAt),
       finishedAt: text(row.finishedAt),
       elapsedMs: integer(row.elapsedMs, 0),
+      criterionSatisfied: row.criterionSatisfied === true,
+      reviewEvidence: strings(row.reviewEvidence),
+      completionVerified: row.completionVerified === true,
     })
   }
   return result.slice(-100)
@@ -150,12 +192,17 @@ export function maestroMeta(row: Pick<AgentTaskRow, "meta">): MaestroMeta | null
     maxRounds: Math.max(1, integer(record.maxRounds, 1000)),
     round: integer(record.round, 0),
     phase: phase(record.phase),
+    successCriterion: text(record.successCriterion),
+    hardRules: normalizeHardRules(strings(record.hardRules)),
     checkpoint: text(record.checkpoint),
     unresolved: strings(record.unresolved),
     nextActions: strings(record.nextActions),
     evidence: strings(record.evidence),
     candidateAnswer: text(record.candidateAnswer),
     finalAnswer: text(record.finalAnswer),
+    criterionSatisfied: record.criterionSatisfied === true,
+    reviewEvidence: strings(record.reviewEvidence),
+    completionVerified: record.completionVerified === true,
     lastAction: action(record.lastAction),
     lastReportedAt: typeof record.lastReportedAt === "string" ? record.lastReportedAt : null,
     currentInput: text(record.currentInput),
@@ -172,6 +219,8 @@ export function publicMaestroTask(row: AgentTaskRow): MaestroPublicTask | null {
   return {
     id: row.id,
     objective: row.goal,
+    successCriterion: meta.successCriterion || row.goal,
+    hardRules: meta.hardRules,
     status: row.status,
     round: meta.round,
     phase: meta.phase,
@@ -182,6 +231,9 @@ export function publicMaestroTask(row: AgentTaskRow): MaestroPublicTask | null {
     evidence: meta.evidence,
     candidateAnswer: meta.candidateAnswer,
     finalAnswer: meta.finalAnswer,
+    criterionSatisfied: meta.criterionSatisfied,
+    reviewEvidence: meta.reviewEvidence,
+    completionVerified: meta.completionVerified,
     lastAction: meta.lastAction,
     lastReportedAt: meta.lastReportedAt,
     createdAt: row.created_at,
@@ -202,20 +254,32 @@ export function clientMaestroTask(row: AgentTaskRow): MaestroClientTask | null {
 
 const TASK_SELECT = "id,user_id,goal,mode,repo,branch,status,error,created_at,updated_at,started_at,finished_at,meta,agent_branch,pull_request_url,pull_request_number,commit_sha"
 
-export async function createMaestroTask(client: SupabaseClient, userId: string, objective: string, maxRounds: number): Promise<AgentTaskRow> {
+export async function createMaestroTask(
+  client: SupabaseClient,
+  userId: string,
+  objective: string,
+  maxRounds: number,
+  contract: MaestroContract = {},
+): Promise<AgentTaskRow> {
   const now = new Date().toISOString()
+  const successCriterion = contract.successCriterion?.trim() || objective
   const meta: MaestroMeta = {
     kind: MAESTRO_META_KIND,
     version: 1,
     maxRounds,
     round: 0,
     phase: "work",
+    successCriterion,
+    hardRules: normalizeHardRules(contract.hardRules ?? []),
     checkpoint: "",
     unresolved: [],
     nextActions: [],
     evidence: [],
     candidateAnswer: "",
     finalAnswer: "",
+    criterionSatisfied: false,
+    reviewEvidence: [],
+    completionVerified: false,
     lastAction: "queued",
     lastReportedAt: null,
     currentInput: "",
@@ -224,7 +288,15 @@ export async function createMaestroTask(client: SupabaseClient, userId: string, 
     lastOutput: "",
     history: [],
   }
-  const { data, error } = await client.from("agent_tasks").insert({ user_id: userId, goal: objective, mode: "plan", branch: MAESTRO_BRANCH, status: "queued", meta: toJson(meta), updated_at: now }).select(TASK_SELECT).single()
+  const { data, error } = await client.from("agent_tasks").insert({
+    user_id: userId,
+    goal: objective,
+    mode: "plan",
+    branch: MAESTRO_BRANCH,
+    status: "queued",
+    meta: toJson(meta),
+    updated_at: now,
+  }).select(TASK_SELECT).single()
   if (error || !data) throw new Error(error?.message ?? "Maestro task creation failed")
   return data as AgentTaskRow
 }
@@ -250,7 +322,16 @@ export async function markMaestroRoundStarted(client: SupabaseClient, userId: st
     if (row.status === "cancelled" || row.status === "completed") return { row, started: false }
     if (round !== meta.round + 1 || meta.currentRoundStartedAt) return { row, started: false }
     const now = new Date().toISOString()
-    const { data, error } = await client.from("agent_tasks").update({ status: "running", started_at: row.started_at ?? now, updated_at: now, meta: toJson({ ...meta, currentInput: input, currentRoundStartedAt: now }) }).eq("id", row.id).eq("user_id", userId).eq("branch", MAESTRO_BRANCH).eq("updated_at", row.updated_at).select(TASK_SELECT).maybeSingle()
+    const extendedMaxRounds = round > meta.maxRounds
+      ? Math.max(round + 999, Math.max(2, meta.maxRounds) * 2)
+      : meta.maxRounds
+    const { data, error } = await client.from("agent_tasks").update({
+      status: "running",
+      started_at: row.started_at ?? now,
+      finished_at: null,
+      updated_at: now,
+      meta: toJson({ ...meta, maxRounds: extendedMaxRounds, currentInput: input, currentRoundStartedAt: now }),
+    }).eq("id", row.id).eq("user_id", userId).eq("branch", MAESTRO_BRANCH).eq("updated_at", row.updated_at).select(TASK_SELECT).maybeSingle()
     if (error) throw new Error(error.message)
     if (data) return { row: data as AgentTaskRow, started: true }
   }
@@ -263,7 +344,12 @@ export async function cancelMaestroTask(client: SupabaseClient, userId: string, 
   const meta = maestroMeta(row)
   if (!meta) return false
   const now = new Date().toISOString()
-  const { error } = await client.from("agent_tasks").update({ status: "cancelled", finished_at: now, updated_at: now, meta: toJson({ ...meta, lastAction: "stop", lastReportedAt: now, currentRoundStartedAt: null }) }).eq("id", jobId).eq("user_id", userId).eq("branch", MAESTRO_BRANCH)
+  const { error } = await client.from("agent_tasks").update({
+    status: "cancelled",
+    finished_at: now,
+    updated_at: now,
+    meta: toJson({ ...meta, lastAction: "stop", lastReportedAt: now, currentRoundStartedAt: null, completionVerified: false }),
+  }).eq("id", jobId).eq("user_id", userId).eq("branch", MAESTRO_BRANCH)
   if (error) throw new Error(error.message)
   return true
 }
@@ -276,18 +362,31 @@ export async function applyMaestroReport(client: SupabaseClient, userId: string,
     const existing = publicMaestroTask(row)
     if (!meta || !existing) throw new Error("Maestro task metadata is invalid")
     if (row.status === "cancelled" || row.status === "completed" || state.round < meta.round) return existing
+
+    const verifiedCompletion = state.action === "finish"
+      && state.phase === "done"
+      && state.completionVerified === true
+      && state.criterionSatisfied === true
+      && state.reviewEvidence.length > 0
+      && Boolean(state.finalAnswer.trim())
+
+    const safePhase: MaestroPhase = verifiedCompletion ? "done" : state.phase === "done" ? "work" : state.phase
+    const safeAction: MaestroAction = verifiedCompletion ? "finish" : state.action === "finish" ? "continue" : state.action
     const now = new Date().toISOString()
     const nextMeta: MaestroMeta = {
       ...meta,
       round: state.round,
-      phase: state.phase,
+      phase: safePhase,
       checkpoint: state.checkpoint,
       unresolved: state.unresolved,
       nextActions: state.nextActions,
       evidence: state.evidence,
       candidateAnswer: state.candidateAnswer,
-      finalAnswer: state.finalAnswer,
-      lastAction: state.action,
+      finalAnswer: verifiedCompletion ? state.finalAnswer : "",
+      criterionSatisfied: verifiedCompletion,
+      reviewEvidence: verifiedCompletion ? state.reviewEvidence : state.reviewEvidence,
+      completionVerified: verifiedCompletion,
+      lastAction: safeAction,
       lastReportedAt: now,
       currentInput: state.currentInput,
       currentRoundStartedAt: state.currentRoundStartedAt,
@@ -295,8 +394,13 @@ export async function applyMaestroReport(client: SupabaseClient, userId: string,
       lastOutput: state.lastOutput,
       history: state.history.slice(-100),
     }
-    const completed = state.action === "finish" && state.phase === "done" && Boolean(state.finalAnswer.trim())
-    const patch = { status: completed ? "completed" : "running", started_at: row.started_at ?? now, finished_at: completed ? now : null, updated_at: now, meta: toJson(nextMeta) }
+    const patch = {
+      status: verifiedCompletion ? "completed" : "running",
+      started_at: row.started_at ?? now,
+      finished_at: verifiedCompletion ? now : null,
+      updated_at: now,
+      meta: toJson(nextMeta),
+    }
     const { data, error } = await client.from("agent_tasks").update(patch).eq("id", row.id).eq("user_id", userId).eq("branch", MAESTRO_BRANCH).eq("updated_at", row.updated_at).select(TASK_SELECT).maybeSingle()
     if (error) throw new Error(error.message)
     if (data) {
