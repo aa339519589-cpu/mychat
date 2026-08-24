@@ -2,10 +2,8 @@ function trimSlash(value: string): string {
   return value.replace(/\/+$/, "")
 }
 
-export function maestroAuthorizationServer(): string {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim()
-  if (!supabaseUrl) throw new Error("NEXT_PUBLIC_SUPABASE_URL is not configured")
-  return `${trimSlash(supabaseUrl)}/auth/v1`
+export function maestroAuthorizationServer(origin: string): string {
+  return trimSlash(origin)
 }
 
 export function maestroResourceUrl(origin: string): string {
@@ -19,7 +17,8 @@ export function maestroResourceMetadataUrl(origin: string): string {
 export function maestroProtectedResourceMetadata(origin: string) {
   return {
     resource: maestroResourceUrl(origin),
-    authorization_servers: [maestroAuthorizationServer()],
+    authorization_servers: [maestroAuthorizationServer(origin)],
+    scopes_supported: ["maestro", "offline_access"],
     bearer_methods_supported: ["header"],
     resource_name: "My che che. Maestro Runner",
   }
