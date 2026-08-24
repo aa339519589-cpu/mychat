@@ -1,11 +1,11 @@
 import { NextRequest } from "next/server"
 import { resolveAuth } from "@/lib/api/guard"
-import { handleMaestroRpc } from "@/lib/maestro/mcp"
 import { maestroUnauthorized } from "@/lib/maestro/oauth"
+import { handleMaestroV4Rpc } from "@/lib/maestro/v4"
 
 const MAX_BODY_BYTES = 512 * 1024
 
-type RpcResponse = Awaited<ReturnType<typeof handleMaestroRpc>>
+type RpcResponse = Awaited<ReturnType<typeof handleMaestroV4Rpc>>
 
 function json(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), {
@@ -26,7 +26,7 @@ async function handleOne(value: unknown, origin: string, userId: string): Promis
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { jsonrpc: "2.0", id: null, error: { code: -32600, message: "Invalid Request" } }
   }
-  return handleMaestroRpc(value, { origin, userId })
+  return handleMaestroV4Rpc(value, { origin, userId })
 }
 
 export async function POST(request: NextRequest): Promise<Response> {

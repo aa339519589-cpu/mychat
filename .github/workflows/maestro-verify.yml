@@ -8,6 +8,7 @@ on:
       - "components/maestro-runner.tsx"
       - "lib/maestro/**"
       - "tests/maestro-runner.test.ts"
+      - "tests/maestro-v4.test.ts"
       - "tsconfig.maestro.json"
       - ".github/workflows/maestro-verify.yml"
   push:
@@ -42,10 +43,10 @@ jobs:
         run: npx tsc -p tsconfig.maestro.json
 
       - name: Lint Maestro only
-        run: npx eslint --max-warnings 0 app/api/maestro app/maestro components/maestro-runner.tsx lib/maestro tests/maestro-runner.test.ts
+        run: npx eslint --max-warnings 0 app/api/maestro app/maestro components/maestro-runner.tsx lib/maestro tests/maestro-runner.test.ts tests/maestro-v4.test.ts
 
       - name: Test Maestro only
-        run: npx tsx --test tests/maestro-runner.test.ts
+        run: npx tsx --test tests/maestro-runner.test.ts tests/maestro-v4.test.ts
 
       - name: Build production app
         run: npm run build
