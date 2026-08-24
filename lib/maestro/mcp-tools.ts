@@ -17,8 +17,11 @@ function roundSchema() {
       startedAt: { type: "string" },
       finishedAt: { type: "string" },
       elapsedMs: { type: "integer", minimum: 0 },
+      criterionSatisfied: { type: "boolean" },
+      reviewEvidence: { type: "array", items: { type: "string" } },
+      completionVerified: { type: "boolean" },
     },
-    required: ["round", "phase", "input", "output", "checkpoint", "action", "startedAt", "finishedAt", "elapsedMs"],
+    required: ["round", "phase", "input", "output", "checkpoint", "action", "startedAt", "finishedAt", "elapsedMs", "criterionSatisfied", "reviewEvidence", "completionVerified"],
     additionalProperties: false,
   }
 }
@@ -31,6 +34,8 @@ function stateOutputSchema() {
       jobId: { type: "string" },
       taskToken: { type: "string", description: "Internal Maestro capability. Never request or display it to the user." },
       objective: { type: "string" },
+      successCriterion: { type: "string" },
+      hardRules: { type: "array", items: { type: "string" } },
       status: { type: "string" },
       round: { type: "integer", minimum: 0 },
       phase: { type: "string", enum: ["work", "review", "done"] },
@@ -41,6 +46,9 @@ function stateOutputSchema() {
       evidence: { type: "array", items: { type: "string" } },
       candidateAnswer: { type: "string" },
       finalAnswer: { type: "string" },
+      criterionSatisfied: { type: "boolean" },
+      reviewEvidence: { type: "array", items: { type: "string" } },
+      completionVerified: { type: "boolean" },
       nextPrompt: { type: "string" },
       currentInput: { type: "string" },
       currentRoundStartedAt: { type: ["string", "null"] },
@@ -51,7 +59,7 @@ function stateOutputSchema() {
       updatedAt: { type: "string" },
       launchGranted: { type: "boolean" },
     },
-    required: ["kind", "jobId", "taskToken", "objective", "status", "round", "phase", "action", "checkpoint", "unresolved", "nextActions", "evidence", "candidateAnswer", "finalAnswer", "nextPrompt", "currentInput", "currentRoundStartedAt", "totalElapsedMs", "lastOutput", "history", "createdAt", "updatedAt", "launchGranted"],
+    required: ["kind", "jobId", "taskToken", "objective", "successCriterion", "hardRules", "status", "round", "phase", "action", "checkpoint", "unresolved", "nextActions", "evidence", "candidateAnswer", "finalAnswer", "criterionSatisfied", "reviewEvidence", "completionVerified", "nextPrompt", "currentInput", "currentRoundStartedAt", "totalElapsedMs", "lastOutput", "history", "createdAt", "updatedAt", "launchGranted"],
     additionalProperties: false,
   }
 }
@@ -93,7 +101,7 @@ export const MAESTRO_TOOLS = [
   {
     name: "maestro_round_gate",
     title: "Maestro round gate",
-    description: "Persist and evaluate the checkpoint at the end of every worker/review turn. Reuse taskToken from the latest internal Maestro state automatically. Never ask the user for relay values. Include roundOutput as the user-visible work product for this round.",
+    description: "Persist and evaluate the end-of-round checkpoint against the immutable success criterion. Reuse taskToken from the latest internal Maestro state automatically. Never ask the user for relay values. Only an independent review with concrete reviewEvidence and completionVerified=true may finish the task.",
     inputSchema: {
       type: "object",
       properties: {
@@ -107,8 +115,11 @@ export const MAESTRO_TOOLS = [
         roundOutput: { type: "string" },
         finalAnswer: { type: "string" },
         done: { type: "boolean" },
+        criterionSatisfied: { type: "boolean" },
+        reviewEvidence: { type: "array", items: { type: "string" }, maxItems: MAX_LIST },
+        completionVerified: { type: "boolean" },
       },
-      required: ["taskToken", "round", "phase", "checkpoint", "unresolved", "nextActions", "evidence", "roundOutput", "finalAnswer", "done"],
+      required: ["taskToken", "round", "phase", "checkpoint", "unresolved", "nextActions", "evidence", "roundOutput", "finalAnswer", "done", "criterionSatisfied", "reviewEvidence", "completionVerified"],
       additionalProperties: false,
     },
     outputSchema: stateOutputSchema(),
