@@ -16,8 +16,8 @@ import { issueMaestroTaskToken, verifyMaestroTaskToken } from "@/lib/maestro/tok
 import { MAESTRO_WIDGET_HTML, MAESTRO_WIDGET_URI } from "@/lib/maestro/widget"
 
 export const MAESTRO_PROTOCOL_VERSION = "2025-06-18"
-export const MAESTRO_SERVER_NAME = "mychat-maestro-runner"
-export const MAESTRO_SERVER_VERSION = "1.4.0"
+export const MAESTRO_SERVER_NAME = "mychat-maestro-runner-v2"
+export const MAESTRO_SERVER_VERSION = "2.0.0"
 
 const MAX_CHECKPOINT = 36_000
 const MAX_ANSWER = 120_000
@@ -123,9 +123,9 @@ function continuationPrompt(options: {
     `目标：${options.objective}`,
     `上一轮持久检查点：${state}`,
     telemetry,
-    "现在直接推进尚未闭环的工作。不要把“需要继续”“之后再做”当作完成。尽可能完成实质工作。",
+    "现在直接推进尚未闭环的工作。不要把‘需要继续’‘之后再做’当作完成。尽可能完成实质工作。",
     "本轮真正结束前必须调用 maestro_round_gate 一次，phase=work，并提交自包含 checkpoint、unresolved、nextActions、evidence、roundOutput、done。只有目标已经完整闭环时才把 done=true，同时提交完整 finalAnswer。",
-    "调用工具后结束这一轮。工具界面会自动创建下一轮，不需要用户手动发送“继续”。不要输出隐藏思维链。",
+    "调用工具后结束这一轮。工具界面会自动创建下一轮，不需要用户手动发送‘继续’。不要输出隐藏思维链。",
   ].join("\n\n")
 }
 
@@ -230,7 +230,10 @@ function stateOutputSchema() {
   return {
     type: "object",
     properties: {
-      kind: { type: "string", const: "maestro-runner-state" }, jobId: { type: "string" }, taskToken: { type: "string", description: "Internal Maestro capability. Never request or display it to the user." }, objective: { type: "string" }, status: { type: "string" }, round: { type: "integer", minimum: 0 }, phase: { type: "string", enum: ["work", "review", "done"] }, action: { type: "string", enum: ["continue", "review", "finish", "stop"] }, checkpoint: { type: "string" }, unresolved: { type: "array", items: { type: "string" } }, nextActions: { type: "array", items: { type: "string" } }, evidence: { type: "array", items: { type: "string" } }, candidateAnswer: { type: "string" }, finalAnswer: { type: "string" }, nextPrompt: { type: "string" }, currentInput: { type: "string" }, currentRoundStartedAt: { type: ["string", "null"] }, totalElapsedMs: { type: "integer", minimum: 0 }, lastOutput: { type: "string" }, history: { type: "array", items: roundSchema(), maxItems: 100 }, createdAt: { type: "string" }, updatedAt: { type: "string" }, launchGranted: { type: "boolean" },
+      kind: { type: "string", const: "maestro-runner-state" },
+      jobId: { type: "string" },
+      taskToken: { type: "string", description: "Internal Maestro capability. Never request or display it to the user." },
+      objective: { type: "string" }, status: { type: "string" }, round: { type: "integer", minimum: 0 }, phase: { type: "string", enum: ["work", "review", "done"] }, action: { type: "string", enum: ["continue", "review", "finish", "stop"] }, checkpoint: { type: "string" }, unresolved: { type: "array", items: { type: "string" } }, nextActions: { type: "array", items: { type: "string" } }, evidence: { type: "array", items: { type: "string" } }, candidateAnswer: { type: "string" }, finalAnswer: { type: "string" }, nextPrompt: { type: "string" }, currentInput: { type: "string" }, currentRoundStartedAt: { type: ["string", "null"] }, totalElapsedMs: { type: "integer", minimum: 0 }, lastOutput: { type: "string" }, history: { type: "array", items: roundSchema(), maxItems: 100 }, createdAt: { type: "string" }, updatedAt: { type: "string" }, launchGranted: { type: "boolean" },
     },
     required: ["kind", "jobId", "taskToken", "objective", "status", "round", "phase", "action", "checkpoint", "unresolved", "nextActions", "evidence", "candidateAnswer", "finalAnswer", "nextPrompt", "currentInput", "currentRoundStartedAt", "totalElapsedMs", "lastOutput", "history", "createdAt", "updatedAt", "launchGranted"],
     additionalProperties: false,
@@ -243,7 +246,7 @@ const SHARED_META = { ...WIDGET_ACCESSIBLE, ui: { resourceUri: MAESTRO_WIDGET_UR
 export const MAESTRO_TOOLS = [
   {
     name: "maestro_create_task", title: "Run a new Maestro task",
-    description: "Create and immediately start a new Maestro Runner task from the user's objective. Never ask the user for any code, token, task id, or relay value.",
+    description: "Create and immediately start a new Maestro Runner task from the user's objective. Always use this for @My che che. followed by a new task. Never ask the user for any code, token, task id, or relay value.",
     inputSchema: { type: "object", properties: { objective: { type: "string", minLength: 1, maxLength: MAX_OBJECTIVE }, maxRounds: { type: "integer", minimum: 2, maximum: 100_000, default: DEFAULT_MAX_ROUNDS } }, required: ["objective"], additionalProperties: false },
     outputSchema: stateOutputSchema(), annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
     _meta: { ...SHARED_META, "openai/toolInvocation/invoking": "Starting Maestro task…", "openai/toolInvocation/invoked": "Maestro task started" },
@@ -383,9 +386,12 @@ export async function handleMaestroRpc(body: JsonRpcRequest, _options: { origin:
   const id = body.id ?? null
   if (body.jsonrpc !== "2.0" || typeof body.method !== "string") return rpcError(id, -32600, "Invalid Request")
   if (body.method.startsWith("notifications/")) return null
-  if (body.method === "initialize") return { jsonrpc: "2.0", id, result: { protocolVersion: MAESTRO_PROTOCOL_VERSION, capabilities: { tools: {}, resources: {} }, serverInfo: { name: MAESTRO_SERVER_NAME, version: MAESTRO_SERVER_VERSION }, instructions: "For a new task inside ChatGPT call maestro_create_task. For a task launched from My Chat call maestro_start with no arguments. Never ask the user for any code, token, task id, or relay value. The Maestro widget reuses maestro_start with the internal task capability to synchronize and atomically claim later rounds. Every active worker/review turn must end with maestro_round_gate and include roundOutput. The gate persists checkpoint, phase, visible input/output, timing, total runtime, and history before returning." } }
+  if (body.method === "initialize") return { jsonrpc: "2.0", id, result: { protocolVersion: MAESTRO_PROTOCOL_VERSION, capabilities: { tools: { listChanged: true }, resources: { listChanged: true } }, serverInfo: { name: MAESTRO_SERVER_NAME, version: MAESTRO_SERVER_VERSION }, instructions: "For a new task inside ChatGPT call maestro_create_task. For a task launched from My Chat call maestro_start with no arguments. Never ask the user for any code, token, task id, or relay value. The Maestro widget reuses maestro_start with the internal task capability to synchronize and atomically claim later rounds. Every active worker/review turn must end with maestro_round_gate and include roundOutput. The gate persists checkpoint, phase, visible input/output, timing, total runtime, and history before returning." } }
   if (body.method === "ping") return { jsonrpc: "2.0", id, result: {} }
-  if (body.method === "tools/list") return { jsonrpc: "2.0", id, result: { tools: MAESTRO_TOOLS } }
+  if (body.method === "tools/list") {
+    console.log(`[maestro-mcp] tools/list ${MAESTRO_SERVER_NAME}@${MAESTRO_SERVER_VERSION}: ${MAESTRO_TOOLS.map(tool => tool.name).join(",")}`)
+    return { jsonrpc: "2.0", id, result: { tools: MAESTRO_TOOLS } }
+  }
   if (body.method === "resources/list") return { jsonrpc: "2.0", id, result: { resources: [{ uri: MAESTRO_WIDGET_URI, name: "Maestro Runner", mimeType: "text/html;profile=mcp-app" }] } }
   if (body.method === "resources/templates/list") return { jsonrpc: "2.0", id, result: { resourceTemplates: [] } }
   if (body.method === "resources/read") {
