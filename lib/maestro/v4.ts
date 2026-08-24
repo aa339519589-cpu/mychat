@@ -12,7 +12,7 @@ export { evaluateMaestroV4Gate } from "@/lib/maestro/v4-engine"
 
 export const MAESTRO_V4_PROTOCOL_VERSION = "2025-06-18"
 export const MAESTRO_V4_SERVER_NAME = "mychat-maestro-runner-v4-zero-code"
-export const MAESTRO_V4_SERVER_VERSION = "4.0.0"
+export const MAESTRO_V4_SERVER_VERSION = "4.1.0"
 
 export type MaestroV4RpcOptions = { origin: string; userId?: string | null }
 type JsonRpcId = string | number | null
