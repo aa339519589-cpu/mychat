@@ -16,8 +16,8 @@ import { issueMaestroTaskToken, verifyMaestroTaskToken } from "@/lib/maestro/tok
 import { MAESTRO_WIDGET_HTML, MAESTRO_WIDGET_URI } from "@/lib/maestro/widget"
 
 export const MAESTRO_PROTOCOL_VERSION = "2025-06-18"
-export const MAESTRO_SERVER_NAME = "mychat-maestro-runner-v2"
-export const MAESTRO_SERVER_VERSION = "2.0.0"
+export const MAESTRO_SERVER_NAME = "mychat-maestro-runner-v3"
+export const MAESTRO_SERVER_VERSION = "3.0.0"
 
 const MAX_CHECKPOINT = 36_000
 const MAX_ANSWER = 120_000
@@ -68,9 +68,10 @@ function createInput(value: unknown): CreateInput | null {
   return objective && Number.isSafeInteger(maxRounds) && maxRounds >= 2 && maxRounds <= 100_000 ? { objective, maxRounds } : null
 }
 
-function startInput(value: unknown): { taskToken: string } {
+function syncInput(value: unknown): { taskToken: string } | null {
   const row = record(value)
-  return { taskToken: cleanText(row?.taskToken, MAX_TOKEN) }
+  const taskToken = cleanText(row?.taskToken, MAX_TOKEN)
+  return taskToken ? { taskToken } : null
 }
 
 function gateInput(value: unknown): GateInput | null {
@@ -252,11 +253,11 @@ export const MAESTRO_TOOLS = [
     _meta: { ...SHARED_META, "openai/toolInvocation/invoking": "Starting Maestro task…", "openai/toolInvocation/invoked": "Maestro task started" },
   },
   {
-    name: "maestro_start", title: "Start or synchronize the My Chat task",
-    description: "For a fresh task launched from My Chat, call with no arguments and claim the newest queued task. The attached Maestro widget may later call this same tool with taskToken from internal tool state to synchronize and atomically claim the next round. Never ask the user for any code, token, task id, or relay value.",
-    inputSchema: { type: "object", properties: { taskToken: { type: "string", minLength: 32, maxLength: MAX_TOKEN, description: "Optional widget-internal capability from prior Maestro state. Never obtain it from the user." } }, additionalProperties: false },
+    name: "maestro_begin", title: "Begin queued My Chat task",
+    description: "Start the newest queued Maestro task created by My Chat. This tool takes no arguments. Call it immediately for a My Chat-launched task. Never ask the user for any code, token, task id, or relay value.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
     outputSchema: stateOutputSchema(), annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: true },
-    _meta: { ...SHARED_META, "openai/toolInvocation/invoking": "Synchronizing Maestro…", "openai/toolInvocation/invoked": "Maestro synchronized" },
+    _meta: { ...SHARED_META, "openai/toolInvocation/invoking": "Starting queued Maestro task…", "openai/toolInvocation/invoked": "Queued Maestro task started" },
   },
   {
     name: "maestro_round_gate", title: "Maestro round gate",
@@ -264,6 +265,13 @@ export const MAESTRO_TOOLS = [
     inputSchema: { type: "object", properties: { taskToken: { type: "string", minLength: 32, maxLength: MAX_TOKEN }, round: { type: "integer", minimum: 1, maximum: 1_000_000 }, phase: { type: "string", enum: ["work", "review"] }, checkpoint: { type: "string" }, unresolved: { type: "array", items: { type: "string" }, maxItems: MAX_LIST }, nextActions: { type: "array", items: { type: "string" }, maxItems: MAX_LIST }, evidence: { type: "array", items: { type: "string" }, maxItems: MAX_LIST }, roundOutput: { type: "string" }, finalAnswer: { type: "string" }, done: { type: "boolean" } }, required: ["taskToken", "round", "phase", "checkpoint", "unresolved", "nextActions", "evidence", "roundOutput", "finalAnswer", "done"], additionalProperties: false },
     outputSchema: stateOutputSchema(), annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: true },
     _meta: { ...SHARED_META, "openai/toolInvocation/invoking": "Saving Maestro round…", "openai/toolInvocation/invoked": "Maestro round saved" },
+  },
+  {
+    name: "maestro_sync", title: "Synchronize Maestro runner",
+    description: "Widget-only synchronization and next-round claim using the internal task capability.",
+    inputSchema: { type: "object", properties: { taskToken: { type: "string", minLength: 32, maxLength: MAX_TOKEN } }, required: ["taskToken"], additionalProperties: false },
+    outputSchema: stateOutputSchema(), annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: true },
+    _meta: { ...WIDGET_ACCESSIBLE, ui: { visibility: ["app"] } },
   },
 ] as const
 
@@ -327,17 +335,21 @@ async function callCreate(args: unknown) {
   return textResult(await claimNextRound(admin, row, token))
 }
 
-async function callStart(args: unknown) {
-  const input = startInput(args)
+async function callBegin() {
   const admin = createAdminClient()
   if (!admin) throw new Error("Maestro storage is unavailable")
-  if (input.taskToken) {
-    const resolved = await taskFromCapability(input.taskToken)
-    return textResult(await claimNextRound(admin, resolved.row, resolved.token))
-  }
   const { row, userId } = await latestQueuedTask()
   const token = issueMaestroTaskToken({ userId, jobId: row.id })
   return textResult(await claimNextRound(admin, row, token))
+}
+
+async function callSync(args: unknown) {
+  const input = syncInput(args)
+  if (!input) throw new Error("Invalid internal Maestro synchronization capability")
+  const admin = createAdminClient()
+  if (!admin) throw new Error("Maestro storage is unavailable")
+  const resolved = await taskFromCapability(input.taskToken)
+  return textResult(await claimNextRound(admin, resolved.row, resolved.token))
 }
 
 function elapsedMs(startedAt: string | null, fallback: string): number {
@@ -386,7 +398,7 @@ export async function handleMaestroRpc(body: JsonRpcRequest, _options: { origin:
   const id = body.id ?? null
   if (body.jsonrpc !== "2.0" || typeof body.method !== "string") return rpcError(id, -32600, "Invalid Request")
   if (body.method.startsWith("notifications/")) return null
-  if (body.method === "initialize") return { jsonrpc: "2.0", id, result: { protocolVersion: MAESTRO_PROTOCOL_VERSION, capabilities: { tools: { listChanged: true }, resources: { listChanged: true } }, serverInfo: { name: MAESTRO_SERVER_NAME, version: MAESTRO_SERVER_VERSION }, instructions: "For a new task inside ChatGPT call maestro_create_task. For a task launched from My Chat call maestro_start with no arguments. Never ask the user for any code, token, task id, or relay value. The Maestro widget reuses maestro_start with the internal task capability to synchronize and atomically claim later rounds. Every active worker/review turn must end with maestro_round_gate and include roundOutput. The gate persists checkpoint, phase, visible input/output, timing, total runtime, and history before returning." } }
+  if (body.method === "initialize") return { jsonrpc: "2.0", id, result: { protocolVersion: MAESTRO_PROTOCOL_VERSION, capabilities: { tools: { listChanged: true }, resources: { listChanged: true } }, serverInfo: { name: MAESTRO_SERVER_NAME, version: MAESTRO_SERVER_VERSION }, instructions: "For a new task inside ChatGPT call maestro_create_task. For a task launched from My Chat call maestro_begin immediately with an empty object and no user-supplied relay data. Never ask the user for any code, token, task id, or relay value. Every active worker/review turn must end with maestro_round_gate and include roundOutput. The attached app synchronizes later rounds through its app-only tool." } }
   if (body.method === "ping") return { jsonrpc: "2.0", id, result: {} }
   if (body.method === "tools/list") {
     console.log(`[maestro-mcp] tools/list ${MAESTRO_SERVER_NAME}@${MAESTRO_SERVER_VERSION}: ${MAESTRO_TOOLS.map(tool => tool.name).join(",")}`)
@@ -403,8 +415,13 @@ export async function handleMaestroRpc(body: JsonRpcRequest, _options: { origin:
     const params = record(body.params)
     try {
       if (params?.name === "maestro_create_task") return { jsonrpc: "2.0", id, result: await callCreate(params.arguments) }
-      if (params?.name === "maestro_start") return { jsonrpc: "2.0", id, result: await callStart(params.arguments) }
+      if (params?.name === "maestro_begin") return { jsonrpc: "2.0", id, result: await callBegin() }
+      if (params?.name === "maestro_sync") return { jsonrpc: "2.0", id, result: await callSync(params.arguments) }
       if (params?.name === "maestro_round_gate") return { jsonrpc: "2.0", id, result: await callGate(params.arguments) }
+      if (params?.name === "maestro_start") {
+        const legacy = syncInput(params.arguments)
+        return legacy ? { jsonrpc: "2.0", id, result: await callSync(params.arguments) } : { jsonrpc: "2.0", id, result: await callBegin() }
+      }
       return rpcError(id, -32602, "Unknown Maestro tool")
     } catch (error) {
       return { jsonrpc: "2.0", id, result: { isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : "Maestro tool failed" }] } }
