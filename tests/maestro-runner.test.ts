@@ -50,38 +50,37 @@ function row(overrides: Partial<AgentTaskRow> = {}): AgentTaskRow {
   }
 }
 
-test("Maestro uses three tools and exposes no user relay code", async () => {
-  assert.deepEqual(MAESTRO_TOOLS.map(tool => tool.name), ["maestro_create_task", "maestro_start", "maestro_round_gate"])
+test("Maestro exposes a fresh zero-argument begin tool and no legacy start tool", async () => {
+  assert.deepEqual(MAESTRO_TOOLS.map(tool => tool.name), ["maestro_create_task", "maestro_begin", "maestro_round_gate", "maestro_sync"])
   const serialized = JSON.stringify(MAESTRO_TOOLS)
-  assert.doesNotMatch(serialized, /startCode/)
-  assert.match(serialized, /taskToken/)
-  assert.equal("required" in MAESTRO_TOOLS[1].inputSchema, false)
-  assert.equal(MAESTRO_TOOLS[1]._meta["openai/widgetAccessible"], true)
+  assert.doesNotMatch(serialized, /startCode|启动码/)
+  assert.doesNotMatch(serialized, /maestro_start/)
+  assert.deepEqual(MAESTRO_TOOLS[1].inputSchema, { type: "object", properties: {}, additionalProperties: false })
+  assert.deepEqual(MAESTRO_TOOLS[3]._meta.ui.visibility, ["app"])
 
   const initialized = await handleMaestroRpc({ jsonrpc: "2.0", id: 1, method: "initialize" }, { origin: "https://example.com" })
-  const result = initialized?.result as { capabilities: unknown; instructions: string }
-  assert.deepEqual(result.capabilities, { tools: {}, resources: {} })
-  assert.match(result.instructions, /maestro_create_task/)
-  assert.match(result.instructions, /maestro_start with no arguments/)
-  assert.doesNotMatch(result.instructions, /startCode/)
+  const result = initialized?.result as { capabilities: unknown; instructions: string; serverInfo: { name: string; version: string } }
+  assert.deepEqual(result.capabilities, { tools: { listChanged: true }, resources: { listChanged: true } })
+  assert.equal(result.serverInfo.name, "mychat-maestro-runner-v3")
+  assert.equal(result.serverInfo.version, "3.0.0")
+  assert.match(result.instructions, /maestro_begin/)
+  assert.doesNotMatch(result.instructions, /maestro_start|startCode|启动码/)
 })
 
-test("widget syncs through maestro_start and never scrapes or fetches ChatGPT", async () => {
+test("widget synchronizes through app-only maestro_sync and never scrapes ChatGPT", async () => {
   assert.match(MAESTRO_WIDGET_HTML, /sendFollowUpMessage/)
-  assert.match(MAESTRO_WIDGET_HTML, /callTool\("maestro_start"/)
-  assert.match(MAESTRO_WIDGET_HTML, /taskToken/)
-  assert.doesNotMatch(MAESTRO_WIDGET_HTML, /startCode/)
+  assert.match(MAESTRO_WIDGET_HTML, /callTool\("maestro_sync"/)
+  assert.doesNotMatch(MAESTRO_WIDGET_HTML, /maestro_start|startCode|启动码/)
   assert.doesNotMatch(MAESTRO_WIDGET_HTML, /fetch\s*\(/)
   assert.doesNotMatch(MAESTRO_WIDGET_HTML, /document\.querySelector/)
   assert.doesNotMatch(MAESTRO_WIDGET_HTML, /backend-api/)
-  assert.match(MAESTRO_WIDGET_HTML, /累计推理墙钟/)
 
   const response = await handleMaestroRpc({ jsonrpc: "2.0", id: 2, method: "resources/read", params: { uri: MAESTRO_WIDGET_URI } }, { origin: "https://example.com" })
   const contents = (response?.result as { contents: Array<{ uri: string; text: string }> }).contents
   assert.equal(contents[0].uri, MAESTRO_WIDGET_URI)
 })
 
-test("My Chat public task projection hides internal capability", () => {
+test("public My Chat task projection hides internal capability", () => {
   const projected = clientMaestroTask(row())
   assert.ok(projected)
   assert.equal("taskToken" in projected, false)
@@ -101,9 +100,7 @@ test("unfinished work continues and candidate closure requires separate review",
   }, "internal-task-token")
   assert.equal(continued.action, "continue")
   assert.equal(continued.phase, "work")
-  assert.equal(continued.launchGranted, false)
   assert.match(continued.nextPrompt, /第 2 轮/)
-  assert.match(continued.nextPrompt, /roundOutput/)
   assert.doesNotMatch(continued.nextPrompt, /启动码|startCode|taskToken|任务 ID|中转/)
 
   const review = evaluateMaestroGate(row(), {
