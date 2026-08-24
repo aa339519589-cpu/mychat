@@ -7,7 +7,7 @@
   },
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "npm run test:maestro && next build",
     "prestart": "tsx scripts/assert-production-config.ts",
     "start": "tsx scripts/start-production.ts",
     "worker": "tsx job-worker.ts",
@@ -25,6 +25,7 @@
     "database:types:generate": "bash scripts/verify-database-types-pg16.sh --write",
     "database:types:check": "bash scripts/verify-database-types-pg16.sh --check",
     "test": "node scripts/run-tests.mjs",
+    "test:maestro": "tsx --test tests/maestro-runner.test.ts",
     "test:coverage": "node scripts/run-tests.mjs --coverage",
     "test:migrations": "bash scripts/verify-generation-migrations-current-pg16.sh",
     "test:e2e": "playwright test",

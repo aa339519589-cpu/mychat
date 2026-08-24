@@ -1,5 +1,3 @@
-const OAUTH_SCOPES = ["openid", "email", "profile", "offline_access"] as const
-
 function trimSlash(value: string): string {
   return value.replace(/\/+$/, "")
 }
@@ -22,7 +20,6 @@ export function maestroProtectedResourceMetadata(origin: string) {
   return {
     resource: maestroResourceUrl(origin),
     authorization_servers: [maestroAuthorizationServer()],
-    scopes_supported: [...OAUTH_SCOPES],
     bearer_methods_supported: ["header"],
     resource_name: "My che che. Maestro Runner",
   }
