@@ -1,11 +1,19 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { MAESTRO_TOOLS, evaluateMaestroGate, handleMaestroRpc } from "../lib/maestro/mcp"
+import { maestroProtectedResourceMetadata, maestroUnauthorized } from "../lib/maestro/oauth"
 import { MAESTRO_WIDGET_HTML, MAESTRO_WIDGET_URI } from "../lib/maestro/widget"
 import { issueMaestroTaskToken, verifyMaestroTaskToken } from "../lib/maestro/tokens"
-import { clientMaestroTask, MAESTRO_BRANCH, MAESTRO_BUILTIN_HARD_RULES, MAESTRO_META_KIND, type AgentTaskRow } from "../lib/maestro/store"
+import {
+  clientMaestroTask,
+  MAESTRO_BRANCH,
+  MAESTRO_BUILTIN_HARD_RULES,
+  MAESTRO_META_KIND,
+  type AgentTaskRow,
+} from "../lib/maestro/store"
 
 process.env.MAESTRO_RUNNER_KEY = "test-maestro-runner-key-0123456789-abcdefghijklmnopqrstuvwxyz"
+process.env.NEXT_PUBLIC_SUPABASE_URL = "https://project-ref.supabase.co"
 
 const SUCCESS_CRITERION = "Prove unconditionally that kappa > 0.75"
 
@@ -57,6 +65,16 @@ function row(overrides: Partial<AgentTaskRow> = {}): AgentTaskRow {
   }
 }
 
+function rowWithMeta(metaOverrides: Record<string, unknown>): AgentTaskRow {
+  const base = row()
+  return row({
+    meta: {
+      ...(base.meta as Record<string, unknown>),
+      ...metaOverrides,
+    } as AgentTaskRow["meta"],
+  })
+}
+
 function gateBase() {
   return {
     checkpoint: "checkpoint",
@@ -75,6 +93,7 @@ test("Maestro exposes automatic creation without user relay codes", async () => 
   const serialized = JSON.stringify(MAESTRO_TOOLS)
   assert.doesNotMatch(serialized, /startCode/)
   assert.match(serialized, /taskToken/)
+  assert.match(serialized, /successCriterion/)
   assert.match(serialized, /criterionSatisfied/)
   assert.match(serialized, /reviewEvidence/)
   assert.equal("required" in MAESTRO_TOOLS[1].inputSchema, false)
@@ -108,7 +127,19 @@ test("unauthenticated callers may scan tools but cannot execute Maestro actions"
   assert.match(callResult.content?.[0]?.text ?? "", /authenticated My Chat user/)
 })
 
-test("widget syncs through maestro_start and never scrapes or fetches ChatGPT", async () => {
+test("OAuth protected-resource metadata points to the Supabase authorization server", async () => {
+  const metadata = maestroProtectedResourceMetadata("https://mychat.example")
+  assert.equal(metadata.resource, "https://mychat.example/api/maestro/mcp")
+  assert.deepEqual(metadata.authorization_servers, ["https://project-ref.supabase.co/auth/v1"])
+  assert.ok(metadata.scopes_supported.includes("offline_access"))
+
+  const unauthorized = maestroUnauthorized("https://mychat.example")
+  assert.equal(unauthorized.status, 401)
+  assert.match(unauthorized.headers.get("www-authenticate") ?? "", /resource_metadata=/)
+  assert.match(unauthorized.headers.get("www-authenticate") ?? "", /oauth-protected-resource/)
+})
+
+test("widget shows live telemetry and immutable completion contract without network fetches", async () => {
   assert.match(MAESTRO_WIDGET_HTML, /sendFollowUpMessage/)
   assert.match(MAESTRO_WIDGET_HTML, /callTool\("maestro_start"/)
   assert.match(MAESTRO_WIDGET_HTML, /taskToken/)
@@ -117,6 +148,9 @@ test("widget syncs through maestro_start and never scrapes or fetches ChatGPT", 
   assert.doesNotMatch(MAESTRO_WIDGET_HTML, /document\.querySelector/)
   assert.doesNotMatch(MAESTRO_WIDGET_HTML, /backend-api/)
   assert.match(MAESTRO_WIDGET_HTML, /累计推理墙钟/)
+  assert.match(MAESTRO_WIDGET_HTML, /不可变成功条件/)
+  assert.match(MAESTRO_WIDGET_HTML, /完成门/)
+  assert.match(MAESTRO_WIDGET_HTML, /独立 Review 证据/)
 
   const response = await handleMaestroRpc(
     { jsonrpc: "2.0", id: 4, method: "resources/read", params: { uri: MAESTRO_WIDGET_URI } },
@@ -173,23 +207,13 @@ test("work done=true can only produce a review candidate, never finish", () => {
 })
 
 test("review cannot finish merely because work is impossible or tools are limited", () => {
-  const previous = row({
-    meta: {
-      ...(row().meta as NonNullable<AgentTaskRow["meta"]> as never),
-    } as AgentTaskRow["meta"],
-  })
-  const base = row()
-  const meta = base.meta as Record<string, unknown>
-  const reviewRow = row({
-    meta: {
-      ...meta,
-      round: 1,
-      phase: "review",
-      candidateAnswer: "I cannot prove the target with current tools.",
-      checkpoint: "No known route closes the gap.",
-      lastAction: "review",
-      currentInput: "independent review",
-    } as AgentTaskRow["meta"],
+  const reviewRow = rowWithMeta({
+    round: 1,
+    phase: "review",
+    candidateAnswer: "I cannot prove the target with current tools.",
+    checkpoint: "No known route closes the gap.",
+    lastAction: "review",
+    currentInput: "independent review",
   })
 
   const rejected = evaluateMaestroGate(reviewRow, {
@@ -213,16 +237,11 @@ test("review cannot finish merely because work is impossible or tools are limite
 })
 
 test("review with criterionSatisfied=true still cannot finish without independent review evidence", () => {
-  const base = row()
-  const meta = base.meta as Record<string, unknown>
-  const reviewRow = row({
-    meta: {
-      ...meta,
-      round: 1,
-      phase: "review",
-      candidateAnswer: "Candidate answer",
-      lastAction: "review",
-    } as AgentTaskRow["meta"],
+  const reviewRow = rowWithMeta({
+    round: 1,
+    phase: "review",
+    candidateAnswer: "Candidate answer",
+    lastAction: "review",
   })
 
   const rejected = evaluateMaestroGate(reviewRow, {
@@ -241,21 +260,16 @@ test("review with criterionSatisfied=true still cannot finish without independen
 })
 
 test("only independent review that verifies the exact criterion may finish", () => {
-  const base = row()
-  const meta = base.meta as Record<string, unknown>
-  const reviewRow = row({
-    meta: {
-      ...meta,
-      round: 1,
-      phase: "review",
-      candidateAnswer: "Candidate proof",
-      checkpoint: "Candidate produced",
-      lastAction: "review",
-      currentInput: "review candidate",
-      currentRoundStartedAt: "2026-08-24T00:01:10.000Z",
-      totalElapsedMs: 10000,
-      lastOutput: "Candidate proof",
-    } as AgentTaskRow["meta"],
+  const reviewRow = rowWithMeta({
+    round: 1,
+    phase: "review",
+    candidateAnswer: "Candidate proof",
+    checkpoint: "Candidate produced",
+    lastAction: "review",
+    currentInput: "review candidate",
+    currentRoundStartedAt: "2026-08-24T00:01:10.000Z",
+    totalElapsedMs: 10000,
+    lastOutput: "Candidate proof",
   })
 
   const finished = evaluateMaestroGate(reviewRow, {
@@ -279,16 +293,11 @@ test("only independent review that verifies the exact criterion may finish", () 
 })
 
 test("initial round horizon is not a completion barrier", () => {
-  const base = row()
-  const meta = base.meta as Record<string, unknown>
-  const beyondBudget = row({
-    meta: {
-      ...meta,
-      maxRounds: 1,
-      round: 1,
-      phase: "work",
-      checkpoint: "Still unfinished",
-    } as AgentTaskRow["meta"],
+  const beyondBudget = rowWithMeta({
+    maxRounds: 1,
+    round: 1,
+    phase: "work",
+    checkpoint: "Still unfinished",
   })
   const continued = evaluateMaestroGate(beyondBudget, {
     ...gateBase(),
