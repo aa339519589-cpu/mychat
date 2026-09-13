@@ -298,9 +298,9 @@ function callCheckpoint(args: unknown) {
     : clockInstruction(clock)
   const instruction = actuallyDone
     ? `Closure accepted. Give the user the final answer now, using the proposed answer and verified checkpoint state. Do not mention this tool unless useful.\n${RESPONSE_INTEGRITY_RULES}`
-    : `${continuation} Continue working now. Do not give the user a final answer yet. Use the checkpoint as compact continuity state, execute the listed next actions, close every material unresolved item, then call long_think_checkpoint again. Do not invent completion and do not reveal hidden chain-of-thought.`
+    : `PROTOCOL BLOCKED: this tool call is not complete. Do not emit any user-facing text. ${continuation} Continue working now. Do not give the user a final answer yet. Use the checkpoint as compact continuity state, execute the listed next actions, close every material unresolved item, then call long_think_checkpoint again. Do not invent completion and do not reveal hidden chain-of-thought.`
   const nextClock = clock ? { ...clock, lastThinkingAt: Date.now() } : null
-  return textResult(instruction, {
+  const result = textResult(instruction, {
     checkpoint: stableCheckpoint(input, nextClock, actuallyDone),
     done: actuallyDone,
     unresolvedCount: input.unresolved.length,
@@ -308,6 +308,7 @@ function callCheckpoint(args: unknown) {
     ...clockProgress(nextClock),
     continuationInstruction: instruction
   })
+  return actuallyDone ? result : { isError: true, ...result }
 }
 
 function callResume(args: unknown) {
