@@ -1,6 +1,7 @@
 export const CHATGPT_LONG_THINK_PROTOCOL_VERSION = "2025-06-18"
 export const CHATGPT_LONG_THINK_SERVER_NAME = "mychat-long-think"
-export const CHATGPT_LONG_THINK_SERVER_VERSION = "1.0.1"
+export const CHATGPT_LONG_THINK_SERVER_VERSION = "1.1.0"
+export const MIN_PURE_THINKING_MS = 30_000
 
 const RESPONSE_INTEGRITY_RULES = `Response integrity rules apply to every reply, including ordinary chat and the final answer after tool use:
 - Answer the user's exact claim. Never replace it with a weaker, stronger, broader, or narrower claim and then respond to that replacement.
@@ -35,6 +36,16 @@ type LongThinkCheckpointInput = {
   done?: boolean
 }
 
+type ThinkingClockPhase = "thinking" | "paused"
+type ThinkingClock = {
+  version: 1
+  pureThinkingMs: number
+  phase: ThinkingClockPhase
+  lastThinkingAt: number | null
+}
+
+type ThinkingClockAction = "start" | "pause" | "resume"
+
 const MAX_TEXT = 24_000
 const MAX_LIST = 64
 const MAX_ITEM = 4_000
@@ -51,6 +62,78 @@ function cleanList(value: unknown): string[] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value)
+}
+
+function finiteNonNegative(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null
+}
+
+function clockFromValue(value: unknown): ThinkingClock | null {
+  if (!isRecord(value)) return null
+  const row = isRecord(value.clock) ? value.clock : value
+  if (row.version !== 1) return null
+  const pureThinkingMs = finiteNonNegative(row.pureThinkingMs)
+  const phase = row.phase === "paused" ? "paused" : row.phase === "thinking" ? "thinking" : null
+  const rawLastThinkingAt = row.lastThinkingAt
+  const lastThinkingAt = rawLastThinkingAt === null ? null : finiteNonNegative(rawLastThinkingAt)
+  if (pureThinkingMs === null || !phase || (rawLastThinkingAt !== null && lastThinkingAt === null)) return null
+  if (phase === "thinking" && lastThinkingAt === null) return null
+  if (phase === "paused" && lastThinkingAt !== null) return null
+  return { version: 1, pureThinkingMs, phase, lastThinkingAt }
+}
+
+function clockFromCheckpoint(value: string): ThinkingClock | null {
+  if (!value) return null
+  try { return clockFromValue(JSON.parse(value)) } catch { return null }
+}
+
+function startedClock(now = Date.now()): ThinkingClock {
+  return { version: 1, pureThinkingMs: 0, phase: "thinking", lastThinkingAt: now }
+}
+
+function settledClock(clock: ThinkingClock, now = Date.now()): ThinkingClock {
+  if (clock.phase !== "thinking" || clock.lastThinkingAt === null) return clock
+  return {
+    ...clock,
+    pureThinkingMs: Math.min(Number.MAX_SAFE_INTEGER, clock.pureThinkingMs + Math.max(0, now - clock.lastThinkingAt)),
+    lastThinkingAt: now,
+  }
+}
+
+function clockJson(clock: ThinkingClock): string {
+  return JSON.stringify({ clock })
+}
+
+function checkpointWithClock(checkpoint: string, clock: ThinkingClock): string {
+  try {
+    const parsed = JSON.parse(checkpoint)
+    if (isRecord(parsed)) return JSON.stringify({ ...parsed, clock })
+  } catch { /* use a clock-only checkpoint below */ }
+  return clockJson(clock)
+}
+
+function clockProgress(clock: ThinkingClock | null): { pureThinkingMs: number; remainingMs: number; phase: ThinkingClockPhase | "not_started" } {
+  if (!clock) return { pureThinkingMs: 0, remainingMs: MIN_PURE_THINKING_MS, phase: "not_started" }
+  const settled = settledClock(clock)
+  return {
+    pureThinkingMs: settled.pureThinkingMs,
+    remainingMs: Math.max(0, MIN_PURE_THINKING_MS - settled.pureThinkingMs),
+    phase: settled.phase,
+  }
+}
+
+function clockInstruction(clock: ThinkingClock | null): string {
+  if (!clock) {
+    return `Start the pure-thinking clock with long_think_clock(action="start") now. The minimum is ${MIN_PURE_THINKING_MS / 1000} seconds with no upper limit. Do not finish before it is reached.`
+  }
+  const progress = clockProgress(clock)
+  if (progress.phase === "paused") {
+    return "The pure-thinking clock is paused. After the external tool returns, call long_think_clock(action=\"resume\") before continuing. Tool time is excluded."
+  }
+  if (progress.remainingMs > 0) {
+    return `Keep thinking. Pure thinking recorded: ${Math.floor(progress.pureThinkingMs / 1000)}s; at least ${Math.ceil(progress.remainingMs / 1000)}s remains. Do not finish yet. There is no upper limit.`
+  }
+  return "The 30-second pure-thinking minimum has been reached. Continue until the problem is actually closed; there is no upper limit."
 }
 
 function checkpointInput(value: unknown): LongThinkCheckpointInput | null {
@@ -70,25 +153,45 @@ function checkpointInput(value: unknown): LongThinkCheckpointInput | null {
   }
 }
 
-function stableCheckpoint(input: LongThinkCheckpointInput): string {
+function stableCheckpoint(input: LongThinkCheckpointInput, clock: ThinkingClock | null, done: boolean): string {
   const payload = {
-    version: 1,
+    version: 2,
     objective: input.objective,
     progress: input.progress,
     unresolved: input.unresolved,
     nextActions: input.nextActions,
     evidence: input.evidence ?? [],
     proposedAnswer: input.proposedAnswer ?? "",
-    done: input.done === true,
+    done,
+    ...(clock ? { clock } : {}),
   }
   return JSON.stringify(payload)
 }
 
 export const CHATGPT_LONG_THINK_TOOLS = [
   {
+    name: "long_think_clock",
+    title: "Pure thinking clock",
+    description: "Enforce a minimum of 30 seconds of pure model thinking with no upper limit. Call start before thinking. Call pause immediately before every external tool call and resume immediately after it returns; the external tool's time is excluded.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["start", "pause", "resume"] },
+        checkpoint: { type: "string", description: "Clock checkpoint returned by this tool or long_think_checkpoint." },
+      },
+      required: ["action"],
+      additionalProperties: false,
+    },
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false,
+      destructiveHint: false,
+    },
+  },
+  {
     name: "long_think_checkpoint",
     title: "Long Think checkpoint",
-    description: "Use this repeatedly while solving a difficult problem. After each substantial reasoning segment, send a compact checkpoint. If unresolved items remain, the tool returns an explicit continuation instruction and you must continue working instead of giving the user a final answer. Set done=true only after the objective is closed and the proposed answer is ready.",
+    description: "Use this repeatedly while solving a difficult problem. The server rejects done=true until the pure-thinking clock has recorded at least 30 seconds. External tool time counts only when bracketed by long_think_clock pause/resume. There is no upper limit.",
     inputSchema: {
       type: "object",
       properties: {
@@ -138,22 +241,63 @@ function textResult(text: string, structuredContent?: Record<string, unknown>) {
   }
 }
 
+function parseClockAction(value: unknown): { action: ThinkingClockAction; checkpoint: string } | null {
+  if (!isRecord(value)) return null
+  const action = value.action === "start" || value.action === "pause" || value.action === "resume" ? value.action : null
+  if (!action) return null
+  return { action, checkpoint: cleanText(value.checkpoint) }
+}
+
+function callClock(args: unknown) {
+  const input = parseClockAction(args)
+  if (!input) return { isError: true, ...textResult("Invalid clock input: action must be start, pause, or resume.") }
+
+  if (input.action === "start") {
+    const clock = startedClock()
+    return textResult(
+      `Pure-thinking clock started. Think continuously for at least ${MIN_PURE_THINKING_MS / 1000} seconds; there is no upper limit. Before every external tool call, pause this clock; after the tool returns, resume it.`,
+      { checkpoint: clockJson(clock), pureThinkingMs: 0, remainingMs: MIN_PURE_THINKING_MS, phase: clock.phase },
+    )
+  }
+
+  const clock = clockFromCheckpoint(input.checkpoint)
+  if (!clock) return { isError: true, ...textResult("Clock checkpoint is missing or invalid. Call long_think_clock(action=\"start\") first.") }
+  if (input.action === "pause") {
+    const paused = settledClock(clock)
+    const next: ThinkingClock = { ...paused, phase: "paused", lastThinkingAt: null }
+    return textResult(
+      "Pure-thinking clock paused. Call long_think_clock(action=\"resume\") immediately after the external tool returns. The tool's time is excluded.",
+      { checkpoint: checkpointWithClock(input.checkpoint, next), pureThinkingMs: next.pureThinkingMs, remainingMs: Math.max(0, MIN_PURE_THINKING_MS - next.pureThinkingMs), phase: next.phase },
+    )
+  }
+
+  const resumed: ThinkingClock = { ...clock, phase: "thinking", lastThinkingAt: Date.now() }
+  return textResult(
+    "Pure-thinking clock resumed. Continue thinking; do not finish until the 30-second minimum is reached and the task is closed.",
+    { checkpoint: checkpointWithClock(input.checkpoint, resumed), pureThinkingMs: resumed.pureThinkingMs, remainingMs: Math.max(0, MIN_PURE_THINKING_MS - resumed.pureThinkingMs), phase: resumed.phase },
+  )
+}
+
 function callCheckpoint(args: unknown) {
   const input = checkpointInput(args)
   if (!input) {
     return { isError: true, ...textResult("Invalid checkpoint input: objective and progress are required, and unresolved/nextActions/done must match the schema.") }
   }
-  const checkpoint = stableCheckpoint(input)
+  const priorClock = clockFromCheckpoint(input.checkpoint ?? "")
+  const clock = priorClock ? settledClock(priorClock) : null
   const hasGaps = input.unresolved.length > 0 || input.nextActions.length > 0
-  const actuallyDone = input.done === true && !hasGaps && Boolean(input.proposedAnswer?.trim())
+  const clockReady = Boolean(clock && clock.phase === "thinking" && clock.pureThinkingMs >= MIN_PURE_THINKING_MS)
+  const actuallyDone = input.done === true && !hasGaps && Boolean(input.proposedAnswer?.trim()) && clockReady
   const instruction = actuallyDone
     ? `Closure accepted. Give the user the final answer now, using the proposed answer and verified checkpoint state. Do not mention this tool unless useful.\n${RESPONSE_INTEGRITY_RULES}`
-    : "Continue working now. Do not give the user a final answer yet. Use the checkpoint as compact continuity state, execute the listed next actions, close every material unresolved item, then call long_think_checkpoint again. Do not invent completion and do not reveal hidden chain-of-thought."
+    : `${clockInstruction(clock)} Continue working now. Do not give the user a final answer yet. Use the checkpoint as compact continuity state, execute the listed next actions, close every material unresolved item, then call long_think_checkpoint again. Do not invent completion and do not reveal hidden chain-of-thought.`
+  const nextClock = clock ? { ...clock, lastThinkingAt: Date.now() } : null
   return textResult(instruction, {
-    checkpoint,
+    checkpoint: stableCheckpoint(input, nextClock, actuallyDone),
     done: actuallyDone,
     unresolvedCount: input.unresolved.length,
     nextActionCount: input.nextActions.length,
+    ...clockProgress(nextClock),
     continuationInstruction: instruction
   })
 }
@@ -164,13 +308,16 @@ function callResume(args: unknown) {
   if (!checkpoint) return { isError: true, ...textResult("checkpoint is required.") }
   const instruction = cleanText(args.instruction, 8_000)
   const suffix = instruction ? ` New user instruction: ${instruction}` : ""
+  const priorClock = clockFromCheckpoint(checkpoint)
+  const resumedClock = priorClock ? { ...priorClock, phase: "thinking" as const, lastThinkingAt: Date.now() } : null
   return textResult(
-    `Resume from this compact checkpoint and continue the unfinished work. Do not claim completion until all material gaps are closed. Do not expose hidden chain-of-thought.${suffix}`,
-    { checkpoint, instruction }
+    `Resume from this compact checkpoint and continue the unfinished work. ${clockInstruction(resumedClock)} Do not claim completion until all material gaps are closed. Do not expose hidden chain-of-thought.${suffix}`,
+    { checkpoint: resumedClock ? checkpointWithClock(checkpoint, resumedClock) : checkpoint, instruction, ...(resumedClock ? clockProgress(resumedClock) : {}) }
   )
 }
 
 export function callChatGptLongThinkTool(name: unknown, args: unknown): unknown {
+  if (name === "long_think_clock") return callClock(args)
   if (name === "long_think_checkpoint") return callCheckpoint(args)
   if (name === "long_think_resume") return callResume(args)
   return { isError: true, ...textResult(`Unknown tool: ${cleanText(name, 200) || "(empty)"}`) }
@@ -192,7 +339,7 @@ export function handleChatGptLongThinkRpc(body: JsonRpcRequest): JsonRpcResponse
         protocolVersion: CHATGPT_LONG_THINK_PROTOCOL_VERSION,
         capabilities: { tools: {} },
         serverInfo: { name: CHATGPT_LONG_THINK_SERVER_NAME, version: CHATGPT_LONG_THINK_SERVER_VERSION },
-        instructions: `For hard tasks, use long_think_checkpoint repeatedly. Continue after each non-final checkpoint. Only answer the user once the checkpoint tool returns done=true. Preserve conclusions and evidence in checkpoint state; never include or request hidden chain-of-thought.\n${RESPONSE_INTEGRITY_RULES}`
+        instructions: `For hard tasks, call long_think_clock(action="start") first. The model must accumulate at least ${MIN_PURE_THINKING_MS / 1000} seconds of pure thinking before a final answer; there is no upper limit. Tool time is excluded only when every external tool call is bracketed by long_think_clock pause/resume. Then use long_think_checkpoint repeatedly. Continue after each non-final checkpoint. Only answer the user once the checkpoint tool returns done=true. Preserve conclusions and evidence in checkpoint state; never include or request hidden chain-of-thought.\n${RESPONSE_INTEGRITY_RULES}`
       }
     }
   }
