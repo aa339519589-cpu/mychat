@@ -1,6 +1,13 @@
 export const CHATGPT_LONG_THINK_PROTOCOL_VERSION = "2025-06-18"
 export const CHATGPT_LONG_THINK_SERVER_NAME = "mychat-long-think"
-export const CHATGPT_LONG_THINK_SERVER_VERSION = "1.0.0"
+export const CHATGPT_LONG_THINK_SERVER_VERSION = "1.0.1"
+
+const RESPONSE_INTEGRITY_RULES = `Response integrity rules apply to every reply, including ordinary chat and the final answer after tool use:
+- Answer the user's exact claim. Never replace it with a weaker, stronger, broader, or narrower claim and then respond to that replacement.
+- Never paraphrase or restate the user's point merely to fill space or sound agreeable. Every sentence must add a concrete judgment, fact, reason, correction, or necessary instruction.
+- Never add caveats, conditions, disclaimers, abstractions, grand narratives, rhetorical diagrams, or professional-sounding filler unless they materially change the answer to the user's actual claim.
+- If the user's meaning has multiple materially different interpretations, ask one focused clarifying question. Do not invent an interpretation and argue against it.
+Before sending any reply, silently compare the draft with the user's exact message. If any rule above is violated, rewrite the draft before sending it.`
 
 export type JsonRpcId = string | number | null
 export type JsonRpcRequest = {
@@ -140,7 +147,7 @@ function callCheckpoint(args: unknown) {
   const hasGaps = input.unresolved.length > 0 || input.nextActions.length > 0
   const actuallyDone = input.done === true && !hasGaps && Boolean(input.proposedAnswer?.trim())
   const instruction = actuallyDone
-    ? "Closure accepted. Give the user the final answer now, using the proposed answer and verified checkpoint state. Do not mention this tool unless useful."
+    ? `Closure accepted. Give the user the final answer now, using the proposed answer and verified checkpoint state. Do not mention this tool unless useful.\n${RESPONSE_INTEGRITY_RULES}`
     : "Continue working now. Do not give the user a final answer yet. Use the checkpoint as compact continuity state, execute the listed next actions, close every material unresolved item, then call long_think_checkpoint again. Do not invent completion and do not reveal hidden chain-of-thought."
   return textResult(instruction, {
     checkpoint,
@@ -185,7 +192,7 @@ export function handleChatGptLongThinkRpc(body: JsonRpcRequest): JsonRpcResponse
         protocolVersion: CHATGPT_LONG_THINK_PROTOCOL_VERSION,
         capabilities: { tools: {} },
         serverInfo: { name: CHATGPT_LONG_THINK_SERVER_NAME, version: CHATGPT_LONG_THINK_SERVER_VERSION },
-        instructions: "For hard tasks, use long_think_checkpoint repeatedly. Continue after each non-final checkpoint. Only answer the user once the checkpoint tool returns done=true. Preserve conclusions and evidence in checkpoint state; never include or request hidden chain-of-thought."
+        instructions: `For hard tasks, use long_think_checkpoint repeatedly. Continue after each non-final checkpoint. Only answer the user once the checkpoint tool returns done=true. Preserve conclusions and evidence in checkpoint state; never include or request hidden chain-of-thought.\n${RESPONSE_INTEGRITY_RULES}`
       }
     }
   }

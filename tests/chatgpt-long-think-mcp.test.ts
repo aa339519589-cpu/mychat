@@ -19,6 +19,10 @@ test("ChatGPT Long Think MCP initializes as a stateless tools server", () => {
   const result = response?.result as Record<string, unknown>
   assert.equal(result.protocolVersion, CHATGPT_LONG_THINK_PROTOCOL_VERSION)
   assert.deepEqual(result.capabilities, { tools: {} })
+  assert.match(String(result.instructions), /Answer the user's exact claim/)
+  assert.match(String(result.instructions), /Never paraphrase or restate/)
+  assert.match(String(result.instructions), /Never add caveats/)
+  assert.match(String(result.instructions), /ask one focused clarifying question/)
 })
 
 test("lists the long-think checkpoint and resume tools as read-only", () => {
@@ -62,6 +66,7 @@ test("checkpoint accepts closure only with no gaps and a proposed answer", () =>
   }) as { structuredContent: { done: boolean }; content: Array<{ text: string }> }
   assert.equal(result.structuredContent.done, true)
   assert.match(result.content[0]?.text ?? "", /Closure accepted/)
+  assert.match(result.content[0]?.text ?? "", /Response integrity rules apply to every reply/)
 })
 
 test("resume returns a continuation instruction without requiring hidden reasoning", () => {
