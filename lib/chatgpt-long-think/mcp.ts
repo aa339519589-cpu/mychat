@@ -1,6 +1,6 @@
 export const CHATGPT_LONG_THINK_PROTOCOL_VERSION = "2025-06-18"
 export const CHATGPT_LONG_THINK_SERVER_NAME = "mychat-long-think"
-export const CHATGPT_LONG_THINK_SERVER_VERSION = "1.3.0"
+export const CHATGPT_LONG_THINK_SERVER_VERSION = "1.4.0"
 export const MIN_PURE_THINKING_MS = 30_000
 const MIN_ACTIVE_CHECKPOINTS = 6
 const MIN_CHECKPOINT_INTERVAL_MS = 3_000
@@ -415,6 +415,22 @@ function evaluateCheckpoint(input: LongThinkCheckpointInput, priorClock: Thinkin
 
 export const CHATGPT_LONG_THINK_TOOLS = [
   {
+    name: "trigger_thinking",
+    title: "Trigger Thinking",
+    description: "One-tap user command. When called, immediately switch the current turn from fast/instant generation to thinking mode and continue the user's actual request in thinking mode.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: [],
+      additionalProperties: false,
+    },
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false,
+      destructiveHint: false,
+    },
+  },
+  {
     name: "long_think_clock",
     title: "Pure thinking clock",
     description: `Enforce at least 30 seconds of active model thinking with no upper limit. Call start before thinking. Checkpoints must be ordered work products, at least ${MIN_CHECKPOINT_INTERVAL_MS / 1000}s apart; a silent gap over ${MAX_SILENT_THINKING_GAP_MS / 1000}s is discarded. Call pause immediately before every external tool call and resume immediately after it returns; external-tool time is excluded.`,
@@ -494,6 +510,16 @@ function parseClockAction(value: unknown): { action: ThinkingClockAction; checkp
   return { action, checkpoint: cleanText(value.checkpoint) }
 }
 
+function callTriggerThinking(args: unknown) {
+  if (args !== undefined && args !== null && (!isRecord(args) || Object.keys(args).length > 0)) {
+    return { isError: true, ...textResult("trigger_thinking takes no arguments.") }
+  }
+  return textResult(
+    "THINKING MODE TRIGGERED. Treat this as the user's explicit command to switch this turn from fast/instant generation to thinking mode. Continue the user's actual request in thinking mode now. Do not answer in fast mode and do not mention this trigger.",
+    { thinking: true, mode: "thinking", trigger: "user_button", requestedAt: Date.now() },
+  )
+}
+
 function callClock(args: unknown) {
   const input = parseClockAction(args)
   if (!input) return { isError: true, ...textResult("Invalid clock input: action must be start, pause, or resume.") }
@@ -564,6 +590,7 @@ function callResume(args: unknown) {
 }
 
 export function callChatGptLongThinkTool(name: unknown, args: unknown): unknown {
+  if (name === "trigger_thinking") return callTriggerThinking(args)
   if (name === "long_think_clock") return callClock(args)
   if (name === "long_think_checkpoint") return callCheckpoint(args)
   if (name === "long_think_resume") return callResume(args)
@@ -586,7 +613,7 @@ export function handleChatGptLongThinkRpc(body: JsonRpcRequest): JsonRpcResponse
         protocolVersion: CHATGPT_LONG_THINK_PROTOCOL_VERSION,
         capabilities: { tools: {} },
         serverInfo: { name: CHATGPT_LONG_THINK_SERVER_NAME, version: CHATGPT_LONG_THINK_SERVER_VERSION },
-        instructions: `For every user request, including ordinary or simple chat, call long_think_clock(action="start") before drafting any user-facing text. Then submit six ordered, concrete work products through long_think_checkpoint: decompose, analyze, verify, challenge, recheck, synthesize. Each checkpoint must be a new stage at least ${MIN_CHECKPOINT_INTERVAL_MS / 1000}s after the previous one; a silent gap over ${MAX_SILENT_THINKING_GAP_MS / 1000}s resets the active run. The model must accumulate at least ${MIN_PURE_THINKING_MS / 1000} seconds of pure thinking and finish all six stages before a final answer; there is no upper limit. Tool time is excluded only when every external tool call is bracketed by long_think_clock pause/resume. You must not send any user-facing text until long_think_checkpoint returns done=true. Continue after every blocked checkpoint. Preserve conclusions and evidence in checkpoint state; never include or request hidden chain-of-thought.\n${RESPONSE_INTEGRITY_RULES}`
+        instructions: `If trigger_thinking is called, it is the user's explicit command to switch the current turn from fast/instant generation to thinking mode. Continue the user's actual request in thinking mode and do not answer in fast mode. For every user request, including ordinary or simple chat, call long_think_clock(action="start") before drafting any user-facing text. Then submit six ordered, concrete work products through long_think_checkpoint: decompose, analyze, verify, challenge, recheck, synthesize. Each checkpoint must be a new stage at least ${MIN_CHECKPOINT_INTERVAL_MS / 1000}s after the previous one; a silent gap over ${MAX_SILENT_THINKING_GAP_MS / 1000}s resets the active run. The model must accumulate at least ${MIN_PURE_THINKING_MS / 1000} seconds of pure thinking and finish all six stages before a final answer; there is no upper limit. Tool time is excluded only when every external tool call is bracketed by long_think_clock pause/resume. You must not send any user-facing text until long_think_checkpoint returns done=true. Continue after every blocked checkpoint. Preserve conclusions and evidence in checkpoint state; never include or request hidden chain-of-thought.\n${RESPONSE_INTEGRITY_RULES}`
       }
     }
   }
