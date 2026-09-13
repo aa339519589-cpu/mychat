@@ -284,13 +284,21 @@ function callCheckpoint(args: unknown) {
     return { isError: true, ...textResult("Invalid checkpoint input: objective and progress are required, and unresolved/nextActions/done must match the schema.") }
   }
   const priorClock = clockFromCheckpoint(input.checkpoint ?? "")
-  const clock = priorClock ? settledClock(priorClock) : null
+  // Older cached MCP sessions only know about this checkpoint tool and do not
+  // have the newer clock tool in their tool list. Start the clock here so
+  // those sessions can still enter the enforced timing gate after reconnecting
+  // is unavailable.
+  const clock = priorClock ? settledClock(priorClock) : startedClock()
+  const autoStarted = !priorClock
   const hasGaps = input.unresolved.length > 0 || input.nextActions.length > 0
   const clockReady = Boolean(clock && clock.phase === "thinking" && clock.pureThinkingMs >= MIN_PURE_THINKING_MS)
   const actuallyDone = input.done === true && !hasGaps && Boolean(input.proposedAnswer?.trim()) && clockReady
+  const continuation = autoStarted
+    ? `Pure-thinking clock started by the checkpoint fallback. The clock tool is long_think_clock; keep thinking for at least ${MIN_PURE_THINKING_MS / 1000} seconds before finishing. There is no upper limit.`
+    : clockInstruction(clock)
   const instruction = actuallyDone
     ? `Closure accepted. Give the user the final answer now, using the proposed answer and verified checkpoint state. Do not mention this tool unless useful.\n${RESPONSE_INTEGRITY_RULES}`
-    : `${clockInstruction(clock)} Continue working now. Do not give the user a final answer yet. Use the checkpoint as compact continuity state, execute the listed next actions, close every material unresolved item, then call long_think_checkpoint again. Do not invent completion and do not reveal hidden chain-of-thought.`
+    : `${continuation} Continue working now. Do not give the user a final answer yet. Use the checkpoint as compact continuity state, execute the listed next actions, close every material unresolved item, then call long_think_checkpoint again. Do not invent completion and do not reveal hidden chain-of-thought.`
   const nextClock = clock ? { ...clock, lastThinkingAt: Date.now() } : null
   return textResult(instruction, {
     checkpoint: stableCheckpoint(input, nextClock, actuallyDone),
