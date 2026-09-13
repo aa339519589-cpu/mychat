@@ -191,7 +191,7 @@ export const CHATGPT_LONG_THINK_TOOLS = [
   {
     name: "long_think_checkpoint",
     title: "Long Think checkpoint",
-    description: "Use this repeatedly while solving a difficult problem. The server rejects done=true until the pure-thinking clock has recorded at least 30 seconds. External tool time counts only when bracketed by long_think_clock pause/resume. There is no upper limit.",
+    description: "Use this for every user request, including ordinary chat. The server rejects done=true until the pure-thinking clock has recorded at least 30 seconds. External tool time counts only when bracketed by long_think_clock pause/resume. There is no upper limit.",
     inputSchema: {
       type: "object",
       properties: {
@@ -255,7 +255,7 @@ function callClock(args: unknown) {
   if (input.action === "start") {
     const clock = startedClock()
     return textResult(
-      `Pure-thinking clock started. Think continuously for at least ${MIN_PURE_THINKING_MS / 1000} seconds; there is no upper limit. Before every external tool call, pause this clock; after the tool returns, resume it.`,
+      `Pure-thinking clock started. Think continuously for at least ${MIN_PURE_THINKING_MS / 1000} seconds; there is no upper limit. Before every external tool call, pause this clock; after the tool returns, resume it. Do not send any user-facing text until long_think_checkpoint returns done=true.`,
       { checkpoint: clockJson(clock), pureThinkingMs: 0, remainingMs: MIN_PURE_THINKING_MS, phase: clock.phase },
     )
   }
@@ -339,7 +339,7 @@ export function handleChatGptLongThinkRpc(body: JsonRpcRequest): JsonRpcResponse
         protocolVersion: CHATGPT_LONG_THINK_PROTOCOL_VERSION,
         capabilities: { tools: {} },
         serverInfo: { name: CHATGPT_LONG_THINK_SERVER_NAME, version: CHATGPT_LONG_THINK_SERVER_VERSION },
-        instructions: `For hard tasks, call long_think_clock(action="start") first. The model must accumulate at least ${MIN_PURE_THINKING_MS / 1000} seconds of pure thinking before a final answer; there is no upper limit. Tool time is excluded only when every external tool call is bracketed by long_think_clock pause/resume. Then use long_think_checkpoint repeatedly. Continue after each non-final checkpoint. Only answer the user once the checkpoint tool returns done=true. Preserve conclusions and evidence in checkpoint state; never include or request hidden chain-of-thought.\n${RESPONSE_INTEGRITY_RULES}`
+        instructions: `For every user request, including ordinary or simple chat, call long_think_clock(action="start") before drafting any user-facing text. The model must accumulate at least ${MIN_PURE_THINKING_MS / 1000} seconds of pure thinking before a final answer; there is no upper limit. Tool time is excluded only when every external tool call is bracketed by long_think_clock pause/resume. You must not send any user-facing text until long_think_checkpoint returns done=true. Continue after every non-final checkpoint. Preserve conclusions and evidence in checkpoint state; never include or request hidden chain-of-thought.\n${RESPONSE_INTEGRITY_RULES}`
       }
     }
   }

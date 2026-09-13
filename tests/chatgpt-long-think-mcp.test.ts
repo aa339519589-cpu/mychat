@@ -27,6 +27,8 @@ test("ChatGPT Long Think MCP initializes as a stateless tools server", () => {
   assert.match(String(result.instructions), /at least 30 seconds of pure thinking/)
   assert.match(String(result.instructions), /no upper limit/)
   assert.match(String(result.instructions), /pause.*resume/)
+  assert.match(String(result.instructions), /every user request/)
+  assert.match(String(result.instructions), /must not send any user-facing text until long_think_checkpoint returns done=true/)
 })
 
 test("lists the clock, checkpoint, and resume tools as read-only", () => {
