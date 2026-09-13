@@ -1,6 +1,6 @@
 export const CHATGPT_LONG_THINK_PROTOCOL_VERSION = "2025-06-18"
 export const CHATGPT_LONG_THINK_SERVER_NAME = "mychat-long-think"
-export const CHATGPT_LONG_THINK_SERVER_VERSION = "1.1.0"
+export const CHATGPT_LONG_THINK_SERVER_VERSION = "1.1.1"
 export const MIN_PURE_THINKING_MS = 30_000
 
 const RESPONSE_INTEGRITY_RULES = `Response integrity rules apply to every reply, including ordinary chat and the final answer after tool use:
