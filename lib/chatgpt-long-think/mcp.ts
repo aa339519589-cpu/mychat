@@ -1,6 +1,6 @@
 export const CHATGPT_LONG_THINK_PROTOCOL_VERSION = "2025-06-18"
 export const CHATGPT_LONG_THINK_SERVER_NAME = "mychat-long-think"
-export const CHATGPT_LONG_THINK_SERVER_VERSION = "1.4.0"
+export const CHATGPT_LONG_THINK_SERVER_VERSION = "1.4.1"
 export const MIN_PURE_THINKING_MS = 30_000
 const MIN_ACTIVE_CHECKPOINTS = 6
 const MIN_CHECKPOINT_INTERVAL_MS = 3_000
@@ -22,6 +22,8 @@ const RESPONSE_INTEGRITY_RULES = `Response integrity rules apply to every reply,
 - Never add caveats, conditions, disclaimers, abstractions, grand narratives, rhetorical diagrams, or professional-sounding filler unless they materially change the answer to the user's actual claim.
 - If the user's meaning has multiple materially different interpretations, ask one focused clarifying question. Do not invent an interpretation and argue against it.
 Before sending any reply, silently compare the draft with the user's exact message. If any rule above is violated, rewrite the draft before sending it.`
+
+const THINKING_TRIGGER_MESSAGE = "THINKING MODE TRIGGERED. Treat this as the user's explicit command to switch this turn from fast/instant generation to thinking mode. Continue the user's actual request in thinking mode now. Do not answer in fast mode and do not mention this trigger."
 
 export type JsonRpcId = string | number | null
 export type JsonRpcRequest = {
@@ -515,7 +517,7 @@ function callTriggerThinking(args: unknown) {
     return { isError: true, ...textResult("trigger_thinking takes no arguments.") }
   }
   return textResult(
-    "THINKING MODE TRIGGERED. Treat this as the user's explicit command to switch this turn from fast/instant generation to thinking mode. Continue the user's actual request in thinking mode now. Do not answer in fast mode and do not mention this trigger.",
+    THINKING_TRIGGER_MESSAGE,
     { thinking: true, mode: "thinking", trigger: "user_button", requestedAt: Date.now() },
   )
 }
@@ -527,8 +529,8 @@ function callClock(args: unknown) {
   if (input.action === "start") {
     const clock = startedClock()
     return textResult(
-      `Active pure-thinking clock started. Think continuously for at least ${MIN_PURE_THINKING_MS / 1000} seconds; there is no upper limit. Submit fresh factual progress at least every ${MIN_CHECKPOINT_INTERVAL_MS / 1000}s; a silent gap over ${MAX_SILENT_THINKING_GAP_MS / 1000}s is discarded. Before every external tool call, pause this clock; after the tool returns, resume it. Do not send any user-facing text until long_think_checkpoint returns done=true.`,
-      { checkpoint: clockJson(clock), pureThinkingMs: 0, remainingMs: MIN_PURE_THINKING_MS, phase: clock.phase, checkpointCount: 0, stageIndex: 0, nextStage: THINKING_STAGES[0].name },
+      `${THINKING_TRIGGER_MESSAGE} Active pure-thinking clock started. Think continuously for at least ${MIN_PURE_THINKING_MS / 1000} seconds; there is no upper limit. Submit fresh factual progress at least every ${MIN_CHECKPOINT_INTERVAL_MS / 1000}s; a silent gap over ${MAX_SILENT_THINKING_GAP_MS / 1000}s is discarded. Before every external tool call, pause this clock; after the tool returns, resume it. Do not send any user-facing text until long_think_checkpoint returns done=true.`,
+      { checkpoint: clockJson(clock), pureThinkingMs: 0, remainingMs: MIN_PURE_THINKING_MS, phase: clock.phase, checkpointCount: 0, stageIndex: 0, nextStage: THINKING_STAGES[0].name, thinking: true, mode: "thinking", trigger: "clock_start" },
     )
   }
 
