@@ -388,3 +388,36 @@ export function callChatGptLongThinkTool(name: unknown, args: unknown): unknown 
 }
 
 export function handleChatGptLongThinkRpc(body: JsonRpcRequest): JsonRpcResponse | null {
+  const id = body.id ?? null
+  if (body.jsonrpc !== "2.0" || typeof body.method !== "string") {
+    return { jsonrpc: "2.0", id, error: { code: -32600, message: "Invalid Request" } }
+  }
+
+  if (body.method.startsWith("notifications/")) return null
+
+  if (body.method === "initialize") {
+    return {
+      jsonrpc: "2.0",
+      id,
+      result: {
+        protocolVersion: CHATGPT_LONG_THINK_PROTOCOL_VERSION,
+        capabilities: { tools: {} },
+        serverInfo: { name: CHATGPT_LONG_THINK_SERVER_NAME, version: CHATGPT_LONG_THINK_SERVER_VERSION },
+        instructions: `For every user request, including ordinary or simple chat, call long_think_clock(action="start") before drafting any user-facing text. The model must accumulate at least ${MIN_PURE_THINKING_MS / 1000} seconds of pure thinking, actively evidenced by ${MIN_ACTIVE_CHECKPOINTS} fresh factual checkpoints, before a final answer; there is no upper limit. Do not wait silently: a gap over ${MAX_SILENT_THINKING_GAP_MS / 1000}s is discarded. Tool time is excluded only when every external tool call is bracketed by long_think_clock pause/resume. You must not send any user-facing text until long_think_checkpoint returns done=true. Continue after every non-final checkpoint. Preserve conclusions and evidence in checkpoint state; never include or request hidden chain-of-thought.\n${RESPONSE_INTEGRITY_RULES}`
+      }
+    }
+  }
+
+  if (body.method === "ping") return { jsonrpc: "2.0", id, result: {} }
+
+  if (body.method === "tools/list") {
+    return { jsonrpc: "2.0", id, result: { tools: CHATGPT_LONG_THINK_TOOLS } }
+  }
+
+  if (body.method === "tools/call") {
+    const params = isRecord(body.params) ? body.params : {}
+    return { jsonrpc: "2.0", id, result: callChatGptLongThinkTool(params.name, params.arguments) }
+  }
+
+  return { jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } }
+}
