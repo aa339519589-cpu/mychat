@@ -134,6 +134,11 @@ test('chat text Job flushes current-attempt accounting before writing its checkp
   assert.equal(captured.modelOptions?.turnOptions?.idempotencyNamespace, context.value.job.id)
   assert.ok(context.events.some(event => event.kind === 'job.started'))
   assert.ok(context.events.some(event => event.kind === 'text.delta'))
+  assert.ok(context.events.some(event => event.kind === 'model.output_completed'))
+  assert.ok(
+    context.events.findIndex(event => event.kind === 'text.delta')
+      < context.events.findIndex(event => event.kind === 'model.output_completed'),
+  )
 })
 
 test('chat text Job rejects unsafe provider tool-call ids before recording an effect', async () => {
