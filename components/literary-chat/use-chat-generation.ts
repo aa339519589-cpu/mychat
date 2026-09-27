@@ -9,7 +9,7 @@ import type { ModelEndpointSummary } from "@/lib/model-endpoints"
 import type { ProjectContext } from "@/lib/project-data"
 import type { SearchMode } from "@/lib/search-mode"
 import type { ClientGenerationPatch, ClientGenerationState } from "@/lib/generation-client"
-import { isOutputStreaming, isRunning, reduceClientGenerationState } from "@/lib/generation-client"
+import { canStartNextTurn, isOutputStreaming, isRunning, reduceClientGenerationState } from "@/lib/generation-client"
 import { cacheConversationMessages, updateConversationTitle } from "@/lib/data"
 import type { ChatTurnAuthority } from '@/lib/llm/chat-request'
 import { runChatStream, type HistoryMessage, type RunChatStreamResult } from "./chat-stream-service"
@@ -104,7 +104,7 @@ export function useChatGeneration(options: UseChatGenerationOptions) {
   }
 
   async function handleSend(text: string, images?: string[], files?: AttachedFile[]) {
-    if (!authorityReady || !user || !active || isOutputStreaming(generationRef.current[active.id])
+    if (!authorityReady || !user || !active || !canStartNextTurn(generationRef.current[active.id])
       || (!activeModelId && !activeEndpointId)) return
     const { userMessage, assistantMessageId, baseHistory, optimisticMessages } = createOptimisticTurn(active, text, images, files)
     const isFirstExchange = active.messages.length === 0
