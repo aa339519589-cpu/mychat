@@ -32,6 +32,8 @@ export type ChatStreamEventContext = {
   projectContext?: ProjectContext
   setConversations: Dispatch<SetStateAction<Conversation[]>>
   setMemories: Dispatch<SetStateAction<Memory[]>>
+  onOutputCompleted?: () => void
+  onRetry?: () => void
 }
 
 function updateAssistantMessage(
@@ -246,6 +248,11 @@ export function processChatStreamEvent(
   const data = event.payload
   if (isRetryEvent(event)) {
     resetForRetry(context)
+    context.onRetry?.()
+    return true
+  }
+  if (event.kind === 'model.output_completed') {
+    context.onOutputCompleted?.()
     return true
   }
   if (event.kind === 'job.terminal') return applyTerminalEvent(context, event)
