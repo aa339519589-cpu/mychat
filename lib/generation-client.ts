@@ -70,6 +70,11 @@ export function isSettling(state?: ClientGenerationState | null): boolean {
   return state?.status === 'running' && state.outputComplete === true
 }
 
+/** A completed visible answer is submit-ready even while its durable predecessor settles. */
+export function canStartNextTurn(state?: ClientGenerationState | null): boolean {
+  return !isOutputStreaming(state)
+}
+
 export type ConversationGenerationSnapshot = {
   id: string
   conversationId: string
