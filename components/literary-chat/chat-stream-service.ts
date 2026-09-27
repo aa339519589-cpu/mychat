@@ -213,7 +213,27 @@ async function reconcileTerminal(
 
 async function consumeChatStream(options: RunChatStreamOptions, state: ChatStreamState, renderer: ChatStreamRenderer, opened: AcceptedJobStream): Promise<void> {
   const { accepted } = opened
-  const context = { state, renderer, conversationId: options.conversationId, assistantMessageId: options.assistantMessageId, projectContext: options.projectContext, setConversations: options.setConversations, setMemories: options.setMemories }
+  const context = {
+    state,
+    renderer,
+    conversationId: options.conversationId,
+    assistantMessageId: options.assistantMessageId,
+    projectContext: options.projectContext,
+    setConversations: options.setConversations,
+    setMemories: options.setMemories,
+    onOutputCompleted: () => options.markGeneration(options.conversationId, {
+      status: 'running',
+      generationId: accepted.jobId,
+      assistantMessageId: options.assistantMessageId,
+      outputComplete: true,
+    }),
+    onRetry: () => options.markGeneration(options.conversationId, {
+      status: 'running',
+      generationId: accepted.jobId,
+      assistantMessageId: options.assistantMessageId,
+      outputComplete: false,
+    }),
+  }
   const streamController = new AbortController()
   const abortStream = () => streamController.abort(options.controller.signal.reason)
   options.controller.signal.addEventListener('abort', abortStream, { once: true })
