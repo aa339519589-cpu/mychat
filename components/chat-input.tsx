@@ -45,13 +45,14 @@ export type ChatInputProps = {
   onReasoningChange: (value: string) => void
   disabled?: boolean
   isLoading: boolean
+  sendBlocked?: boolean
   onStop: () => void
 }
 
 export function ChatInput({
   onSend, activeTier, onTierChange, mobile, searchMode, onSearchModeChange,
   historyRetrieval, onHistoryRetrievalChange, renderEnabled, onRenderEnabledChange, models, endpoints = [], activeModelId, activeModel,
-  activeEndpointId = null, activeEndpoint = null, onModelChange, onEndpointChange, reasoningEffort, onReasoningChange, disabled = false, isLoading, onStop,
+  activeEndpointId = null, activeEndpoint = null, onModelChange, onEndpointChange, reasoningEffort, onReasoningChange, disabled = false, isLoading, sendBlocked = false, onStop,
 }: ChatInputProps) {
   const [plusOpen, setPlusOpen] = useState(false)
   const [modelPickerOpen, setModelPickerOpen] = useState(false)
@@ -70,7 +71,7 @@ export function ChatInput({
   const activeOutputKind = activeEndpoint?.outputKind ?? activeModel?.outputKind
   const reasoningOptions = reasoningOptionsFor(activeEndpoint, activeModel)
   const hasActiveTools = searchMode !== "off" || historyRetrieval || renderEnabled
-  const canSend = !disabled && !isLoading && !state.sendPending && Boolean(activeEndpoint || activeModel) && (!!state.value.trim() || state.images.length > 0 || state.files.length > 0)
+  const canSend = !disabled && !isLoading && !sendBlocked && !state.sendPending && Boolean(activeEndpoint || activeModel) && (!!state.value.trim() || state.images.length > 0 || state.files.length > 0)
 
   return (
     <div className={cn("relative z-10 mx-auto w-full shrink-0", mobile ? "bg-background px-3 pb-[max(0.65rem,env(safe-area-inset-bottom))] pt-1.5" : "max-w-[56rem] px-10 pb-7 pt-1.5")}>
