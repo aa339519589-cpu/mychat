@@ -167,6 +167,24 @@ async function consumeGenerationStream(options: {
   const state = createGenerationStreamState()
   for await (const event of streamJobEvents(accepted, controller.signal)) {
     applyGenerationStreamEvent(event, state)
+    if (event.kind === 'job.retry_scheduled'
+      || (event.kind === 'job.leased'
+        && typeof event.payload.attempt === 'number'
+        && event.payload.attempt > 1)) {
+      markGeneration(initial.conversationId, {
+        status: 'running',
+        generationId: accepted.jobId,
+        assistantMessageId: initial.assistantMessageId,
+        outputComplete: false,
+      })
+    } else if (event.kind === 'model.output_completed') {
+      markGeneration(initial.conversationId, {
+        status: 'running',
+        generationId: accepted.jobId,
+        assistantMessageId: initial.assistantMessageId,
+        outputComplete: true,
+      })
+    }
     if (event.kind === 'job.terminal') {
       const snapshot = terminalSnapshot(event, accepted, initial, state)
       const applied = snapshot && await applyGenerationTerminal({
