@@ -85,6 +85,10 @@ test('chat admission body handles a minimal turn without optional client metadat
 test('active predecessor unique conflict is distinguished from permanent admission conflicts', () => {
   assert.equal(isActiveChatGenerationConflict({
     code: '23505',
+    message: 'chat_conversation_job_active',
+  }), true)
+  assert.equal(isActiveChatGenerationConflict({
+    code: '23505',
     message: 'duplicate key value violates unique constraint "jobs_one_active_chat_conversation_idx"',
     details: 'Key (principal_id, (subject ->> \'conversationId\')) already exists.',
   }), true)
@@ -100,8 +104,7 @@ test('active predecessor unique conflict is distinguished from permanent admissi
 
   const normalized = directAdmissionError({
     code: '23505',
-    message: 'duplicate key value violates unique constraint "jobs_one_active_chat_conversation_idx"',
-    details: 'Key (principal_id, (subject ->> \'conversationId\')) already exists.',
+    message: 'chat_conversation_job_active',
   })
   assert.equal(normalized.code, 'JOB_CONFLICT')
   assert.equal(normalized.retryable, true)
