@@ -62,7 +62,7 @@ export function isActiveChatGenerationConflict(error: unknown): boolean {
       && value.includes('jobs_one_active_chat_conversation_idx'))
 }
 
-function directAdmissionError(error: unknown): JobRuntimeError {
+export function directAdmissionError(error: unknown): JobRuntimeError {
   const details = databaseDetails(error)
   const activeChatConflict = isActiveChatGenerationConflict(error)
   const code = typeof details.databaseCode === 'string' ? details.databaseCode : ''
