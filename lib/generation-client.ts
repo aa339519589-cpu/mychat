@@ -16,6 +16,8 @@ export type ClientGenerationState = {
   assistantMessageId?: string
   conversationId: string
   authoritativeTerminal?: boolean
+  /** The provider has finished producing user-visible output, while durable job finalization may still be settling. */
+  outputComplete?: boolean
 }
 
 export type ClientGenerationPatch = Partial<ClientGenerationState> & {
@@ -34,6 +36,14 @@ export function reduceClientGenerationState(
   if (current?.authoritativeTerminal
     && current.generationId === generationId
     && patch.authoritativeTerminal !== true) return previous
+  const sameGeneration = current?.generationId === generationId
+  const outputComplete = patch.begin
+    ? false
+    : patch.outputComplete !== undefined
+      ? patch.outputComplete
+      : patch.status === 'running'
+        ? sameGeneration && current?.outputComplete === true
+        : true
   return {
     ...previous,
     [conversationId]: {
@@ -42,13 +52,22 @@ export function reduceClientGenerationState(
       generationId,
       assistantMessageId: patch.assistantMessageId ?? current?.assistantMessageId,
       authoritativeTerminal: patch.authoritativeTerminal === true
-        || (!patch.begin && current?.generationId === generationId && current.authoritativeTerminal),
+        || (!patch.begin && sameGeneration && current.authoritativeTerminal),
+      outputComplete,
     },
   }
 }
 
 export function isRunning(state?: ClientGenerationState | null): boolean {
   return state?.status === 'running'
+}
+
+export function isOutputStreaming(state?: ClientGenerationState | null): boolean {
+  return state?.status === 'running' && state.outputComplete !== true
+}
+
+export function isSettling(state?: ClientGenerationState | null): boolean {
+  return state?.status === 'running' && state.outputComplete === true
 }
 
 export type ConversationGenerationSnapshot = {

@@ -9,7 +9,7 @@ import type { ModelEndpointSummary } from "@/lib/model-endpoints"
 import type { ProjectContext } from "@/lib/project-data"
 import type { SearchMode } from "@/lib/search-mode"
 import type { ClientGenerationPatch, ClientGenerationState } from "@/lib/generation-client"
-import { isRunning, reduceClientGenerationState } from "@/lib/generation-client"
+import { isOutputStreaming, isRunning, isSettling, reduceClientGenerationState } from "@/lib/generation-client"
 import { cacheConversationMessages, updateConversationTitle } from "@/lib/data"
 import type { ChatTurnAuthority } from '@/lib/llm/chat-request'
 import { runChatStream, type HistoryMessage, type RunChatStreamResult } from "./chat-stream-service"
@@ -68,7 +68,9 @@ export function useChatGeneration(options: UseChatGenerationOptions) {
   const abortByConversationRef = useRef<Map<string, AbortController>>(new Map())
   const resumeByConversationRef = useRef<Map<string, { operation: Promise<void>; reconciled: Promise<boolean> }>>(new Map())
   const activeGeneration = activeId ? generationByConversation[activeId] : undefined
-  const isActiveGenerating = isRunning(activeGeneration)
+  const isActiveGenerating = isOutputStreaming(activeGeneration)
+  const isActiveSettling = isSettling(activeGeneration)
+  const isActiveBusy = isRunning(activeGeneration)
 
   function markGeneration(conversationId: string, patch: ClientGenerationPatch) { setGenerationByConversation(previous => reduceClientGenerationState(previous, conversationId, patch)) }
   function clearAbort(conversationId: string, controller: AbortController) { if (abortByConversationRef.current.get(conversationId) === controller) abortByConversationRef.current.delete(conversationId) }
@@ -103,7 +105,8 @@ export function useChatGeneration(options: UseChatGenerationOptions) {
   }
 
   async function handleSend(text: string, images?: string[], files?: AttachedFile[]) {
-    if (!authorityReady || !user || !active || (!activeModelId && !activeEndpointId)) return
+    if (!authorityReady || !user || !active || isRunning(generationRef.current[active.id])
+      || (!activeModelId && !activeEndpointId)) return
     const { userMessage, assistantMessageId, baseHistory, optimisticMessages } = createOptimisticTurn(active, text, images, files)
     const isFirstExchange = active.messages.length === 0
     const wasDraft = Boolean(active.draft)
@@ -136,9 +139,9 @@ export function useChatGeneration(options: UseChatGenerationOptions) {
   }
 
   function regenerationContext() {
-    return { user, active, activeId, isActiveGenerating: !authorityReady || isActiveGenerating, setOpenArtifactId, setConversations, markGeneration, getProjectContext, registerAbort: (conversationId: string, controller: AbortController) => abortByConversationRef.current.set(conversationId, controller), resumeExistingGeneration: (conversationId: string) => resumeKnownGeneration(conversationId, resumeGenerationIfNeeded), startStream }
+    return { user, active, activeId, isActiveGenerating: !authorityReady || isActiveBusy, setOpenArtifactId, setConversations, markGeneration, getProjectContext, registerAbort: (conversationId: string, controller: AbortController) => abortByConversationRef.current.set(conversationId, controller), resumeExistingGeneration: (conversationId: string) => resumeKnownGeneration(conversationId, resumeGenerationIfNeeded), startStream }
   }
   function handleRegenerate() { return regenerateLastAssistant(regenerationContext()) }
   function regenerateFromUserMessage(userMessageId: string, editedContent?: string) { return regenerateFromUser({ ...regenerationContext(), userMessageId, editedContent }) }
-  return { generationByConversation, isActiveGenerating, handleStop, handleSend, handleRegenerate, handleEditUserMessage: (messageId: string, content: string) => regenerateFromUserMessage(messageId, content), handleRegenerateFromUser: (messageId: string) => regenerateFromUserMessage(messageId), resumeGenerationIfNeeded }
+  return { generationByConversation, isActiveGenerating, isActiveSettling, handleStop, handleSend, handleRegenerate, handleEditUserMessage: (messageId: string, content: string) => regenerateFromUserMessage(messageId, content), handleRegenerateFromUser: (messageId: string) => regenerateFromUserMessage(messageId), resumeGenerationIfNeeded }
 }

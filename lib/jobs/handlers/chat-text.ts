@@ -362,6 +362,18 @@ async function runPreparedChat(
     onTurn: logTurn(context.job.id),
   })
   runtime.tokenUsage = result.tokenUsage
+  // This is the semantic end of model output. Durable accounting, media
+  // persistence, and job finalization continue afterwards, but the composer
+  // must stop presenting an active "stop generation" control immediately.
+  await runtime.writer.append(
+    'model.output_completed',
+    {
+      phase: 'provider_complete',
+      contentLength: runtime.writer.text().length,
+      thinkingLength: runtime.writer.thinking().length,
+    },
+    `${context.job.id}:model-output-completed:${context.fence.leaseVersion}`,
+  )
 }
 
 export async function runChatTextJob(

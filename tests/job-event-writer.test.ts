@@ -78,3 +78,22 @@ test('job event writer hydrates the materialized checkpoint prefix without emitt
     { thinking: ' and new reasoning' },
   ])
 })
+
+
+test('model output completion is relayed immediately as a live control event', async () => {
+  const target = context()
+  const live: Array<{ kind: string; payload: JsonObject }> = []
+  const writer = new JobEventWriter(target.value, event => {
+    live.push({ kind: event.kind, payload: event.payload })
+  })
+
+  await writer.append('model.output_completed', {
+    phase: 'provider_complete',
+    contentLength: 6,
+    thinkingLength: 0,
+  })
+
+  assert.equal(live[0]?.kind, 'model.output_completed')
+  assert.equal(live[0]?.payload.phase, 'provider_complete')
+  assert.ok(target.batches.flat().some(event => event.kind === 'model.output_completed'))
+})

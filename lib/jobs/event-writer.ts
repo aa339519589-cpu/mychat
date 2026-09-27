@@ -142,6 +142,7 @@ export class JobEventWriter {
       kind === 'job.started'
       || kind === 'job.resumed'
       || kind === 'job.retry_scheduled'
+      || kind === 'model.output_completed'
       || kind.startsWith('tool.')
     ) {
       this.publishLive({ kind, payload })

@@ -32,7 +32,7 @@ function harness() {
     ],
   }])
   const memories = stateDispatch<Memory[]>([])
-  const calls = { cancel: 0, flush: 0, schedule: 0 }
+  const calls = { cancel: 0, flush: 0, schedule: 0, outputCompleted: 0, retry: 0 }
   const context: ChatStreamEventContext = {
     state: createChatStreamState(),
     renderer: {
@@ -44,6 +44,8 @@ function harness() {
     assistantMessageId: 'assistant',
     setConversations: conversations.dispatch,
     setMemories: memories.dispatch,
+    onOutputCompleted: () => { calls.outputCompleted++ },
+    onRetry: () => { calls.retry++ },
   }
   return { context, calls, conversations, memories }
 }
@@ -101,6 +103,7 @@ test('chat stream reducer accumulates deltas, deduplicates media, and resets ret
   assert.deepEqual(fixture.context.state.fullMedia, [])
   assert.equal(fixture.calls.cancel, 1)
   assert.equal(fixture.calls.flush, 1)
+  assert.equal(fixture.calls.retry, 1)
 })
 
 test('chat stream reducer surfaces job.snapshot content for first-token catch-up', () => {
@@ -143,4 +146,20 @@ test('chat stream reducer accepts only canonical terminal snapshots and stops on
   assert.equal(processChatStreamEvent(failed.context, event('job.warning', { error: 'offline' })), false)
   assert.equal(failed.context.state.terminalError, 'offline')
   assert.equal(failed.calls.cancel, 1)
+})
+
+
+test('provider completion releases the generating phase before durable terminal arrives', () => {
+  const fixture = harness()
+  const started = performance.now()
+  assert.equal(processChatStreamEvent(fixture.context, event('model.output_completed', {
+    phase: 'provider_complete',
+    contentLength: 6,
+    thinkingLength: 0,
+  })), true)
+  const elapsedMs = performance.now() - started
+
+  assert.equal(fixture.calls.outputCompleted, 1)
+  assert.equal(fixture.context.state.authoritativeTerminal, null)
+  assert.ok(elapsedMs < 2_000)
 })
