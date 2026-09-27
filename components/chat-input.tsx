@@ -88,7 +88,6 @@ export function ChatInput({
           onSubmit={state.submit}
           disabled={disabled}
           isLoading={isLoading}
-          sendPending={state.sendPending}
           activeModelLabel={activeModelLabel}
           activeModelProvider={activeProvider}
           activeOutputKind={activeOutputKind}
