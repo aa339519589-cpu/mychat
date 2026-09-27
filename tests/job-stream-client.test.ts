@@ -111,6 +111,37 @@ test('retryable admission outage reuses the exact serialized request and job id'
   assert.deepEqual(delays, [250])
 })
 
+test('next turn retries while the previous generation is still finalizing', async () => {
+  const postedBodies: string[] = []
+  const delays: number[] = []
+  let postCalls = 0
+  const fetcher = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.method !== 'POST') return emptyGenerationResponse()
+    postCalls += 1
+    postedBodies.push(String(init.body))
+    if (postCalls === 1) return Response.json({
+      error: {
+        code: 'CONFLICT',
+        message: '上一条回复正在完成保存，当前消息会自动发送',
+        retryable: true,
+        details: { conflictKind: 'active_chat_generation' },
+      },
+      request_id: 'request-predecessor',
+    }, { status: 425, headers: { 'Retry-After': '1' } })
+    return acceptedResponse()
+  }) as typeof fetch
+
+  const accepted = await enqueueJob('/api/chat', body, new AbortController().signal, {
+    fetcher,
+    sleep: async milliseconds => { delays.push(milliseconds) },
+  })
+
+  assert.equal(accepted.jobId, generationId)
+  assert.equal(postCalls, 2)
+  assert.deepEqual(postedBodies, [JSON.stringify(body), JSON.stringify(body)])
+  assert.deepEqual(delays, [1_000])
+})
+
 test('chat admission uses standard foreground fetch instead of Safari keepalive', async () => {
   let requestInit: RequestInit | undefined
   const fetcher = (async (_input: RequestInfo | URL, init?: RequestInit) => {
