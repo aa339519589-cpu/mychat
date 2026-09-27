@@ -5,7 +5,7 @@ import { ArrowRight, ArrowUp, ChevronDown, Square } from "lucide-react"
 import { ComposerProviderIcon } from "@/components/provider-logo"
 import { cn } from "@/lib/utils"
 
-export function ComposerBar({ mobile, value, onValueChange, textareaRef, onResize, onSubmit, disabled, isLoading, sendPending, activeModelLabel, activeModelProvider, activeOutputKind, canSend, onStop, onOpenModel }: {
+export function ComposerBar({ mobile, value, onValueChange, textareaRef, onResize, onSubmit, disabled, isLoading, activeModelLabel, activeModelProvider, activeOutputKind, canSend, onStop, onOpenModel }: {
   mobile: boolean
   value: string
   onValueChange: (value: string) => void
@@ -14,7 +14,6 @@ export function ComposerBar({ mobile, value, onValueChange, textareaRef, onResiz
   onSubmit: () => void
   disabled: boolean
   isLoading: boolean
-  sendPending: boolean
   activeModelLabel: string
   activeModelProvider?: string | null
   activeOutputKind?: string
