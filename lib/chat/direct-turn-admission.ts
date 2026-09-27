@@ -54,8 +54,17 @@ function databaseDetails(error: unknown): JsonObject {
   }
 }
 
+export function isActiveChatGenerationConflict(error: unknown): boolean {
+  const details = databaseDetails(error)
+  if (details.databaseCode !== '23505') return false
+  return [details.databaseMessage, details.databaseDetails, details.databaseHint]
+    .some(value => typeof value === 'string'
+      && value.includes('jobs_one_active_chat_conversation_idx'))
+}
+
 function directAdmissionError(error: unknown): JobRuntimeError {
   const details = databaseDetails(error)
+  const activeChatConflict = isActiveChatGenerationConflict(error)
   const code = typeof details.databaseCode === 'string' ? details.databaseCode : ''
   const message = typeof details.databaseMessage === 'string'
     ? `Direct chat admission (${code || 'unknown'}) failed: ${details.databaseMessage}`
@@ -67,8 +76,10 @@ function directAdmissionError(error: unknown): JobRuntimeError {
     invalidInput ? 'JOB_INVALID_INPUT' : conflict ? 'JOB_CONFLICT' : 'JOB_DEPENDENCY_UNAVAILABLE',
     message,
     {
-      retryable: !invalidInput && !conflict && !deterministicInfrastructure,
-      details,
+      retryable: activeChatConflict || (!invalidInput && !conflict && !deterministicInfrastructure),
+      details: activeChatConflict
+        ? { ...details, conflictKind: 'active_chat_generation' }
+        : details,
       cause: error,
     },
   )
