@@ -24,6 +24,17 @@ function configurationError(request: Request, message: string, details: Readonly
 function admissionError(request: Request, error: unknown): Response {
   if (error instanceof JobPayloadStorageError) return configurationError(request, error.message, { storageCode: error.code })
   if (!isJobRuntimeError(error)) return configurationError(request, '聊天任务入队失败')
+  if (error.code === 'JOB_CONFLICT' && error.retryable
+    && error.details.conflictKind === 'active_chat_generation') {
+    return apiErrorResponseV1(request, {
+      status: 425,
+      code: 'CONFLICT',
+      message: '上一条回复正在完成保存，当前消息会自动发送',
+      retryable: true,
+      details: error.details,
+      headers: { 'Retry-After': '1' },
+    })
+  }
   if (error.code === 'JOB_CONFLICT') return apiErrorResponseV1(request, { status: 409, code: 'CONFLICT', message: error.message, retryable: false, details: error.details })
   if (error.code === 'JOB_INVALID_INPUT') return apiErrorResponseV1(request, { status: 400, code: 'INVALID_REQUEST', message: error.message, retryable: false, details: error.details })
   if (!error.retryable) return apiErrorResponseV1(request, { status: 500, code: 'INTERNAL_ERROR', message: error.message, retryable: false, details: error.details })
