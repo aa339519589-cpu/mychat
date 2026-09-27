@@ -116,9 +116,9 @@ async function enqueueChatStream(options: RunChatStreamOptions, state: ChatStrea
       await removePermanentlyRejectedSubmission(options.conversationId, generationId ? { id: generationId } : null, error)
       throw error
     }
-    renderer.flush('消息已保存；连接恢复后会自动继续，无需重新发送。')
+    renderer.flush('消息已保留，正在等待发送；无需重新点击。')
     try {
-      const accepted = await enqueueJobUntilAccepted('/api/chat', body, options.controller.signal, () => renderer.flush('消息已保存；连接恢复后会自动继续，无需重新发送。'))
+      const accepted = await enqueueJobUntilAccepted('/api/chat', body, options.controller.signal, () => renderer.flush('消息已保留，正在等待发送；无需重新点击。'))
       opened = { accepted, response: null }
     } catch (fallbackError) {
       await removePermanentlyRejectedSubmission(options.conversationId, generationId ? { id: generationId } : null, fallbackError)
