@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { requestClientGenerationCancellation } from '../components/literary-chat/generation-job-actions'
 import {
+  canStartNextTurn,
   isOutputStreaming,
   isRunning,
   isSettling,
@@ -53,6 +54,7 @@ test('client generation keeps durable running separate from visible output strea
   assert.equal(isRunning(state[conversationId]), true)
   assert.equal(isOutputStreaming(state[conversationId]), true)
   assert.equal(isSettling(state[conversationId]), false)
+  assert.equal(canStartNextTurn(state[conversationId]), false)
 
   state = reduceClientGenerationState(state, conversationId, {
     status: 'running',
@@ -63,6 +65,7 @@ test('client generation keeps durable running separate from visible output strea
   assert.equal(isRunning(state[conversationId]), true)
   assert.equal(isOutputStreaming(state[conversationId]), false)
   assert.equal(isSettling(state[conversationId]), true)
+  assert.equal(canStartNextTurn(state[conversationId]), true)
 
   // A later ordinary running patch must not resurrect the stop button.
   state = reduceClientGenerationState(state, conversationId, {
