@@ -5,7 +5,7 @@ import {
   chatAdmissionRequestBody,
   type RunChatStreamOptions,
 } from '../components/literary-chat/chat-stream-service'
-import { isActiveChatGenerationConflict } from '../lib/chat/direct-turn-admission'
+import { directAdmissionError, isActiveChatGenerationConflict } from '../lib/chat/direct-turn-admission'
 
 test('chat admission uploads only the current user turn', () => {
   const messages = [
@@ -97,4 +97,13 @@ test('active predecessor unique conflict is distinguished from permanent admissi
     code: '23503',
     message: 'foreign key violation',
   }), false)
+
+  const normalized = directAdmissionError({
+    code: '23505',
+    message: 'duplicate key value violates unique constraint "jobs_one_active_chat_conversation_idx"',
+    details: 'Key (principal_id, (subject ->> \'conversationId\')) already exists.',
+  })
+  assert.equal(normalized.code, 'JOB_CONFLICT')
+  assert.equal(normalized.retryable, true)
+  assert.equal(normalized.details.conflictKind, 'active_chat_generation')
 })
