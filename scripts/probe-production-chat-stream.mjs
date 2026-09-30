@@ -1,0 +1,215 @@
+import { randomBytes, randomUUID } from 'node:crypto'
+import { writeFile } from 'node:fs/promises'
+import { performance } from 'node:perf_hooks'
+
+const productionUrl = process.env.PRODUCTION_URL
+const renderApiKey = process.env.RENDER_API_KEY
+const renderServiceId = process.env.RENDER_SERVICE_ID
+const resultPath = process.env.STREAM_PROBE_RESULT_PATH || '/tmp/chat-stream-probe.json'
+
+async function json(response, label) {
+  const text = await response.text()
+  let body = null
+  try { body = text ? JSON.parse(text) : null } catch {}
+  if (!response.ok) throw new Error(`${label} failed (${response.status}): ${text.slice(0, 500)}`)
+  return body
+}
+
+async function renderEnv(key) {
+  const response = await fetch(`https://api.render.com/v1/services/${renderServiceId}/env-vars/${key}`, {
+    headers: { Authorization: `Bearer ${renderApiKey}` },
+  })
+  const body = await json(response, `Read Render ${key}`)
+  if (!body || typeof body.value !== 'string' || !body.value) {
+    throw new Error(`${key} is unavailable in Render`)
+  }
+  return body.value
+}
+
+function splitSse(buffer) {
+  const events = []
+  let rest = buffer
+  for (;;) {
+    const index = rest.indexOf('\n\n')
+    if (index < 0) break
+    events.push(rest.slice(0, index))
+    rest = rest.slice(index + 2)
+  }
+  return { events, rest }
+}
+
+function eventData(frame) {
+  const data = frame.split('\n')
+    .filter(line => line.startsWith('data:'))
+    .map(line => line.slice(5).trimStart())
+    .join('\n')
+  if (!data) return null
+  try { return JSON.parse(data) } catch { return null }
+}
+
+function percentile(values, p) {
+  return values.length ? values[Math.min(values.length - 1, Math.floor(values.length * p))] : 0
+}
+
+async function deleteUser(supabaseUrl, serviceRole, userId) {
+  if (!userId) return
+  await fetch(`${supabaseUrl}/auth/v1/admin/users/${userId}`, {
+    method: 'DELETE',
+    headers: { apikey: serviceRole, Authorization: `Bearer ${serviceRole}` },
+  }).catch(() => undefined)
+}
+
+async function runProbe() {
+  if (!productionUrl || !renderApiKey || !renderServiceId) {
+    throw new Error('Production probe configuration is unavailable')
+  }
+  const [supabaseUrl, anonKey, serviceRole] = await Promise.all([
+    renderEnv('NEXT_PUBLIC_SUPABASE_URL'),
+    renderEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY'),
+    renderEnv('SUPABASE_SERVICE_ROLE_KEY'),
+  ])
+  const email = `stream-probe-${Date.now()}-${randomBytes(4).toString('hex')}@example.com`
+  const password = `Probe-${randomBytes(24).toString('base64url')}!`
+  let userId = null
+
+  try {
+    const created = await json(await fetch(`${supabaseUrl}/auth/v1/admin/users`, {
+      method: 'POST',
+      headers: {
+        apikey: serviceRole,
+        Authorization: `Bearer ${serviceRole}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ email, password, email_confirm: true }),
+    }), 'Create disposable stream probe user')
+    userId = created.id
+
+    const session = await json(await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
+      method: 'POST',
+      headers: { apikey: anonKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    }), 'Sign in disposable stream probe user')
+    const accessToken = session.access_token
+    if (!accessToken) throw new Error('Supabase sign-in omitted access_token')
+
+    const conversationId = randomUUID()
+    const userMessageId = randomUUID()
+    const assistantMessageId = randomUUID()
+    const generationId = randomUUID()
+    const prompt = '请直接输出一篇不少于2200个中文汉字的连续说明文，主题是人工智能如何改变普通人的学习、工作和生活。不要联网，不要调用任何工具，不要使用代码块，不要使用表格，不要列举序号，不要省略，不要提前结束。正文必须超过2200个中文汉字。'
+    const body = {
+      tier: '绝句',
+      messages: [{ id: userMessageId, role: 'user', content: prompt, ts: new Date().toISOString() }],
+      searchMode: 'off',
+      historyRetrieval: false,
+      renderEnabled: false,
+      conversationId,
+      userMessageId,
+      generationId,
+      assistantMessageId,
+      generateImage: false,
+      generateVideo: false,
+      turn: {
+        schemaVersion: 1,
+        createConversation: true,
+        title: '2200字真实流式探针',
+        projectId: null,
+      },
+    }
+
+    const started = performance.now()
+    const accepted = await json(await fetch(`${productionUrl}/api/chat`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(body),
+    }), 'Enqueue production Chat probe')
+    if (!accepted.streamUrl) throw new Error('Chat admission omitted streamUrl')
+
+    const response = await fetch(`${productionUrl}${accepted.streamUrl}`, {
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: 'text/event-stream' },
+    })
+    if (!response.ok || !response.body) {
+      throw new Error(`Open Chat event stream failed (${response.status})`)
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let totalChars = 0
+    let firstTextMs = null
+    let terminalMs = null
+    let lastTextAt = null
+    let maxGapMs = 0
+    let maxDeltaChars = 0
+    let textEvents = 0
+    const gaps = []
+    const deltas = []
+
+    while (true) {
+      const chunk = await reader.read()
+      if (chunk.done) break
+      buffer += decoder.decode(chunk.value, { stream: true }).replace(/\r\n/g, '\n')
+      const split = splitSse(buffer)
+      buffer = split.rest
+      for (const frame of split.events) {
+        const event = eventData(frame)
+        if (!event || typeof event.kind !== 'string' || !event.payload) continue
+        if (event.kind === 'text.delta' && typeof event.payload.text === 'string' && event.payload.text) {
+          const now = performance.now()
+          const chars = Array.from(event.payload.text).length
+          if (firstTextMs === null) firstTextMs = now - started
+          if (lastTextAt !== null) {
+            const gap = now - lastTextAt
+            gaps.push(Math.round(gap))
+            maxGapMs = Math.max(maxGapMs, gap)
+          }
+          lastTextAt = now
+          totalChars += chars
+          textEvents += 1
+          maxDeltaChars = Math.max(maxDeltaChars, chars)
+          deltas.push(chars)
+        }
+        if (event.kind === 'job.terminal') {
+          terminalMs = performance.now() - started
+          break
+        }
+      }
+      if (terminalMs !== null) break
+    }
+
+    gaps.sort((a, b) => a - b)
+    deltas.sort((a, b) => a - b)
+    const metrics = {
+      totalChars,
+      textEvents,
+      firstTextMs: firstTextMs === null ? null : Math.round(firstTextMs),
+      terminalMs: terminalMs === null ? null : Math.round(terminalMs),
+      maxGapMs: Math.round(maxGapMs),
+      p95GapMs: percentile(gaps, 0.95),
+      maxDeltaChars,
+      p95DeltaChars: percentile(deltas, 0.95),
+    }
+    const failures = []
+    if (totalChars < 2000) failures.push(`output ${totalChars}<2000`)
+    if (textEvents < 8) failures.push(`events ${textEvents}<8`)
+    if (maxGapMs > 1200) failures.push(`gap ${Math.round(maxGapMs)}ms>1200ms`)
+    if (maxDeltaChars > 300) failures.push(`burst ${maxDeltaChars}>300 chars`)
+    return { ok: failures.length === 0, metrics, error: failures.join(', ') }
+  } finally {
+    await deleteUser(supabaseUrl, serviceRole, userId)
+  }
+}
+
+let result
+try {
+  result = await runProbe()
+} catch (error) {
+  result = { ok: false, metrics: null, error: error instanceof Error ? error.message : String(error) }
+}
+await writeFile(resultPath, JSON.stringify(result))
+console.log(`STREAM_PROBE_RESULT=${JSON.stringify(result)}`)
+if (!result.ok) process.exitCode = 1
