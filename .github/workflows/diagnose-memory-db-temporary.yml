@@ -55,3 +55,16 @@ jobs:
           probe project_memories id
           probe code_memories id
           probe profits id
+          body=$(mktemp)
+          status=$(curl --silent --show-error --connect-timeout 10 --max-time 20 \
+            "${auth[@]}" -H 'Content-Type: application/json' \
+            --output "$body" --write-out '%{http_code}' \
+            --request POST \
+            --data '{"input_contract_version":5,"input_manifest_sha256":"69e4973cfac2b9532f27b784257df991e09796c1bdf8a6872297806de0db4d74","input_migration_count":51}' \
+            "$supabase_url/rest/v1/rpc/verify_schema_contract_v3")
+          if [[ "$status" == 2* ]]; then
+            echo "schema_contract_v5 status=$status result=$(jq -c '.' "$body")"
+          else
+            echo "schema_contract_v5 status=$status code=$(jq -r '.code // ""' "$body" 2>/dev/null || true) message=$(jq -r '.message // ""' "$body" 2>/dev/null | cut -c1-180 || true)"
+          fi
+          rm -f "$body"
