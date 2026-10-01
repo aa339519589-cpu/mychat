@@ -155,6 +155,9 @@ jobs:
           }
           probe_as_user profiles memory_enabled "user_id=eq.$user_id"
           probe_as_user memories id "id=eq.$memory_id"
+          probe_as_user projects id,name,instructions,created_at,updated_at "user_id=eq.$user_id"
+          probe_as_user artifacts id,title,raw,conversation_id,message_id,project_id,created_at,updated_at "user_id=eq.$user_id"
+          probe_as_user code_sessions id,repo,title,created_at,updated_at "user_id=eq.$user_id"
           mutate_as_user memory_toggle PATCH "profiles?user_id=eq.$user_id" '{"memory_enabled":false}'
           mutate_as_user memory_toggle_restore PATCH "profiles?user_id=eq.$user_id" '{"memory_enabled":true}'
           mutate_as_user memory_insert POST memories "$(jq -nc --arg id "$(uuidgen | tr '[:upper:]' '[:lower:]')" --arg user "$user_id" '{id:$id,user_id:$user,content:"temporary authenticated diagnostic",enabled:true}')"
