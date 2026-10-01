@@ -29,18 +29,21 @@ jobs:
             "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars?limit=100")
           normalized=$(jq -c 'if type == "array" then map(.envVar // .) elif (.envVars | type) == "array" then (.envVars | map(.envVar // .)) else [] end' <<<"$render_env")
           service_role=$(jq -r 'map(select(.key == "SUPABASE_SERVICE_ROLE_KEY"))[0].value // empty' <<<"$normalized")
+          anon_key=$(jq -r 'map(select(.key == "NEXT_PUBLIC_SUPABASE_ANON_KEY"))[0].value // empty' <<<"$normalized")
           supabase_url=$(jq -r 'map(select(.key == "NEXT_PUBLIC_SUPABASE_URL" or .key == "SUPABASE_URL"))[0].value // empty' <<<"$normalized")
           test -n "$service_role"
+          test -n "$anon_key"
           test -n "$supabase_url"
           echo "::add-mask::$service_role"
+          echo "::add-mask::$anon_key"
           echo "production_env_keys=$(jq -r 'map(.key) | sort | join(",")' <<<"$normalized")"
           auth=(-H "apikey: $service_role" -H "Authorization: Bearer $service_role" -H 'Accept: application/json')
           probe() {
-            local table="$1" columns="$2" body status code message
+            local table="$1" columns="$2" query="$3" body status code message
             body=$(mktemp)
             status=$(curl --silent --show-error --connect-timeout 10 --max-time 20 \
               "${auth[@]}" --output "$body" --write-out '%{http_code}' \
-              "$supabase_url/rest/v1/$table?select=$columns&limit=0")
+              "$supabase_url/rest/v1/$table?select=$columns&$query&limit=0")
             if [[ "$status" == 2* ]]; then
               echo "$table status=$status visible=true no_rows_requested=true"
             else
@@ -50,11 +53,11 @@ jobs:
             fi
             rm -f "$body"
           }
-          probe memories id
-          probe profiles user_id
-          probe project_memories id
-          probe code_memories id
-          probe profits id
+          probe memories id enabled=eq.true
+          probe profiles user_id,memory_enabled user_id=eq.00000000-0000-4000-8000-000000000001
+          probe project_memories id enabled=eq.true
+          probe code_memories id enabled=eq.true
+          probe profits id ''
           body=$(mktemp)
           status=$(curl --silent --show-error --connect-timeout 10 --max-time 20 \
             "${auth[@]}" -H 'Content-Type: application/json' \
@@ -68,3 +71,70 @@ jobs:
             echo "schema_contract_v5 status=$status code=$(jq -r '.code // ""' "$body" 2>/dev/null || true) message=$(jq -r '.message // ""' "$body" 2>/dev/null | cut -c1-180 || true)"
           fi
           rm -f "$body"
+          user_id=''
+          cleanup() {
+            local prior_status=$?
+            trap - EXIT
+            set +e
+            if [[ -n "$user_id" ]]; then
+              curl --silent --show-error --connect-timeout 5 --max-time 15 \
+                "${auth[@]}" -H 'Content-Type: application/json' \
+                --output /dev/null --write-out '' \
+                --request DELETE "$supabase_url/auth/v1/admin/users/$user_id"
+              if [[ "$?" -ne 0 ]]; then prior_status=1; fi
+            fi
+            exit "$prior_status"
+          }
+          trap cleanup EXIT
+          test_email="memory-diagnostic-${GITHUB_RUN_ID}@example.com"
+          password=$(openssl rand -hex 24)
+          echo "::add-mask::$password"
+          user_response=$(curl --silent --show-error --connect-timeout 10 --max-time 20 \
+            "${auth[@]}" -H 'Content-Type: application/json' \
+            --request POST \
+            --data "$(jq -nc --arg email "$test_email" --arg password "$password" '{email:$email,password:$password,email_confirm:true,user_metadata:{temporary_diagnostic:true}}')" \
+            "$supabase_url/auth/v1/admin/users")
+          user_id=$(jq -r '.id // empty' <<<"$user_response")
+          test -n "$user_id"
+          profile_status=$(curl --silent --show-error --connect-timeout 10 --max-time 20 \
+            "${auth[@]}" -H 'Content-Type: application/json' -H 'Prefer: resolution=merge-duplicates,return=minimal' \
+            --output /dev/null --write-out '%{http_code}' \
+            --request POST \
+            --data "$(jq -nc --arg id "$user_id" '{user_id:$id,memory_enabled:true}')" \
+            "$supabase_url/rest/v1/profiles?on_conflict=user_id")
+          echo "diagnostic_profile_seed_status=$profile_status"
+          memory_id=$(uuidgen | tr '[:upper:]' '[:lower:]')
+          memory_status=$(curl --silent --show-error --connect-timeout 10 --max-time 20 \
+            "${auth[@]}" -H 'Content-Type: application/json' -H 'Prefer: return=minimal' \
+            --output /dev/null --write-out '%{http_code}' \
+            --request POST \
+            --data "$(jq -nc --arg id "$memory_id" --arg user "$user_id" '{id:$id,user_id:$user,content:"temporary diagnostic record",enabled:true}')" \
+            "$supabase_url/rest/v1/memories")
+          echo "diagnostic_memory_seed_status=$memory_status"
+          token_response=$(curl --silent --show-error --connect-timeout 10 --max-time 20 \
+            -H "apikey: $anon_key" -H "Authorization: Bearer $anon_key" \
+            -H 'Content-Type: application/json' \
+            --request POST \
+            --data "$(jq -nc --arg email "$test_email" --arg password "$password" '{email:$email,password:$password}')" \
+            "$supabase_url/auth/v1/token?grant_type=password")
+          access_token=$(jq -r '.access_token // empty' <<<"$token_response")
+          test -n "$access_token"
+          echo "::add-mask::$access_token"
+          user_auth=(-H "apikey: $anon_key" -H "Authorization: Bearer $access_token" -H 'Accept: application/json')
+          probe_as_user() {
+            local table="$1" columns="$2" query="$3" body status code message
+            body=$(mktemp)
+            status=$(curl --silent --show-error --connect-timeout 10 --max-time 20 \
+              "${user_auth[@]}" --output "$body" --write-out '%{http_code}' \
+              "$supabase_url/rest/v1/$table?select=$columns&$query&limit=1")
+            if [[ "$status" == 2* ]]; then
+              echo "authenticated_$table status=$status query_ok=true response_count=$(jq 'length' "$body" 2>/dev/null || echo 0)"
+            else
+              code=$(jq -r '.code // ""' "$body" 2>/dev/null || true)
+              message=$(jq -r '.message // ""' "$body" 2>/dev/null | cut -c1-180 || true)
+              echo "authenticated_$table status=$status code=$code message=$message"
+            fi
+            rm -f "$body"
+          }
+          probe_as_user profiles "user_id,memory_enabled" "user_id=eq.$user_id"
+          probe_as_user memories id "id=eq.$memory_id"
