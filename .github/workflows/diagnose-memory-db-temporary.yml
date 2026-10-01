@@ -14,116 +14,44 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     env:
-      SUPABASE_PROJECT_REF: usibkqqksgwgvdiqwpyo
-      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
     steps:
-      - name: Read database catalog metadata only
+      - name: Probe production schema without reading records
         shell: bash
         run: |
           set -Eeuo pipefail
-          test -n "$SUPABASE_ACCESS_TOKEN"
-          query=$(cat <<'SQL'
-          select jsonb_build_object(
-            'profit_relations', coalesce((
-              select jsonb_agg(jsonb_build_object(
-                'schema', n.nspname,
-                'name', c.relname,
-                'kind', c.relkind,
-                'owner', pg_get_userbyid(c.relowner),
-                'rls', c.relrowsecurity,
-                'force_rls', c.relforcerowsecurity,
-                'anon_select', has_table_privilege('anon', c.oid, 'select'),
-                'authenticated_select', has_table_privilege('authenticated', c.oid, 'select'),
-                'service_role_select', has_table_privilege('service_role', c.oid, 'select')
-              ) order by n.nspname, c.relname)
-              from pg_class c
-              join pg_namespace n on n.oid = c.relnamespace
-              where c.relname ilike '%profit%'
-                and c.relkind in ('r','p','v','m','f')
-                and n.nspname not in ('pg_catalog','information_schema')
-            ), '[]'::jsonb),
-            'memory_relations', coalesce((
-              select jsonb_agg(jsonb_build_object(
-                'schema', n.nspname,
-                'name', c.relname,
-                'kind', c.relkind,
-                'rls', c.relrowsecurity,
-                'force_rls', c.relforcerowsecurity,
-                'authenticated_select', has_table_privilege('authenticated', c.oid, 'select'),
-                'authenticated_insert', has_table_privilege('authenticated', c.oid, 'insert'),
-                'authenticated_update', has_table_privilege('authenticated', c.oid, 'update'),
-                'authenticated_delete', has_table_privilege('authenticated', c.oid, 'delete')
-              ) order by c.relname)
-              from pg_class c
-              join pg_namespace n on n.oid = c.relnamespace
-              where n.nspname = 'public'
-                and c.relname in ('memories','project_memories','code_memories','profiles')
-                and c.relkind in ('r','p','v','m','f')
-            ), '[]'::jsonb),
-            'relevant_policies', coalesce((
-              select jsonb_agg(jsonb_build_object(
-                'schema', schemaname,
-                'table', tablename,
-                'name', policyname,
-                'roles', roles,
-                'command', cmd,
-                'using', qual,
-                'check', with_check
-              ) order by schemaname, tablename, policyname)
-              from pg_policies
-              where (schemaname = 'public'
-                and tablename in ('memories','project_memories','code_memories','profiles'))
-                or coalesce(qual,'') ilike '%profit%'
-                or coalesce(with_check,'') ilike '%profit%'
-            ), '[]'::jsonb),
-            'functions_referencing_profit', coalesce((
-              select jsonb_agg(jsonb_build_object(
-                'schema', n.nspname,
-                'name', p.proname,
-                'kind', p.prokind,
-                'security_definer', p.prosecdef
-              ) order by n.nspname, p.proname)
-              from pg_proc p
-              join pg_namespace n on n.oid = p.pronamespace
-              where n.nspname not in ('pg_catalog','information_schema')
-                and p.prokind in ('f','p','w')
-                and pg_get_functiondef(p.oid) ilike '%profit%'
-            ), '[]'::jsonb),
-            'views_referencing_profit', coalesce((
-              select jsonb_agg(jsonb_build_object(
-                'schema', schemaname,
-                'name', viewname,
-                'owner', viewowner
-              ) order by schemaname, viewname)
-              from pg_views
-              where definition ilike '%profit%'
-                and schemaname not in ('pg_catalog','information_schema')
-            ), '[]'::jsonb),
-            'memory_triggers', coalesce((
-              select jsonb_agg(jsonb_build_object(
-                'table', c.relname,
-                'trigger', t.tgname,
-                'enabled', t.tgenabled,
-                'function_schema', fn.nspname,
-                'function', p.proname
-              ) order by c.relname, t.tgname)
-              from pg_trigger t
-              join pg_class c on c.oid = t.tgrelid
-              join pg_namespace n on n.oid = c.relnamespace
-              join pg_proc p on p.oid = t.tgfoid
-              join pg_namespace fn on fn.oid = p.pronamespace
-              where not t.tgisinternal
-                and n.nspname = 'public'
-                and c.relname in ('memories','project_memories','code_memories','profiles')
-            ), '[]'::jsonb)
-          ) as diagnosis;
-          SQL
-          )
-          result=$(curl --fail-with-body --silent --show-error \
-            --connect-timeout 10 --max-time 60 \
-            --request POST \
-            --header "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
-            --header 'Content-Type: application/json' \
-            --data "$(jq -nc --arg query "$query" '{query:$query,read_only:true}')" \
-            "https://api.supabase.com/v1/projects/$SUPABASE_PROJECT_REF/database/query")
-          jq -c '.' <<<"$result"
+          test -n "$RENDER_API_KEY"
+          test -n "$RENDER_SERVICE_ID"
+          render_env=$(curl --fail-with-body --silent --show-error \
+            --connect-timeout 10 --max-time 30 \
+            --header "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/env-vars?limit=100")
+          normalized=$(jq -c 'if type == "array" then map(.envVar // .) elif (.envVars | type) == "array" then (.envVars | map(.envVar // .)) else [] end' <<<"$render_env")
+          service_role=$(jq -r 'map(select(.key == "SUPABASE_SERVICE_ROLE_KEY"))[0].value // empty' <<<"$normalized")
+          supabase_url=$(jq -r 'map(select(.key == "NEXT_PUBLIC_SUPABASE_URL" or .key == "SUPABASE_URL"))[0].value // empty' <<<"$normalized")
+          test -n "$service_role"
+          test -n "$supabase_url"
+          echo "::add-mask::$service_role"
+          echo "production_env_keys=$(jq -r 'map(.key) | sort | join(",")' <<<"$normalized")"
+          auth=(-H "apikey: $service_role" -H "Authorization: Bearer $service_role" -H 'Accept: application/json')
+          probe() {
+            local table="$1" columns="$2" body status code message
+            body=$(mktemp)
+            status=$(curl --silent --show-error --connect-timeout 10 --max-time 20 \
+              "${auth[@]}" --output "$body" --write-out '%{http_code}' \
+              "$supabase_url/rest/v1/$table?select=$columns&limit=0")
+            if [[ "$status" == 2* ]]; then
+              echo "$table status=$status visible=true no_rows_requested=true"
+            else
+              code=$(jq -r '.code // ""' "$body" 2>/dev/null || true)
+              message=$(jq -r '.message // ""' "$body" 2>/dev/null | cut -c1-180 || true)
+              echo "$table status=$status code=$code message=$message"
+            fi
+            rm -f "$body"
+          }
+          probe memories id
+          probe profiles user_id
+          probe project_memories id
+          probe code_memories id
+          probe profits id
