@@ -17,7 +17,7 @@ jobs:
       RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
       RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
     steps:
-      - name: Probe production schema without reading records
+      - name: Probe production schema with a disposable account
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -43,7 +43,7 @@ jobs:
             body=$(mktemp)
             status=$(curl --silent --show-error --connect-timeout 10 --max-time 20 \
               "${auth[@]}" --output "$body" --write-out '%{http_code}' \
-              "$supabase_url/rest/v1/$table?select=$columns&$query&limit=0")
+              "$supabase_url/rest/v1/$table?select=$columns${query:+&$query}&limit=0")
             if [[ "$status" == 2* ]]; then
               echo "$table status=$status visible=true no_rows_requested=true"
             else
@@ -53,10 +53,10 @@ jobs:
             fi
             rm -f "$body"
           }
-          probe memories id enabled=eq.true
-          probe profiles user_id,memory_enabled user_id=eq.00000000-0000-4000-8000-000000000001
-          probe project_memories id enabled=eq.true
-          probe code_memories id enabled=eq.true
+          probe memories id 'enabled=eq.true'
+          probe profiles user_id,memory_enabled ''
+          probe project_memories id ''
+          probe code_memories id ''
           probe profits id ''
           body=$(mktemp)
           status=$(curl --silent --show-error --connect-timeout 10 --max-time 20 \
@@ -73,15 +73,16 @@ jobs:
           rm -f "$body"
           user_id=''
           cleanup() {
-            local prior_status=$?
+            local prior_status=$? delete_status
             trap - EXIT
             set +e
             if [[ -n "$user_id" ]]; then
-              curl --silent --show-error --connect-timeout 5 --max-time 15 \
+              delete_status=$(curl --silent --show-error --connect-timeout 5 --max-time 15 \
                 "${auth[@]}" -H 'Content-Type: application/json' \
-                --output /dev/null --write-out '' \
-                --request DELETE "$supabase_url/auth/v1/admin/users/$user_id"
-              if [[ "$?" -ne 0 ]]; then prior_status=1; fi
+                --output /dev/null --write-out '%{http_code}' \
+                --request DELETE "$supabase_url/auth/v1/admin/users/$user_id")
+              echo "diagnostic_account_cleanup_status=$delete_status"
+              if [[ ! "$delete_status" == 2* ]]; then prior_status=1; fi
             fi
             exit "$prior_status"
           }
@@ -136,5 +137,26 @@ jobs:
             fi
             rm -f "$body"
           }
-          probe_as_user profiles "user_id,memory_enabled" "user_id=eq.$user_id"
+          mutate_as_user() {
+            local label="$1" method="$2" path="$3" payload="$4" body status code message
+            body=$(mktemp)
+            status=$(curl --silent --show-error --connect-timeout 10 --max-time 20 \
+              "${user_auth[@]}" -H 'Content-Type: application/json' -H 'Prefer: return=minimal' \
+              --output "$body" --write-out '%{http_code}' \
+              --request "$method" --data "$payload" "$supabase_url/rest/v1/$path")
+            if [[ "$status" == 2* ]]; then
+              echo "$label status=$status"
+            else
+              code=$(jq -r '.code // ""' "$body" 2>/dev/null || true)
+              message=$(jq -r '.message // ""' "$body" 2>/dev/null | cut -c1-180 || true)
+              echo "$label status=$status code=$code message=$message"
+            fi
+            rm -f "$body"
+          }
+          probe_as_user profiles memory_enabled "user_id=eq.$user_id"
           probe_as_user memories id "id=eq.$memory_id"
+          mutate_as_user memory_toggle PATCH "profiles?user_id=eq.$user_id" '{"memory_enabled":false}'
+          mutate_as_user memory_toggle_restore PATCH "profiles?user_id=eq.$user_id" '{"memory_enabled":true}'
+          mutate_as_user memory_insert POST memories "$(jq -nc --arg id "$(uuidgen | tr '[:upper:]' '[:lower:]')" --arg user "$user_id" '{id:$id,user_id:$user,content:"temporary authenticated diagnostic",enabled:true}')"
+          mutate_as_user memory_update PATCH "memories?id=eq.$memory_id&user_id=eq.$user_id" '{"content":"temporary diagnostic updated"}'
+          mutate_as_user memory_delete DELETE "memories?id=eq.$memory_id&user_id=eq.$user_id" '{}'
