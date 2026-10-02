@@ -13,8 +13,17 @@ type MemoryEvent = {
 }
 
 type SearchEvent = {
+  kind?: 'web' | 'image'
   query: string
-  results: { title: string; url: string }[]
+  results: {
+    title: string
+    url: string
+    snippet?: string
+    published_at?: string
+    favicon_url?: string
+    thumbnail_url?: string
+  }[]
+  images?: { url: string; description?: string }[]
 }
 
 // Code 板块：一步操作的进度提示（浏览/读取/写入/部署/记忆…）
