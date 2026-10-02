@@ -48,22 +48,35 @@ function sameSignature(left: string, right: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b)
 }
 
-function parseSignedToken(token: string): Record<string, unknown> | null {
+function tokenParts(token: string): { payload: string; suppliedSignature: string } | null {
   const [prefix, payload, suppliedSignature, extra] = token.trim().split(".")
   if (prefix !== TOKEN_PREFIX || !payload || !suppliedSignature || extra !== undefined) return null
-  let expected: string
-  try { expected = signature(payload) } catch { return null }
-  if (!sameSignature(suppliedSignature, expected)) return null
+  return { payload, suppliedSignature }
+}
+
+function validBasePayload(row: Record<string, unknown>): boolean {
+  return row.v === 1
+    && typeof row.userId === "string" && Boolean(row.userId)
+    && typeof row.jobId === "string" && Boolean(row.jobId)
+    && Number.isSafeInteger(row.exp)
+    && Number(row.exp) >= Math.floor(Date.now() / 1000)
+}
+
+function decodedPayload(payload: string): Record<string, unknown> | null {
   let parsed: unknown
   try { parsed = decode(payload) } catch { return null }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null
   const row = parsed as Record<string, unknown>
-  if (row.v !== 1
-    || typeof row.userId !== "string" || !row.userId
-    || typeof row.jobId !== "string" || !row.jobId
-    || !Number.isSafeInteger(row.exp)
-    || Number(row.exp) < Math.floor(Date.now() / 1000)) return null
-  return row
+  return validBasePayload(row) ? row : null
+}
+
+function parseSignedToken(token: string): Record<string, unknown> | null {
+  const parts = tokenParts(token)
+  if (!parts) return null
+  let expected: string
+  try { expected = signature(parts.payload) } catch { return null }
+  if (!sameSignature(parts.suppliedSignature, expected)) return null
+  return decodedPayload(parts.payload)
 }
 
 function signedToken(payload: BasePayload & { kind: string } & Record<string, unknown>): string {

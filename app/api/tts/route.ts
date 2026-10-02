@@ -12,6 +12,7 @@ const MAX_TEXT_LENGTH = 50_000
 const MAX_AUDIO_BYTES = 20 * 1024 * 1024
 
 type TTSRequest = { text?: unknown }
+type ParsedTTSRequest = { text: string }
 
 function failure(
   request: NextRequest,
@@ -23,14 +24,7 @@ function failure(
   return apiErrorResponseV1(request, { status, code, message, retryable })
 }
 
-export async function POST(request: NextRequest): Promise<Response> {
-  const auth = await resolveAuth(request)
-  if (auth.authUnavailable) return failure(request, 503, 'AUTH_DEPENDENCY_UNAVAILABLE', '认证服务暂时不可用', true)
-
-  const rateGate = await enforceRequestRateLimit(auth, request)
-  if (rateGate.response) return rateGate.response
-  if (!auth.userId) return failure(request, 401, 'AUTH_REQUIRED', '请先登录后再朗读', false)
-
+async function parseTTSRequest(request: NextRequest): Promise<ParsedTTSRequest | Response> {
   let body: TTSRequest
   try {
     body = await readJson<TTSRequest>(request, { maxBytes: 256 * 1024 })
@@ -48,10 +42,10 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (!text || text.length > MAX_TEXT_LENGTH) {
     return failure(request, 400, 'INVALID_REQUEST', '朗读文本为空或过长', false)
   }
+  return { text }
+}
 
-  const apiKey = process.env.FISH_AUDIO_API_KEY?.trim()
-  if (!apiKey) return failure(request, 503, 'DEPENDENCY_UNAVAILABLE', '语音服务暂时不可用', true)
-
+async function requestFishAudio(request: NextRequest, text: string, apiKey: string): Promise<Response> {
   try {
     const providerResponse = await fetch(FISH_AUDIO_URL, {
       method: 'POST',
@@ -72,10 +66,8 @@ export async function POST(request: NextRequest): Promise<Response> {
 
     const contentType = providerResponse.headers.get('content-type')?.toLowerCase() ?? ''
     const declaredAudioLength = Number(providerResponse.headers.get('content-length'))
-    if (!contentType.startsWith('audio/')) {
-      return failure(request, 502, 'DEPENDENCY_UNAVAILABLE', '语音服务返回了无效音频', true)
-    }
-    if (Number.isFinite(declaredAudioLength) && declaredAudioLength > MAX_AUDIO_BYTES) {
+    if (!contentType.startsWith('audio/')
+      || (Number.isFinite(declaredAudioLength) && declaredAudioLength > MAX_AUDIO_BYTES)) {
       return failure(request, 502, 'DEPENDENCY_UNAVAILABLE', '语音服务返回了无效音频', true)
     }
 
@@ -103,4 +95,21 @@ export async function POST(request: NextRequest): Promise<Response> {
       true,
     )
   }
+}
+
+export async function POST(request: NextRequest): Promise<Response> {
+  const auth = await resolveAuth(request)
+  if (auth.authUnavailable) return failure(request, 503, 'AUTH_DEPENDENCY_UNAVAILABLE', '认证服务暂时不可用', true)
+
+  const rateGate = await enforceRequestRateLimit(auth, request)
+  if (rateGate.response) return rateGate.response
+  if (!auth.userId) return failure(request, 401, 'AUTH_REQUIRED', '请先登录后再朗读', false)
+
+  const parsed = await parseTTSRequest(request)
+  if (parsed instanceof Response) return parsed
+
+  const apiKey = process.env.FISH_AUDIO_API_KEY?.trim()
+  if (!apiKey) return failure(request, 503, 'DEPENDENCY_UNAVAILABLE', '语音服务暂时不可用', true)
+
+  return requestFishAudio(request, parsed.text, apiKey)
 }

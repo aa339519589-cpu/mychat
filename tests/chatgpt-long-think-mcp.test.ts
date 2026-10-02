@@ -31,17 +31,18 @@ test("ChatGPT Long Think MCP initializes as a stateless tools server", () => {
   assert.match(String(result.instructions), /must not send any user-facing text until long_think_checkpoint returns done=true/)
 })
 
-test("lists the clock, checkpoint, and resume tools as read-only", () => {
+test("lists all four Long Think tools as read-only", () => {
   const response = handleChatGptLongThinkRpc({ jsonrpc: "2.0", id: "tools", method: "tools/list" })
   const result = response?.result as { tools: typeof CHATGPT_LONG_THINK_TOOLS }
-  assert.equal(result.tools.length, 3)
-  assert.deepEqual(result.tools.map(tool => tool.name), ["long_think_clock", "long_think_checkpoint", "long_think_resume"])
+  assert.equal(result.tools.length, 4)
+  assert.deepEqual(result.tools.map(tool => tool.name), ["trigger_thinking", "long_think_clock", "long_think_checkpoint", "long_think_resume"])
   assert.ok(result.tools.every(tool => tool.annotations.readOnlyHint === true))
 })
 
 test("checkpoint forces continuation while material gaps remain", () => {
   const result = callChatGptLongThinkTool("long_think_checkpoint", {
     objective: "Prove the claim",
+    stage: "decompose",
     progress: "Reduced the problem to two remaining lemmas.",
     unresolved: ["Lemma B is still open"],
     nextActions: ["Prove Lemma B"],
@@ -54,7 +55,7 @@ test("checkpoint forces continuation while material gaps remain", () => {
   }
   assert.equal(result.structuredContent.done, false)
   assert.match(result.structuredContent.continuationInstruction, /Continue working now/)
-  assert.match(result.structuredContent.continuationInstruction, /long_think_clock/)
+  assert.match(result.structuredContent.continuationInstruction, /long_think_checkpoint/)
   assert.match(result.content[0]?.text ?? "", /Do not give the user a final answer yet/)
   const checkpoint = JSON.parse(result.structuredContent.checkpoint) as Record<string, unknown>
   assert.equal(checkpoint.objective, "Prove the claim")
@@ -63,21 +64,33 @@ test("checkpoint forces continuation while material gaps remain", () => {
 
 test("checkpoint accepts closure only with no gaps and a proposed answer", () => {
   const originalNow = Date.now
-  Date.now = () => MIN_PURE_THINKING_MS + 1_000
+  let now = 0
+  Date.now = () => now
   try {
-    const clock = JSON.stringify({ clock: { version: 1, pureThinkingMs: 0, phase: "thinking", lastThinkingAt: 0 } })
-    const result = callChatGptLongThinkTool("long_think_checkpoint", {
-      objective: "Solve the problem",
-      checkpoint: clock,
-      progress: "All required cases are verified.",
-      unresolved: [],
-      nextActions: [],
-      evidence: ["All cases checked"],
-      proposedAnswer: "The result is established.",
-      done: true,
-    }) as { structuredContent: { done: boolean; pureThinkingMs: number }; content: Array<{ text: string }> }
+    const started = callChatGptLongThinkTool("long_think_clock", { action: "start" }) as { structuredContent: { checkpoint: string } }
+    let checkpoint = started.structuredContent.checkpoint
+    let result: { structuredContent: { done: boolean; pureThinkingMs: number }; content: Array<{ text: string }> } | null = null
+    const stages = ["decompose", "analyze", "verify", "challenge", "recheck", "synthesize"]
+    for (const [index, stage] of stages.entries()) {
+      now = (index + 1) * 5_000
+      const finalStage = stage === "synthesize"
+      const response = callChatGptLongThinkTool("long_think_checkpoint", {
+        objective: "Solve the problem",
+        stage,
+        checkpoint,
+        progress: `Verified a new concrete result for ordered stage ${stage}.`,
+        unresolved: finalStage ? [] : ["One remaining closure check"],
+        nextActions: finalStage ? [] : ["Complete the remaining closure check"],
+        evidence: stage === "verify" || finalStage ? ["All cases checked"] : [],
+        proposedAnswer: finalStage ? "The result is established." : "",
+        done: finalStage,
+      }) as { structuredContent: { checkpoint: string; done: boolean; pureThinkingMs: number }; content: Array<{ text: string }> }
+      checkpoint = response.structuredContent.checkpoint
+      result = response
+    }
+    assert.ok(result)
     assert.equal(result.structuredContent.done, true)
-    assert.equal(result.structuredContent.pureThinkingMs, MIN_PURE_THINKING_MS + 1_000)
+    assert.equal(result.structuredContent.pureThinkingMs, MIN_PURE_THINKING_MS)
     assert.match(result.content[0]?.text ?? "", /Closure accepted/)
     assert.match(result.content[0]?.text ?? "", /Response integrity rules apply to every reply/)
   } finally {
@@ -99,15 +112,27 @@ test("clock excludes external-tool time and keeps accumulating pure thinking", (
     const resumed = callChatGptLongThinkTool("long_think_clock", { action: "resume", checkpoint: paused.structuredContent.checkpoint }) as { structuredContent: { checkpoint: string; pureThinkingMs: number; phase: string } }
     assert.equal(resumed.structuredContent.pureThinkingMs, 10_000)
     assert.equal(resumed.structuredContent.phase, "thinking")
-    now = 119_999
-    const checkpoint = callChatGptLongThinkTool("long_think_checkpoint", {
+    now = 109_999
+    const firstCheckpoint = callChatGptLongThinkTool("long_think_checkpoint", {
       objective: "Solve the problem",
+      stage: "decompose",
       checkpoint: resumed.structuredContent.checkpoint,
-      progress: "Still checking the final case.",
+      progress: "Started a fresh ordered check after resuming active thinking.",
       unresolved: ["Final case"],
       nextActions: ["Check final case"],
       done: false,
-    }) as { structuredContent: { checkpoint: string; pureThinkingMs: number; remainingMs: number } }
+    }) as { structuredContent: { checkpoint: string; pureThinkingMs: number } }
+    assert.equal(firstCheckpoint.structuredContent.pureThinkingMs, 19_999)
+    now = 119_999
+    const checkpoint = callChatGptLongThinkTool("long_think_checkpoint", {
+      objective: "Solve the problem",
+      stage: "analyze",
+      checkpoint: firstCheckpoint.structuredContent.checkpoint,
+      progress: "Compared the final case against the previous verified invariant.",
+      unresolved: ["Final case"],
+      nextActions: ["Check final case"],
+      done: false,
+    }) as { structuredContent: { pureThinkingMs: number; remainingMs: number } }
     assert.equal(checkpoint.structuredContent.pureThinkingMs, 29_999)
     assert.equal(checkpoint.structuredContent.remainingMs, 1)
   } finally {
@@ -117,12 +142,13 @@ test("clock excludes external-tool time and keeps accumulating pure thinking", (
 
 test("closure stays blocked until the pure-thinking minimum is reached", () => {
   const originalNow = Date.now
-  Date.now = () => MIN_PURE_THINKING_MS - 1
+  Date.now = () => 3_000
   try {
     const result = callChatGptLongThinkTool("long_think_checkpoint", {
       objective: "Solve the problem",
-      checkpoint: JSON.stringify({ clock: { version: 1, pureThinkingMs: 0, phase: "thinking", lastThinkingAt: 0 } }),
-      progress: "Candidate answer is ready.",
+      stage: "synthesize",
+      checkpoint: JSON.stringify({ clock: { version: 1, pureThinkingMs: 26_999, phase: "thinking", lastThinkingAt: 0, checkpointCount: 5, lastProgressDigest: null, stageIndex: 5 } }),
+      progress: "Candidate answer is ready after all six distinct stages.",
       unresolved: [],
       nextActions: [],
       proposedAnswer: "The result is established.",
@@ -139,6 +165,7 @@ test("closure stays blocked until the pure-thinking minimum is reached", () => {
 test("resume preserves the full checkpoint while restarting the thinking segment", () => {
   const result = callChatGptLongThinkTool("long_think_checkpoint", {
     objective: "Solve the problem",
+    stage: "decompose",
     checkpoint: JSON.stringify({ clock: { version: 1, pureThinkingMs: 5_000, phase: "paused", lastThinkingAt: null } }),
     progress: "Saved progress.",
     unresolved: ["One check"],

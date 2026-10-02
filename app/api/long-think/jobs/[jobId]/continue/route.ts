@@ -72,9 +72,13 @@ async function enqueue(input: JsonObject, principalId: string, authClass: JobAut
   })
 }
 
-export async function POST(request: NextRequest, context: { params: Promise<{ jobId: string }> }) {
-  const maintenance = expensiveWriteMaintenanceResponse(request)
-  if (maintenance) return maintenance
+type ResolvedAuth = Awaited<ReturnType<typeof resolveAuth>>
+type AuthorizedAuth = ResolvedAuth & {
+  supabase: NonNullable<ResolvedAuth['supabase']>
+  userId: string
+}
+
+async function authorizedUser(request: NextRequest): Promise<AuthorizedAuth | Response> {
   const auth = await resolveAuth(request)
   if (auth.authUnavailable) return apiErrorResponseV1(request, {
     status: 503, code: 'AUTH_DEPENDENCY_UNAVAILABLE', message: '认证服务暂时不可用', retryable: true,
@@ -85,12 +89,10 @@ export async function POST(request: NextRequest, context: { params: Promise<{ jo
   })
   const rate = await enforceRequestRateLimit(auth, request)
   if (rate.response) return rate.response
+  return auth as AuthorizedAuth
+}
 
-  const { jobId: sourceJobId } = await context.params
-  if (!isUuid(sourceJobId)) return apiErrorResponseV1(request, {
-    status: 400, code: 'INVALID_REQUEST', message: 'jobId 无效', retryable: false,
-  })
-
+async function readContinuation(request: NextRequest): Promise<{ body: Record<string, unknown>; instruction: string } | Response> {
   let body: Record<string, unknown>
   try { body = await readJson(request, { maxBytes: 512 * 1024 }) }
   catch (error) {
@@ -103,7 +105,14 @@ export async function POST(request: NextRequest, context: { params: Promise<{ jo
   if (!instruction || instruction.length > MAX_INSTRUCTION_CHARS) return apiErrorResponseV1(request, {
     status: 400, code: 'INVALID_REQUEST', message: '请输入继续要求', retryable: false,
   })
+  return { body, instruction }
+}
 
+async function continuationSeed(
+  request: NextRequest,
+  auth: AuthorizedAuth,
+  sourceJobId: string,
+): Promise<{ oldInput: SourceLongThinkInput; seed: JsonObject } | Response> {
   const { data, error } = await auth.supabase.from('jobs')
     .select('id,type,status,input,checkpoint,result')
     .eq('id', sourceJobId).eq('principal_id', auth.userId).maybeSingle()
@@ -114,21 +123,29 @@ export async function POST(request: NextRequest, context: { params: Promise<{ jo
   if (!row || row.type !== 'reasoning.long') return apiErrorResponseV1(request, {
     status: 404, code: 'NOT_FOUND', message: '长期任务不存在', retryable: false,
   })
-
   const oldInput = sourceInput(row.input)
   const seed = checkpointData(row.checkpoint) ?? resultCheckpoint(row.result)
   if (!oldInput || !seed) return apiErrorResponseV1(request, {
     status: 409, code: 'CONFLICT', message: '这个任务还没有可续接的 checkpoint', retryable: false,
   })
+  return { oldInput, seed }
+}
 
+function buildNextInput(
+  request: NextRequest,
+  body: Record<string, unknown>,
+  instruction: string,
+  sourceJobId: string,
+  oldInput: SourceLongThinkInput,
+  seed: JsonObject,
+): JsonObject | Response {
   const maxTokens = integer(body.maxTokens, Number(oldInput.maxTokens) || 32_768, 512, 262_144)
   const minRounds = integer(body.minRounds, 1, 1, 100_000)
   const verifyEvery = integer(body.verifyEvery, Number(oldInput.verifyEvery) || 6, 1, 10_000)
   if (maxTokens === null || minRounds === null || verifyEvery === null) return apiErrorResponseV1(request, {
     status: 400, code: 'INVALID_REQUEST', message: '继续任务参数无效', retryable: false,
   })
-
-  const nextInput: JsonObject = {
+  return {
     endpointId: oldInput.endpointId,
     problem: `${oldInput.problem.trim()}\n\n【用户继续要求】\n${instruction}`,
     maxTokens,
@@ -137,9 +154,16 @@ export async function POST(request: NextRequest, context: { params: Promise<{ jo
     seedCheckpoint: seed,
     continuedFrom: sourceJobId,
   }
+}
 
+async function enqueueResponse(
+  request: NextRequest,
+  input: JsonObject,
+  auth: AuthorizedAuth,
+  sourceJobId: string,
+): Promise<Response> {
   try {
-    const enqueued = await enqueue(nextInput, auth.userId, auth.isAnonymous ? 'anonymous' : 'registered', sourceJobId)
+    const enqueued = await enqueue(input, auth.userId, auth.isAnonymous ? 'anonymous' : 'registered', sourceJobId)
     return Response.json({ jobId: enqueued.job.id, status: enqueued.job.status }, {
       status: 202,
       headers: {
@@ -155,4 +179,22 @@ export async function POST(request: NextRequest, context: { params: Promise<{ jo
       headers: { 'Retry-After': '2' },
     })
   }
+}
+
+export async function POST(request: NextRequest, context: { params: Promise<{ jobId: string }> }) {
+  const maintenance = expensiveWriteMaintenanceResponse(request)
+  if (maintenance) return maintenance
+  const auth = await authorizedUser(request)
+  if (auth instanceof Response) return auth
+  const { jobId: sourceJobId } = await context.params
+  if (!isUuid(sourceJobId)) return apiErrorResponseV1(request, {
+    status: 400, code: 'INVALID_REQUEST', message: 'jobId 无效', retryable: false,
+  })
+  const continuation = await readContinuation(request)
+  if (continuation instanceof Response) return continuation
+  const source = await continuationSeed(request, auth, sourceJobId)
+  if (source instanceof Response) return source
+  const nextInput = buildNextInput(request, continuation.body, continuation.instruction, sourceJobId, source.oldInput, source.seed)
+  if (nextInput instanceof Response) return nextInput
+  return enqueueResponse(request, nextInput, auth, sourceJobId)
 }

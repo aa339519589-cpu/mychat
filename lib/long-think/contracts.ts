@@ -46,6 +46,19 @@ function integer(value: unknown, minimum: number, maximum: number): number | nul
     : null
 }
 
+function validatedJobNumbers(
+  row: Record<string, unknown>,
+  problem: string,
+  maxTokens: number | null,
+  minRounds: number | null,
+  verifyEvery: number | null,
+  seedCheckpoint: JsonObject | null,
+): { maxTokens: number; minRounds: number; verifyEvery: number } | null {
+  if (!problem || problem.length > 1_000_000 || maxTokens === null || minRounds === null || verifyEvery === null
+    || (row.seedCheckpoint !== undefined && row.seedCheckpoint !== null && seedCheckpoint === null)) return null
+  return { maxTokens, minRounds, verifyEvery }
+}
+
 function sanitizeJson(value: JsonValue): JsonValue {
   if (typeof value === 'string') return value.replaceAll('\u0000', '')
   if (Array.isArray(value)) return value.map(sanitizeJson)
@@ -70,15 +83,31 @@ export function parseLongThinkJobInput(value: JsonValue): LongThinkJobInput {
   const seedCheckpoint = row.seedCheckpoint === undefined || row.seedCheckpoint === null
     ? null : jsonObject(row.seedCheckpoint)
   const continuedFrom = typeof row.continuedFrom === 'string' ? row.continuedFrom : null
-  if (!endpointId || !problem || problem.length > 1_000_000 || maxTokens === null || minRounds === null || verifyEvery === null
-    || (row.seedCheckpoint !== undefined && row.seedCheckpoint !== null && seedCheckpoint === null)) {
+  const limits = validatedJobNumbers(row, problem, maxTokens, minRounds, verifyEvery, seedCheckpoint)
+  if (!endpointId || !limits) {
     throw new TypeError('Long-think job input is invalid')
   }
-  return { endpointId, problem, maxTokens, minRounds, verifyEvery, seedCheckpoint, continuedFrom }
+  return { endpointId, problem, ...limits, seedCheckpoint, continuedFrom }
 }
 
 function nullableTokenCount(value: unknown): number | null {
   return value === null ? null : integer(value, 0, Number.MAX_SAFE_INTEGER)
+}
+
+function checkpointCounters(
+  round: number | null,
+  verifierRuns: number | null,
+  reviewerRuns: number | null,
+  transientErrors: number | null,
+  formatFailures: number | null,
+  apiCalls: number | null,
+  inputTokens: number | null | undefined,
+  outputTokens: number | null | undefined,
+  state: Record<string, unknown> | null,
+): { round: number; verifierRuns: number; reviewerRuns: number; transientErrors: number; formatFailures: number; apiCalls: number; inputTokens: number | null; outputTokens: number | null; state: Record<string, unknown> } | null {
+  if (round === null || verifierRuns === null || reviewerRuns === null || transientErrors === null
+    || formatFailures === null || apiCalls === null || inputTokens === undefined || outputTokens === undefined || state === null) return null
+  return { round, verifierRuns, reviewerRuns, transientErrors, formatFailures, apiCalls, inputTokens, outputTokens, state }
 }
 
 export function initialLongThinkCheckpoint(): LongThinkRuntimeCheckpoint {
@@ -109,21 +138,21 @@ export function parseLongThinkCheckpoint(value: JsonObject | null | undefined): 
   const apiCalls = integer(usage?.apiCalls, 0, Number.MAX_SAFE_INTEGER)
   const inputTokens = nullableTokenCount(usage?.inputTokens)
   const outputTokens = nullableTokenCount(usage?.outputTokens)
-  if (round === null || verifierRuns === null || reviewerRuns === null || transientErrors === null
-    || formatFailures === null || apiCalls === null || inputTokens === undefined || outputTokens === undefined || !state) {
+  const counters = checkpointCounters(round, verifierRuns, reviewerRuns, transientErrors, formatFailures, apiCalls, inputTokens, outputTokens, state)
+  if (!counters) {
     return initialLongThinkCheckpoint()
   }
   return {
-    round,
-    state: sanitizeLongThinkJsonObject(state as JsonObject),
+    round: counters.round,
+    state: sanitizeLongThinkJsonObject(counters.state as JsonObject),
     candidateAnswer: typeof row.candidateAnswer === 'string' ? row.candidateAnswer.replaceAll('\u0000', '') : '',
     lastReasoning: typeof row.lastReasoning === 'string' ? row.lastReasoning.replaceAll('\u0000', '') : '',
     lastStreamText: typeof row.lastStreamText === 'string' ? row.lastStreamText.replaceAll('\u0000', '') : '',
-    usage: { apiCalls, inputTokens, outputTokens },
-    verifierRuns,
-    reviewerRuns,
-    transientErrors,
-    formatFailures,
+    usage: { apiCalls: counters.apiCalls, inputTokens: counters.inputTokens, outputTokens: counters.outputTokens },
+    verifierRuns: counters.verifierRuns,
+    reviewerRuns: counters.reviewerRuns,
+    transientErrors: counters.transientErrors,
+    formatFailures: counters.formatFailures,
   }
 }
 

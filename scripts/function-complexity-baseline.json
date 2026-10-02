@@ -136,14 +136,9 @@
         92
       ]
     },
-    "components/literary-chat/use-chat-generation.ts": {
-      "complexity": [
-        18
-      ]
-    },
     "components/literary-chat/use-model-selection.ts": {
       "maxLines": [
-        144
+        143
       ]
     },
     "components/literary-chat/use-projects.ts": {
@@ -375,7 +370,6 @@
     },
     "lib/generation-client.ts": {
       "complexity": [
-        21,
         17
       ]
     },

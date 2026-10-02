@@ -60,6 +60,24 @@ async function resumeKnownGeneration(conversationId: string, resume: (conversati
   return true
 }
 
+function updateFirstExchangeTitle(
+  isFirstExchange: boolean,
+  result: RunChatStreamResult,
+  conversationId: string,
+  text: string,
+  endpoint: ModelEndpointSummary | null,
+  setConversations: Dispatch<SetStateAction<Conversation[]>>,
+) {
+  if (!isFirstExchange || result.status !== "completed" || !result.content) return
+  if (endpoint && endpoint.outputKind !== "chat") {
+    const title = text.trim().replace(/\s+/g, " ").slice(0, 14) || "媒体生成"
+    setConversations(previous => previous.map(conversation => conversation.id === conversationId ? { ...conversation, title } : conversation))
+    updateConversationTitle(conversationId, title)
+    return
+  }
+  generateConversationTitle({ conversationId, userText: text, assistantText: result.content, endpoint, setConversations })
+}
+
 export function useChatGeneration(options: UseChatGenerationOptions) {
   const { user, active, activeId, activeTier, activeEndpoint, activeEndpointId, activeModelId, reasoningEffort, memories, memoryEnabled, searchMode, historyRetrieval, renderEnabled, showTokenUsage, authorityReady, setConversations, setMemories, setOpenArtifactId, loadedRef, draftIdRef, getProjectContext, onConversationCreated } = options
   const [generationByConversation, setGenerationByConversation] = useState<Record<string, ClientGenerationState>>({})
@@ -86,10 +104,6 @@ export function useChatGeneration(options: UseChatGenerationOptions) {
     const cleanup = () => { if (resumeByConversationRef.current.get(conversationId) === entry) resumeByConversationRef.current.delete(conversationId) }
     void operation.then(cleanup, () => { resolveReconciled(false); cleanup() })
     return reconciled
-  }
-
-  function generateTitle(conversationId: string, userText: string, assistantText: string) {
-    return generateConversationTitle({ conversationId, userText, assistantText, endpoint: activeEndpoint, setConversations })
   }
 
   async function startStream(history: HistoryMessage[], assistantMessageId: string, conversationId: string, controller: AbortController, attachments?: AttachedFile[], projectContext?: ProjectContext, generationId?: string, turn?: ChatTurnAuthority, onAccepted?: () => void) {
@@ -123,13 +137,7 @@ export function useChatGeneration(options: UseChatGenerationOptions) {
       const controller = new AbortController()
       abortByConversationRef.current.set(conversationId, controller)
       const result = await startStream(history, assistantMessageId, conversationId, controller, files?.length ? files : undefined, projectContext, generationId, turn, onAccepted)
-      if (isFirstExchange && result.status === "completed" && result.content) {
-        if (activeEndpoint && activeEndpoint.outputKind !== "chat") {
-          const title = text.trim().replace(/\s+/g, " ").slice(0, 14) || "媒体生成"
-          setConversations(previous => previous.map(conversation => conversation.id === conversationId ? { ...conversation, title } : conversation))
-          updateConversationTitle(conversationId, title)
-        } else generateTitle(conversationId, text, result.content)
-      }
+      updateFirstExchangeTitle(isFirstExchange, result, conversationId, text, activeEndpoint, setConversations)
     } catch (error) {
       console.error("handleSend failed", error)
       markGeneration(conversationId, { status: "error", generationId, assistantMessageId })

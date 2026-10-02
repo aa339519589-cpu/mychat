@@ -25,6 +25,17 @@ export type ClientGenerationPatch = Partial<ClientGenerationState> & {
   begin?: boolean
 }
 
+function shouldKeepOutputComplete(
+  current: ClientGenerationState | undefined,
+  patch: ClientGenerationPatch,
+  sameGeneration: boolean,
+): boolean {
+  if (patch.begin) return false
+  if (patch.outputComplete !== undefined) return patch.outputComplete
+  if (patch.status === 'running') return sameGeneration && current?.outputComplete === true
+  return true
+}
+
 export function reduceClientGenerationState(
   previous: Record<string, ClientGenerationState>,
   conversationId: string,
@@ -37,13 +48,7 @@ export function reduceClientGenerationState(
     && current.generationId === generationId
     && patch.authoritativeTerminal !== true) return previous
   const sameGeneration = current?.generationId === generationId
-  const outputComplete = patch.begin
-    ? false
-    : patch.outputComplete !== undefined
-      ? patch.outputComplete
-      : patch.status === 'running'
-        ? sameGeneration && current?.outputComplete === true
-        : true
+  const outputComplete = shouldKeepOutputComplete(current, patch, sameGeneration)
   return {
     ...previous,
     [conversationId]: {
@@ -93,23 +98,36 @@ function isGenerationStatus(value: unknown): value is GenerationStatus {
     || value === 'failed' || value === 'cancelled'
 }
 
+type ValidGenerationSnapshotFields = Record<string, unknown> & {
+  id: string
+  conversationId: string
+  assistantMessageId: string
+  status: GenerationStatus
+  content: string
+  thinking: string
+  media: unknown[]
+  sequence: number
+}
+
+function hasValidSnapshotFields(snapshot: Record<string, unknown>): snapshot is ValidGenerationSnapshotFields {
+  return typeof snapshot.id === 'string'
+    && typeof snapshot.conversationId === 'string'
+    && typeof snapshot.assistantMessageId === 'string'
+    && isGenerationStatus(snapshot.status)
+    && typeof snapshot.content === 'string'
+    && typeof snapshot.thinking === 'string'
+    && Array.isArray(snapshot.media)
+    && Number.isSafeInteger(snapshot.sequence)
+    && Number(snapshot.sequence) >= 0
+    && (snapshot.error === null || snapshot.error === undefined || typeof snapshot.error === 'string')
+}
+
 export function normalizeConversationGenerationSnapshot(
   value: unknown,
 ): ConversationGenerationSnapshot | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const snapshot = value as Record<string, unknown>
-  if (typeof snapshot.id !== 'string'
-    || typeof snapshot.conversationId !== 'string'
-    || typeof snapshot.assistantMessageId !== 'string'
-    || !isGenerationStatus(snapshot.status)
-    || typeof snapshot.content !== 'string'
-    || typeof snapshot.thinking !== 'string'
-    || !Array.isArray(snapshot.media)
-    || !Number.isSafeInteger(snapshot.sequence)
-    || Number(snapshot.sequence) < 0
-    || (snapshot.error !== null && snapshot.error !== undefined && typeof snapshot.error !== 'string')) {
-    return null
-  }
+  if (!hasValidSnapshotFields(snapshot)) return null
   const media = normalizeGeneratedMediaList(snapshot.media)
   if (media.length !== snapshot.media.length) return null
   const tokenUsage = normalizeTokenUsage(snapshot.tokenUsage)
