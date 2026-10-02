@@ -27,6 +27,17 @@ test('code chat request preserves the selected model', () => {
   assert.equal(parsed.taskId, null)
 })
 
+test('code chat request carries a valid custom endpoint and rejects malformed endpoint ids', () => {
+  const endpointId = '70000000-0000-4000-8000-000000000001'
+  const parsed = parseCodeChatRequest(requestBody({ endpointId }))
+  assert.equal(parsed.endpointId, endpointId)
+
+  assert.throws(
+    () => parseCodeChatRequest(requestBody({ endpointId: 'not-a-uuid' })),
+    /endpointId/,
+  )
+})
+
 test('code chat request rejects invalid repositories and message roles', () => {
   assert.throws(
     () => parseCodeChatRequest(requestBody({ repo: 'owner/repo/extra' })),

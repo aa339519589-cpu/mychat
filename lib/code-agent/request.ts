@@ -14,6 +14,7 @@ export type CodeChatMessage = {
 export type CodeChatRequest = {
   repo: string | null
   modelId: string
+  endpointId?: string
   reasoningEffort?: string
   messages: CodeChatMessage[]
   taskId: string | null
@@ -81,11 +82,13 @@ export function parseCodeChatRequest(input: unknown): CodeChatRequest {
   const taskId = optionalUuid(body.taskId, 'taskId')
   const responseId = optionalUuid(body.responseId, 'responseId')
   const sessionId = optionalUuid(body.sessionId, 'sessionId')
+  const endpointId = optionalUuid(body.endpointId, 'endpointId')
   const reasoningEffort = optionalReasoningEffort(body.reasoningEffort)
 
   return {
     repo: repositoryOf(body.repo, sessionId),
     modelId: requiredModelId(body.modelId),
+    ...(endpointId ? { endpointId } : {}),
     ...(reasoningEffort ? { reasoningEffort } : {}),
     messages: messagesOf(body.messages),
     taskId,

@@ -68,6 +68,7 @@ async function resolveAdmissionPolicy(request: NextRequest, auth: AuthCtx, body:
   try {
     selection = await resolveCodeModelSelection({
       modelId: body.modelId,
+      endpointId: body.endpointId,
       reasoningEffort: body.reasoningEffort,
       supabase: auth.supabase,
       userId: auth.userId,
@@ -155,6 +156,7 @@ async function enqueueAgentTask(input: {
     repo: input.body.repo,
     modelId: input.selection.model,
     accessClass: input.selection.accessClass,
+    ...(input.body.endpointId ? { endpointId: input.body.endpointId } : {}),
     ...(input.selection.reasoningEffort ? { reasoningEffort: input.selection.reasoningEffort } : {}),
     sessionId: input.body.sessionId,
     responseId: input.body.responseId,

@@ -180,3 +180,50 @@ test('DeepSeek Code selection bypasses OpenRouter and keeps official credentials
     restoreEnvironment('OPENROUTER_API_KEY', previousOpenRouterKey)
   }
 })
+
+test('Code selection resolves the selected custom endpoint and keeps explicit thinking Off', async () => {
+  const chatEndpoint = {
+    ...endpoint,
+    name: 'Sonnet 5.5',
+    protocol: 'anthropic',
+    model: 'claude-sonnet-5',
+    output_kind: 'chat',
+  }
+  const result = await resolveCodeModelSelection({
+    modelId: 'endpoint:endpoint-id',
+    endpointId: 'endpoint-id',
+    reasoningEffort: 'none',
+    supabase: {} as never,
+    userId: 'user-id',
+    allowPremium: true,
+  }, {
+    getOwnedEndpoint: async () => chatEndpoint,
+    resolveEndpointKey: () => 'custom-code-key',
+    validateEndpointNetwork: async () => 'https://safe.example/v1',
+  })
+
+  assert.equal(result.customEndpoint, true)
+  assert.equal(result.model, 'claude-sonnet-5')
+  assert.equal(result.apiKey, 'custom-code-key')
+  assert.equal(result.outputKind, 'chat')
+  assert.equal(result.reasoningEffort, 'none')
+  assert.equal(result.thinking, false)
+})
+
+test('Code selection rejects custom image and video endpoints', async () => {
+  await assert.rejects(
+    resolveCodeModelSelection({
+      modelId: 'endpoint:endpoint-id',
+      endpointId: 'endpoint-id',
+      supabase: {} as never,
+      userId: 'user-id',
+    }, {
+      getOwnedEndpoint: async () => endpoint,
+      resolveEndpointKey: () => 'media-key',
+      validateEndpointNetwork: async () => 'https://safe.example/v1',
+    }),
+    (error: unknown) => error instanceof ChatModelSelectionError
+      && error.status === 409
+      && error.message === 'Code 仅支持文本模型',
+  )
+})
