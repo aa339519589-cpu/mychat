@@ -33,9 +33,11 @@ async function mockAuthenticatedWorkspace(page: Page) {
     user,
   }
   const encoded = `base64-${Buffer.from(JSON.stringify(session)).toString('base64url')}`
-  await page.addInitScript(({ value }) => {
-    document.cookie = `sb-example-auth-token=${value}; path=/; SameSite=Lax`
-  }, { value: encoded })
+  await page.context().addCookies([{
+    name: 'sb-127-auth-token',
+    value: encoded,
+    url: 'http://127.0.0.1:3210',
+  }])
 
   await page.route('**/api/endpoints', route => route.fulfill({
     status: 200,
@@ -47,7 +49,7 @@ async function mockAuthenticatedWorkspace(page: Page) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ job: null, streamUrl: null }),
   }))
-  await page.route('https://example.supabase.co/**', route => {
+  await page.route('http://127.0.0.1:3211/**', route => {
     const request = route.request()
     const url = new URL(request.url())
     if (request.method() === 'OPTIONS') {
