@@ -121,6 +121,7 @@ async function selectedModel(
 ): Promise<{ selection: ChatModelSelection; usingBalance: boolean }> {
   const payload = object(context.job.input)
   const modelId = required(payload.modelId, 'modelId')
+  const endpointId = payload.endpointId === undefined ? undefined : required(payload.endpointId, 'endpointId')
   const reasoningEffort = typeof payload.reasoningEffort === 'string'
     ? payload.reasoningEffort
     : undefined
@@ -128,6 +129,7 @@ async function selectedModel(
   try {
     selection = await resolveCodeModelSelection({
       modelId,
+      endpointId,
       reasoningEffort,
       supabase: client as unknown as SupabaseServer,
       userId,

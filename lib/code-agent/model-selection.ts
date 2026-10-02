@@ -12,6 +12,8 @@ const DIRECT_DEEPSEEK_RUNTIME_MODELS: Readonly<Record<string, string>> = {
   'deepseek-v4-pro': 'deepseek/deepseek-v4-pro',
 }
 
+type CodeModelSelectionDependencies = Parameters<typeof resolveChatModelSelection>[1]
+
 /** Accept both the public catalog ID and the persisted provider runtime ID. */
 export function codeCatalogModelId(modelId: string): string {
   return DIRECT_DEEPSEEK_RUNTIME_MODELS[modelId] ?? modelId
@@ -19,11 +21,27 @@ export function codeCatalogModelId(modelId: string): string {
 
 export async function resolveCodeModelSelection(options: {
   modelId: string
+  endpointId?: string
   reasoningEffort?: string
   supabase: SupabaseServer | null
   userId: string | null
   allowPremium?: boolean
-}): Promise<ChatModelSelection> {
+}, dependencies?: CodeModelSelectionDependencies): Promise<ChatModelSelection> {
+  if (options.endpointId) {
+    const selection = await resolveChatModelSelection({
+      tier: '绝句',
+      endpointId: options.endpointId,
+      reasoningEffort: options.reasoningEffort,
+      supabase: options.supabase,
+      userId: options.userId,
+      allowPremium: options.allowPremium,
+    }, dependencies)
+    if (selection.outputKind !== 'chat') {
+      throw new ChatModelSelectionError(409, { error: 'Code 仅支持文本模型' })
+    }
+    return selection
+  }
+
   const modelId = codeCatalogModelId(options.modelId)
   const directDeepSeek = getDirectDeepSeekCatalogRoute(modelId)
   if (!directDeepSeek) {
@@ -45,5 +63,5 @@ export async function resolveCodeModelSelection(options: {
     supabase: options.supabase,
     userId: options.userId,
     allowPremium: options.allowPremium,
-  })
+  }, dependencies)
 }
