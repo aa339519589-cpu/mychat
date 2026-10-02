@@ -3,7 +3,13 @@
 import { useRef, useState } from "react"
 import type { User } from "@supabase/supabase-js"
 import type { Memory } from "@/lib/memory-data"
-import { deleteMemoryRow, insertMemory, updateMemory } from "@/lib/data"
+import {
+  deleteMemoryRow,
+  fetchMemories,
+  fetchProfile,
+  insertMemory,
+  updateMemory,
+} from "@/lib/data"
 
 const MEMORY_SETTING_PREFIX = "mychat:memory-enabled:"
 
@@ -28,6 +34,10 @@ function clearLocalSetting(userId: string) {
   try { window.localStorage.removeItem(settingKey(userId)) } catch {}
 }
 
+function errorMessage(error: unknown, fallback: string) {
+  return error instanceof Error && error.message.trim() ? error.message : fallback
+}
+
 async function persistMemoryEnabled(enabled: boolean): Promise<void> {
   const response = await fetch('/api/profile/memory', {
     method: 'PUT',
@@ -45,30 +55,57 @@ async function persistMemoryEnabled(enabled: boolean): Promise<void> {
 export function useMemories(user: User | null) {
   const [memories, setMemories] = useState<Memory[]>([])
   const [memoryEnabled, setMemoryEnabledState] = useState(true)
+  const [memoryLoading, setMemoryLoading] = useState(false)
+  const [memoryError, setMemoryError] = useState<string | null>(null)
   const writeVersionRef = useRef(0)
 
-  function persistMemorySetting(userId: string, enabled: boolean, version: number) {
-    void persistMemoryEnabled(enabled)
-      .then(() => {
-        if (writeVersionRef.current === version) clearLocalSetting(userId)
-      })
-      .catch(error => {
-        console.error("setMemoryEnabled", error)
-      })
+  function beginMemoryLoad() {
+    setMemoryLoading(true)
+    setMemoryError(null)
   }
 
-  function restoreMemories(items: Memory[], enabled: boolean) {
+  function failMemoryLoad(error: unknown) {
+    setMemoryLoading(false)
+    setMemoryError(errorMessage(error, "记忆读取失败，请重试"))
+  }
+
+  async function persistMemorySetting(
+    userId: string,
+    enabled: boolean,
+    version: number,
+    fallback: boolean,
+  ): Promise<boolean> {
+    try {
+      await persistMemoryEnabled(enabled)
+      if (writeVersionRef.current === version) {
+        clearLocalSetting(userId)
+        setMemoryError(null)
+      }
+      return true
+    } catch (error) {
+      if (writeVersionRef.current === version) {
+        clearLocalSetting(userId)
+        setMemoryEnabledState(fallback)
+        setMemoryError(errorMessage(error, "记忆设置保存失败，请重试"))
+      }
+      return false
+    }
+  }
+
+  function restoreMemories(items: Memory[], enabled: boolean, useLocalSetting = true) {
     setMemories(items)
+    setMemoryLoading(false)
+    setMemoryError(null)
     if (!user) {
       setMemoryEnabledState(enabled)
       return
     }
-    const local = readLocalSetting(user.id)
+    const local = useLocalSetting ? readLocalSetting(user.id) : null
     const resolved = local ?? enabled
     setMemoryEnabledState(resolved)
     if (local !== null) {
       const version = ++writeVersionRef.current
-      persistMemorySetting(user.id, local, version)
+      void persistMemorySetting(user.id, local, version, enabled)
     }
   }
 
@@ -76,41 +113,98 @@ export function useMemories(user: User | null) {
     writeVersionRef.current += 1
     setMemories([])
     setMemoryEnabledState(true)
+    setMemoryLoading(false)
+    setMemoryError(null)
   }
 
-  async function handleMemoryAdd(content: string) {
-    if (!user) return
-    const memory = await insertMemory(user.id, content)
-    if (memory) setMemories(previous => [...previous, memory])
+  async function refreshMemories(): Promise<boolean> {
+    if (!user) {
+      failMemoryLoad(new Error("请先登录后再读取记忆"))
+      return false
+    }
+    beginMemoryLoad()
+    const [itemsResult, profileResult] = await Promise.allSettled([
+      fetchMemories(),
+      fetchProfile(),
+    ])
+    const items = itemsResult.status === "fulfilled" ? itemsResult.value : []
+    const enabled = profileResult.status === "fulfilled" ? profileResult.value.memoryEnabled : false
+    restoreMemories(items, enabled, profileResult.status === "fulfilled")
+    const failure = itemsResult.status === "rejected"
+      ? itemsResult.reason
+      : profileResult.status === "rejected" ? profileResult.reason : null
+    if (failure) failMemoryLoad(failure)
+    return !failure
   }
 
-  function handleMemoryEdit(id: string, content: string) {
-    const timestamp = new Date().toISOString()
-    setMemories(previous => previous.map(memory => memory.id === id
-      ? { ...memory, content, timestamp }
-      : memory))
-    updateMemory(id, content)
+  async function handleMemoryAdd(content: string): Promise<boolean> {
+    if (!user) {
+      setMemoryError("请先登录后再保存记忆")
+      return false
+    }
+    try {
+      const memory = await insertMemory(user.id, content)
+      setMemories(previous => [...previous, memory])
+      setMemoryError(null)
+      return true
+    } catch (error) {
+      setMemoryError(errorMessage(error, "记忆保存失败，请重试"))
+      return false
+    }
   }
 
-  function handleMemoryDelete(id: string) {
-    setMemories(previous => previous.filter(memory => memory.id !== id))
-    deleteMemoryRow(id)
+  async function handleMemoryEdit(id: string, content: string): Promise<boolean> {
+    try {
+      await updateMemory(id, content)
+      const timestamp = new Date().toISOString()
+      setMemories(previous => previous.map(memory => memory.id === id
+        ? { ...memory, content, timestamp }
+        : memory))
+      setMemoryError(null)
+      return true
+    } catch (error) {
+      setMemoryError(errorMessage(error, "记忆修改失败，请重试"))
+      return false
+    }
   }
 
-  function handleMemoryEnabledChange(enabled: boolean) {
+  async function handleMemoryDelete(id: string): Promise<boolean> {
+    try {
+      await deleteMemoryRow(id)
+      setMemories(previous => previous.filter(memory => memory.id !== id))
+      setMemoryError(null)
+      return true
+    } catch (error) {
+      setMemoryError(errorMessage(error, "记忆删除失败，请重试"))
+      return false
+    }
+  }
+
+  async function handleMemoryEnabledChange(enabled: boolean): Promise<boolean> {
+    const previous = memoryEnabled
     setMemoryEnabledState(enabled)
-    if (!user) return
+    setMemoryError(null)
+    if (!user) {
+      setMemoryEnabledState(previous)
+      setMemoryError("请先登录后再保存记忆设置")
+      return false
+    }
     writeLocalSetting(user.id, enabled)
     const version = ++writeVersionRef.current
-    persistMemorySetting(user.id, enabled, version)
+    return persistMemorySetting(user.id, enabled, version, previous)
   }
 
   return {
     memories,
     memoryEnabled,
+    memoryLoading,
+    memoryError,
     setMemories,
+    beginMemoryLoad,
+    failMemoryLoad,
     restoreMemories,
     resetMemories,
+    refreshMemories,
     handleMemoryAdd,
     handleMemoryEdit,
     handleMemoryDelete,

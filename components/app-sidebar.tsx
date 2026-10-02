@@ -19,8 +19,10 @@ export type AppSidebarProps = {
     rename: (id: string, title: string) => void; move: (id: string, projectId: string | null) => void
   }
   memory: {
-    items: Memory[]; enabled: boolean; setEnabled: (value: boolean) => void
-    add: (content: string) => void; edit: (id: string, content: string) => void; delete: (id: string) => void
+    items: Memory[]; enabled: boolean; loading: boolean; error: string | null; retry: () => Promise<boolean>
+    setEnabled: (value: boolean) => Promise<boolean>
+    add: (content: string) => Promise<boolean>; edit: (id: string, content: string) => Promise<boolean>
+    delete: (id: string) => Promise<boolean>
   }
   project: {
     items: Project[]; create: (name: string) => Promise<Project | null>

@@ -84,14 +84,15 @@ export function ComingSoon({ icon, title, desc }: { icon: ReactNode; title: stri
   )
 }
 
-export function Switch({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+export function Switch({ checked, onChange, disabled = false }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   const reducedMotion = useReducedMotion()
   return (
     <button
       role="switch"
       aria-checked={checked}
+      disabled={disabled}
       onClick={() => onChange(!checked)}
-      className="fluid-press relative h-11 w-11 shrink-0 rounded-full"
+      className="fluid-press relative h-11 w-11 shrink-0 rounded-full disabled:opacity-50"
     >
       <span className={cn("absolute inset-x-0 top-2.5 h-6 rounded-full", checked ? "bg-sidebar-primary" : "bg-muted-foreground/30")} />
       <motion.span

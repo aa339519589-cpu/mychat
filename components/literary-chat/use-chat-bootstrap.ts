@@ -32,7 +32,9 @@ type ChatBootstrapOptions = {
   draftIdRef: MutableRefObject<string | null>
   rootConversationIdRef: MutableRefObject<string | null>
   memory: {
-    restore: (items: Memory[], enabled: boolean) => void
+    beginLoad: () => void
+    restore: (items: Memory[], enabled: boolean, useLocalSetting?: boolean) => void
+    failLoad: (error: unknown) => void
     reset: () => void
   }
   project: { set: Dispatch<SetStateAction<Project[]>>; reset: () => void }
@@ -116,14 +118,21 @@ export function useChatBootstrap({
     void (async () => {
       ensureProfile(currentUser.id)
       restoreModelEndpoints(model, cancelled)
-      const [rows, memories, profile, projects] = await Promise.all([
+      memory.beginLoad()
+      void Promise.allSettled([fetchMemories(), fetchProfile()]).then(([memoryResult, profileResult]) => {
+        if (cancelled()) return
+        const items = memoryResult.status === "fulfilled" ? memoryResult.value : []
+        const enabled = profileResult.status === "fulfilled" ? profileResult.value.memoryEnabled : false
+        memory.restore(items, enabled, profileResult.status === "fulfilled")
+        if (memoryResult.status === "rejected") memory.failLoad(memoryResult.reason)
+        else if (profileResult.status === "rejected") memory.failLoad(profileResult.reason)
+      })
+
+      const [rows, projects] = await Promise.all([
         fetchConversations(),
-        fetchMemories(),
-        fetchProfile(),
         fetchProjects(),
       ])
       if (cancelled()) return
-      memory.restore(memories, profile.memoryEnabled)
       project.set(projects)
       for (const row of rows) if (row.msgCount === 0) {
         void deleteConversationRow(row.id).catch(() => undefined)
