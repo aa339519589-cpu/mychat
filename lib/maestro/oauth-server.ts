@@ -176,11 +176,20 @@ export function maestroOAuthClientName(clientId: string): string {
   return verifyPayload<ClientPayload>(clientId, "client")?.name || "ChatGPT"
 }
 
-export function parseMaestroAuthorizationRequest(params: URLSearchParams, origin: string): MaestroAuthorizationRequest {
-  if (params.get("response_type") !== "code") throw new Error("response_type must be code")
+function requiredAuthorizationClient(params: URLSearchParams): { clientId: string; client: ClientPayload } {
   const clientId = params.get("client_id")?.trim() || ""
   const client = verifyPayload<ClientPayload>(clientId, "client")
   if (!client) throw new Error("invalid client_id")
+  return { clientId, client }
+}
+
+function expectedMaestroResource(origin: string): string {
+  return `${origin.replace(/\/+$/, "")}/api/maestro/mcp`
+}
+
+export function parseMaestroAuthorizationRequest(params: URLSearchParams, origin: string): MaestroAuthorizationRequest {
+  if (params.get("response_type") !== "code") throw new Error("response_type must be code")
+  const { clientId, client } = requiredAuthorizationClient(params)
   const redirectUri = params.get("redirect_uri")?.trim() || ""
   if (!client.redirectUris.includes(redirectUri)) throw new Error("redirect_uri was not registered")
   const codeChallenge = params.get("code_challenge")?.trim() || ""
@@ -188,7 +197,7 @@ export function parseMaestroAuthorizationRequest(params: URLSearchParams, origin
   const scope = normalizeScopes(params.get("scope"))
   if (!scope) throw new Error("unsupported scope")
   const resource = params.get("resource")?.trim()
-  const expectedResource = `${origin.replace(/\/+$/, "")}/api/maestro/mcp`
+  const expectedResource = expectedMaestroResource(origin)
   if (resource && resource !== expectedResource) throw new Error("invalid resource")
   return {
     clientId,
@@ -248,14 +257,22 @@ function issueAccessAndRefresh(code: Pick<CodePayload, "sub" | "clientHash" | "s
 }
 
 export function exchangeMaestroAuthorizationCode(input: URLSearchParams) {
-  const clientId = input.get("client_id")?.trim() || ""
-  if (!verifyPayload<ClientPayload>(clientId, "client")) throw new Error("invalid client_id")
+  const { clientId } = requiredAuthorizationClient(input)
+  const code = authorizationCode(input, clientId)
+  validateCodeVerifier(input, code)
+  return issueAccessAndRefresh(code)
+}
+
+function authorizationCode(input: URLSearchParams, clientId: string): CodePayload {
   const code = verifyPayload<CodePayload>(input.get("code")?.trim() || "", "code")
   if (!code || code.clientHash !== clientHash(clientId)) throw new Error("invalid authorization code")
   if ((input.get("redirect_uri")?.trim() || "") !== code.redirectUri) throw new Error("redirect_uri mismatch")
+  return code
+}
+
+function validateCodeVerifier(input: URLSearchParams, code: CodePayload): void {
   const verifier = input.get("code_verifier")?.trim() || ""
   if (verifier.length < 43 || verifier.length > 128 || hash(verifier) !== code.codeChallenge) throw new Error("invalid code_verifier")
-  return issueAccessAndRefresh(code)
 }
 
 export function refreshMaestroAccessToken(input: URLSearchParams) {

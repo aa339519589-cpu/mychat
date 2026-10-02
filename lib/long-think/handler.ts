@@ -6,6 +6,7 @@ import type { SupabaseClient } from '@/lib/supabase/types'
 import { checkpointJson, parseLongThinkCheckpoint, parseLongThinkJobInput, type LongThinkJobInput, type LongThinkRuntimeCheckpoint } from './contracts'
 import { loadLongThinkSharedContext, runLongThinkCapabilities, type LongThinkSharedContext } from './capabilities'
 import { LongThinkProviderError, longThinkCompletion, type LongThinkCompletion, type LongThinkMessage, type LongThinkProgressSnapshot } from './provider'
+import { reviewerUserMessage, solverUserMessage, verifierUserMessage } from './prompts'
 
 const SOLVER_SYSTEM = [
   '你是一个长期任务执行器。目标不是尽快结束，而是把用户的问题真正闭环。每次调用完成下一段最有价值的工作，然后输出一个可被下一次调用直接继承的状态快照。',
@@ -154,26 +155,6 @@ function finalAnswerOf(value: JsonObject, fallback: string): string {
 function gapsOf(value: JsonObject): string[] {
   if (!Array.isArray(value.gaps)) return []
   return value.gaps.map(gap => typeof gap === 'string' ? gap : JSON.stringify(gap)).slice(0, 256)
-}
-
-function solverUserMessage(problem: string, previous: string, round: number, sharedContext: string): string {
-  return [
-    '原始问题：', problem,
-    '', 'MyChat 共享记忆 / 历史上下文：', sharedContext,
-    '', '上一轮续接状态：', previous,
-    '', '当前轮次：' + String(round),
-    '', '继续工作。不要重新开始。优先处理 unresolved、审查器留下的缺口和 _capability_results。需要外部资料时主动请求联网工具。',
-  ].join('\n')
-}
-
-function verifierUserMessage(problem: string, runtime: LongThinkRuntimeCheckpoint): string {
-  return ['原始问题：', problem, '', '当前续接状态：', JSON.stringify(runtime.state), '', '候选答案：',
-    runtime.candidateAnswer || '（尚未形成完整候选答案）', '', '已完成轮数：' + String(runtime.round)].join('\n')
-}
-
-function reviewerUserMessage(problem: string, runtime: LongThinkRuntimeCheckpoint, answer: string, verdict: JsonObject): string {
-  return ['原始问题：', problem, '', '最终状态：', JSON.stringify(runtime.state), '', '候选答案：', answer,
-    '', 'Verifier：', JSON.stringify(verdict)].join('\n')
 }
 
 function continuationCheckpoint(runtime: LongThinkRuntimeCheckpoint): JsonObject {

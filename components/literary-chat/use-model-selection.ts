@@ -79,6 +79,64 @@ function preferredEndpointEffort(endpoint: ModelEndpointSummary, saved?: string 
   return endpoint.reasoningEfforts[0] ?? null
 }
 
+function restoreSelection(
+  endpoints: ModelEndpointSummary[],
+  catalog: ModelCatalogItem[],
+  activeModelId: string | null,
+  setModelEndpoints: Dispatch<SetStateAction<ModelEndpointSummary[]>>,
+  setActiveEndpointId: Dispatch<SetStateAction<string | null>>,
+  setReasoningEffortState: Dispatch<SetStateAction<string | null>>,
+) {
+  setModelEndpoints(endpoints)
+  let savedEndpointId: string | null = null
+  try { savedEndpointId = localStorage.getItem(ACTIVE_ENDPOINT_STORAGE_KEY) } catch {}
+
+  const selectedEndpoint = savedEndpointId
+    ? endpoints.find(endpoint => endpoint.id === savedEndpointId && !endpoint.needsReconnect) ?? null
+    : null
+  if (selectedEndpoint) {
+    setActiveEndpointId(selectedEndpoint.id)
+    setReasoningEffortState(preferredEndpointEffort(
+      selectedEndpoint,
+      savedCustomReasoningEffort(selectedEndpoint),
+    ))
+    return
+  }
+
+  setActiveEndpointId(null)
+  if (savedEndpointId) {
+    try { localStorage.removeItem(ACTIVE_ENDPOINT_STORAGE_KEY) } catch {}
+  }
+  const selectedModel = catalog.find(model => model.id === activeModelId && isSelectable(model))
+  if (!selectedModel) return
+  let savedEffort: string | null = null
+  try { savedEffort = localStorage.getItem("chat_reasoning_effort") } catch {}
+  const usableSaved = savedEffort === "none" || savedEffort === "minimal" || savedEffort === "low"
+    ? savedEffort
+    : null
+  setReasoningEffortState(preferredEffort(selectedModel, usableSaved))
+}
+
+function deleteEndpointSelection(
+  id: string,
+  activeEndpointId: string | null,
+  setModelEndpoints: Dispatch<SetStateAction<ModelEndpointSummary[]>>,
+  setActiveEndpointId: Dispatch<SetStateAction<string | null>>,
+  setReasoningEffortState: Dispatch<SetStateAction<string | null>>,
+) {
+  setModelEndpoints(previous => previous.filter(item => item.id !== id))
+  try {
+    localStorage.removeItem(customReasoningStorageKey(id))
+    if (localStorage.getItem(ACTIVE_ENDPOINT_STORAGE_KEY) === id) {
+      localStorage.removeItem(ACTIVE_ENDPOINT_STORAGE_KEY)
+    }
+  } catch {}
+  if (activeEndpointId === id) {
+    setActiveEndpointId(null)
+    setReasoningEffortState(null)
+  }
+}
+
 export function useModelSelection(options: UseModelSelectionOptions) {
   const { setSearchMode, setHistoryRetrieval, setRenderEnabled } = options
   const [activeTier, setActiveTier] = useState<Tier>("绝句")
@@ -134,38 +192,7 @@ export function useModelSelection(options: UseModelSelectionOptions) {
   }, [])
 
   function restoreModelSelection(endpoints: ModelEndpointSummary[]) {
-    setModelEndpoints(endpoints)
-
-    let savedEndpointId: string | null = null
-    try { savedEndpointId = localStorage.getItem(ACTIVE_ENDPOINT_STORAGE_KEY) } catch {}
-
-    const selectedEndpoint = savedEndpointId
-      ? endpoints.find(endpoint => endpoint.id === savedEndpointId && !endpoint.needsReconnect) ?? null
-      : null
-
-    if (selectedEndpoint) {
-      setActiveEndpointId(selectedEndpoint.id)
-      setReasoningEffortState(preferredEndpointEffort(
-        selectedEndpoint,
-        savedCustomReasoningEffort(selectedEndpoint),
-      ))
-      return
-    }
-
-    setActiveEndpointId(null)
-    if (savedEndpointId) {
-      try { localStorage.removeItem(ACTIVE_ENDPOINT_STORAGE_KEY) } catch {}
-    }
-
-    const selectedModel = catalog.find(model => model.id === activeModelId && isSelectable(model))
-    if (selectedModel) {
-      let savedEffort: string | null = null
-      try { savedEffort = localStorage.getItem("chat_reasoning_effort") } catch {}
-      const usableSaved = savedEffort === "none" || savedEffort === "minimal" || savedEffort === "low"
-        ? savedEffort
-        : null
-      setReasoningEffortState(preferredEffort(selectedModel, usableSaved))
-    }
+    restoreSelection(endpoints, catalog, activeModelId, setModelEndpoints, setActiveEndpointId, setReasoningEffortState)
   }
 
   function resetModelEndpoints() {
@@ -235,17 +262,7 @@ export function useModelSelection(options: UseModelSelectionOptions) {
     }
   }
   function handleEndpointDeleted(id: string) {
-    setModelEndpoints(previous => previous.filter(item => item.id !== id))
-    try {
-      localStorage.removeItem(customReasoningStorageKey(id))
-      if (localStorage.getItem(ACTIVE_ENDPOINT_STORAGE_KEY) === id) {
-        localStorage.removeItem(ACTIVE_ENDPOINT_STORAGE_KEY)
-      }
-    } catch {}
-    if (activeEndpointId === id) {
-      setActiveEndpointId(null)
-      setReasoningEffortState(null)
-    }
+    deleteEndpointSelection(id, activeEndpointId, setModelEndpoints, setActiveEndpointId, setReasoningEffortState)
   }
 
   const activeModel = useMemo(

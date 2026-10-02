@@ -100,7 +100,7 @@ export async function loadLongThinkSharedContext(
   }
 }
 
-function toolContext(client: SupabaseClient, userId: string, memoryIsEnabled: boolean, signal?: AbortSignal): ToolContext {
+function toolContext(client: SupabaseClient, userId: string, signal?: AbortSignal): ToolContext {
   return {
     supabase: client,
     userId,
@@ -165,7 +165,7 @@ export async function runLongThinkCapabilities(
   memoryIsEnabled: boolean,
   signal?: AbortSignal,
 ): Promise<CapabilityRun> {
-  const ctx = toolContext(client, userId, memoryIsEnabled, signal)
+  const ctx = toolContext(client, userId, signal)
   const [web, pages, memory] = await Promise.all([
     runWebQueries(state, ctx),
     runFetches(state, ctx),

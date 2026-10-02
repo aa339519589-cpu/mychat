@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react"
 
 type RoundRecord = {
   round: number
@@ -67,6 +67,118 @@ function formatMs(ms: number): string {
   return `${seconds}s`
 }
 
+function TaskCreateForm(props: {
+  objective: string
+  maxRounds: string
+  busy: boolean
+  error: string
+  onObjectiveChange(value: string): void
+  onMaxRoundsChange(value: string): void
+  onCreate(): void
+}) {
+  return <div className="rounded-3xl border border-border/70 bg-card/50 p-4 sm:p-6">
+    <label className="text-xs font-medium text-muted-foreground">新任务</label>
+    <textarea value={props.objective} onChange={event => props.onObjectiveChange(event.target.value)} rows={8} placeholder="把需要持续多轮闭环的问题完整写在这里" className="mt-2 w-full resize-y rounded-2xl border border-border bg-background p-4 text-sm leading-6 outline-none" />
+    <div className="mt-3 flex flex-wrap items-end gap-3">
+      <label className="text-xs text-muted-foreground">最大轮数<input value={props.maxRounds} onChange={event => props.onMaxRoundsChange(event.target.value)} type="number" min={2} max={100000} className="mt-1 block h-10 w-36 rounded-xl border border-border bg-background px-3 text-sm text-foreground" /></label>
+      <button disabled={props.busy || !props.objective.trim()} onClick={props.onCreate} className="h-10 rounded-xl bg-foreground px-5 text-sm font-medium text-background disabled:opacity-40">{props.busy ? "正在启动…" : "创建并启动 ChatGPT"}</button>
+    </div>
+    <p className="mt-3 text-xs leading-5 text-muted-foreground">不需要复制启动指令，也不需要输入任何启动码、token 或任务 ID。</p>
+    {props.error && <p className="mt-3 text-sm text-destructive">{props.error}</p>}
+  </div>
+}
+
+function ActiveTaskCard(props: { task: Task; busy: boolean; currentRound: number; liveRoundMs: number; liveTotalMs: number; onStop(): void }) {
+  const { task, busy, currentRound, liveRoundMs, liveTotalMs, onStop } = props
+  return <div className="rounded-3xl border border-border/70 bg-card/50 p-4 sm:p-6">
+    <div className="flex items-start justify-between gap-4"><div><div className="text-xs text-muted-foreground">当前任务</div><h2 className="mt-1 text-base font-medium leading-6">{task.objective}</h2></div>{task.status !== "completed" && task.status !== "cancelled" && <button disabled={busy} onClick={onStop} className="shrink-0 rounded-xl border border-border px-3 py-2 text-xs">停止</button>}</div>
+    <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4 text-center">
+      <div className="rounded-2xl border border-border/60 p-3"><div className="text-lg font-semibold">{currentRound}</div><div className="text-[11px] text-muted-foreground">当前轮</div></div>
+      <div className="rounded-2xl border border-border/60 p-3"><div className="text-lg font-semibold">{task.phase === "review" ? "Review" : task.phase === "done" ? "Done" : "Work"}</div><div className="text-[11px] text-muted-foreground">阶段</div></div>
+      <div className="rounded-2xl border border-border/60 p-3"><div className="text-lg font-semibold">{formatMs(liveRoundMs)}</div><div className="text-[11px] text-muted-foreground">本轮墙钟</div></div>
+      <div className="rounded-2xl border border-border/60 p-3"><div className="text-lg font-semibold">{formatMs(liveTotalMs)}</div><div className="text-[11px] text-muted-foreground">累计推理墙钟</div></div>
+    </div>
+    <div className="mt-5 grid gap-4 xl:grid-cols-2">
+      <div><div className="text-xs font-medium text-muted-foreground">本轮输入</div><div className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded-2xl border border-border/60 p-4 text-sm leading-6">{task.currentInput || "等待下一轮输入…"}</div></div>
+      <div><div className="text-xs font-medium text-muted-foreground">{task.currentRoundStartedAt ? "本轮输出 · 生成中" : task.finalAnswer ? "最终输出" : "最近已完成输出"}</div><div className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded-2xl border border-border/60 p-4 text-sm leading-6">{task.finalAnswer || task.lastOutput || (task.currentRoundStartedAt ? "本轮正在生成，结束后自动同步。" : "等待输出…")}</div></div>
+    </div>
+    <div className="mt-5"><div className="text-xs font-medium text-muted-foreground">持久检查点</div><div className="mt-2 whitespace-pre-wrap rounded-2xl border border-border/60 p-4 text-sm leading-6 text-muted-foreground">{task.checkpoint || "暂无检查点"}</div></div>
+    <div className="mt-4 grid gap-4 md:grid-cols-3">
+      <div><div className="text-xs font-medium text-muted-foreground">尚未解决</div><ul className="mt-2 space-y-1 text-sm leading-6">{task.unresolved.length ? task.unresolved.map((item, index) => <li key={`${index}-${item}`}>· {item}</li>) : <li className="text-muted-foreground">无</li>}</ul></div>
+      <div><div className="text-xs font-medium text-muted-foreground">下一步</div><ul className="mt-2 space-y-1 text-sm leading-6">{task.nextActions.length ? task.nextActions.map((item, index) => <li key={`${index}-${item}`}>· {item}</li>) : <li className="text-muted-foreground">无</li>}</ul></div>
+      <div><div className="text-xs font-medium text-muted-foreground">证据</div><ul className="mt-2 space-y-1 text-sm leading-6">{task.evidence.length ? task.evidence.map((item, index) => <li key={`${index}-${item}`}>· {item}</li>) : <li className="text-muted-foreground">暂无</li>}</ul></div>
+    </div>
+    <details className="mt-5 rounded-2xl border border-border/60 p-4"><summary className="cursor-pointer text-xs font-medium text-muted-foreground">轮次历史（{task.history.length}）</summary><div className="mt-3 max-h-[32rem] space-y-3 overflow-auto">{task.history.slice().reverse().map(item => <div key={`${item.round}-${item.finishedAt}`} className="rounded-xl border border-border/50 p-3"><div className="flex justify-between gap-3 text-xs"><span>第 {item.round} 轮 · {item.phase === "review" ? "Review" : "Work"}</span><span className="text-muted-foreground">{formatMs(item.elapsedMs)}</span></div><details className="mt-2"><summary className="cursor-pointer text-xs text-muted-foreground">输入</summary><pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-xs leading-5">{item.input}</pre></details><details className="mt-2"><summary className="cursor-pointer text-xs text-muted-foreground">输出</summary><pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-xs leading-5">{item.output}</pre></details></div>)}</div></details>
+    <div className="mt-4 text-xs text-muted-foreground">服务端状态更新时间：{task.updatedAt}</div>
+  </div>
+}
+
+function TaskList(props: { tasks: Task[]; activeId: string | undefined; onSelect(id: string): void }) {
+  return <aside className="rounded-3xl border border-border/70 bg-card/40 p-3 sm:p-4 lg:sticky lg:top-6 lg:self-start">
+    <div className="px-2 pb-3 text-xs font-medium text-muted-foreground">任务列表</div>
+    <div className="space-y-2">{props.tasks.length === 0 ? <p className="px-2 py-8 text-center text-xs text-muted-foreground">还没有 Maestro 任务</p> : props.tasks.map(task => <button key={task.id} onClick={() => props.onSelect(task.id)} className={`w-full rounded-2xl border p-3 text-left transition ${task.id === props.activeId ? "border-foreground/35 bg-background" : "border-border/60 hover:bg-background/50"}`}><div className="line-clamp-2 text-sm leading-5">{task.objective}</div><div className="mt-2 flex justify-between gap-2 text-[11px] text-muted-foreground"><span>{statusText(task)}</span><span>第 {task.round + (task.currentRoundStartedAt ? 1 : 0)} 轮</span></div></button>)}</div>
+  </aside>
+}
+
+async function createMaestroTask(options: {
+  objective: string
+  maxRounds: string
+  setBusy: Dispatch<SetStateAction<boolean>>
+  setError: Dispatch<SetStateAction<string>>
+  setActiveId: Dispatch<SetStateAction<string>>
+  setObjective: Dispatch<SetStateAction<string>>
+  refresh(): Promise<void>
+}) {
+  const chatWindow = window.open("about:blank", "_blank")
+  options.setBusy(true)
+  options.setError("")
+  try {
+    if (chatWindow) {
+      chatWindow.document.title = "正在启动 ChatGPT…"
+      chatWindow.document.body.textContent = "正在启动 ChatGPT…"
+    }
+    const rounds = Number(options.maxRounds)
+    if (!Number.isSafeInteger(rounds) || rounds < 2 || rounds > 100000) throw new Error("最大轮数必须是 2 到 100000")
+    const body = await requestJson("/api/maestro/jobs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ objective: options.objective, maxRounds: rounds }),
+    })
+    const task = body.task as Task | undefined
+    const launchUrl = typeof body.launchUrl === "string" ? body.launchUrl : ""
+    if (!task?.id || !launchUrl) throw new Error("Maestro 任务创建结果无效")
+    options.setActiveId(task.id)
+    options.setObjective("")
+    await options.refresh()
+    if (chatWindow && !chatWindow.closed) chatWindow.location.replace(launchUrl)
+    else window.location.assign(launchUrl)
+  } catch (cause) {
+    if (chatWindow && !chatWindow.closed) chatWindow.close()
+    options.setError(cause instanceof Error ? cause.message : "任务创建失败")
+  } finally {
+    options.setBusy(false)
+  }
+}
+
+async function stopMaestroTask(
+  active: Task | null,
+  setBusy: Dispatch<SetStateAction<boolean>>,
+  setError: Dispatch<SetStateAction<string>>,
+  refresh: () => Promise<void>,
+) {
+  if (!active) return
+  setBusy(true)
+  setError("")
+  try {
+    await requestJson(`/api/maestro/jobs/${encodeURIComponent(active.id)}`, { method: "DELETE" })
+    await refresh()
+  } catch (cause) {
+    setError(cause instanceof Error ? cause.message : "停止失败")
+  } finally {
+    setBusy(false)
+  }
+}
+
 export function MaestroRunner() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [activeId, setActiveId] = useState("")
@@ -92,44 +204,8 @@ export function MaestroRunner() {
     return () => { window.clearInterval(refreshTimer); window.clearInterval(clockTimer) }
   }, [refresh])
 
-  const create = async () => {
-    const chatWindow = window.open("about:blank", "_blank")
-    setBusy(true); setError("")
-    try {
-      if (chatWindow) {
-        chatWindow.document.title = "正在启动 ChatGPT…"
-        chatWindow.document.body.textContent = "正在启动 ChatGPT…"
-      }
-      const rounds = Number(maxRounds)
-      if (!Number.isSafeInteger(rounds) || rounds < 2 || rounds > 100000) throw new Error("最大轮数必须是 2 到 100000")
-      const body = await requestJson("/api/maestro/jobs", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ objective, maxRounds: rounds }),
-      })
-      const task = body.task as Task | undefined
-      const launchUrl = typeof body.launchUrl === "string" ? body.launchUrl : ""
-      if (!task?.id || !launchUrl) throw new Error("Maestro 任务创建结果无效")
-      setActiveId(task.id)
-      setObjective("")
-      await refresh()
-      if (chatWindow && !chatWindow.closed) chatWindow.location.replace(launchUrl)
-      else window.location.assign(launchUrl)
-    } catch (cause) {
-      if (chatWindow && !chatWindow.closed) chatWindow.close()
-      setError(cause instanceof Error ? cause.message : "任务创建失败")
-    } finally { setBusy(false) }
-  }
-
-  const stop = async () => {
-    if (!active) return
-    setBusy(true); setError("")
-    try {
-      await requestJson(`/api/maestro/jobs/${encodeURIComponent(active.id)}`, { method: "DELETE" })
-      await refresh()
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "停止失败") }
-    finally { setBusy(false) }
-  }
+  const create = () => createMaestroTask({ objective, maxRounds, setBusy, setError, setActiveId, setObjective, refresh })
+  const stop = () => stopMaestroTask(active, setBusy, setError, refresh)
 
   const liveRoundMs = active?.currentRoundStartedAt
     ? Math.max(0, now - Date.parse(active.currentRoundStartedAt))
@@ -146,50 +222,25 @@ export function MaestroRunner() {
 
       <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
         <section className="space-y-5">
-          <div className="rounded-3xl border border-border/70 bg-card/50 p-4 sm:p-6">
-            <label className="text-xs font-medium text-muted-foreground">新任务</label>
-            <textarea value={objective} onChange={event => setObjective(event.target.value)} rows={8} placeholder="把需要持续多轮闭环的问题完整写在这里" className="mt-2 w-full resize-y rounded-2xl border border-border bg-background p-4 text-sm leading-6 outline-none" />
-            <div className="mt-3 flex flex-wrap items-end gap-3">
-              <label className="text-xs text-muted-foreground">最大轮数<input value={maxRounds} onChange={event => setMaxRounds(event.target.value)} type="number" min={2} max={100000} className="mt-1 block h-10 w-36 rounded-xl border border-border bg-background px-3 text-sm text-foreground" /></label>
-              <button disabled={busy || !objective.trim()} onClick={() => void create()} className="h-10 rounded-xl bg-foreground px-5 text-sm font-medium text-background disabled:opacity-40">{busy ? "正在启动…" : "创建并启动 ChatGPT"}</button>
-            </div>
-            <p className="mt-3 text-xs leading-5 text-muted-foreground">不需要复制启动指令，也不需要输入任何启动码、token 或任务 ID。</p>
-            {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
-          </div>
-
-          {active && <div className="rounded-3xl border border-border/70 bg-card/50 p-4 sm:p-6">
-            <div className="flex items-start justify-between gap-4"><div><div className="text-xs text-muted-foreground">当前任务</div><h2 className="mt-1 text-base font-medium leading-6">{active.objective}</h2></div>{active.status !== "completed" && active.status !== "cancelled" && <button disabled={busy} onClick={() => void stop()} className="shrink-0 rounded-xl border border-border px-3 py-2 text-xs">停止</button>}</div>
-
-            <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4 text-center">
-              <div className="rounded-2xl border border-border/60 p-3"><div className="text-lg font-semibold">{currentRound}</div><div className="text-[11px] text-muted-foreground">当前轮</div></div>
-              <div className="rounded-2xl border border-border/60 p-3"><div className="text-lg font-semibold">{active.phase === "review" ? "Review" : active.phase === "done" ? "Done" : "Work"}</div><div className="text-[11px] text-muted-foreground">阶段</div></div>
-              <div className="rounded-2xl border border-border/60 p-3"><div className="text-lg font-semibold">{formatMs(liveRoundMs)}</div><div className="text-[11px] text-muted-foreground">本轮墙钟</div></div>
-              <div className="rounded-2xl border border-border/60 p-3"><div className="text-lg font-semibold">{formatMs(liveTotalMs)}</div><div className="text-[11px] text-muted-foreground">累计推理墙钟</div></div>
-            </div>
-
-            <div className="mt-5 grid gap-4 xl:grid-cols-2">
-              <div><div className="text-xs font-medium text-muted-foreground">本轮输入</div><div className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded-2xl border border-border/60 p-4 text-sm leading-6">{active.currentInput || "等待下一轮输入…"}</div></div>
-              <div><div className="text-xs font-medium text-muted-foreground">{active.currentRoundStartedAt ? "本轮输出 · 生成中" : active.finalAnswer ? "最终输出" : "最近已完成输出"}</div><div className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded-2xl border border-border/60 p-4 text-sm leading-6">{active.finalAnswer || active.lastOutput || (active.currentRoundStartedAt ? "本轮正在生成，结束后自动同步。" : "等待输出…")}</div></div>
-            </div>
-
-            <div className="mt-5"><div className="text-xs font-medium text-muted-foreground">持久检查点</div><div className="mt-2 whitespace-pre-wrap rounded-2xl border border-border/60 p-4 text-sm leading-6 text-muted-foreground">{active.checkpoint || "暂无检查点"}</div></div>
-
-            <div className="mt-4 grid gap-4 md:grid-cols-3">
-              <div><div className="text-xs font-medium text-muted-foreground">尚未解决</div><ul className="mt-2 space-y-1 text-sm leading-6">{active.unresolved.length ? active.unresolved.map((item, index) => <li key={`${index}-${item}`}>· {item}</li>) : <li className="text-muted-foreground">无</li>}</ul></div>
-              <div><div className="text-xs font-medium text-muted-foreground">下一步</div><ul className="mt-2 space-y-1 text-sm leading-6">{active.nextActions.length ? active.nextActions.map((item, index) => <li key={`${index}-${item}`}>· {item}</li>) : <li className="text-muted-foreground">无</li>}</ul></div>
-              <div><div className="text-xs font-medium text-muted-foreground">证据</div><ul className="mt-2 space-y-1 text-sm leading-6">{active.evidence.length ? active.evidence.map((item, index) => <li key={`${index}-${item}`}>· {item}</li>) : <li className="text-muted-foreground">暂无</li>}</ul></div>
-            </div>
-
-            <details className="mt-5 rounded-2xl border border-border/60 p-4"><summary className="cursor-pointer text-xs font-medium text-muted-foreground">轮次历史（{active.history.length}）</summary><div className="mt-3 max-h-[32rem] space-y-3 overflow-auto">{active.history.slice().reverse().map(item => <div key={`${item.round}-${item.finishedAt}`} className="rounded-xl border border-border/50 p-3"><div className="flex justify-between gap-3 text-xs"><span>第 {item.round} 轮 · {item.phase === "review" ? "Review" : "Work"}</span><span className="text-muted-foreground">{formatMs(item.elapsedMs)}</span></div><details className="mt-2"><summary className="cursor-pointer text-xs text-muted-foreground">输入</summary><pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-xs leading-5">{item.input}</pre></details><details className="mt-2"><summary className="cursor-pointer text-xs text-muted-foreground">输出</summary><pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-xs leading-5">{item.output}</pre></details></div>)}</div></details>
-
-            <div className="mt-4 text-xs text-muted-foreground">服务端状态更新时间：{active.updatedAt}</div>
-          </div>}
+          <TaskCreateForm
+            objective={objective}
+            maxRounds={maxRounds}
+            busy={busy}
+            error={error}
+            onObjectiveChange={setObjective}
+            onMaxRoundsChange={setMaxRounds}
+            onCreate={() => void create()}
+          />
+          {active && <ActiveTaskCard
+            task={active}
+            busy={busy}
+            currentRound={currentRound}
+            liveRoundMs={liveRoundMs}
+            liveTotalMs={liveTotalMs}
+            onStop={() => void stop()}
+          />}
         </section>
-
-        <aside className="rounded-3xl border border-border/70 bg-card/40 p-3 sm:p-4 lg:sticky lg:top-6 lg:self-start">
-          <div className="px-2 pb-3 text-xs font-medium text-muted-foreground">任务列表</div>
-          <div className="space-y-2">{tasks.length === 0 ? <p className="px-2 py-8 text-center text-xs text-muted-foreground">还没有 Maestro 任务</p> : tasks.map(task => <button key={task.id} onClick={() => setActiveId(task.id)} className={`w-full rounded-2xl border p-3 text-left transition ${task.id === active?.id ? "border-foreground/35 bg-background" : "border-border/60 hover:bg-background/50"}`}><div className="line-clamp-2 text-sm leading-5">{task.objective}</div><div className="mt-2 flex justify-between gap-2 text-[11px] text-muted-foreground"><span>{statusText(task)}</span><span>第 {task.round + (task.currentRoundStartedAt ? 1 : 0)} 轮</span></div></button>)}</div>
-        </aside>
+        <TaskList tasks={tasks} activeId={active?.id} onSelect={setActiveId} />
       </div>
     </div>
   </main>

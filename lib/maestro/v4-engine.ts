@@ -9,6 +9,7 @@ import {
   publicMaestroTask,
   type AgentTaskRow,
   type MaestroAction,
+  type MaestroMeta,
   type MaestroPhase,
   type MaestroReportState,
   type MaestroRoundRecord,
@@ -111,14 +112,21 @@ function promptFor(row: AgentTaskRow): string {
   })
 }
 
-function storedState(row: AgentTaskRow, taskToken: string): MaestroReportState {
-  const task = publicMaestroTask(row)
-  if (!task) throw new Error("Maestro task metadata is invalid")
+type StoredOutcome = { completed: boolean; stopped: boolean; phase: MaestroPhase; action: MaestroAction }
+
+function storedOutcome(task: NonNullable<ReturnType<typeof publicMaestroTask>>): StoredOutcome {
   const completed = task.status === "completed" && task.completionVerified && task.criterionSatisfied && Boolean(task.finalAnswer)
   const stopped = task.status === "cancelled"
   const phase: MaestroPhase = completed ? "done" : task.phase === "done" ? "work" : task.phase
   const action: MaestroAction = completed ? "finish" : stopped ? "stop" : phase === "review" ? "review" : "continue"
-  const nextPrompt = action === "finish" || action === "stop" ? "" : promptFor(row)
+  return { completed, stopped, phase, action }
+}
+
+function storedState(row: AgentTaskRow, taskToken: string): MaestroReportState {
+  const task = publicMaestroTask(row)
+  if (!task) throw new Error("Maestro task metadata is invalid")
+  const outcome = storedOutcome(task)
+  const nextPrompt = outcome.action === "finish" || outcome.action === "stop" ? "" : promptFor(row)
   return {
     kind: "maestro-runner-state",
     jobId: task.id,
@@ -126,19 +134,19 @@ function storedState(row: AgentTaskRow, taskToken: string): MaestroReportState {
     objective: task.objective,
     successCriterion: task.successCriterion,
     hardRules: task.hardRules,
-    status: completed ? "completed" : stopped ? "cancelled" : "running",
+    status: outcome.completed ? "completed" : outcome.stopped ? "cancelled" : "running",
     round: task.round,
-    phase,
-    action,
+    phase: outcome.phase,
+    action: outcome.action,
     checkpoint: task.checkpoint,
     unresolved: task.unresolved,
     nextActions: task.nextActions,
     evidence: task.evidence,
     candidateAnswer: task.candidateAnswer,
-    finalAnswer: completed ? task.finalAnswer : "",
-    criterionSatisfied: completed,
+    finalAnswer: outcome.completed ? task.finalAnswer : "",
+    criterionSatisfied: outcome.completed,
     reviewEvidence: task.reviewEvidence,
-    completionVerified: completed,
+    completionVerified: outcome.completed,
     nextPrompt,
     currentInput: task.currentInput || nextPrompt,
     currentRoundStartedAt: task.currentRoundStartedAt,
@@ -159,63 +167,79 @@ function reviewRejection(input: MaestroV4GateInput, criterion: string) {
   return { unresolved, nextActions }
 }
 
-export function evaluateMaestroV4Gate(row: AgentTaskRow, input: MaestroV4GateInput, taskToken: string): MaestroReportState {
-  const task = publicMaestroTask(row)
-  const meta = maestroMeta(row)
-  if (!task || !meta) throw new Error("Maestro task metadata is invalid")
-  if (task.status === "cancelled" || task.status === "completed") return storedState(row, taskToken)
-  if (input.round <= meta.round) return storedState(row, taskToken)
-  if (input.round !== meta.round + 1) throw new Error(`Expected Maestro round ${meta.round + 1}`)
-  const expected: Exclude<MaestroPhase, "done"> = meta.phase === "review" ? "review" : "work"
-  if (input.phase !== expected) throw new Error(`Expected Maestro phase ${expected}`)
+type GateTransition = {
+  phase: MaestroPhase
+  action: MaestroAction
+  candidateAnswer: string
+  finalAnswer: string
+  criterionSatisfied: boolean
+  reviewEvidence: string[]
+  completionVerified: boolean
+  unresolved: string[]
+  nextActions: string[]
+}
 
+function gateTransition(
+  task: NonNullable<ReturnType<typeof publicMaestroTask>>,
+  meta: MaestroMeta,
+  input: MaestroV4GateInput,
+  expected: Exclude<MaestroPhase, "done">,
+): GateTransition {
   const hasGaps = input.unresolved.length > 0 || input.nextActions.length > 0
   const candidateReady = input.done && !hasGaps && Boolean(input.finalAnswer)
-  let phase: MaestroPhase = "work"
-  let action: MaestroAction = "continue"
-  let candidateAnswer = meta.candidateAnswer
-  let finalAnswer = ""
-  let criterionSatisfied = false
-  let reviewEvidence: string[] = []
-  let completionVerified = false
-  let unresolved = input.unresolved
-  let nextActions = input.nextActions
-
-  if (expected === "work" && candidateReady) {
-    phase = "review"
-    action = "review"
-    candidateAnswer = input.finalAnswer
-  } else if (expected === "review") {
-    const verified = input.done && input.criterionSatisfied && !hasGaps && Boolean(input.finalAnswer) && input.reviewEvidence.length > 0
-    if (verified) {
-      phase = "done"
-      action = "finish"
-      candidateAnswer = meta.candidateAnswer || input.finalAnswer
-      finalAnswer = input.finalAnswer
-      criterionSatisfied = true
-      reviewEvidence = input.reviewEvidence
-      completionVerified = true
-    } else {
-      const rejected = reviewRejection(input, task.successCriterion)
-      unresolved = rejected.unresolved
-      nextActions = rejected.nextActions
-      reviewEvidence = input.reviewEvidence
-    }
+  const state: GateTransition = {
+    phase: "work",
+    action: "continue",
+    candidateAnswer: meta.candidateAnswer,
+    finalAnswer: "",
+    criterionSatisfied: false,
+    reviewEvidence: [],
+    completionVerified: false,
+    unresolved: input.unresolved,
+    nextActions: input.nextActions,
   }
 
-  const nextPrompt = action === "finish" ? "" : maestroV4Prompt({
+  if (expected === "work" && candidateReady) {
+    return { ...state, phase: "review", action: "review", candidateAnswer: input.finalAnswer }
+  }
+  if (expected !== "review") return state
+  const verified = input.done && input.criterionSatisfied && !hasGaps
+    && Boolean(input.finalAnswer) && input.reviewEvidence.length > 0
+  if (verified) {
+    return {
+      ...state,
+      phase: "done",
+      action: "finish",
+      candidateAnswer: meta.candidateAnswer || input.finalAnswer,
+      finalAnswer: input.finalAnswer,
+      criterionSatisfied: true,
+      reviewEvidence: input.reviewEvidence,
+      completionVerified: true,
+    }
+  }
+  const rejected = reviewRejection(input, task.successCriterion)
+  return { ...state, unresolved: rejected.unresolved, nextActions: rejected.nextActions, reviewEvidence: input.reviewEvidence }
+}
+
+function gateReport(
+  task: NonNullable<ReturnType<typeof publicMaestroTask>>,
+  meta: MaestroMeta,
+  input: MaestroV4GateInput,
+  taskToken: string,
+  transition: GateTransition,
+): MaestroReportState {
+  const nextPrompt = transition.action === "finish" ? "" : maestroV4Prompt({
     objective: task.objective,
     successCriterion: task.successCriterion,
     hardRules: task.hardRules,
     nextRound: input.round + 1,
-    phase,
+    phase: transition.phase,
     checkpoint: input.checkpoint,
-    unresolved,
-    nextActions,
+    unresolved: transition.unresolved,
+    nextActions: transition.nextActions,
     evidence: input.evidence,
-    candidateAnswer,
+    candidateAnswer: transition.candidateAnswer,
   })
-
   return {
     kind: "maestro-runner-state",
     jobId: task.id,
@@ -223,19 +247,19 @@ export function evaluateMaestroV4Gate(row: AgentTaskRow, input: MaestroV4GateInp
     objective: task.objective,
     successCriterion: task.successCriterion,
     hardRules: task.hardRules,
-    status: completionVerified ? "completed" : "running",
+    status: transition.completionVerified ? "completed" : "running",
     round: input.round,
-    phase,
-    action,
+    phase: transition.phase,
+    action: transition.action,
     checkpoint: input.checkpoint,
-    unresolved,
-    nextActions,
+    unresolved: transition.unresolved,
+    nextActions: transition.nextActions,
     evidence: input.evidence,
-    candidateAnswer,
-    finalAnswer,
-    criterionSatisfied,
-    reviewEvidence,
-    completionVerified,
+    candidateAnswer: transition.candidateAnswer,
+    finalAnswer: transition.finalAnswer,
+    criterionSatisfied: transition.criterionSatisfied,
+    reviewEvidence: transition.reviewEvidence,
+    completionVerified: transition.completionVerified,
     nextPrompt,
     currentInput: nextPrompt,
     currentRoundStartedAt: null,
@@ -246,6 +270,18 @@ export function evaluateMaestroV4Gate(row: AgentTaskRow, input: MaestroV4GateInp
     updatedAt: task.updatedAt,
     launchGranted: false,
   }
+}
+
+export function evaluateMaestroV4Gate(row: AgentTaskRow, input: MaestroV4GateInput, taskToken: string): MaestroReportState {
+  const task = publicMaestroTask(row)
+  const meta = maestroMeta(row)
+  if (!task || !meta) throw new Error("Maestro task metadata is invalid")
+  if (task.status === "cancelled" || task.status === "completed") return storedState(row, taskToken)
+  if (input.round <= meta.round) return storedState(row, taskToken)
+  if (input.round !== meta.round + 1) throw new Error(`Expected Maestro round ${meta.round + 1}`)
+  const expected: Exclude<MaestroPhase, "done"> = meta.phase === "review" ? "review" : "work"
+  if (input.phase !== expected) throw new Error(`Expected Maestro phase ${expected}`)
+  return gateReport(task, meta, input, taskToken, gateTransition(task, meta, input, expected))
 }
 
 function textResult(state: MaestroReportState) {

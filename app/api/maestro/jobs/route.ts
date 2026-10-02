@@ -29,13 +29,11 @@ export async function GET(request: Request): Promise<Response> {
   }
 }
 
-export async function POST(request: NextRequest): Promise<Response> {
-  const auth = await resolveAuth(request)
-  if (!auth.supabase || !auth.userId) return Response.json({ error: "请先登录" }, { status: 401 })
-  const gate = await enforceLimits(auth, request, { quota: false })
-  if (gate.response) return gate.response
-  if (!maestroRunnerConfigured()) return Response.json({ error: "Maestro Runner 尚未完成服务器密钥配置" }, { status: 503 })
-
+async function createTaskResponse(
+  request: NextRequest,
+  supabase: NonNullable<Awaited<ReturnType<typeof resolveAuth>>['supabase']>,
+  userId: string,
+): Promise<Response> {
   let body: Record<string, unknown>
   try { body = await readJson(request, { maxBytes: 128 * 1024 }) }
   catch (error) { return requestErrorResponse(error) }
@@ -48,11 +46,20 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
 
   try {
-    const row = await createMaestroTask(auth.supabase, auth.userId, objective, rawMaxRounds)
+    const row = await createMaestroTask(supabase, userId, objective, rawMaxRounds)
     const task = clientMaestroTask(row)
     if (!task) throw new Error("Maestro task metadata is invalid")
     return Response.json({ task, launchUrl: directLaunchUrl() }, { status: 201 })
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Maestro 任务创建失败" }, { status: 500 })
   }
+}
+
+export async function POST(request: NextRequest): Promise<Response> {
+  const auth = await resolveAuth(request)
+  if (!auth.supabase || !auth.userId) return Response.json({ error: "请先登录" }, { status: 401 })
+  const gate = await enforceLimits(auth, request, { quota: false })
+  if (gate.response) return gate.response
+  if (!maestroRunnerConfigured()) return Response.json({ error: "Maestro Runner 尚未完成服务器密钥配置" }, { status: 503 })
+  return createTaskResponse(request, auth.supabase, auth.userId)
 }

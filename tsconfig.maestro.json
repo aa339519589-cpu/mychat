@@ -16,7 +16,6 @@
     "components/maestro-runner.tsx",
     "components/oauth-consent.tsx",
     "lib/maestro/**/*.ts",
-    "tests/maestro-runner.test.ts",
     "tests/maestro-v4.test.ts",
     "tests/maestro-oauth-server.test.ts"
   ],

@@ -25,6 +25,14 @@ function jsonObject(value: unknown): JsonObject | null {
     ? value as JsonObject : null
 }
 
+function invalidSeedCheckpoint(value: unknown, parsed: JsonObject | null): boolean {
+  return value != null && parsed === null
+}
+
+function invalidContinuation(value: string | null): boolean {
+  return value !== null && !isUuid(value)
+}
+
 function parseCreateInput(body: Record<string, unknown>): JsonObject | null {
   const endpointId = typeof body.endpointId === 'string' ? body.endpointId : ''
   const problem = typeof body.problem === 'string' ? body.problem.trim() : ''
@@ -35,8 +43,8 @@ function parseCreateInput(body: Record<string, unknown>): JsonObject | null {
   const continuedFrom = typeof body.continuedFrom === 'string' ? body.continuedFrom : null
   if (!isUuid(endpointId) || !problem || problem.length > MAX_PROBLEM_CHARS
     || maxTokens === null || minRounds === null || verifyEvery === null
-    || (body.seedCheckpoint != null && seedCheckpoint === null)
-    || (continuedFrom !== null && !isUuid(continuedFrom))) return null
+    || invalidSeedCheckpoint(body.seedCheckpoint, seedCheckpoint)
+    || invalidContinuation(continuedFrom)) return null
   return {
     endpointId, problem, maxTokens, minRounds, verifyEvery,
     ...(seedCheckpoint ? { seedCheckpoint } : {}),
