@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { apiErrorResponseV1 } from '@/lib/api/errors'
 import { enforceRequestRateLimit, resolveAuth } from '@/lib/api/guard'
+import { log } from '@/lib/logger'
 import { readJson, RequestError } from '@/lib/api/request'
 import { prepareBoundedAudioStream } from '@/lib/api/tts-audio-stream'
 
@@ -64,13 +65,16 @@ async function requestFishAudio(request: NextRequest, text: string, apiKey: stri
         reference_id: REFERENCE_ID,
         format: 'mp3',
         chunk_length: 100,
-        latency: 'low',
+        latency: 'balanced',
       }),
       cache: 'no-store',
       signal,
     })
 
     if (!providerResponse.ok) {
+      log.error('tts', 'Fish Audio rejected the synthesis request', {
+        status: providerResponse.status,
+      })
       return failure(request, 502, 'DEPENDENCY_UNAVAILABLE', '语音生成失败，请稍后重试', true)
     }
 
@@ -78,6 +82,10 @@ async function requestFishAudio(request: NextRequest, text: string, apiKey: stri
     const declaredAudioLength = Number(providerResponse.headers.get('content-length'))
     if (!contentType.startsWith('audio/')
       || (Number.isFinite(declaredAudioLength) && declaredAudioLength > MAX_AUDIO_BYTES)) {
+      log.error('tts', 'Fish Audio returned an invalid audio response', {
+        status: providerResponse.status,
+        contentType,
+      })
       return failure(request, 502, 'DEPENDENCY_UNAVAILABLE', '语音服务返回了无效音频', true)
     }
 
