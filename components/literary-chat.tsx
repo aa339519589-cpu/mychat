@@ -24,6 +24,29 @@ const EMPTY_DRAFT_TITLE = "未命名的篇章"
 const TOKEN_USAGE_TEST_EMAIL = "339519589@qq.com"
 function createDraft(id: string, projectId?: string): Conversation { return { id, title: EMPTY_DRAFT_TITLE, excerpt: "", date: "今日", messages: [], draft: true, projectId } }
 
+function bootstrapMemoryActions(memory: ReturnType<typeof useMemories>) {
+  return {
+    beginLoad: memory.beginMemoryLoad,
+    restore: memory.restoreMemories,
+    failLoad: memory.failMemoryLoad,
+    reset: memory.resetMemories,
+  }
+}
+
+function sidebarMemoryState(memory: ReturnType<typeof useMemories>): AppSidebarProps["memory"] {
+  return {
+    items: memory.memories,
+    enabled: memory.memoryEnabled,
+    loading: memory.memoryLoading,
+    error: memory.memoryError,
+    retry: memory.refreshMemories,
+    setEnabled: memory.handleMemoryEnabledChange,
+    add: memory.handleMemoryAdd,
+    edit: memory.handleMemoryEdit,
+    delete: memory.handleMemoryDelete,
+  }
+}
+
 export function LiteraryChat() {
   const { user, setUser, authChecked } = useAuthUser()
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -57,7 +80,7 @@ export function LiteraryChat() {
     loadedRef,
     draftIdRef,
     rootConversationIdRef,
-    memory: { restore: memory.restoreMemories, reset: memory.resetMemories },
+    memory: bootstrapMemoryActions(memory),
     project: { set: project.setProjects, reset: project.resetProjects },
     model: { restore: model.restoreModelSelection, reset: model.resetModelEndpoints },
     onConversationHydrated: id => resumeHydratedRef.current(id),
@@ -237,7 +260,7 @@ export function LiteraryChat() {
 
   const sidebar: AppSidebarProps = {
     conversation: { items: conversations, activeId, select: handleSelect, create: handleNew, delete: handleDelete, deleteAll: handleDeleteAll, toggleStar: handleToggleStar, togglePin: handleTogglePin, rename: handleRename, move: handleMove },
-    memory: { items: memory.memories, enabled: memory.memoryEnabled, setEnabled: memory.handleMemoryEnabledChange, add: memory.handleMemoryAdd, edit: memory.handleMemoryEdit, delete: memory.handleMemoryDelete },
+    memory: sidebarMemoryState(memory),
     project: { items: project.projects, create: project.handleProjectCreate, rename: project.handleProjectRename, setInstructions: project.handleProjectInstructions, delete: project.handleProjectDelete, createConversation: handleNewInProject, loadFiles: project.handleLoadProjectFiles, addFile: project.handleAddProjectFile, deleteFile: project.handleDeleteProjectFile, loadMemories: project.handleLoadProjectMemories, addMemory: project.handleAddProjectMemory, editMemory: project.handleEditProjectMemory, deleteMemory: project.handleDeleteProjectMemory },
     model: { catalog: model.catalog, activeModelId: model.activeModelId, selectModel: model.handleModelSelect, endpoints: model.modelEndpoints, activeId: model.activeEndpointId, select: model.handleEndpointSelect, created: model.handleEndpointCreated, updated: model.handleEndpointUpdated, deleted: model.handleEndpointDeleted },
     session: { email: user?.email ?? "", logout: handleLogout, openCode: () => { layout.setDrawerOpen(false); layout.setCodeOpen(true) }, openArtifacts: () => { layout.setDrawerOpen(false); layout.setArtifactLibraryOpen(true) } },
