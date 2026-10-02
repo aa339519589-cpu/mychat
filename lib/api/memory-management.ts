@@ -161,51 +161,70 @@ export async function handleMemoryCollection(
   const store = availableStore(dependencies)
   if (store instanceof Response) return store
 
-  if (request.method === 'GET') {
-    try {
-      const result = await store.list(auth.userId)
-      if (result.error) {
-        logStoreFailure('list', result.error)
-        return json({ error: '记忆读取失败，请稍后重试' }, 500)
-      }
-      return json({ memories: result.data ?? [] })
-    } catch (error) {
-      logStoreFailure('list', error as StoreError)
+  return collectionOperation(request, dependencies, store, auth.userId)
+}
+
+async function collectionOperation(
+  request: Request,
+  dependencies: MemoryManagementDependencies,
+  store: UserMemoryStore,
+  userId: string,
+): Promise<Response> {
+  switch (request.method) {
+    case 'GET': return listMemories(store, userId)
+    case 'POST': return createMemory(request, dependencies, store, userId)
+    case 'DELETE': return deleteAllMemories(store, userId)
+    default: return json({ error: '不支持的记忆操作' }, 405)
+  }
+}
+
+async function listMemories(store: UserMemoryStore, userId: string): Promise<Response> {
+  try {
+    const result = await store.list(userId)
+    if (result.error) {
+      logStoreFailure('list', result.error)
       return json({ error: '记忆读取失败，请稍后重试' }, 500)
     }
+    return json({ memories: result.data ?? [] })
+  } catch (error) {
+    logStoreFailure('list', error as StoreError)
+    return json({ error: '记忆读取失败，请稍后重试' }, 500)
   }
+}
 
-  if (request.method === 'POST') {
-    const input = await readContent(request, dependencies)
-    if ('response' in input) return input.response
-    try {
-      const result = await store.create(auth.userId, input.content)
-      if (result.error || !result.data) {
-        logStoreFailure('create', result.error)
-        return json({ error: '记忆保存失败，请稍后重试' }, 500)
-      }
-      return json({ memory: result.data }, 201)
-    } catch (error) {
-      logStoreFailure('create', error as StoreError)
+async function createMemory(
+  request: Request,
+  dependencies: MemoryManagementDependencies,
+  store: UserMemoryStore,
+  userId: string,
+): Promise<Response> {
+  const input = await readContent(request, dependencies)
+  if ('response' in input) return input.response
+  try {
+    const result = await store.create(userId, input.content)
+    if (result.error || !result.data) {
+      logStoreFailure('create', result.error)
       return json({ error: '记忆保存失败，请稍后重试' }, 500)
     }
+    return json({ memory: result.data }, 201)
+  } catch (error) {
+    logStoreFailure('create', error as StoreError)
+    return json({ error: '记忆保存失败，请稍后重试' }, 500)
   }
+}
 
-  if (request.method === 'DELETE') {
-    try {
-      const result = await store.deleteAll(auth.userId)
-      if (result.error) {
-        logStoreFailure('delete-all', result.error)
-        return json({ error: '记忆清除失败，请稍后重试' }, 500)
-      }
-      return json({ deleted: result.data?.length ?? 0 })
-    } catch (error) {
-      logStoreFailure('delete-all', error as StoreError)
+async function deleteAllMemories(store: UserMemoryStore, userId: string): Promise<Response> {
+  try {
+    const result = await store.deleteAll(userId)
+    if (result.error) {
+      logStoreFailure('delete-all', result.error)
       return json({ error: '记忆清除失败，请稍后重试' }, 500)
     }
+    return json({ deleted: result.data?.length ?? 0 })
+  } catch (error) {
+    logStoreFailure('delete-all', error as StoreError)
+    return json({ error: '记忆清除失败，请稍后重试' }, 500)
   }
-
-  return json({ error: '不支持的记忆操作' }, 405)
 }
 
 export async function handleMemoryItem(
