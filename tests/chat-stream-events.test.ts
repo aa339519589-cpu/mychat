@@ -61,11 +61,16 @@ test('chat stream reducer applies bounded auxiliary events and rejects unsafe se
   })), true)
   assert.equal(processChatStreamEvent(fixture.context, event('tool.search', {
     search: {
+      kind: 'web',
       query: 'topic',
       results: [
-        { title: 'Docs', url: 'https://example.com/docs' },
+        { title: 'Docs', url: 'https://example.com/docs', snippet: 'Useful context', published_at: '2026-10-02', favicon_url: 'https://example.com/icon.png', thumbnail_url: 'https://example.com/thumb.jpg' },
         { title: 'Script', url: 'javascript:alert(1)' },
         { title: 'Credentials', url: 'https://user:pass@example.com' },
+      ],
+      images: [
+        { url: 'https://example.com/image.jpg', description: 'Relevant image' },
+        { url: 'javascript:alert(1)', description: 'unsafe' },
       ],
     },
   }, 2)), true)
@@ -76,8 +81,10 @@ test('chat stream reducer applies bounded auxiliary events and rejects unsafe se
   const conversation = fixture.conversations.current()[0]
   assert.deepEqual(conversation.messages[1]?.memoryNotes, ['记住了：preference'])
   assert.deepEqual(conversation.messages[1]?.searchNotes, [{
+    kind: 'web',
     query: 'topic',
-    results: [{ title: 'Docs', url: 'https://example.com/docs' }],
+    results: [{ title: 'Docs', url: 'https://example.com/docs', snippet: 'Useful context', published_at: '2026-10-02', favicon_url: 'https://example.com/icon.png', thumbnail_url: 'https://example.com/thumb.jpg' }],
+    images: [{ url: 'https://example.com/image.jpg', description: 'Relevant image' }],
   }])
   assert.equal(conversation.messages[0]?.imageSummary, 'diagram')
   assert.deepEqual(fixture.memories.current(), [

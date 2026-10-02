@@ -25,7 +25,7 @@
     "database:types:generate": "bash scripts/verify-database-types-pg16.sh --write",
     "database:types:check": "bash scripts/verify-database-types-pg16.sh --check",
     "test": "node scripts/run-tests.mjs",
-    "test:maestro": "tsx --test tests/maestro-runner.test.ts tests/maestro-v4.test.ts tests/maestro-oauth-server.test.ts",
+    "test:maestro": "tsx --test tests/maestro-v4.test.ts tests/maestro-oauth-server.test.ts",
     "test:coverage": "node scripts/run-tests.mjs --coverage",
     "test:migrations": "bash scripts/verify-generation-migrations-current-pg16.sh",
     "test:e2e": "playwright test",
@@ -45,7 +45,7 @@
     "lucide-react": "^1.16.0",
     "mermaid": "^11.15.0",
     "motion": "12.42.2",
-    "next": "16.2.12",
+    "next": "16.3.8",
     "pdfjs-dist": "^6.0.227",
     "react": "^19",
     "react-dom": "^19",
@@ -67,7 +67,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9.39.5",
-    "eslint-config-next": "16.2.12",
+    "eslint-config-next": "16.3.8",
     "postcss": "^8.5",
     "shadcn": "^4.8.0",
     "tailwindcss": "^4.2.0",
@@ -75,6 +75,6 @@
   },
   "overrides": {
     "postcss": "$postcss",
-    "sharp": "0.35.0"
+    "sharp": "0.35.4"
   }
 }

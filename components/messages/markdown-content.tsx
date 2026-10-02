@@ -10,10 +10,22 @@ import {
   isPrivateNetworkGeneratedMediaUrl,
   isSafeGeneratedMediaUrl,
 } from "@/lib/generated-media"
+import type { SearchImage, SearchResult } from "@/lib/search-notes"
 import { normalizeMathDelimiters } from "@/lib/math"
 import { prepareChatMarkdown } from "@/lib/markdown"
+import { SearchResultCard } from "./search-result-card"
 
-export function MessageMarkdown({ text }: { text: string }) {
+export function MessageMarkdown({
+  text,
+  searchResults,
+  searchImages,
+  onOpenSearchImage,
+}: {
+  text: string
+  searchResults?: ReadonlyMap<string, SearchResult>
+  searchImages?: ReadonlyMap<string, SearchImage>
+  onOpenSearchImage?: (image: SearchImage) => void
+}) {
   const markdown = prepareChatMarkdown(normalizeMathDelimiters(text))
   return (
     <ReactMarkdown
@@ -21,7 +33,12 @@ export function MessageMarkdown({ text }: { text: string }) {
       rehypePlugins={[rehypeKatex]}
       components={{
         p: ({ children }) => <p className="mb-3 break-words leading-[1.7] tracking-[0.01em] [overflow-wrap:anywhere]">{children}</p>,
-        a: ({ children, href }) => <a href={href} className="break-all text-primary underline underline-offset-4 hover:text-primary/80">{children}</a>,
+        a: ({ children, href }) => {
+          const result = href ? searchResults?.get(href) : undefined
+          return result
+            ? <SearchResultCard result={result} />
+            : <a href={href} className="break-all text-primary underline underline-offset-4 hover:text-primary/80">{children}</a>
+        },
         strong: ({ children }) => <strong className="font-[650]">{children}</strong>,
         em: ({ children }) => <em className="italic">{children}</em>,
         del: ({ children }) => <del className="text-muted-foreground/60 line-through">{children}</del>,
@@ -44,22 +61,27 @@ export function MessageMarkdown({ text }: { text: string }) {
         tr: ({ children }) => <tr className="border-b border-border/20 last:border-b-0">{children}</tr>,
         th: ({ children }) => <th className="border-r border-border/20 px-3 py-2 text-left text-sm font-[625] last:border-r-0">{children}</th>,
         td: ({ children }) => <td className="break-words border-r border-border/20 px-3 py-2 text-sm last:border-r-0 [overflow-wrap:anywhere]">{children}</td>,
-        img: ({ src, alt }) => isSafeGeneratedMediaUrl("image", src) ? (
-          <Image
-            src={src}
-            alt={alt ?? ""}
-            width={1024}
-            height={768}
-            unoptimized
-            className="my-3 h-auto max-w-full rounded-lg border border-border/20"
-          />
-        ) : (
-          <span role="alert" className="my-3 block rounded-lg border border-destructive/30 px-3 py-2 text-sm text-muted-foreground">
-            {isPrivateNetworkGeneratedMediaUrl(src)
-              ? "已阻止正文图片直接访问本机或内网地址。"
-              : "正文图片链接不安全或不受支持。"}
-          </span>
-        ),
+        img: ({ src, alt }) => {
+          const searchImage = typeof src === "string" ? searchImages?.get(src) : undefined
+          if (searchImage && onOpenSearchImage) {
+            return (
+              <button type="button" onClick={() => onOpenSearchImage(searchImage)} className="my-3 block max-w-full overflow-hidden rounded-lg border border-border/20 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+                <Image src={searchImage.url} alt={alt ?? searchImage.description ?? "搜索结果图片"} width={1024} height={768} unoptimized className="h-auto max-h-[32rem] max-w-full object-contain" />
+                <span className="sr-only">点击查看大图</span>
+              </button>
+            )
+          }
+          if (isSafeGeneratedMediaUrl("image", src)) {
+            return <Image src={src} alt={alt ?? ""} width={1024} height={768} unoptimized className="my-3 h-auto max-w-full rounded-lg border border-border/20" />
+          }
+          return (
+            <span role="alert" className="my-3 block rounded-lg border border-destructive/30 px-3 py-2 text-sm text-muted-foreground">
+              {isPrivateNetworkGeneratedMediaUrl(src)
+                ? "已阻止正文图片直接访问本机或内网地址。"
+                : "正文图片链接不安全或不受支持。"}
+            </span>
+          )
+        },
       }}
     >
       {markdown}
