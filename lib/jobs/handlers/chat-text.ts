@@ -1,10 +1,7 @@
 import type { SupabaseClient } from '@/lib/supabase/types'
 import { hasScannedPdfAttachment, ocrScannedPdfs } from '@/lib/chat/attachments'
 import { prepareChatHistory, RECENT_CONTEXT_MESSAGES } from '@/lib/chat/history'
-import {
-  appendUserSystemPrompt,
-  latestBeijingDateFromMessages,
-} from '@/lib/chat/request-context'
+import { latestBeijingDateFromMessages } from '@/lib/chat/request-context'
 import { log } from '@/lib/logger'
 import { runAgentLoop, type AgentLoopOpts, type ExecuteTool } from '@/lib/llm/agent-loop'
 import { buildModelContext } from '@/lib/llm/context'
@@ -12,9 +9,8 @@ import type { ChatEvent } from '@/lib/llm/events'
 import { ensureImageSummaries } from '@/lib/llm/image-context'
 import { chatCompletionsUrl, injectAttachmentsOpenAI } from '@/lib/llm/openai'
 import type { ReasoningEffort } from '@/lib/llm/provider-adapters'
-import { buildSystem } from '@/lib/llm/system'
 import type { TokenUsage } from '@/lib/token-usage'
-import { activeTools, execTool, toOpenAITools, type ToolContext } from '@/lib/tools'
+import { execTool, toOpenAITools, type ToolContext } from '@/lib/tools'
 import { isJobIdentifier } from '../contracts'
 import { JobRuntimeError } from '../errors'
 import { JobEventWriter } from '../event-writer'
@@ -29,6 +25,7 @@ import {
   type GeneratedMedia,
 } from './chat-media-persistence'
 import { completeChatTextRun, rethrowChatTextFailure } from './chat-text-completion'
+import { buildChatSystem, buildChatTools, type ActiveChatTools } from './chat-text-context'
 import {
   chatTokenAccounting,
   restoredHistoricalTokens,
@@ -41,8 +38,6 @@ const MAX_OUTPUT_TOKENS = 40_000
 const TRIAL_MAX_OUTPUT_TOKENS = 10_000
 const INSTANT_MAX_OUTPUT_TOKENS = 96
 const REPLAY_SAFE_TOOLS = new Set(['web_search', 'fetch_url'])
-
-type ActiveChatTools = ReturnType<typeof activeTools>
 
 export type ChatTextDependencies = ChatMediaPersistenceDependencies & {
   runAgentLoop: typeof runAgentLoop
@@ -109,52 +104,6 @@ function createRuntime(context: JobExecutionContext): ChatTextRuntime {
   }
 }
 
-function chatTools(
-  context: JobExecutionContext,
-  input: LoadedChatJob,
-  latestBeijingDate: string | null,
-  instant: boolean,
-): { tools: ActiveChatTools; toolContext: ToolContext } {
-  const { selection, command } = input
-  const projectId = input.context.project?.id ?? null
-  return {
-    tools: instant ? [] : activeTools({
-      loggedIn: true,
-      searchMode: command.searchMode,
-      memoryEnabled: selection.customEndpoint ? false : input.context.memoryEnabled,
-      projectId: selection.customEndpoint ? null : projectId,
-    }),
-    toolContext: {
-      supabase: input.client,
-      userId: input.userId,
-      projectId,
-      searchMode: command.searchMode,
-      latestBeijingDate,
-      signal: context.signal,
-    },
-  }
-}
-
-function chatSystem(input: LoadedChatJob, latestBeijingDate: string | null, historyContext: string): string {
-  const { selection, command } = input
-  const { memories, memoryEnabled, project } = input.context
-  const backendSystem = buildSystem(
-    !selection.customEndpoint && memoryEnabled && !project?.id ? memories : undefined,
-    {
-      searchMode: command.searchMode,
-      latestBeijingDate,
-      memoryEnabled: selection.customEndpoint ? false : memoryEnabled,
-      project: selection.customEndpoint ? undefined : project,
-      modelSource: selection.customEndpoint ? 'custom' : 'platform',
-      tierLabel: selection.customEndpoint ? null : selection.platformTierLabel,
-      modelId: selection.customEndpoint ? selection.model : null,
-      endpointName: selection.customEndpoint ? selection.endpointDisplayName : null,
-      renderRules: input.command.renderEnabled,
-    },
-  ) + historyContext
-  return appendUserSystemPrompt(backendSystem, input.context.customSystemPrompt)
-}
-
 async function recentModelMessages(
   context: JobExecutionContext,
   input: LoadedChatJob,
@@ -215,7 +164,7 @@ async function prepareChat(
   const project = input.context.project
   const latestBeijingDate = latestBeijingDateFromMessages(input.context.messages)
   const instantMessages = instantModelMessages(input)
-  const configuredTools = chatTools(context, input, latestBeijingDate, Boolean(instantMessages))
+  const configuredTools = buildChatTools(context, input, latestBeijingDate, Boolean(instantMessages))
   if (instantMessages) {
     const baseLength = await restoreChatTrajectory(context, runtime.writer, instantMessages)
     return { ...configuredTools, modelMessages: instantMessages, baseLength, instant: true }
@@ -233,7 +182,7 @@ async function prepareChat(
   })
   const preparedMessages = await recentModelMessages(context, input, runtime, dependencies)
   const modelMessages: AgentLoopOpts['messages'] = [
-    { role: 'system', content: chatSystem(input, latestBeijingDate, history.renderedContext) },
+    { role: 'system', content: buildChatSystem(input, latestBeijingDate, history.renderedContext) },
     ...buildModelContext(preparedMessages, selection.capability),
   ]
   await appendAttachments(context, input, runtime, dependencies, modelMessages)
