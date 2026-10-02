@@ -21,6 +21,7 @@ import { JobEventWriter } from '../event-writer'
 import { executeFencedToolEffect } from '../tool-effects'
 import type { JobExecutionContext, JobHandlerResult } from '../worker'
 import type { LoadedChatJob } from './chat-input'
+import { resolveChatMemoryPolicy } from './chat-memory-policy'
 import { instantModelMessages } from './chat-instant'
 import {
   CHAT_MEDIA_PERSISTENCE_DEFAULTS,
@@ -117,11 +118,17 @@ function chatTools(
 ): { tools: ActiveChatTools; toolContext: ToolContext } {
   const { selection, command } = input
   const projectId = input.context.project?.id ?? null
+  const memoryPolicy = resolveChatMemoryPolicy({
+    customEndpoint: selection.customEndpoint,
+    memoryEnabled: input.context.memoryEnabled,
+    inProject: Boolean(projectId),
+    memories: input.context.memories,
+  })
   return {
     tools: instant ? [] : activeTools({
       loggedIn: true,
       searchMode: command.searchMode,
-      memoryEnabled: selection.customEndpoint ? false : input.context.memoryEnabled,
+      memoryEnabled: memoryPolicy.enabled,
       projectId: selection.customEndpoint ? null : projectId,
     }),
     toolContext: {
@@ -138,12 +145,18 @@ function chatTools(
 function chatSystem(input: LoadedChatJob, latestBeijingDate: string | null, historyContext: string): string {
   const { selection, command } = input
   const { memories, memoryEnabled, project } = input.context
+  const memoryPolicy = resolveChatMemoryPolicy({
+    customEndpoint: selection.customEndpoint,
+    memoryEnabled,
+    inProject: Boolean(project?.id),
+    memories,
+  })
   const backendSystem = buildSystem(
-    !selection.customEndpoint && memoryEnabled && !project?.id ? memories : undefined,
+    memoryPolicy.globalMemories,
     {
       searchMode: command.searchMode,
       latestBeijingDate,
-      memoryEnabled: selection.customEndpoint ? false : memoryEnabled,
+      memoryEnabled: memoryPolicy.enabled,
       project: selection.customEndpoint ? undefined : project,
       modelSource: selection.customEndpoint ? 'custom' : 'platform',
       tierLabel: selection.customEndpoint ? null : selection.platformTierLabel,
