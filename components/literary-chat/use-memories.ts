@@ -160,7 +160,7 @@ function createMemoryItemActions(user: User | null, setters: MemorySetters) {
       return false
     }
     try {
-      const memory = await insertMemory(user.id, content)
+      const memory = await insertMemory(content)
       setters.setMemories(previous => [...previous, memory])
       setters.setMemoryError(null)
       return true

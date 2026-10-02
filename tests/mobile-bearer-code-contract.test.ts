@@ -39,6 +39,18 @@ test('browser memory preferences use the same authenticated API instead of revok
   assert.match(profile, /export async function setMemoryEnabled\(_userId: string, enabled: boolean\): Promise<void> \{\s*await memorySettingResponse\("PUT", enabled\)\s*\}/)
 })
 
+test('global memory rows use the authenticated server API instead of direct table permissions', () => {
+  const memoryRoute = source('lib/api/memory-management.ts')
+  const browserMemory = source('lib/data/memory.ts')
+
+  assert.match(memoryRoute, /resolveAuth\(request\)/)
+  assert.match(memoryRoute, /\.eq\('user_id', userId\)/)
+  assert.match(memoryRoute, /\.eq\('id', id\)\s*\.eq\('user_id', userId\)/)
+  assert.match(browserMemory, /fetch\(path,[\s\S]*credentials: 'same-origin'/)
+  assert.match(browserMemory, /['"]\/api\/memories['"]/)
+  assert.doesNotMatch(browserMemory, /createClient|\.from\(["'`]memories/)
+})
+
 test('GitHub session keeps cookie-bound browser access and uses server-audited access only for bearer requests', () => {
   const session = source('lib/github-session.ts')
 

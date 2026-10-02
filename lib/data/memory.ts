@@ -1,60 +1,79 @@
-import { createClient } from "@/lib/supabase/client"
-import type { Memory } from "@/lib/memory-data"
+import type { Memory } from '@/lib/memory-data'
 
-// ───────────── 记忆 ─────────────
-
-export async function fetchMemories(): Promise<Memory[]> {
-  const supabase = createClient()
-  const { data, error } = await supabase
-    .from("memories")
-    .select("id, content, created_at, updated_at")
-    .order("created_at", { ascending: true })
-    .limit(200)
-  if (error) throw error
-  return (data ?? []).map(r => ({
-    id: r.id as string,
-    content: r.content as string,
-    timestamp: (r.updated_at as string) || (r.created_at as string) || undefined,
-  }))
+type MemoryRow = {
+  id: string
+  content: string
+  created_at?: string | null
+  updated_at?: string | null
+}
+type MemoryApiResponse = {
+  memories?: MemoryRow[]
+  memory?: MemoryRow
+  deleted?: number
+  ok?: boolean
+  error?: unknown
 }
 
-export async function insertMemory(userId: string, content: string): Promise<Memory> {
-  const supabase = createClient()
-  const id = crypto.randomUUID()
-  const { data, error } = await supabase
-    .from("memories")
-    .insert({ id, user_id: userId, content })
-    .select("id, content, created_at, updated_at")
-    .single()
-  if (error) throw error
-  if (!data) throw new Error("记忆没有保存到服务器，请重试")
+async function memoryRequest(
+  path: string,
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  body?: object,
+): Promise<MemoryApiResponse> {
+  const response = await fetch(path, {
+    method,
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  })
+  let result: MemoryApiResponse = {}
+  try {
+    result = await response.json() as MemoryApiResponse
+  } catch {
+    // Keep a stable user-facing error when an intermediary returns non-JSON.
+  }
+  if (!response.ok) {
+    throw new Error(
+      typeof result.error === 'string' && result.error
+        ? result.error
+        : '记忆服务暂时不可用，请稍后重试',
+    )
+  }
+  return result
+}
+
+function toMemory(row: MemoryRow): Memory {
   return {
-    id: data.id,
-    content: data.content,
-    timestamp: data.updated_at || data.created_at || undefined,
+    id: row.id,
+    content: row.content,
+    timestamp: row.updated_at || row.created_at || undefined,
   }
 }
 
+export async function fetchMemories(): Promise<Memory[]> {
+  const result = await memoryRequest('/api/memories', 'GET')
+  if (!Array.isArray(result.memories)) throw new Error('记忆服务返回的数据无效，请重试')
+  return result.memories.map(toMemory)
+}
+
+export async function insertMemory(content: string): Promise<Memory> {
+  const result = await memoryRequest('/api/memories', 'POST', { content })
+  if (!result.memory) throw new Error('记忆保存结果无效，请重试')
+  return toMemory(result.memory)
+}
+
 export async function updateMemory(id: string, content: string): Promise<void> {
-  const supabase = createClient()
-  const { data, error } = await supabase
-    .from("memories")
-    .update({ content, updated_at: new Date().toISOString() })
-    .eq("id", id)
-    .select("id")
-    .maybeSingle()
-  if (error) throw error
-  if (!data) throw new Error("这条记忆不存在或无法修改，请刷新后重试")
+  const result = await memoryRequest(`/api/memories/${encodeURIComponent(id)}`, 'PATCH', { content })
+  if (!result.memory) throw new Error('记忆修改结果无效，请刷新后重试')
 }
 
 export async function deleteMemoryRow(id: string): Promise<void> {
-  const supabase = createClient()
-  const { data, error } = await supabase
-    .from("memories")
-    .delete()
-    .eq("id", id)
-    .select("id")
-    .maybeSingle()
-  if (error) throw error
-  if (!data) throw new Error("这条记忆不存在或无法删除，请刷新后重试")
+  const result = await memoryRequest(`/api/memories/${encodeURIComponent(id)}`, 'DELETE')
+  if (result.ok !== true) throw new Error('记忆删除结果无效，请刷新后重试')
+}
+
+export async function deleteAllMemories(): Promise<number> {
+  const result = await memoryRequest('/api/memories', 'DELETE')
+  if (typeof result.deleted !== 'number') throw new Error('记忆清除结果无效，请重试')
+  return result.deleted
 }
