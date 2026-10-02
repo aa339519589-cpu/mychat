@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 ARG MYCHAT_BUILD_REVISION=unknown
-FROM node:24-alpine3.23@sha256:595398b0081eacda8e1c4c5b97b76cd1020e4d58a8ebcb4843b9bca1e79e7436 AS build
+FROM node:24-alpine3.23@sha256:9ec4a2e289874ed0d722e1772ec2de45d2801541db8612f3638b26f128c69ac2 AS build
 
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -11,7 +11,7 @@ COPY . .
 RUN npm run build \
     && npm prune --ignore-scripts --omit=dev --legacy-peer-deps
 
-FROM node:24-alpine3.23@sha256:595398b0081eacda8e1c4c5b97b76cd1020e4d58a8ebcb4843b9bca1e79e7436 AS runtime
+FROM node:24-alpine3.23@sha256:9ec4a2e289874ed0d722e1772ec2de45d2801541db8612f3638b26f128c69ac2 AS runtime
 
 ARG MYCHAT_BUILD_REVISION
 LABEL org.opencontainers.image.revision=$MYCHAT_BUILD_REVISION
