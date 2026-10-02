@@ -13,6 +13,37 @@ export type QuotaSnapshot = {
 }
 
 type SystemPromptResponse = { prompt?: unknown; error?: unknown }
+type MemorySettingResponse = { enabled?: unknown; error?: unknown }
+
+async function memorySettingResponse(
+  method: "GET" | "PUT",
+  enabled?: boolean,
+): Promise<boolean> {
+  const response = await fetch("/api/profile/memory", {
+    method,
+    cache: "no-store",
+    credentials: "same-origin",
+    headers: method === "PUT" ? { "Content-Type": "application/json" } : undefined,
+    body: method === "PUT" ? JSON.stringify({ enabled }) : undefined,
+  })
+  let body: MemorySettingResponse = {}
+  try {
+    body = await response.json() as MemorySettingResponse
+  } catch {
+    // Keep a stable fallback when an intermediary returns non-JSON.
+  }
+  if (!response.ok || typeof body.enabled !== "boolean") {
+    throw new Error(
+      typeof body.error === "string" && body.error
+        ? body.error
+        : method === "GET" ? "记忆设置加载失败，请稍后重试" : "记忆设置保存失败，请稍后重试",
+    )
+  }
+  if (method === "PUT" && body.enabled !== enabled) {
+    throw new Error("记忆设置保存结果不一致，请重试")
+  }
+  return body.enabled
+}
 
 async function systemPromptResponse(response: Response, fallback: string): Promise<string> {
   let body: SystemPromptResponse = {}
@@ -30,11 +61,8 @@ async function systemPromptResponse(response: Response, fallback: string): Promi
 
 // 读取当前登录用户的档案；没有行就返回默认值
 export async function fetchProfile(): Promise<Profile> {
-  const supabase = createClient()
-  const { data, error } = await supabase.from("profiles").select("memory_enabled").maybeSingle()
-  if (error) throw error
   return {
-    memoryEnabled: data?.memory_enabled ?? true,
+    memoryEnabled: await memorySettingResponse("GET"),
   }
 }
 
@@ -98,10 +126,6 @@ export async function ensureProfile(userId: string): Promise<void> {
 }
 
 // 切换记忆总开关。写入失败必须向上抛出，禁止静默伪装成功。
-export async function setMemoryEnabled(userId: string, enabled: boolean): Promise<void> {
-  const supabase = createClient()
-  const { error } = await supabase
-    .from("profiles")
-    .upsert({ user_id: userId, memory_enabled: enabled }, { onConflict: "user_id" })
-  if (error) throw error
+export async function setMemoryEnabled(_userId: string, enabled: boolean): Promise<void> {
+  await memorySettingResponse("PUT", enabled)
 }
