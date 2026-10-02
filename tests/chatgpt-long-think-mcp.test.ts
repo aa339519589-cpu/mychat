@@ -31,53 +31,62 @@ test("ChatGPT Long Think MCP initializes as a stateless tools server", () => {
   assert.match(String(result.instructions), /must not send any user-facing text until long_think_checkpoint returns done=true/)
 })
 
-test("lists the clock, checkpoint, and resume tools as read-only", () => {
+test("lists the thinking trigger, clock, checkpoint, and resume tools as read-only", () => {
   const response = handleChatGptLongThinkRpc({ jsonrpc: "2.0", id: "tools", method: "tools/list" })
   const result = response?.result as { tools: typeof CHATGPT_LONG_THINK_TOOLS }
-  assert.equal(result.tools.length, 3)
-  assert.deepEqual(result.tools.map(tool => tool.name), ["long_think_clock", "long_think_checkpoint", "long_think_resume"])
+  assert.equal(result.tools.length, 4)
+  assert.deepEqual(result.tools.map(tool => tool.name), ["trigger_thinking", "long_think_clock", "long_think_checkpoint", "long_think_resume"])
   assert.ok(result.tools.every(tool => tool.annotations.readOnlyHint === true))
 })
 
+const stages = ["decompose", "analyze", "verify", "challenge", "recheck", "synthesize"] as const
+
+function submitStage(stageIndex: number, checkpoint: string, now: number, done = false) {
+  Date.now = () => now
+  return callChatGptLongThinkTool("long_think_checkpoint", {
+    objective: "Solve the problem",
+    stage: stages[stageIndex],
+    checkpoint,
+    progress: `Stage ${stageIndex}: verified distinct work product for the requested problem.`,
+    unresolved: stageIndex === 5 && done ? [] : ["Validate the remaining condition"],
+    nextActions: stageIndex === 5 && done ? [] : ["Check the remaining condition"],
+    evidence: stageIndex === 2 ? ["Checked the primary condition"] : [],
+    proposedAnswer: stageIndex === 5 && done ? "The result is established." : "",
+    done,
+  }) as { structuredContent: { checkpoint: string; done: boolean; pureThinkingMs: number; remainingMs: number }; content: Array<{ text: string }> }
+}
+
 test("checkpoint forces continuation while material gaps remain", () => {
-  const result = callChatGptLongThinkTool("long_think_checkpoint", {
-    objective: "Prove the claim",
-    progress: "Reduced the problem to two remaining lemmas.",
-    unresolved: ["Lemma B is still open"],
-    nextActions: ["Prove Lemma B"],
-    evidence: ["Lemma A verified"],
-    proposedAnswer: "Premature draft",
-    done: true,
-  }) as {
-    structuredContent: { checkpoint: string; done: boolean; continuationInstruction: string }
-    content: Array<{ type: string; text: string }>
-  }
+  const originalNow = Date.now
+  Date.now = () => 0
+  try {
+    const started = callChatGptLongThinkTool("long_think_clock", { action: "start" }) as { structuredContent: { checkpoint: string } }
+    const result = submitStage(0, started.structuredContent.checkpoint, MIN_PURE_THINKING_MS / 10)
   assert.equal(result.structuredContent.done, false)
-  assert.match(result.structuredContent.continuationInstruction, /Continue working now/)
-  assert.match(result.structuredContent.continuationInstruction, /long_think_clock/)
-  assert.match(result.content[0]?.text ?? "", /Do not give the user a final answer yet/)
+    assert.equal(result.structuredContent.pureThinkingMs, MIN_PURE_THINKING_MS / 10)
+    assert.match(result.content[0]?.text ?? "", /Do not give the user a final answer yet/)
   const checkpoint = JSON.parse(result.structuredContent.checkpoint) as Record<string, unknown>
-  assert.equal(checkpoint.objective, "Prove the claim")
+    assert.equal(checkpoint.objective, "Solve the problem")
   assert.equal(checkpoint.done, false)
+  } finally {
+    Date.now = originalNow
+  }
 })
 
 test("checkpoint accepts closure only with no gaps and a proposed answer", () => {
   const originalNow = Date.now
-  Date.now = () => MIN_PURE_THINKING_MS + 1_000
   try {
-    const clock = JSON.stringify({ clock: { version: 1, pureThinkingMs: 0, phase: "thinking", lastThinkingAt: 0 } })
-    const result = callChatGptLongThinkTool("long_think_checkpoint", {
-      objective: "Solve the problem",
-      checkpoint: clock,
-      progress: "All required cases are verified.",
-      unresolved: [],
-      nextActions: [],
-      evidence: ["All cases checked"],
-      proposedAnswer: "The result is established.",
-      done: true,
-    }) as { structuredContent: { done: boolean; pureThinkingMs: number }; content: Array<{ text: string }> }
+    Date.now = () => 0
+    const started = callChatGptLongThinkTool("long_think_clock", { action: "start" }) as { structuredContent: { checkpoint: string } }
+    let checkpoint = started.structuredContent.checkpoint
+    let result: ReturnType<typeof submitStage> | undefined
+    for (let stageIndex = 0; stageIndex < stages.length; stageIndex += 1) {
+      result = submitStage(stageIndex, checkpoint, (stageIndex + 1) * 5_000, stageIndex === stages.length - 1)
+      checkpoint = result.structuredContent.checkpoint
+    }
+    assert.ok(result)
     assert.equal(result.structuredContent.done, true)
-    assert.equal(result.structuredContent.pureThinkingMs, MIN_PURE_THINKING_MS + 1_000)
+    assert.equal(result.structuredContent.pureThinkingMs, MIN_PURE_THINKING_MS)
     assert.match(result.content[0]?.text ?? "", /Closure accepted/)
     assert.match(result.content[0]?.text ?? "", /Response integrity rules apply to every reply/)
   } finally {
@@ -99,17 +108,12 @@ test("clock excludes external-tool time and keeps accumulating pure thinking", (
     const resumed = callChatGptLongThinkTool("long_think_clock", { action: "resume", checkpoint: paused.structuredContent.checkpoint }) as { structuredContent: { checkpoint: string; pureThinkingMs: number; phase: string } }
     assert.equal(resumed.structuredContent.pureThinkingMs, 10_000)
     assert.equal(resumed.structuredContent.phase, "thinking")
-    now = 119_999
-    const checkpoint = callChatGptLongThinkTool("long_think_checkpoint", {
-      objective: "Solve the problem",
-      checkpoint: resumed.structuredContent.checkpoint,
-      progress: "Still checking the final case.",
-      unresolved: ["Final case"],
-      nextActions: ["Check final case"],
-      done: false,
-    }) as { structuredContent: { checkpoint: string; pureThinkingMs: number; remainingMs: number } }
-    assert.equal(checkpoint.structuredContent.pureThinkingMs, 29_999)
-    assert.equal(checkpoint.structuredContent.remainingMs, 1)
+    now = 105_000
+    const first = submitStage(0, resumed.structuredContent.checkpoint, now)
+    assert.equal(first.structuredContent.pureThinkingMs, 15_000)
+    now = 110_000
+    const second = submitStage(1, first.structuredContent.checkpoint, now)
+    assert.equal(second.structuredContent.pureThinkingMs, 20_000)
   } finally {
     Date.now = originalNow
   }
@@ -117,17 +121,17 @@ test("clock excludes external-tool time and keeps accumulating pure thinking", (
 
 test("closure stays blocked until the pure-thinking minimum is reached", () => {
   const originalNow = Date.now
-  Date.now = () => MIN_PURE_THINKING_MS - 1
   try {
-    const result = callChatGptLongThinkTool("long_think_checkpoint", {
-      objective: "Solve the problem",
-      checkpoint: JSON.stringify({ clock: { version: 1, pureThinkingMs: 0, phase: "thinking", lastThinkingAt: 0 } }),
-      progress: "Candidate answer is ready.",
-      unresolved: [],
-      nextActions: [],
-      proposedAnswer: "The result is established.",
-      done: true,
-    }) as { structuredContent: { done: boolean; remainingMs: number }; content: Array<{ text: string }> }
+    Date.now = () => 0
+    const started = callChatGptLongThinkTool("long_think_clock", { action: "start" }) as { structuredContent: { checkpoint: string } }
+    let checkpoint = started.structuredContent.checkpoint
+    let result: ReturnType<typeof submitStage> | undefined
+    for (let stageIndex = 0; stageIndex < stages.length; stageIndex += 1) {
+      const now = stageIndex === stages.length - 1 ? MIN_PURE_THINKING_MS - 1 : (stageIndex + 1) * 5_000
+      result = submitStage(stageIndex, checkpoint, now, stageIndex === stages.length - 1)
+      checkpoint = result.structuredContent.checkpoint
+    }
+    assert.ok(result)
     assert.equal(result.structuredContent.done, false)
     assert.equal(result.structuredContent.remainingMs, 1)
     assert.match(result.content[0]?.text ?? "", /Do not finish yet/)
@@ -137,22 +141,22 @@ test("closure stays blocked until the pure-thinking minimum is reached", () => {
 })
 
 test("resume preserves the full checkpoint while restarting the thinking segment", () => {
-  const result = callChatGptLongThinkTool("long_think_checkpoint", {
-    objective: "Solve the problem",
-    checkpoint: JSON.stringify({ clock: { version: 1, pureThinkingMs: 5_000, phase: "paused", lastThinkingAt: null } }),
-    progress: "Saved progress.",
-    unresolved: ["One check"],
-    nextActions: ["Perform the check"],
-    done: false,
-  }) as { structuredContent: { checkpoint: string } }
-  const resumed = callChatGptLongThinkTool("long_think_resume", {
-    checkpoint: result.structuredContent.checkpoint,
-    instruction: "also verify the edge case",
-  }) as { structuredContent: { checkpoint: string; instruction: string }; content: Array<{ text: string }> }
-  const checkpoint = JSON.parse(resumed.structuredContent.checkpoint) as Record<string, unknown>
-  assert.equal(checkpoint.objective, "Solve the problem")
-  assert.equal(resumed.structuredContent.instruction, "also verify the edge case")
-  assert.match(resumed.content[0]?.text ?? "", /continue the unfinished work/i)
+  const originalNow = Date.now
+  try {
+    Date.now = () => 0
+    const started = callChatGptLongThinkTool("long_think_clock", { action: "start" }) as { structuredContent: { checkpoint: string } }
+    const result = submitStage(0, started.structuredContent.checkpoint, 3_000)
+    const resumed = callChatGptLongThinkTool("long_think_resume", {
+      checkpoint: result.structuredContent.checkpoint,
+      instruction: "also verify the edge case",
+    }) as { structuredContent: { checkpoint: string; instruction: string }; content: Array<{ text: string }> }
+    const checkpoint = JSON.parse(resumed.structuredContent.checkpoint) as Record<string, unknown>
+    assert.equal(checkpoint.objective, "Solve the problem")
+    assert.equal(resumed.structuredContent.instruction, "also verify the edge case")
+    assert.match(resumed.content[0]?.text ?? "", /continue the unfinished work/i)
+  } finally {
+    Date.now = originalNow
+  }
 })
 
 test("resume returns a continuation instruction without requiring hidden reasoning", () => {

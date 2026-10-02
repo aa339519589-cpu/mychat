@@ -111,7 +111,7 @@ test("web search validates and deduplicates untrusted provider results", { concu
     return Response.json({
       answer: "summary",
       results: [
-        { title: "One", url: "https://one.example", content: "first" },
+        { title: "One", url: "https://one.example", content: "first", published_date: "2026-07-12", favicon: "https://one.example/favicon.ico", images: [{ url: "https://one.example/thumb.jpg" }] },
         { title: "Duplicate", url: "https://ONE.example", content: "duplicate" },
         { title: "Two", url: "https://two.example", content: "second" },
         { title: "Script", url: "javascript:alert(1)", content: "unsafe" },
@@ -127,11 +127,13 @@ test("web search validates and deduplicates untrusted provider results", { concu
   assert.match(outcome.result, /搜索模式：联网/)
   assert.match(outcome.result, /已检索并去重 2 个来源/)
   assert.deepEqual(outcome.event, { search: {
+    kind: "web",
     query: "current topic",
     results: [
-      { title: "One", url: "https://one.example" },
-      { title: "Two", url: "https://two.example" },
+      { title: "One", url: "https://one.example", snippet: "first", published_at: "2026-07-12", favicon_url: "https://one.example/favicon.ico", thumbnail_url: "https://one.example/thumb.jpg" },
+      { title: "Two", url: "https://two.example", snippet: "second", published_at: undefined, favicon_url: undefined, thumbnail_url: undefined },
     ],
+    images: [],
   } })
 })
 

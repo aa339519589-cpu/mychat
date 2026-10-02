@@ -94,9 +94,9 @@ function DisconnectedConsole({ onExit }: Pick<CodeConsoleViewProps, "onExit">) {
       <main className="flex flex-1 flex-col items-center justify-center gap-4 px-8 text-center">
         <GitBranch className="size-8" style={{ color: ACCENT }} aria-hidden="true" />
         <h1 className="text-sm font-medium text-foreground" style={{ fontFamily: MONO }}>尚未连接 GitHub</h1>
-        <button type="button" onClick={() => { window.location.href = "/api/auth/github" }}
+        <a href="/api/auth/github"
           className="fluid-press min-h-11 rounded-lg px-5 text-sm font-medium text-white hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--code-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-          style={{ background: ACCENT, fontFamily: MONO }}>连接 GitHub</button>
+          style={{ background: ACCENT, fontFamily: MONO }}>连接 GitHub</a>
       </main>
     </Shell>
   )
