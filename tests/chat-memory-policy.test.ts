@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { activeTools } from '../lib/tools'
 import { buildSystem } from '../lib/llm/system'
-import { resolveChatMemoryPolicy } from '../lib/jobs/handlers/chat-memory-policy'
+import { resolveChatMemoryPolicy } from '../lib/jobs/handlers/chat-text-context'
 
 test('an enabled global Memory is available to a selected custom model in main chat', () => {
   const memories = [{ id: 'memory-1', content: 'prefers concise answers' }]
@@ -61,7 +61,7 @@ test('platform project chats keep project memory tools without global memories',
 })
 
 test('chat tools and system prompt both consume the selected-model memory policy', () => {
-  const source = readFileSync(new URL('../lib/jobs/handlers/chat-text.ts', import.meta.url), 'utf8')
+  const source = readFileSync(new URL('../lib/jobs/handlers/chat-text-context.ts', import.meta.url), 'utf8')
   assert.equal((source.match(/const memoryPolicy = resolveChatMemoryPolicy\(/g) ?? []).length, 2)
   assert.match(source, /memoryEnabled:\s*memoryPolicy\.enabled/)
   assert.match(source, /memoryPolicy\.globalMemories/)
