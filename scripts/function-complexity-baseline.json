@@ -133,7 +133,7 @@
     },
     "components/literary-chat/use-chat-bootstrap.ts": {
       "maxLines": [
-        92
+        90
       ]
     },
     "components/literary-chat/use-model-selection.ts": {

@@ -1,6 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
 const port = 3210
+const e2eSupabaseUrl = 'http://127.0.0.1:3211'
 
 export default defineConfig({
   testDir: './e2e',
@@ -20,17 +21,27 @@ export default defineConfig({
     { name: 'tablet-chromium', use: { ...devices['Desktop Chrome'], viewport: { width: 768, height: 900 } } },
     { name: 'mobile-chromium', use: { ...devices['Pixel 7'] } },
   ],
-  webServer: {
-    // NEXT_PUBLIC_* is compiled into the client bundle, so build and start under
-    // the exact same deterministic E2E environment.
-    command: `npm run build && npm start -- --hostname 127.0.0.1 --port ${port}`,
-    url: `http://127.0.0.1:${port}`,
-    reuseExistingServer: !process.env.CI,
-    timeout: 60_000,
-    env: {
-      MYCHAT_RUNTIME_ROLE: 'web',
-      NEXT_PUBLIC_SUPABASE_URL: 'https://example.supabase.co',
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: 'e2e-public-anon-key',
+  webServer: [
+    {
+      command: 'node scripts/e2e-supabase-mock.mjs',
+      url: `${e2eSupabaseUrl}/health`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 60_000,
     },
-  },
+    {
+      // NEXT_PUBLIC_* is compiled into the client bundle, so build and start under
+      // the exact same deterministic E2E environment.
+      command: `npm run build && npm start -- --hostname 127.0.0.1 --port ${port}`,
+      url: `http://127.0.0.1:${port}`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 60_000,
+      env: {
+        MYCHAT_RUNTIME_ROLE: 'web',
+        NEXT_PUBLIC_SUPABASE_URL: e2eSupabaseUrl,
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: 'e2e-public-anon-key',
+        SUPABASE_URL: e2eSupabaseUrl,
+        SUPABASE_SERVICE_ROLE_KEY: 'e2e-service-role-key',
+      },
+    },
+  ],
 })

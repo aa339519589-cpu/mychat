@@ -4,8 +4,20 @@ export function createContentSecurityPolicyNonce(): string {
   return crypto.randomUUID().replaceAll('-', '')
 }
 
-export function contentSecurityPolicy(nonce: string): string {
+function localSupabaseOrigin(value: string | undefined): string | null {
+  if (!value) return null
+  try {
+    const url = new URL(value)
+    if (url.protocol !== 'http:' || !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) return null
+    return url.origin
+  } catch {
+    return null
+  }
+}
+
+export function contentSecurityPolicy(nonce: string, supabaseUrl?: string): string {
   if (!CSP_NONCE.test(nonce)) throw new TypeError('Invalid content security policy nonce')
+  const localSupabase = localSupabaseOrigin(supabaseUrl)
   return [
     "default-src 'self'",
     // function-plot compiles user-entered math expressions with Function/eval.
@@ -15,7 +27,7 @@ export function contentSecurityPolicy(nonce: string): string {
     "img-src 'self' data: blob: https:",
     "font-src 'self' data:",
     "media-src 'self' blob: https:",
-    "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vitals.vercel-insights.com",
+    `connect-src 'self' https://*.supabase.co wss://*.supabase.co https://vitals.vercel-insights.com${localSupabase ? ` ${localSupabase}` : ''}`,
     "worker-src 'self' blob:",
     "object-src 'none'",
     "base-uri 'self'",

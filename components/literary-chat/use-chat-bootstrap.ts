@@ -85,6 +85,18 @@ function createBlankDraft(): Conversation {
   }
 }
 
+function loadBootstrapMemories(memory: ChatBootstrapOptions["memory"], isCancelled: () => boolean) {
+  memory.beginLoad()
+  void Promise.allSettled([fetchMemories(), fetchProfile()]).then(([memoryResult, profileResult]) => {
+    if (isCancelled()) return
+    const items = memoryResult.status === "fulfilled" ? memoryResult.value : []
+    const enabled = profileResult.status === "fulfilled" ? profileResult.value.memoryEnabled : false
+    memory.restore(items, enabled, profileResult.status === "fulfilled")
+    if (memoryResult.status === "rejected") memory.failLoad(memoryResult.reason)
+    else if (profileResult.status === "rejected") memory.failLoad(profileResult.reason)
+  })
+}
+
 export function useChatBootstrap({
   user,
   routeConversationId,
@@ -118,15 +130,7 @@ export function useChatBootstrap({
     void (async () => {
       ensureProfile(currentUser.id)
       restoreModelEndpoints(model, cancelled)
-      memory.beginLoad()
-      void Promise.allSettled([fetchMemories(), fetchProfile()]).then(([memoryResult, profileResult]) => {
-        if (cancelled()) return
-        const items = memoryResult.status === "fulfilled" ? memoryResult.value : []
-        const enabled = profileResult.status === "fulfilled" ? profileResult.value.memoryEnabled : false
-        memory.restore(items, enabled, profileResult.status === "fulfilled")
-        if (memoryResult.status === "rejected") memory.failLoad(memoryResult.reason)
-        else if (profileResult.status === "rejected") memory.failLoad(profileResult.reason)
-      })
+      loadBootstrapMemories(memory, cancelled)
 
       const [rows, projects] = await Promise.all([
         fetchConversations(),
