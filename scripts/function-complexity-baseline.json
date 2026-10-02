@@ -38,6 +38,21 @@
         23
       ]
     },
+    "app/api/long-think/jobs/[jobId]/continue/route.ts": {
+      "complexity": [
+        27
+      ]
+    },
+    "app/api/long-think/jobs/route.ts": {
+      "complexity": [
+        17
+      ]
+    },
+    "app/api/maestro/jobs/route.ts": {
+      "complexity": [
+        16
+      ]
+    },
     "app/api/redeem-code/route.ts": {
       "complexity": [
         17
@@ -138,12 +153,12 @@
     },
     "components/literary-chat/use-chat-generation.ts": {
       "complexity": [
-        18
+        19
       ]
     },
     "components/literary-chat/use-model-selection.ts": {
       "maxLines": [
-        144
+        179
       ]
     },
     "components/literary-chat/use-projects.ts": {
@@ -154,6 +169,14 @@
     "components/login-screen.tsx": {
       "maxLines": [
         151
+      ]
+    },
+    "components/maestro-runner.tsx": {
+      "complexity": [
+        27
+      ],
+      "maxLines": [
+        111
       ]
     },
     "components/messages/assistant-message.tsx": {
@@ -375,8 +398,8 @@
     },
     "lib/generation-client.ts": {
       "complexity": [
-        21,
-        17
+        22,
+        21
       ]
     },
     "lib/github-connection.ts": {
@@ -562,6 +585,42 @@
     "lib/logger.ts": {
       "complexity": [
         17
+      ]
+    },
+    "lib/long-think/contracts.ts": {
+      "complexity": [
+        17,
+        16
+      ]
+    },
+    "lib/maestro/oauth-server.ts": {
+      "complexity": [
+        17,
+        16
+      ]
+    },
+    "lib/maestro/store.ts": {
+      "complexity": [
+        25
+      ]
+    },
+    "lib/maestro/tokens.ts": {
+      "complexity": [
+        18
+      ]
+    },
+    "lib/maestro/v4-engine.ts": {
+      "complexity": [
+        23,
+        16
+      ],
+      "maxLines": [
+        84
+      ]
+    },
+    "lib/maestro/v4.ts": {
+      "complexity": [
+        30
       ]
     },
     "lib/model-catalog.ts": {
