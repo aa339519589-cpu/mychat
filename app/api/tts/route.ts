@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { apiErrorResponseV1 } from '@/lib/api/errors'
 import { enforceRequestRateLimit, resolveAuth } from '@/lib/api/guard'
 import { readJson, RequestError } from '@/lib/api/request'
+import { prepareBoundedAudioStream } from '@/lib/api/tts-audio-stream'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -46,6 +47,9 @@ async function parseTTSRequest(request: NextRequest): Promise<ParsedTTSRequest |
 }
 
 async function requestFishAudio(request: NextRequest, text: string, apiKey: string): Promise<Response> {
+  const providerTimeout = AbortSignal.timeout(60_000)
+  const signal = AbortSignal.any([request.signal, providerTimeout])
+
   try {
     const providerResponse = await fetch(FISH_AUDIO_URL, {
       method: 'POST',
@@ -55,9 +59,15 @@ async function requestFishAudio(request: NextRequest, text: string, apiKey: stri
         model: 's2.1-pro-free',
         Accept: 'audio/mpeg',
       },
-      body: JSON.stringify({ text, reference_id: REFERENCE_ID, format: 'mp3' }),
+      body: JSON.stringify({
+        text,
+        reference_id: REFERENCE_ID,
+        format: 'mp3',
+        chunk_length: 100,
+        latency: 'balanced',
+      }),
       cache: 'no-store',
-      signal: AbortSignal.timeout(60_000),
+      signal,
     })
 
     if (!providerResponse.ok) {
@@ -71,22 +81,24 @@ async function requestFishAudio(request: NextRequest, text: string, apiKey: stri
       return failure(request, 502, 'DEPENDENCY_UNAVAILABLE', '语音服务返回了无效音频', true)
     }
 
-    const audio = await providerResponse.arrayBuffer()
-    if (audio.byteLength === 0 || audio.byteLength > MAX_AUDIO_BYTES) {
+    let audioStream: ReadableStream<Uint8Array>
+    try {
+      audioStream = await prepareBoundedAudioStream(providerResponse.body, MAX_AUDIO_BYTES)
+    } catch {
       return failure(request, 502, 'DEPENDENCY_UNAVAILABLE', '语音服务返回了无效音频', true)
     }
 
-    return new Response(audio, {
+    return new Response(audioStream, {
       status: 200,
       headers: {
         'Content-Type': 'audio/mpeg',
-        'Content-Length': String(audio.byteLength),
-        'Cache-Control': 'no-store',
+        'Cache-Control': 'no-store, no-transform',
+        'X-Accel-Buffering': 'no',
         'X-Content-Type-Options': 'nosniff',
       },
     })
-  } catch (error) {
-    const timedOut = error instanceof Error && error.name === 'TimeoutError'
+  } catch {
+    const timedOut = providerTimeout.aborted
     return failure(
       request,
       timedOut ? 504 : 502,
