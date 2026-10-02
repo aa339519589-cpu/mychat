@@ -1,7 +1,7 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { ArrowDownToLine, ArrowUp, Brain, Check, ChevronDown, ChevronRight, Copy, Globe, RefreshCw } from "lucide-react"
+import { useState } from "react"
+import { ArrowDownToLine, ArrowUp, Brain, Check, ChevronRight, Copy, RefreshCw } from "lucide-react"
 
 import { ArtifactCard } from "@/components/artifact-card"
 import { FunctionPlotChart } from "@/components/function-plot-chart"
@@ -14,43 +14,7 @@ import type { Message } from "@/lib/chat-data"
 import { stripToolMarkup } from "@/lib/llm/sanitize"
 import { normalizeSearchNotes } from "@/lib/search-notes"
 import type { TokenUsage } from "@/lib/token-usage"
-import { MessageMarkdown } from "./markdown-content"
-
-type Searches = NonNullable<Message["searchNotes"]>
-
-function SearchBlock({ searches, replying }: { searches: Searches; replying: boolean }) {
-  const [open, setOpen] = useState(true)
-  useEffect(() => { if (replying) setOpen(false) }, [replying])
-  const safeSearches = normalizeSearchNotes(searches)
-  const total = safeSearches.reduce((count, search) => count + search.results.length, 0)
-  if (total === 0) return null
-  return (
-    <div className="mb-2.5">
-      <button
-        onClick={() => setOpen(value => !value)}
-        className="flex items-center gap-1.5 text-xs font-[500] italic text-muted-foreground/70 transition-colors hover:text-muted-foreground md:text-[12px]"
-      >
-        {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
-        <Globe className="size-3.5" />
-        <span>搜索了 {total} 个来源</span>
-      </button>
-      {open && (
-        <div className="mt-2 space-y-2 rounded-xl border border-border/30 bg-muted/15 px-4 py-2.5 text-xs md:text-[12px]">
-          {safeSearches.map((search, searchIndex) => (
-            <div key={searchIndex} className="space-y-1">
-              <div className="text-xs font-[500] italic text-muted-foreground">搜索：{search.query}</div>
-              {search.results.map((result, resultIndex) => (
-                <a key={resultIndex} href={result.url} target="_blank" rel="noopener noreferrer" className="block truncate text-xs font-[500] text-primary/80 underline underline-offset-2 hover:text-primary">
-                  {result.title || result.url}
-                </a>
-              ))}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
+import { SearchActivity, SearchEnhancedMarkdown } from "./search-results"
 
 function ThinkingDisclosure({ thinking, live }: { thinking: string; live: boolean }) {
   const [open, setOpen] = useState(false)
@@ -209,15 +173,14 @@ export function AssistantMessage({
   onRegenerate?: () => void
 }) {
   const { display, blocks } = parseArtifact(stripToolMarkup(message.content ?? ""))
+  const searchNotes = normalizeSearchNotes(message.searchNotes ?? [])
   const hasArtifactOutput = blocks.length > 0
   const liveThinking = isLast && isLoading
 
   return (
     <div className="group min-w-0 pl-[6px] md:pl-0">
       <div className="min-w-0">
-        {message.searchNotes && message.searchNotes.length > 0 && (
-          <SearchBlock searches={message.searchNotes} replying={!!message.content} />
-        )}
+        {searchNotes.length > 0 && <SearchActivity searches={searchNotes} />}
         {message.memoryNotes && message.memoryNotes.length > 0 && (
           <div className="mb-2.5 space-y-1">
             {message.memoryNotes.map((note, index) => (
@@ -245,7 +208,7 @@ export function AssistantMessage({
             <>
               {display && (
                 <div className="font-sans text-[18px] font-[450] leading-[1.7] tracking-[0.01em] text-foreground md:text-[19px] md:leading-[1.72]">
-                  <MessageMarkdown text={display} />
+                  <SearchEnhancedMarkdown text={display} searches={searchNotes} />
                 </div>
               )}
               {message.media && message.media.length > 0 && (

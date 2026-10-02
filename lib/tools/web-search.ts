@@ -6,7 +6,7 @@ import {
   searchSourceBudget,
   type SearchTimeRange,
 } from '@/lib/search-mode'
-import { isSafeExternalHttpUrl } from '@/lib/external-url'
+import { isSafeExternalHttpsUrl, isSafeExternalHttpUrl } from '@/lib/external-url'
 import { isRecord } from '@/lib/unknown-value'
 
 type TavilyTopic = 'general' | 'news'
@@ -28,15 +28,15 @@ function parseSearchHit(result: unknown): SearchHit[] {
   if (!isRecord(result) || !isSafeExternalHttpUrl(result.url)) return []
   const sourceImages = Array.isArray(result.images) ? result.images : []
   const thumbnailURL = sourceImages.find((image) =>
-    isRecord(image) && isSafeExternalHttpUrl(image.url),
+    isRecord(image) && isSafeExternalHttpsUrl(image.url),
   )
   return [{
     title: typeof result.title === 'string' ? result.title : '',
     url: result.url,
     content: String(result.content ?? ''),
     publishedDate: typeof result.published_date === 'string' ? result.published_date : undefined,
-    favicon: isSafeExternalHttpUrl(result.favicon) ? result.favicon : undefined,
-    thumbnailURL: isRecord(thumbnailURL) && isSafeExternalHttpUrl(thumbnailURL.url)
+    favicon: isSafeExternalHttpsUrl(result.favicon) ? result.favicon : undefined,
+    thumbnailURL: isRecord(thumbnailURL) && isSafeExternalHttpsUrl(thumbnailURL.url)
       ? thumbnailURL.url
       : undefined,
     score: typeof result.score === 'number' ? result.score : undefined,
@@ -47,7 +47,7 @@ function parseSearchImages(value: unknown): SearchImage[] {
   if (!Array.isArray(value)) return []
   const seen = new Set<string>()
   return value.flatMap((item) => {
-    if (!isRecord(item) || !isSafeExternalHttpUrl(item.url) || seen.has(item.url)) return []
+    if (!isRecord(item) || !isSafeExternalHttpsUrl(item.url) || seen.has(item.url)) return []
     seen.add(item.url)
     return [{
       url: item.url,

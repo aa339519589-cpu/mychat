@@ -1,4 +1,5 @@
 import type { GeneratedMedia } from "@/lib/generated-media"
+import type { SearchNote } from "@/lib/search-notes"
 import type { TokenUsage } from "@/lib/token-usage"
 
 export type Tier = "绝句" | "正构" | "鸿篇" | "观照" | "绘影" | "录像"
@@ -46,7 +47,7 @@ export type Message = {
   media?: GeneratedMedia[]
   memoryNotes?: string[]
   files?: string[]
-  searchNotes?: { query: string; results: { title: string; url: string }[] }[]
+  searchNotes?: SearchNote[]
   tokenUsage?: TokenUsage
   /** Database-authoritative terminal metadata mirrored with the assistant message. */
   generation?: MessageGenerationTerminal

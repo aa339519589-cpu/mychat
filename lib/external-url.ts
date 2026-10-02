@@ -14,3 +14,7 @@ export function isSafeExternalHttpUrl(value: unknown): value is string {
     return false
   }
 }
+
+export function isSafeExternalHttpsUrl(value: unknown): value is string {
+  return isSafeExternalHttpUrl(value) && new URL(value).protocol === 'https:'
+}

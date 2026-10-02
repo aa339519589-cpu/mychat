@@ -22,8 +22,8 @@ test("message cache normalization rejects malformed entries and preserves safe f
       images: ["https://example.com/image.png", 42],
       memoryNotes: ["remember", false],
       searchNotes: [
-        { query: "safe", results: [{ title: "Docs", url: "https://example.com/docs" }] },
-        { query: "unsafe", results: [{ title: "Run", url: "javascript:alert(1)" }] },
+        { query: "safe", results: [{ title: "Docs", url: "https://example.com/docs", snippet: "A concise description.", published_at: "2026-10-02", favicon_url: "https://example.com/favicon.ico", thumbnail_url: "https://example.com/thumb.jpg" }], images: [{ url: "https://example.com/image.jpg", description: "An image" }] },
+        { query: "unsafe", results: [{ title: "Run", url: "javascript:alert(1)" }], images: [{ url: "javascript:alert(1)" }] },
         { query: 42, results: [] },
       ],
     },
@@ -36,8 +36,8 @@ test("message cache normalization rejects malformed entries and preserves safe f
   assert.deepEqual(messages[0].images, ["https://example.com/image.png"])
   assert.deepEqual(messages[0].memoryNotes, ["remember"])
   assert.deepEqual(messages[0].searchNotes, [
-    { query: "safe", results: [{ title: "Docs", url: "https://example.com/docs" }] },
-    { query: "unsafe", results: [] },
+    { query: "safe", kind: "web", results: [{ title: "Docs", url: "https://example.com/docs", snippet: "A concise description.", published_at: "2026-10-02", favicon_url: "https://example.com/favicon.ico", thumbnail_url: "https://example.com/thumb.jpg" }], images: [{ url: "https://example.com/image.jpg", description: "An image" }] },
+    { query: "unsafe", kind: "web", results: [], images: [] },
   ])
 })
 
