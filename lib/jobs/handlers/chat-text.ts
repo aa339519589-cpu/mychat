@@ -115,14 +115,14 @@ function chatTools(
   latestBeijingDate: string | null,
   instant: boolean,
 ): { tools: ActiveChatTools; toolContext: ToolContext } {
-  const { selection, command } = input
+  const { command } = input
   const projectId = input.context.project?.id ?? null
   return {
     tools: instant ? [] : activeTools({
       loggedIn: true,
       searchMode: command.searchMode,
-      memoryEnabled: selection.customEndpoint ? false : input.context.memoryEnabled,
-      projectId: selection.customEndpoint ? null : projectId,
+      memoryEnabled: input.context.memoryEnabled,
+      projectId,
     }),
     toolContext: {
       supabase: input.client,
@@ -139,12 +139,12 @@ function chatSystem(input: LoadedChatJob, latestBeijingDate: string | null, hist
   const { selection, command } = input
   const { memories, memoryEnabled, project } = input.context
   const backendSystem = buildSystem(
-    !selection.customEndpoint && memoryEnabled && !project?.id ? memories : undefined,
+    memoryEnabled && !project?.id ? memories : undefined,
     {
       searchMode: command.searchMode,
       latestBeijingDate,
-      memoryEnabled: selection.customEndpoint ? false : memoryEnabled,
-      project: selection.customEndpoint ? undefined : project,
+      memoryEnabled,
+      project,
       modelSource: selection.customEndpoint ? 'custom' : 'platform',
       tierLabel: selection.customEndpoint ? null : selection.platformTierLabel,
       modelId: selection.customEndpoint ? selection.model : null,

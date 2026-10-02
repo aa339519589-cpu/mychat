@@ -21,6 +21,16 @@ test('Code and GitHub routes bind mobile bearer authentication to the incoming r
   assert.match(githubRepos, /getGitHubSession\(\{[\s\S]*?request: req/)
 })
 
+test('memory preference route supports verified mobile bearer tokens without widening profile grants', () => {
+  const memoryRoute = source('app/api/profile/memory/route.ts')
+
+  assert.equal((memoryRoute.match(/resolveAuth\(request\)/g) ?? []).length, 1)
+  assert.match(memoryRoute, /authenticatedUserId\(request\)/)
+  assert.match(memoryRoute, /\.upsert\(\{ user_id: auth\.userId, memory_enabled: enabled \}/)
+  assert.match(memoryRoute, /\.eq\('user_id', auth\.userId\)/)
+  assert.doesNotMatch(memoryRoute, /GRANT\s+(?:INSERT|UPDATE|ALL)\s+ON\s+(?:TABLE\s+)?public\.profiles/i)
+})
+
 test('GitHub session keeps cookie-bound browser access and uses server-audited access only for bearer requests', () => {
   const session = source('lib/github-session.ts')
 

@@ -1,5 +1,5 @@
 import { createAdminClient } from '@/lib/supabase/admin'
-import { createClient as createSessionClient } from '@/lib/supabase/server'
+import { resolveAuth } from '@/lib/api/guard'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -11,16 +11,25 @@ function response(body: object, status = 200): Response {
   })
 }
 
-async function authenticatedUserId(): Promise<string | null> {
-  const session = await createSessionClient()
-  const { data, error } = await session.auth.getUser()
-  if (error || !data.user) return null
-  return data.user.id
+async function authenticatedUserId(request: Request): Promise<{
+  userId: string | null
+  authUnavailable: boolean
+}> {
+  const auth = await resolveAuth(request)
+  return {
+    userId: auth.userId,
+    authUnavailable: auth.authUnavailable === true,
+  }
 }
 
-export async function GET(): Promise<Response> {
-  const userId = await authenticatedUserId()
-  if (!userId) return response({ error: '请先登录后再读取记忆设置' }, 401)
+export async function GET(request: Request): Promise<Response> {
+  const auth = await authenticatedUserId(request)
+  if (!auth.userId) {
+    return response(
+      { error: auth.authUnavailable ? '认证服务暂时不可用' : '请先登录后再读取记忆设置' },
+      auth.authUnavailable ? 503 : 401,
+    )
+  }
 
   const admin = createAdminClient()
   if (!admin) return response({ error: '记忆设置服务暂时不可用' }, 503)
@@ -28,7 +37,7 @@ export async function GET(): Promise<Response> {
   const { data, error } = await admin
     .from('profiles')
     .select('memory_enabled')
-    .eq('user_id', userId)
+    .eq('user_id', auth.userId)
     .maybeSingle()
 
   if (error) return response({ error: '记忆设置读取失败' }, 500)
@@ -36,8 +45,13 @@ export async function GET(): Promise<Response> {
 }
 
 export async function PUT(request: Request): Promise<Response> {
-  const userId = await authenticatedUserId()
-  if (!userId) return response({ error: '请先登录后再保存记忆设置' }, 401)
+  const auth = await authenticatedUserId(request)
+  if (!auth.userId) {
+    return response(
+      { error: auth.authUnavailable ? '认证服务暂时不可用' : '请先登录后再保存记忆设置' },
+      auth.authUnavailable ? 503 : 401,
+    )
+  }
 
   let body: unknown
   try {
@@ -54,7 +68,7 @@ export async function PUT(request: Request): Promise<Response> {
 
   const { data, error } = await admin
     .from('profiles')
-    .upsert({ user_id: userId, memory_enabled: enabled }, { onConflict: 'user_id' })
+    .upsert({ user_id: auth.userId, memory_enabled: enabled }, { onConflict: 'user_id' })
     .select('memory_enabled')
     .single()
 

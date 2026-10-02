@@ -225,12 +225,7 @@ async function loadGlobalMemories(
   client: SupabaseClient,
   userId: string,
 ): Promise<{ enabled: boolean; memories: Memory[] }> {
-  const profileResult = await client.from('profiles').select('memory_enabled')
-    .eq('user_id', userId).maybeSingle()
-  if (profileResult.error) {
-    throw new AuthoritativeContextError('CONTEXT_UNAVAILABLE', '记忆上下文暂时不可用')
-  }
-  const enabled = profileResult.data?.memory_enabled !== false
+  const enabled = await loadMemoryEnabled(client, userId)
   if (!enabled) return { enabled, memories: [] }
   const memories = await loadBoundedCollection<Memory>({
     maxRows: MAX_MEMORIES,
@@ -249,10 +244,14 @@ async function loadGlobalMemories(
     },
     unavailableMessage: '记忆上下文暂时不可用',
   })
-  return {
-    enabled,
-    memories,
-  }
+  return { enabled, memories }
+}
+
+async function loadMemoryEnabled(client: SupabaseClient, userId: string): Promise<boolean> {
+  const { data, error } = await client.from('profiles').select('memory_enabled')
+    .eq('user_id', userId).maybeSingle()
+  if (error) throw new AuthoritativeContextError('CONTEXT_UNAVAILABLE', '记忆上下文暂时不可用')
+  return data?.memory_enabled !== false
 }
 
 async function loadMessageHistory(input: {
@@ -343,12 +342,13 @@ async function fullContext(
   // Message history and memories/project are independent — load in parallel to
   // shave a full Supabase RTT off every non-instant turn before the LLM starts.
   if (projectId) {
-    const [messages, project] = await Promise.all([
+    const [messages, project, memoryEnabled] = await Promise.all([
       loadMessageHistory(historyInput),
       loadProjectContext(input.client, input.userId, projectId),
+      loadMemoryEnabled(input.client, input.userId),
     ])
     assertContextBudget({ messages, project })
-    return { messages, memories: [], memoryEnabled: false, project }
+    return { messages, memories: [], memoryEnabled, project }
   }
   const [messages, globalMemory] = await Promise.all([
     loadMessageHistory(historyInput),

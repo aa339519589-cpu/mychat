@@ -2,6 +2,7 @@
 
 import { AnimatePresence, motion, useReducedMotion } from "motion/react"
 import type { PointerEvent as ReactPointerEvent } from "react"
+import { useRouter } from "next/navigation"
 import { BrainCircuit, ChevronRight, Code2, Folder, LogOut, PanelLeft, Plus, Settings, Shapes } from "lucide-react"
 import type { Conversation } from "@/lib/chat-data"
 import { ConversationRow, NavRow } from "@/components/sidebar/primitives"
@@ -67,10 +68,11 @@ function SidebarHeader({ onClose, onDragStart, onDragMove, onDragEnd, onDragCanc
 }
 
 function SidebarNavigation({ onNew, onOpenProjects, onOpenArtifacts, onOpenCode }: { onNew: () => void; onOpenProjects: () => void; onOpenArtifacts: () => void; onOpenCode: () => void }) {
+  const router = useRouter()
   return (
     <nav className="mx-4 grid gap-0 pb-2">
       <NavRow icon={<Plus className="size-5" />} label="新对话" onClick={onNew} emphasis />
-      <NavRow icon={<BrainCircuit className="size-5" />} label="长期思考" onClick={() => window.location.assign("/long-think")} />
+      <NavRow icon={<BrainCircuit className="size-5" />} label="长期思考" onClick={() => router.push("/long-think")} />
       <NavRow icon={<Folder className="size-5" />} label="项目" onClick={onOpenProjects} />
       <NavRow icon={<Shapes className="size-5" />} label="作品" onClick={onOpenArtifacts} />
       <NavRow icon={<Code2 className="size-5" />} label="代码" onClick={onOpenCode} />
