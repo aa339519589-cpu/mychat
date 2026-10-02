@@ -64,7 +64,7 @@ async function requestFishAudio(request: NextRequest, text: string, apiKey: stri
         reference_id: REFERENCE_ID,
         format: 'mp3',
         chunk_length: 100,
-        latency: 'balanced',
+        latency: 'low',
       }),
       cache: 'no-store',
       signal,
