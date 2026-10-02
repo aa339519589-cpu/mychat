@@ -141,6 +141,79 @@ test('chat text Job flushes current-attempt accounting before writing its checkp
   )
 })
 
+test('custom chat models receive enabled global memories and memory tools', async () => {
+  const context = executionContext()
+  const input = chatInput()
+  input.context = {
+    ...input.context,
+    messages: [{
+      id: '30000000-0000-4000-8000-000000000001',
+      role: 'user',
+      content: 'Please explain how my saved preferences should affect future answers.',
+    }],
+    memories: [{
+      id: '70000000-0000-4000-8000-000000000001',
+      content: '用户偏好简洁、清晰的中文回答。',
+      timestamp: '2026-10-01T00:00:00.000Z',
+    }],
+    memoryEnabled: true,
+  }
+  let captured: AgentLoopOpts | undefined
+
+  await runChatTextJob(context.value, input, baseDependencies(async options => {
+    captured = options
+    return { totalTokens: 0 }
+  }))
+
+  const system = captured?.messages[0]?.content
+  assert.equal(typeof system, 'string')
+  assert.match(system as string, /当前用户已经开启 Memory/)
+  assert.match(system as string, /用户偏好简洁、清晰的中文回答/)
+  const toolNames = (captured?.tools ?? []).map(tool => {
+    const definition = tool.function as { name?: string } | undefined
+    return definition?.name
+  })
+  assert.ok(toolNames.includes('remember'))
+  assert.ok(toolNames.includes('update_memory'))
+  assert.ok(toolNames.includes('forget'))
+})
+
+test('custom project chats receive enabled project memories and project memory tools', async () => {
+  const context = executionContext()
+  const input = chatInput()
+  input.context = {
+    ...input.context,
+    memories: [],
+    memoryEnabled: true,
+    project: {
+      id: '70000000-0000-4000-8000-000000000002',
+      instructions: '',
+      files: [],
+      projectMemories: [{
+        id: '70000000-0000-4000-8000-000000000003',
+        content: '项目规定先运行回归测试。',
+      }],
+    },
+  }
+  let captured: AgentLoopOpts | undefined
+
+  await runChatTextJob(context.value, input, baseDependencies(async options => {
+    captured = options
+    return { totalTokens: 0 }
+  }))
+
+  const system = captured?.messages[0]?.content
+  assert.equal(typeof system, 'string')
+  assert.match(system as string, /项目规定先运行回归测试/)
+  const toolNames = (captured?.tools ?? []).map(tool => {
+    const definition = tool.function as { name?: string } | undefined
+    return definition?.name
+  })
+  assert.ok(toolNames.includes('remember_project'))
+  assert.ok(toolNames.includes('update_project_memory'))
+  assert.ok(toolNames.includes('forget_project'))
+})
+
 test('chat text Job rejects unsafe provider tool-call ids before recording an effect', async () => {
   const context = executionContext()
   let effectCalls = 0

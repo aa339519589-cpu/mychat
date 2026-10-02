@@ -308,7 +308,7 @@ function checkpointReady(input: LongThinkCheckpointInput, evaluation: Checkpoint
     && input.done === true
 }
 
-function checkpointInstruction(input: LongThinkCheckpointInput, evaluation: CheckpointEvaluation, actuallyDone: boolean): string {
+function checkpointInstruction(evaluation: CheckpointEvaluation, actuallyDone: boolean): string {
   if (actuallyDone) return `Closure accepted. Give the user the final answer now, using the proposed answer and verified checkpoint state. Do not mention this tool unless useful.\n${RESPONSE_INTEGRITY_RULES}`
   return `PROTOCOL BLOCKED: this tool call is not complete. Do not emit any user-facing text. ${evaluation.continuation} Continue working now. Do not give the user a final answer yet. Use the checkpoint as compact continuity state, execute the listed next actions, close every material unresolved item, then call long_think_checkpoint again. Do not invent completion and do not reveal hidden chain-of-thought.`
 }
@@ -562,7 +562,7 @@ function callCheckpoint(args: unknown) {
   const evaluation = evaluateCheckpoint(input, priorClock, now)
   const { clock } = evaluation
   const actuallyDone = checkpointReady(input, evaluation)
-  const instruction = checkpointInstruction(input, evaluation, actuallyDone)
+  const instruction = checkpointInstruction(evaluation, actuallyDone)
   const result = textResult(instruction, {
     checkpoint: stableCheckpoint(input, clock, actuallyDone),
     done: actuallyDone,
