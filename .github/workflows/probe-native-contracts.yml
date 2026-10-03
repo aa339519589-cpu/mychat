@@ -1,0 +1,31 @@
+name: Audit Native Production Contracts
+on:
+  push:
+    branches: [audit/mychat-20261003]
+    paths:
+      - .github/workflows/probe-native-contracts.yml
+      - scripts/probe-native-contracts.mjs
+permissions:
+  contents: read
+jobs:
+  authenticated-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - name: Install audio decoder
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: Verify isolated authenticated production requests
+        run: node scripts/probe-native-contracts.mjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: native-production-audit
+          path: audit-output/
+          retention-days: 7
