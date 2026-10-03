@@ -4,23 +4,47 @@ import type { GenerationTerminalEvent } from "@/lib/generation/types"
 // SSE 事件契约：服务端 emit 与前端解析共用的唯一真源。
 // 服务端每次只发一个单键事件对象；前端按键名分支处理。新增事件类型只改这里。
 
-type MemoryEvent = {
-  action: 'create' | 'update' | 'delete'
+export type MemoryEvent = {
+  action: 'create' | 'update' | 'delete' | 'duplicate'
   id?: string
   content?: string
+  topic?: string
+  sensitive?: boolean
   ok: boolean
   timestamp?: string
+  reason?: 'sensitive_consent_required' | 'prohibited_content'
 }
 
 type SearchEvent = {
+  kind?: 'web' | 'image' | 'history' | 'connector'
   query: string
-  results: { title: string; url: string }[]
+  results: {
+    title: string
+    url: string
+    snippet?: string
+    published_at?: string
+    favicon_url?: string
+    thumbnail_url?: string
+    conversation_id?: string
+    message_start_id?: string
+  }[]
+  images?: { url: string; description?: string }[]
 }
 
 // Code 板块：一步操作的进度提示（浏览/读取/写入/部署/记忆…）
 type StepEvent = { kind: string; label: string }
 
 type ImageSummaryEvent = { messageId: string; summary: string }
+
+type ConnectorAppEvent = {
+  connectorId: string
+  connectorName: string
+  toolName: string
+  toolTitle: string
+  resourceUri: string
+  arguments: Record<string, unknown>
+  result: Record<string, unknown>
+}
 
 // Code 板块：加入「待执行计划」的动作，前端展示供用户确认
 export type CodePlan =
@@ -36,6 +60,7 @@ export type ChatEvent =
   | { error: string }
   | { memory: MemoryEvent }
   | { search: SearchEvent }
+  | { connectorApp: ConnectorAppEvent }
   | { imageSummary: ImageSummaryEvent }
   | { media: GeneratedMedia }
   | { step: StepEvent }

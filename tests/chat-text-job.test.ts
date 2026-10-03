@@ -13,9 +13,19 @@ import {
   type ChatTextDependencies,
 } from '../lib/jobs/handlers/chat-text'
 
+function chatTestSupabase() {
+  const query = {
+    select() { return query },
+    eq() { return query },
+    in() { return query },
+    async order() { return { data: [], error: null } },
+  }
+  return { from: () => query } as unknown as SupabaseClient
+}
+
 function chatInput(): LoadedChatJob {
   return {
-    client: {} as SupabaseClient,
+    client: chatTestSupabase(),
     userId: '10000000-0000-4000-8000-000000000001',
     conversationId: '20000000-0000-4000-8000-000000000001',
     userMessageId: '30000000-0000-4000-8000-000000000001',
@@ -25,6 +35,7 @@ function chatInput(): LoadedChatJob {
       searchMode: 'off',
       deepResearch: false,
       historyRetrieval: false,
+      connectorAccessMode: 'always_available',
       usingBalance: false,
       outputKind: 'text',
       attachments: [],
@@ -139,6 +150,123 @@ test('chat text Job flushes current-attempt accounting before writing its checkp
     context.events.findIndex(event => event.kind === 'text.delta')
       < context.events.findIndex(event => event.kind === 'model.output_completed'),
   )
+})
+
+test('chat text Job publishes retrieved history citations as a search trace', async () => {
+  const context = executionContext()
+  const input = chatInput()
+  input.context = {
+    ...input.context,
+    messages: [{
+      id: '30000000-0000-4000-8000-000000000001',
+      role: 'user',
+      content: 'What did I say about coffee?',
+    }],
+  }
+  const result = await runChatTextJob(context.value, input, {
+    ...baseDependencies(async options => {
+      options.emit({ text: 'answer' })
+      options.messages.push({ role: 'assistant', content: 'answer' })
+      return { totalTokens: 0 }
+    }),
+    prepareHistory: async () => ({
+      conversationId: 'current-conversation',
+      renderedContext: '\nHISTORY',
+      query: '咖啡',
+      sources: [{
+        conversationId: 'history-conversation',
+        conversationTitle: 'Coffee notes',
+        messageStartId: 'history-message',
+        snippet: '用户喜欢手冲咖啡',
+        createdAt: '2026-07-13T00:00:00.000Z',
+      }],
+    }),
+  })
+
+  assert.equal(result.status, 'completed')
+  const event = context.events.find(item => item.kind === 'tool.search')
+  const payload = event?.payload.search
+  assert.ok(payload && typeof payload === 'object' && !Array.isArray(payload))
+  const search = payload as unknown as {
+    kind?: unknown
+    results?: Array<{ conversation_id?: unknown; url?: unknown }>
+  }
+  assert.equal(search.kind, 'history')
+  assert.equal(search.results?.[0]?.conversation_id, 'history-conversation')
+  assert.match(String(search.results?.[0]?.url ?? ''), /^mychat:\/\/conversation\//)
+})
+
+test('custom chat models receive enabled global memories and memory tools', async () => {
+  const context = executionContext()
+  const input = chatInput()
+  input.context = {
+    ...input.context,
+    messages: [{
+      id: '30000000-0000-4000-8000-000000000001',
+      role: 'user',
+      content: 'Please explain how my saved preferences should affect future answers.',
+    }],
+    memories: [{
+      id: '70000000-0000-4000-8000-000000000001',
+      content: '用户偏好简洁、清晰的中文回答。',
+      timestamp: '2026-10-01T00:00:00.000Z',
+    }],
+    memoryEnabled: true,
+  }
+  let captured: AgentLoopOpts | undefined
+
+  await runChatTextJob(context.value, input, baseDependencies(async options => {
+    captured = options
+    return { totalTokens: 0 }
+  }))
+
+  const system = captured?.messages[0]?.content
+  assert.equal(typeof system, 'string')
+  assert.match(system as string, /当前用户已经开启 Memory/)
+  assert.match(system as string, /用户偏好简洁、清晰的中文回答/)
+  const toolNames = (captured?.tools ?? []).map(tool => {
+    const definition = tool.function as { name?: string } | undefined
+    return definition?.name
+  })
+  assert.ok(toolNames.includes('remember'))
+  assert.ok(toolNames.includes('update_memory'))
+  assert.ok(toolNames.includes('forget'))
+})
+
+test('custom project chats receive enabled project memories and project memory tools', async () => {
+  const context = executionContext()
+  const input = chatInput()
+  input.context = {
+    ...input.context,
+    memories: [],
+    memoryEnabled: true,
+    project: {
+      id: '70000000-0000-4000-8000-000000000002',
+      instructions: '',
+      files: [],
+      projectMemories: [{
+        id: '70000000-0000-4000-8000-000000000003',
+        content: '项目规定先运行回归测试。',
+      }],
+    },
+  }
+  let captured: AgentLoopOpts | undefined
+
+  await runChatTextJob(context.value, input, baseDependencies(async options => {
+    captured = options
+    return { totalTokens: 0 }
+  }))
+
+  const system = captured?.messages[0]?.content
+  assert.equal(typeof system, 'string')
+  assert.match(system as string, /项目规定先运行回归测试/)
+  const toolNames = (captured?.tools ?? []).map(tool => {
+    const definition = tool.function as { name?: string } | undefined
+    return definition?.name
+  })
+  assert.ok(toolNames.includes('remember_project'))
+  assert.ok(toolNames.includes('update_project_memory'))
+  assert.ok(toolNames.includes('forget_project'))
 })
 
 test('chat text Job rejects unsafe provider tool-call ids before recording an effect', async () => {

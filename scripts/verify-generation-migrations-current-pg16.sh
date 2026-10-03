@@ -21,7 +21,43 @@ const currentContractReplay = `${marker}
 "\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260802181500_fix_service_role_claim_context.sql" >/dev/null
 "\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260802181500_fix_service_role_claim_context.sql" >/dev/null
 "\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260802190000_schema_contract_attestation_v5.sql" >/dev/null
-"\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260802190000_schema_contract_attestation_v5.sql" >/dev/null`
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20260802190000_schema_contract_attestation_v5.sql" >/dev/null
+"\${PSQL[@]}" -d "$DB" <<'SQL'
+create table if not exists public.memories (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  content text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.memories enable row level security;
+alter table public.profiles
+  add column if not exists memory_enabled boolean not null default true;
+SQL
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20261003010000_memory_topics.sql" >/dev/null
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20261003010000_memory_topics.sql" >/dev/null
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20261003020000_schema_contract_attestation_v6.sql" >/dev/null
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20261003020000_schema_contract_attestation_v6.sql" >/dev/null
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20261003030000_memory_sensitivity_and_reset.sql" >/dev/null
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20261003030000_memory_sensitivity_and_reset.sql" >/dev/null
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20261003040000_schema_contract_attestation_v7.sql" >/dev/null
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20261003040000_schema_contract_attestation_v7.sql" >/dev/null
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/tests/memory-controls-pg16.sql" >/dev/null
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20261003050000_conversation_memory_control.sql" >/dev/null
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20261003050000_conversation_memory_control.sql" >/dev/null
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20261003060000_schema_contract_attestation_v8.sql" >/dev/null
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20261003060000_schema_contract_attestation_v8.sql" >/dev/null
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/tests/conversation-memory-control-pg16.sql" >/dev/null
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20261003070000_remote_mcp_connectors.sql" >/dev/null
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20261003070000_remote_mcp_connectors.sql" >/dev/null
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20261003080000_schema_contract_attestation_v9.sql" >/dev/null
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20261003080000_schema_contract_attestation_v9.sql" >/dev/null
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/tests/mcp-connector-storage-pg16.sql" >/dev/null
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20261003090000_connector_oauth_lifecycle.sql" >/dev/null
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20261003090000_connector_oauth_lifecycle.sql" >/dev/null
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20261003100000_schema_contract_attestation_v10.sql" >/dev/null
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20261003100000_schema_contract_attestation_v10.sql" >/dev/null
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/tests/connector-oauth-storage-pg16.sql" >/dev/null`
 
 const first = source.indexOf(marker)
 if (first < 0 || source.indexOf(marker, first + marker.length) >= 0) {

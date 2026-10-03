@@ -294,11 +294,6 @@
         18
       ]
     },
-    "lib/chat/job-command.ts": {
-      "complexity": [
-        19
-      ]
-    },
     "lib/chat/model-selection.ts": {
       "complexity": [
         44
@@ -332,11 +327,6 @@
       ],
       "maxLines": [
         85
-      ]
-    },
-    "lib/code-tools/definitions.ts": {
-      "complexity": [
-        16
       ]
     },
     "lib/code-tools/search.ts": {
@@ -415,12 +405,6 @@
         90
       ]
     },
-    "lib/jobs/handlers/chat-input.ts": {
-      "complexity": [
-        20,
-        17
-      ]
-    },
     "lib/jobs/handlers/chat-media.ts": {
       "complexity": [
         19
@@ -478,11 +462,6 @@
         16
       ]
     },
-    "lib/llm/chat-request.ts": {
-      "complexity": [
-        20
-      ]
-    },
     "lib/llm/conversation-summary.ts": {
       "complexity": [
         17
@@ -535,14 +514,6 @@
         16
       ]
     },
-    "lib/llm/system.ts": {
-      "complexity": [
-        27
-      ],
-      "maxLines": [
-        92
-      ]
-    },
     "lib/llm/turn-response.ts": {
       "complexity": [
         30
@@ -556,6 +527,11 @@
     "lib/logger.ts": {
       "complexity": [
         17
+      ]
+    },
+    "lib/maestro/store.ts": {
+      "complexity": [
+        25
       ]
     },
     "lib/model-catalog.ts": {
@@ -612,11 +588,6 @@
     "lib/tools/fetch-url.ts": {
       "complexity": [
         18
-      ]
-    },
-    "lib/tools/memory.ts": {
-      "complexity": [
-        34
       ]
     }
   }

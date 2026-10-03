@@ -23,6 +23,9 @@ function eventDraft(event: ChatEvent): JobEventDraft | null {
   if ('media' in event) return { kind: 'media.uploaded', payload: { media: jsonObject(event.media) } }
   if ('memory' in event) return { kind: 'tool.memory', payload: { memory: jsonObject(event.memory) } }
   if ('search' in event) return { kind: 'tool.search', payload: { search: jsonObject(event.search) } }
+  if ('connectorApp' in event) {
+    return { kind: 'connector.app', payload: { connectorApp: jsonObject(event.connectorApp) } }
+  }
   if ('imageSummary' in event) {
     return { kind: 'context.image_summary', payload: { imageSummary: jsonObject(event.imageSummary) } }
   }

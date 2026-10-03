@@ -6,6 +6,8 @@ CREATE TABLE IF NOT EXISTS public.project_memories (
   project_id uuid NOT NULL REFERENCES public.projects(id) ON DELETE CASCADE,
   user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   content text NOT NULL,
+  topic text NOT NULL DEFAULT 'General',
+  sensitive boolean NOT NULL DEFAULT false,
   created_at timestamptz DEFAULT now(),
   updated_at timestamptz DEFAULT now()
 );

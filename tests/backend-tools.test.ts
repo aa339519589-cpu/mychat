@@ -18,7 +18,18 @@ function quotaClient(data: Record<string, unknown> | null, error: unknown = null
 
 function resultQuery(value: unknown) {
   const promise = Promise.resolve(value)
-  return { eq() { return this }, then: promise.then.bind(promise) }
+  return {
+    eq() { return this },
+    select() { return this },
+    maybeSingle() {
+      return promise.then(result => {
+        if (!result || typeof result !== "object") return result
+        const source = result as Record<string, unknown>
+        return { ...source, data: Array.isArray(source.data) ? source.data[0] ?? null : source.data }
+      })
+    },
+    then: promise.then.bind(promise),
+  }
 }
 
 test("quota windows, balance fallback, and atomic accounting cover every decision", async () => {
@@ -127,11 +138,19 @@ test("web search validates and deduplicates untrusted provider results", { concu
   assert.match(outcome.result, /搜索模式：联网/)
   assert.match(outcome.result, /已检索并去重 2 个来源/)
   assert.deepEqual(outcome.event, { search: {
+    kind: "web",
     query: "current topic",
     results: [
-      { title: "One", url: "https://one.example" },
-      { title: "Two", url: "https://two.example" },
+      {
+        title: "One", url: "https://one.example", snippet: "first",
+        published_at: undefined, favicon_url: undefined, thumbnail_url: undefined,
+      },
+      {
+        title: "Two", url: "https://two.example", snippet: "second",
+        published_at: undefined, favicon_url: undefined, thumbnail_url: undefined,
+      },
     ],
+    images: [],
   } })
 })
 
@@ -144,8 +163,8 @@ test("memory tools handle create, duplicate, update, delete, and project scoping
       return {
         select() { return resultQuery({ data: existing, error: null }) },
         insert(value: unknown) { mutations.push({ operation: "insert", table, value }); return Promise.resolve({ error: null }) },
-        update(value: unknown) { mutations.push({ operation: "update", table, value }); return resultQuery({ error: null }) },
-        delete() { mutations.push({ operation: "delete", table }); return resultQuery({ error: null }) },
+        update(value: unknown) { mutations.push({ operation: "update", table, value }); return resultQuery({ data: { id }, error: null }) },
+        delete() { mutations.push({ operation: "delete", table }); return resultQuery({ data: { id }, error: null }) },
       }
     },
   })
@@ -155,9 +174,17 @@ test("memory tools handle create, duplicate, update, delete, and project scoping
   const forget = memoryTools.find(tool => tool.name === "forget")!
   const rememberProject = memoryTools.find(tool => tool.name === "remember_project")!
   assert.equal((await remember.execute({ content: "new preference" }, context)).result, "操作成功")
+  const inserted = mutations.find(item => item.operation === "insert" && item.table === "memories")?.value
+  assert.equal((inserted as { user_id?: string }).user_id, "user")
+  assert.equal((inserted as { content?: string }).content, "new preference")
+  assert.equal((inserted as { topic?: string }).topic, "General")
+  assert.match((inserted as { id: string }).id, /^[0-9a-f-]{36}$/i)
+  assert.equal((await remember.execute({ content: "a separate preference", topic: "  Preferences  " }, context)).result, "操作成功")
+  assert.equal((mutations.filter(item => item.operation === "insert").at(-1)?.value as { topic?: string }).topic, "Preferences")
   existing = [{ id, content: "用户喜欢喝咖啡" }]
   assert.match((await remember.execute({ content: "用户喜欢喝咖啡" }, context)).result, /高度相似/)
-  assert.equal((await update.execute({ id, content: "updated" }, context)).result, "操作成功")
+  assert.equal((await update.execute({ id, content: "updated", topic: "Preferences" }, context)).result, "操作成功")
+  assert.equal((mutations.filter(item => item.operation === "update").at(-1)?.value as { topic?: string }).topic, "Preferences")
   assert.equal((await forget.execute({ id }, context)).result, "操作成功")
   assert.equal((await update.execute({ id: "bad", content: "updated" }, context)).result, "操作失败")
   assert.equal((await rememberProject.execute({ content: "project" }, context)).result, "操作失败")
@@ -176,6 +203,8 @@ test("memory tools validate malformed rows and scope every project mutation", as
     from(table: string) {
       const query = {
         eq(field: string, value: unknown) { filters.push([field, value]); return query },
+        select() { return query },
+        maybeSingle() { return Promise.resolve({ data: writeError ? null : { id }, error: writeError }) },
         then<TResult1 = { data?: unknown; error: typeof writeError }, TResult2 = never>(
           onfulfilled?: ((value: { data?: unknown; error: typeof writeError }) => TResult1 | PromiseLike<TResult1>) | null,
           onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,

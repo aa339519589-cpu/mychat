@@ -2,7 +2,8 @@ import type { SupabaseServer } from '@/lib/api/guard'
 import {
   ensureConversationIndexed,
   latestUserQuery,
-  retrieveHistoryContext,
+  retrieveHistoryWithSources,
+  type RetrievedHistorySource,
 } from '@/lib/llm/active-retrieval'
 import {
   prepareConversationSummary,
@@ -23,7 +24,12 @@ export async function prepareChatHistory(options: {
   historyRetrievalEnabled: boolean
   customEndpoint: boolean
   signal?: AbortSignal
-}): Promise<{ conversationId: string | null; renderedContext: string }> {
+}): Promise<{
+  conversationId: string | null
+  renderedContext: string
+  query?: string
+  sources?: RetrievedHistorySource[]
+}> {
   if (!options.historyRetrievalEnabled) {
     return {
       conversationId: typeof options.conversationId === 'string' && options.conversationId
@@ -50,17 +56,20 @@ export async function prepareChatHistory(options: {
       options.signal,
     )
   }
-  const historyContext = await retrieveHistoryContext({
+  const query = latestUserQuery(options.messages)
+  const history = await retrieveHistoryWithSources({
     supabase: options.supabase,
     userId: options.userId,
     conversationId: summary.conversationId,
     projectId: options.projectId,
-    query: latestUserQuery(options.messages),
+    query,
     mode: options.customEndpoint ? 'light' : historyRetrievalModeForTier(options.tier),
     signal: options.signal,
   })
   return {
     conversationId: summary.conversationId,
-    renderedContext: summary.renderedSummary + historyContext,
+    renderedContext: summary.renderedSummary + history.renderedContext,
+    query,
+    sources: history.sources,
   }
 }

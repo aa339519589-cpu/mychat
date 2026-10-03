@@ -37,6 +37,9 @@ function agentInput(): LoadedAgentJob {
     defaultBranch: null,
     repoIsPrivate: false,
     memories: [],
+    userMemories: [],
+    memoryEnabled: true,
+    sensitiveMemoryEnabled: false,
     mode: 'plan',
     workspaceReady: false,
     selection: {

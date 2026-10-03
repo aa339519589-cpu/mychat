@@ -36,14 +36,14 @@ test('the account Memory switch still disables custom-model memory', () => {
   })
 })
 
-test('custom endpoints do not receive project memory or project memory tools', () => {
+test('custom project chats can use project memory without receiving global memories', () => {
   assert.deepEqual(resolveChatMemoryPolicy({
     customEndpoint: true,
     memoryEnabled: true,
     inProject: true,
     memories: [{ id: 'memory-1', content: 'global preference' }],
   }), {
-    enabled: false,
+    enabled: true,
     globalMemories: undefined,
   })
 })

@@ -12,6 +12,7 @@ export type ToolContext = {
   supabase: SupabaseClient | null
   userId: string | null
   projectId?: string | null  // 有值 = 当前在项目内，记忆写 project_memories 表
+  sensitiveMemoryEnabled?: boolean
   searchMode?: SearchMode
   latestBeijingDate?: string | null
   signal?: AbortSignal
@@ -28,6 +29,7 @@ export type ToolSchema = {
   type: 'object'
   properties: Record<string, unknown>
   required?: string[]
+  [key: string]: unknown
 }
 
 // 本次请求的上下文开关，决定哪些工具可用

@@ -65,6 +65,19 @@ export async function getMemoryEnabled(auth: AuthCtx): Promise<boolean> {
   }
 }
 
+// Sensitive memory is opt-in and must fail closed if its preference cannot be read.
+export async function getSensitiveMemoryEnabled(auth: AuthCtx): Promise<boolean> {
+  const { supabase, userId } = auth
+  if (!supabase || !userId) return false
+  try {
+    const { data, error } = await supabase.from('profiles')
+      .select('sensitive_memory_enabled').eq('user_id', userId).maybeSingle()
+    return !error && data?.sensitive_memory_enabled === true
+  } catch {
+    return false
+  }
+}
+
 export type LimitGate =
   | { response: Response; usingBalance?: undefined }
   | { response?: undefined; usingBalance: boolean }

@@ -1,22 +1,25 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import type { Database } from '@/lib/supabase/database.types'
-import { resolveAuth, type AuthCtx } from '@/lib/api/guard'
+import { enforceRequestRateLimit, resolveAuth, type AuthCtx, type RequestRateGate } from '@/lib/api/guard'
 import { readJson, RequestError } from '@/lib/api/request'
+import { parseMemoryInput } from '@/lib/api/memory-input'
+import { classifyMemorySensitivity } from '@/lib/api/memory-sensitivity'
 
 type MemoryRow = Pick<
   Database['public']['Tables']['memories']['Row'],
   'id' | 'content' | 'created_at' | 'updated_at'
->
+> & { topic?: string; sensitive?: boolean }
+type MemoryAttributes = { topic?: string; sensitive: boolean }
 type MemoryId = Pick<MemoryRow, 'id'>
 type StoreError = { code?: string } | null
 type StoreResult<T> = { data: T | null; error: StoreError }
 
 export type UserMemoryStore = {
   list(userId: string): Promise<StoreResult<MemoryRow[]>>
-  create(userId: string, content: string): Promise<StoreResult<MemoryRow>>
-  update(userId: string, id: string, content: string, updatedAt: string): Promise<StoreResult<MemoryRow>>
+  create(userId: string, content: string, attributes: MemoryAttributes): Promise<StoreResult<MemoryRow>>
+  update(userId: string, id: string, content: string, updatedAt: string, attributes: MemoryAttributes): Promise<StoreResult<MemoryRow>>
   delete(userId: string, id: string): Promise<StoreResult<MemoryId>>
-  deleteAll(userId: string): Promise<StoreResult<MemoryId[]>>
+  deleteAll(userId: string): Promise<StoreResult<MemoryId[] | number>>
 }
 
 export type MemoryManagementDependencies = {
@@ -24,12 +27,13 @@ export type MemoryManagementDependencies = {
   createStore: () => UserMemoryStore | null
   readBody: (request: Request, options: { maxBytes: number }) => Promise<unknown>
   now: () => Date
+  rateLimit: (auth: AuthCtx, request: Request) => Promise<RequestRateGate>
+  sensitiveEnabled: (userId: string) => Promise<boolean>
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-const MAX_MEMORY_LENGTH = 20_000
 const MAX_BODY_BYTES = 128 * 1024
-const MEMORY_COLUMNS = 'id,content,created_at,updated_at' as const
+const MEMORY_COLUMNS = 'id,content,topic,sensitive,created_at,updated_at' as const
 
 function storeFromAdmin(): UserMemoryStore | null {
   const admin = createAdminClient()
@@ -39,20 +43,20 @@ function storeFromAdmin(): UserMemoryStore | null {
       const { data, error } = await admin.from('memories')
         .select(MEMORY_COLUMNS)
         .eq('user_id', userId)
-        .order('created_at', { ascending: true })
+        .order('updated_at', { ascending: false })
         .limit(200)
       return { data, error }
     },
-    create: async (userId, content) => {
+    create: async (userId, content, attributes) => {
       const { data, error } = await admin.from('memories')
-        .insert({ user_id: userId, content })
+        .insert({ user_id: userId, content, ...attributes })
         .select(MEMORY_COLUMNS)
         .single()
       return { data, error }
     },
-    update: async (userId, id, content, updatedAt) => {
+    update: async (userId, id, content, updatedAt, attributes) => {
       const { data, error } = await admin.from('memories')
-        .update({ content, updated_at: updatedAt })
+        .update({ content, updated_at: updatedAt, ...attributes })
         .eq('id', id)
         .eq('user_id', userId)
         .select(MEMORY_COLUMNS)
@@ -69,10 +73,7 @@ function storeFromAdmin(): UserMemoryStore | null {
       return { data, error }
     },
     deleteAll: async userId => {
-      const { data, error } = await admin.from('memories')
-        .delete()
-        .eq('user_id', userId)
-        .select('id')
+      const { data, error } = await admin.rpc('reset_user_memories', { input_user_id: userId })
       return { data, error }
     },
   }
@@ -83,6 +84,14 @@ const DEFAULT_DEPENDENCIES: MemoryManagementDependencies = {
   createStore: storeFromAdmin,
   readBody: (request, options) => readJson(request, options),
   now: () => new Date(),
+  rateLimit: enforceRequestRateLimit,
+  sensitiveEnabled: async userId => {
+    const admin = createAdminClient()
+    if (!admin) return false
+    const { data, error } = await admin.from('profiles')
+      .select('sensitive_memory_enabled').eq('user_id', userId).maybeSingle()
+    return !error && data?.sensitive_memory_enabled === true
+  },
 }
 
 function json(body: object, status = 200): Response {
@@ -101,7 +110,7 @@ async function authenticate(
   dependencies: MemoryManagementDependencies,
 ): Promise<{ userId: string } | { response: Response }> {
   const auth = await dependencies.resolveAuth(request)
-  if (!auth.userId) {
+  if (!auth.userId || auth.authUnavailable) {
     return {
       response: json(
         { error: auth.authUnavailable ? '认证服务暂时不可用，请稍后重试' : '请先登录后再使用记忆' },
@@ -109,21 +118,27 @@ async function authenticate(
       ),
     }
   }
+  if (request.method !== 'GET') {
+    const gate = await dependencies.rateLimit(auth, request)
+    if (gate.response) return { response: gate.response }
+  }
   return { userId: auth.userId }
 }
 
-function parseContent(value: unknown): string | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-  const content = (value as { content?: unknown }).content
-  if (typeof content !== 'string') return null
-  const normalized = content.trim()
-  return normalized.length > 0 && normalized.length <= MAX_MEMORY_LENGTH ? normalized : null
+async function memoryWritePolicy(content: string, userId: string, dependencies: MemoryManagementDependencies): Promise<Response | null> {
+  const classification = classifyMemorySensitivity(content)
+  if (classification.prohibited) return json({ error: '不会保存政府证件号码、犯罪记录、账户号码或移民身份等信息' }, 422)
+  if (classification.sensitive && !await dependencies.sensitiveEnabled(userId)) {
+    return json({ error: '请先在记忆设置中明确开启敏感记忆保存' }, 409)
+  }
+  return null
 }
 
 async function readContent(
   request: Request,
   dependencies: MemoryManagementDependencies,
-): Promise<{ content: string } | { response: Response }> {
+  userId: string,
+): Promise<{ content: string; attributes: MemoryAttributes } | { response: Response }> {
   let body: unknown
   try {
     body = await dependencies.readBody(request, { maxBytes: MAX_BODY_BYTES })
@@ -136,9 +151,15 @@ async function readContent(
       ),
     }
   }
-  const content = parseContent(body)
-  if (!content) return { response: json({ error: '记忆内容为空或超过 20,000 个字符' }, 400) }
-  return { content }
+  const input = parseMemoryInput(body)
+  if (!input) return { response: json({ error: '记忆内容或主题格式无效，内容最多 20,000 个字符' }, 400) }
+  const policyError = await memoryWritePolicy(input.content, userId, dependencies)
+  if (policyError) return { response: policyError }
+  const providedTopic = Object.hasOwn(body as object, 'topic')
+  return { content: input.content, attributes: {
+    ...(request.method === 'POST' || providedTopic ? { topic: input.topic } : {}),
+    sensitive: classifyMemorySensitivity(input.content).sensitive,
+  } }
 }
 
 function availableStore(
@@ -198,10 +219,10 @@ async function createMemory(
   store: UserMemoryStore,
   userId: string,
 ): Promise<Response> {
-  const input = await readContent(request, dependencies)
+  const input = await readContent(request, dependencies, userId)
   if ('response' in input) return input.response
   try {
-    const result = await store.create(userId, input.content)
+    const result = await store.create(userId, input.content, input.attributes)
     if (result.error || !result.data) {
       logStoreFailure('create', result.error)
       return json({ error: '记忆保存失败，请稍后重试' }, 500)
@@ -220,7 +241,11 @@ async function deleteAllMemories(store: UserMemoryStore, userId: string): Promis
       logStoreFailure('delete-all', result.error)
       return json({ error: '记忆清除失败，请稍后重试' }, 500)
     }
-    return json({ deleted: result.data?.length ?? 0 })
+    const count = typeof result.data === 'number' ? result.data : result.data?.length
+    if (count === undefined || !Number.isSafeInteger(count) || count < 0) {
+      return json({ error: '记忆清除结果无效，请稍后重试' }, 500)
+    }
+    return json({ deleted: count })
   } catch (error) {
     logStoreFailure('delete-all', error as StoreError)
     return json({ error: '记忆清除失败，请稍后重试' }, 500)
@@ -240,7 +265,7 @@ export async function handleMemoryItem(
   if (store instanceof Response) return store
 
   if (request.method === 'PATCH') {
-    const input = await readContent(request, dependencies)
+    const input = await readContent(request, dependencies, auth.userId)
     if ('response' in input) return input.response
     try {
       const result = await store.update(
@@ -248,6 +273,7 @@ export async function handleMemoryItem(
         memoryId,
         input.content,
         dependencies.now().toISOString(),
+        input.attributes,
       )
       if (result.error) {
         logStoreFailure('update', result.error)

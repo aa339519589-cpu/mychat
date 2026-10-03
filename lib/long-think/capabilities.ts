@@ -13,6 +13,7 @@ const MEMORY_LIMIT = 80
 
 export type LongThinkSharedContext = {
   memoryEnabled: boolean
+  sensitiveMemoryEnabled: boolean
   text: string
 }
 
@@ -46,23 +47,32 @@ function compact(value: string, limit = MAX_TOOL_RESULT_CHARS): string {
   return value.length > limit ? `${value.slice(0, limit)}\n…（工具结果已截断）` : value
 }
 
-async function memoryEnabled(client: SupabaseClient, userId: string): Promise<boolean> {
+async function memoryPreferences(client: SupabaseClient, userId: string): Promise<{
+  memoryEnabled: boolean
+  sensitiveMemoryEnabled: boolean
+}> {
   try {
-    const { data } = await client.from('profiles').select('memory_enabled').eq('user_id', userId).maybeSingle()
-    return data?.memory_enabled !== false
+    const { data, error } = await client.from('profiles')
+      .select('memory_enabled,sensitive_memory_enabled').eq('user_id', userId).maybeSingle()
+    if (error) return { memoryEnabled: false, sensitiveMemoryEnabled: false }
+    return {
+      memoryEnabled: data?.memory_enabled !== false,
+      sensitiveMemoryEnabled: data?.sensitive_memory_enabled === true,
+    }
   } catch {
-    return true
+    return { memoryEnabled: false, sensitiveMemoryEnabled: false }
   }
 }
 
-async function explicitMemories(client: SupabaseClient, userId: string): Promise<string> {
+async function explicitMemories(client: SupabaseClient, userId: string, sensitiveMemoryEnabled: boolean): Promise<string> {
   try {
-    const { data, error } = await client.from('memories').select('id,content,updated_at').eq('user_id', userId)
-      .order('updated_at', { ascending: false }).limit(MEMORY_LIMIT)
+    let query = client.from('memories').select('id,content,topic,sensitive,updated_at').eq('user_id', userId)
+    if (!sensitiveMemoryEnabled) query = query.eq('sensitive', false)
+    const { data, error } = await query.order('updated_at', { ascending: false }).limit(MEMORY_LIMIT)
     if (error || !Array.isArray(data) || data.length === 0) return ''
     return data
       .filter(row => typeof row.id === 'string' && typeof row.content === 'string')
-      .map(row => `- [${row.id}] ${row.content}`)
+      .map(row => `- [${row.topic || 'General'} · ${row.id}] ${row.content}`)
       .join('\n')
   } catch {
     return ''
@@ -75,11 +85,13 @@ export async function loadLongThinkSharedContext(
   query: string,
   signal?: AbortSignal,
 ): Promise<LongThinkSharedContext> {
-  const enabled = await memoryEnabled(client, userId)
-  if (!enabled) return { memoryEnabled: false, text: 'MyChat Memory 当前已关闭。' }
+  const preferences = await memoryPreferences(client, userId)
+  if (!preferences.memoryEnabled) {
+    return { ...preferences, text: 'MyChat Memory 当前已关闭。' }
+  }
 
   const [memories, history] = await Promise.all([
-    explicitMemories(client, userId),
+    explicitMemories(client, userId, preferences.sensitiveMemoryEnabled),
     retrieveHistoryContext({
       supabase: client as unknown as SupabaseServer,
       userId,
@@ -96,15 +108,22 @@ export async function loadLongThinkSharedContext(
   ].filter(Boolean)
   return {
     memoryEnabled: true,
+    sensitiveMemoryEnabled: preferences.sensitiveMemoryEnabled,
     text: blocks.length ? blocks.join('\n\n') : 'MyChat Memory 已开启，目前没有检索到与本任务相关的既有记忆。',
   }
 }
 
-function toolContext(client: SupabaseClient, userId: string, signal?: AbortSignal): ToolContext {
+function toolContext(
+  client: SupabaseClient,
+  userId: string,
+  sensitiveMemoryEnabled: boolean,
+  signal?: AbortSignal,
+): ToolContext {
   return {
     supabase: client,
     userId,
     projectId: null,
+    sensitiveMemoryEnabled,
     searchMode: 'web',
     latestBeijingDate: beijingDate(),
     signal,
@@ -163,9 +182,10 @@ export async function runLongThinkCapabilities(
   client: SupabaseClient,
   userId: string,
   memoryIsEnabled: boolean,
+  sensitiveMemoryIsEnabled: boolean,
   signal?: AbortSignal,
 ): Promise<CapabilityRun> {
-  const ctx = toolContext(client, userId, signal)
+  const ctx = toolContext(client, userId, sensitiveMemoryIsEnabled, signal)
   const [web, pages, memory] = await Promise.all([
     runWebQueries(state, ctx),
     runFetches(state, ctx),

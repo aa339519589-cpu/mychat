@@ -23,6 +23,16 @@ test('general chat requires one complete durable generation identity', () => {
     turn,
   })
   assert.doesNotThrow(() => requireDurableChatIdentity(complete))
+  assert.equal(validateChatRequest({
+    messages: [{ role: 'user', content: 'hello' }],
+    ...identity,
+    turn: { ...turn, memoryEnabled: false },
+  }).turn?.schemaVersion, 1)
+  rejects({
+    messages: [{ role: 'user', content: 'hello' }],
+    ...identity,
+    turn: { ...turn, memoryEnabled: 'off' },
+  }, /turn 无效/)
 
   for (const partial of [
     {},
@@ -148,6 +158,7 @@ test('chat request boundary accepts the complete supported payload', () => {
     tier: '正构',
     searchMode: 'web',
     historyRetrieval: true,
+    connectorAccessMode: 'on_demand',
     renderEnabled: true,
     generateImage: false,
     generateVideo: false,
@@ -161,6 +172,31 @@ test('chat request boundary accepts the complete supported payload', () => {
   assert.equal(body.messages.length, 1)
   assert.equal(body.attachments?.length, 1)
   assert.equal(body.project?.files.length, 1)
+})
+
+test('per-chat connector selection accepts up to ten unique UUIDs only', () => {
+  const connectorIds = Array.from({ length: 10 }, (_, index) =>
+    `50000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`)
+  connectorIds[0] = '5a000000-0000-4000-8000-000000000001'
+  assert.deepEqual(
+    validateChatRequest({ messages: [{ role: 'user', content: 'hello' }], connectorIds }).connectorIds,
+    connectorIds,
+  )
+  rejects({ messages: [{ role: 'user', content: 'hello' }], connectorIds: 'not-an-array' }, /connectorIds 无效/)
+  rejects({ messages: [{ role: 'user', content: 'hello' }], connectorIds: [...connectorIds, '60000000-0000-4000-8000-000000000001'] }, /connectorIds 无效/)
+  rejects({ messages: [{ role: 'user', content: 'hello' }], connectorIds: ['bad'] }, /connectorIds 无效/)
+  rejects({ messages: [{ role: 'user', content: 'hello' }], connectorIds: [connectorIds[0], connectorIds[0]] }, /connectorIds 无效/)
+  rejects({ messages: [{ role: 'user', content: 'hello' }], connectorIds: [connectorIds[0], connectorIds[0]?.replace('a', 'A')] }, /connectorIds 无效/)
+})
+
+test('connector access modes are validated and preserved', () => {
+  for (const connectorAccessMode of ['auto', 'always_available', 'on_demand'] as const) {
+    assert.equal(
+      validateChatRequest({ messages: [{ role: 'user', content: 'hello' }], connectorAccessMode }).connectorAccessMode,
+      connectorAccessMode,
+    )
+  }
+  rejects({ messages: [{ role: 'user', content: 'hello' }], connectorAccessMode: 'random' }, /connectorAccessMode 无效/)
 })
 
 test('chat request boundary accepts both fenced regeneration operations', () => {

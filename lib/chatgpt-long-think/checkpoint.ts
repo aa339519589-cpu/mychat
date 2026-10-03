@@ -1,4 +1,14 @@
 import {
+  MAX_SILENT_THINKING_GAP_MS,
+  MIN_ACTIVE_CHECKPOINTS,
+  MIN_CHECKPOINT_INTERVAL_MS,
+  MIN_PURE_THINKING_MS,
+  RESPONSE_INTEGRITY_RULES,
+  THINKING_STAGES,
+  type LongThinkCheckpointInput,
+  type ThinkingClock,
+} from "./protocol"
+import {
   cleanList,
   cleanText,
   clockInstruction,
@@ -6,21 +16,7 @@ import {
   progressDigest,
   settledClock,
   startedClock,
-  MAX_SILENT_THINKING_GAP_MS,
-  MIN_ACTIVE_CHECKPOINTS,
-  MIN_CHECKPOINT_INTERVAL_MS,
-  MIN_PURE_THINKING_MS,
-  THINKING_STAGES,
-  type LongThinkCheckpointInput,
-  type ThinkingClock,
-} from "./checkpoint-clock"
-
-export const RESPONSE_INTEGRITY_RULES = `Response integrity rules apply to every reply, including ordinary chat and the final answer after tool use:
-- Answer the user's exact claim. Never replace it with a weaker, stronger, broader, or narrower claim and then respond to that replacement.
-- Never paraphrase or restate the user's point merely to fill space or sound agreeable. Every sentence must add a concrete judgment, fact, reason, correction, or necessary instruction.
-- Never add caveats, conditions, disclaimers, abstractions, grand narratives, rhetorical diagrams, or professional-sounding filler unless they materially change the answer to the user's actual claim.
-- If the user's meaning has multiple materially different interpretations, ask one focused clarifying question. Do not invent an interpretation and argue against it.
-Before sending any reply, silently compare the draft with the user's exact message. If any rule above is violated, rewrite the draft before sending it.`
+} from "./clock"
 
 export function checkpointInput(value: unknown): LongThinkCheckpointInput | null {
   if (!isRecord(value)) return null
@@ -82,7 +78,7 @@ export function stableCheckpoint(input: LongThinkCheckpointInput, clock: Thinkin
   return JSON.stringify(payload)
 }
 
-type CheckpointEvaluation = {
+export type CheckpointEvaluation = {
   clock: ThinkingClock
   acceptedProgress: boolean
   continuation: string

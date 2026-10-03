@@ -15,6 +15,36 @@ import type { LoadedAgentJob } from './agent-input'
 const SAFE_TOOLS = new Set(['list_files', 'search_files', 'read_file', 'git_diff', 'search', 'fetch_url'])
 const CHECKPOINT_TOOLS = new Set(['write_files', 'edit_file', 'delete_files', 'apply_patch', 'execute', 'verify'])
 
+function createWorkspaceToolExecutor(
+  context: JobExecutionContext,
+  input: LoadedAgentJob,
+  hasWorkspace: boolean,
+  canExecute: boolean,
+  events: ReturnType<typeof createCodeEventCollector>,
+  progress: ReturnType<typeof createCodeRunProgress>,
+) {
+  return createCodeToolExecutor({
+    repo: input.repo,
+    login: input.login,
+    token: input.token,
+    defaultBranch: input.defaultBranch,
+    repoIsPrivate: input.repoIsPrivate,
+    supabase: input.client,
+    userId: input.userId,
+    wsReady: hasWorkspace,
+    wsTaskId: input.taskId,
+    wsUserId: input.userId,
+    tavilyApiKey: process.env.TAVILY_API_KEY ?? '',
+    emit: events.emit,
+    signal: context.signal,
+    canExecute,
+    memoryEnabled: input.memoryEnabled,
+    sensitiveMemoryEnabled: input.sensitiveMemoryEnabled,
+    state: progress.toolState,
+    sandboxTimeoutMs: () => context.budget.remainingSandboxTimeMs(),
+  })
+}
+
 export function createAgentRuntime(
   context: JobExecutionContext,
   input: LoadedAgentJob,
@@ -31,6 +61,7 @@ export function createAgentRuntime(
       : '在 workspace 中执行受控命令',
     canExecute,
     allowExternalNetwork: !input.repoIsPrivate,
+    memoryEnabled: input.memoryEnabled && Boolean(input.userId && input.client),
   })
   const events = createCodeEventCollector({
     send: event => writer.emit(event as ChatEvent),
@@ -42,24 +73,7 @@ export function createAgentRuntime(
     return changed.ok && changed.data.files.length > 0
   }
   const progress = createCodeRunProgress(workspaceHasChanges)
-  const executeImpl = createCodeToolExecutor({
-    repo: input.repo,
-    login: input.login,
-    token: input.token,
-    defaultBranch: input.defaultBranch,
-    repoIsPrivate: input.repoIsPrivate,
-    supabase: input.client,
-    userId: input.userId,
-    wsReady: hasWorkspace,
-    wsTaskId: input.taskId,
-    wsUserId: input.userId,
-    tavilyApiKey: process.env.TAVILY_API_KEY ?? '',
-    emit: events.emit,
-    signal: context.signal,
-    canExecute,
-    state: progress.toolState,
-    sandboxTimeoutMs: () => context.budget.remainingSandboxTimeMs(),
-  })
+  const executeImpl = createWorkspaceToolExecutor(context, input, hasWorkspace, canExecute, events, progress)
   const executeTool: ExecuteTool = async (name, args, execution) => {
     context.budget.consumeToolCall()
     const startedAt = Date.now()
