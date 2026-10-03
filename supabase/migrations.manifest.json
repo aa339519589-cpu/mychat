@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "contractVersion": 10,
-  "sealMigration": "20261003100000_schema_contract_attestation_v10.sql",
-  "migrationCount": 61,
+  "contractVersion": 11,
+  "sealMigration": "20261003120000_schema_contract_attestation_v11.sql",
+  "migrationCount": 63,
   "migrations": [
     {
       "file": "20260624_add_pr_mode_constraint.sql",
@@ -247,7 +247,15 @@
     {
       "file": "20261003090000_connector_oauth_lifecycle.sql",
       "sha256": "6531c8961506d975f31a8bdf0cfc8d2d74d497e00d114977f432776225cf9f47"
+    },
+    {
+      "file": "20261003100000_schema_contract_attestation_v10.sql",
+      "sha256": "89454d901feea1ddbce09391024d1898184a14af225fee349bcc72b6da9b5e69"
+    },
+    {
+      "file": "20261003110000_private_chat_and_memory_claims.sql",
+      "sha256": "b0fa2b87f92409dc3dcbe530b589d758026ab88b91a78c65199ef719d94f759f"
     }
   ],
-  "contractDigest": "b8c2500aee3ef8059d6119387b9e08106175f407488a003ec982103964739a35"
+  "contractDigest": "dd6230a4f2aa3533f4bfac894ff38a10432c91003353535bc48eac7a11ca562d"
 }

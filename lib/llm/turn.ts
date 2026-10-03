@@ -139,6 +139,24 @@ function responseEndsRetry(opened: OpenTurnResponse, finalAttempt: boolean): boo
   return finalAttempt
 }
 
+async function openAffordableTurn(input: Parameters<typeof openTurnResponse>[0]): Promise<OpenTurnResponse> {
+  const opened = await openTurnResponse(input)
+  if (input.options?.adapter !== 'openrouter-openai' || opened.response.status !== 402
+    || !input.options.maxOutputTokens) return opened
+  const raw = await readLimitedResponseText(opened.response, MAX_GENERIC_ERROR_RESPONSE_BYTES)
+  let affordable = 0
+  try {
+    const error = JSON.parse(raw)?.error
+    const match = typeof error?.message === 'string'
+      ? error.message.match(/can only afford\s+(\d+)\s*(?:tokens)?/i) : null
+    affordable = match ? Math.floor(Number(match[1]) * 0.9) : 0
+  } catch { /* A different credit failure must retain its provider response. */ }
+  if (affordable >= 512 && affordable < input.options.maxOutputTokens) {
+    return openTurnResponse({ ...input, options: { ...input.options, maxOutputTokens: affordable } })
+  }
+  return { ...opened, response: new Response(raw, { status: opened.response.status, headers: opened.response.headers }) }
+}
+
 function assertRetryCanContinue(
   error: unknown,
   signal: AbortSignal | undefined,
@@ -162,7 +180,7 @@ async function openTurnWithRetry(input: {
     await retryDelay(delays[attempt] ?? 0, input.options?.signal)
     const finalAttempt = attempt === delays.length - 1
     try {
-      const opened = await openTurnResponse(input)
+      const opened = await openAffordableTurn(input)
       if (responseEndsRetry(opened, finalAttempt)) return opened
       await discardRetryResponse(opened.response)
     } catch (error) {

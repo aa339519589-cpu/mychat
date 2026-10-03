@@ -87,7 +87,7 @@ while IFS= read -r migration; do
   # Contract v4+ attestation RPCs are service-only deployment probes. They are
   # deliberately excluded from the browser-facing generated Supabase types.
   case "$migration" in
-    20260801020000_schema_contract_attestation_v4.sql|20260802190000_schema_contract_attestation_v5.sql|20261003020000_schema_contract_attestation_v6.sql|20261003040000_schema_contract_attestation_v7.sql|20261003060000_schema_contract_attestation_v8.sql|20261003080000_schema_contract_attestation_v9.sql)
+    *_schema_contract_attestation_v[4-9].sql|*_schema_contract_attestation_v[1-9][0-9].sql)
       continue
       ;;
   esac

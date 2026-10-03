@@ -57,7 +57,12 @@ SQL
 "\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20261003090000_connector_oauth_lifecycle.sql" >/dev/null
 "\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20261003100000_schema_contract_attestation_v10.sql" >/dev/null
 "\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20261003100000_schema_contract_attestation_v10.sql" >/dev/null
-"\${PSQL[@]}" -d "$DB" -f "$ROOT/tests/connector-oauth-storage-pg16.sql" >/dev/null`
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/tests/connector-oauth-storage-pg16.sql" >/dev/null
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20261003110000_private_chat_and_memory_claims.sql" >/dev/null
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20261003110000_private_chat_and_memory_claims.sql" >/dev/null
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20261003120000_schema_contract_attestation_v11.sql" >/dev/null
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/supabase/migrations/20261003120000_schema_contract_attestation_v11.sql" >/dev/null
+"\${PSQL[@]}" -d "$DB" -f "$ROOT/tests/private-chat-pg16.sql" >/dev/null`
 
 const first = source.indexOf(marker)
 if (first < 0 || source.indexOf(marker, first + marker.length) >= 0) {
