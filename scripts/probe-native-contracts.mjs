@@ -193,7 +193,7 @@ try {
   })
   await check('actual-history-retrieval-with-owned-source',async()=>{
     ensure(historySourceId,'Saved source conversation missing')
-    const result=await chat(a,'请实际使用历史检索工具搜索“验收偏好图形”，找出以前回复中的名称并给出会话来源。',{historyRetrieval:true,memoryEnabled:false})
+    const result=await chat(a,'请实际启动历史检索，搜索 验收偏好图形，找出以前回复中的名称并给出会话来源。',{historyRetrieval:true,memoryEnabled:false})
     const sources=result.events.filter(x=>x.kind==='tool.search' && x.payload?.search?.kind==='history')
     const owned=sources.flatMap(x=>x.payload.search.results).find(y=>y.conversation_id===historySourceId)
     ensure(owned,'No owned history source event')
