@@ -212,20 +212,25 @@ try {
     topic: '验收',
   }))
 
-  const own = await chat(user, model, '本项目的验收偏好图形是什么？只回答名称。', firstProject)
+  const ownAnswers = []
+  for (let attempt = 0; attempt < 3; attempt++) {
+    ownAnswers.push(await chat(user, model, '本项目的验收偏好图形是什么？只回答名称。', firstProject))
+  }
   const unrelated = await chat(user, model, '本项目的验收偏好图形是什么？不知道就说不知道。', secondProject)
   const summarize = value => value.replaceAll(projectMarker, '[PROJECT_MARKER]').replaceAll(globalMarker, '[GLOBAL_MARKER]').slice(0, 320)
-  report.answerSummaries = { own: summarize(own), unrelated: summarize(unrelated) }
-  ensure(own.includes(projectMarker), 'Model did not use the matching project memory')
-  ensure(!own.includes(globalMarker), 'Global memory leaked into project context')
+  report.answerSummaries = { own: ownAnswers.map(summarize), unrelated: summarize(unrelated) }
+  const matchingPasses = ownAnswers.filter(answer => answer.includes(projectMarker)).length
+  const leakedGlobalMemory = ownAnswers.some(answer => answer.includes(globalMarker))
+  ensure(matchingPasses === ownAnswers.length, `Matching project memory used ${matchingPasses}/${ownAnswers.length} times`)
+  ensure(!leakedGlobalMemory, 'Global memory leaked into project context')
   ensure(!unrelated.includes(projectMarker) && !unrelated.includes(globalMarker), 'Memory leaked into an unrelated project')
   report.checks.push({
     name: 'model-project-memory-isolation',
     passed: true,
     matchingProjectMemoryUsed: true,
+    matchingProjectMemoryPasses: ownAnswers.length,
     globalMemoryKeptOut: true,
     unrelatedProjectMemoryKeptOut: true,
-    outputCharacters: { own: own.length, unrelated: unrelated.length },
   })
 } catch (error) {
   report.checks.push({ name: 'model-project-memory-isolation', passed: false, error: error.message })
