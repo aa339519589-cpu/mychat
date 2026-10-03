@@ -4,7 +4,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 const origin = 'https://mychat-nm6x.onrender.com'
 const expectedRevision = 'dd8186889175'
 const output = 'audit-output'
-const report = { observedAt: new Date().toISOString(), expectedRevision, checks: [], cleanup: null }
+const report = { observedAt: new Date().toISOString(), expectedRevision, checks: [], cleanup: null, chatDiagnostics: [], answerSummaries: {} }
 mkdirSync(output, { recursive: true })
 
 let supabaseURL
@@ -124,7 +124,19 @@ async function chat(user, model, prompt, projectId) {
     await new Promise(resolve => setTimeout(resolve, 2_000))
   }
   ensure(job?.status === 'completed', `Model job ${job?.status ?? 'missing'}/${job?.errorCode ?? 'no code'}`)
-  const messages = await rest(`messages?id=eq.${assistantMessageId}&select=content`, 'GET')
+  const [messages, conversations, storedProjectMemories] = await Promise.all([
+    rest(`messages?id=eq.${assistantMessageId}&select=content`, 'GET'),
+    rest(`conversations?id=eq.${conversationId}&select=id,project_id,memory_enabled`, 'GET'),
+    projectId ? rest(`project_memories?user_id=eq.${user.id}&project_id=eq.${projectId}&select=id`, 'GET') : Promise.resolve([]),
+  ])
+  report.chatDiagnostics.push({
+    projectRequested: Boolean(projectId),
+    conversationFound: conversations.length === 1,
+    conversationProjectMatches: conversations[0]?.project_id === projectId,
+    conversationMemoryEnabled: conversations[0]?.memory_enabled,
+    storedProjectMemoryCount: storedProjectMemories.length,
+    assistantMessageFound: messages.length === 1,
+  })
   return messages[0]?.content ?? ''
 }
 
@@ -202,6 +214,8 @@ try {
 
   const own = await chat(user, model, '本项目的验收偏好图形是什么？只回答名称。', firstProject)
   const unrelated = await chat(user, model, '本项目的验收偏好图形是什么？不知道就说不知道。', secondProject)
+  const summarize = value => value.replaceAll(projectMarker, '[PROJECT_MARKER]').replaceAll(globalMarker, '[GLOBAL_MARKER]').slice(0, 320)
+  report.answerSummaries = { own: summarize(own), unrelated: summarize(unrelated) }
   ensure(own.includes(projectMarker), 'Model did not use the matching project memory')
   ensure(!own.includes(globalMarker), 'Global memory leaked into project context')
   ensure(!unrelated.includes(projectMarker) && !unrelated.includes(globalMarker), 'Memory leaked into an unrelated project')
