@@ -23,12 +23,11 @@ export async function POST(request: NextRequest): Promise<Response> {
   catch (error) { return requestErrorResponse(error) }
 
   if (!validUUID(body.conversationId) || !validUUID(body.userMessageId)
-    || !validUUID(body.assistantMessageId) || typeof body.privateChat !== 'boolean') {
+    || typeof body.privateChat !== 'boolean') {
     return response({ error: 'ChatGPT 套餐对话上下文请求无效' }, 400)
   }
   const conversationId = body.conversationId.toLowerCase()
   const userMessageId = body.userMessageId.toLowerCase()
-  const assistantMessageId = body.assistantMessageId.toLowerCase()
   const admin = createAdminClient()
   if (!admin) return response({ error: '对话数据库暂时不可用' }, 503)
   const context = await preparePlanContextResponse({
@@ -36,7 +35,6 @@ export async function POST(request: NextRequest): Promise<Response> {
     userId: auth.userId,
     conversationId,
     userMessageId,
-    assistantMessageId,
     body,
     signal: request.signal,
   })
