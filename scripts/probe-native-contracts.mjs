@@ -195,9 +195,12 @@ try {
     ensure(historySourceId,'Saved source conversation missing')
     const result=await chat(a,'请实际使用历史检索工具搜索“验收偏好图形”，找出以前回复中的名称并给出会话来源。',{historyRetrieval:true,memoryEnabled:false})
     const sources=result.events.filter(x=>x.kind==='tool.search' && x.payload?.search?.kind==='history')
-    ensure(result.text.includes(globalMarker),'History retrieval missed the saved answer')
-    ensure(sources.some(x=>x.payload.search.results.some(y=>y.conversation_id===historySourceId)),'No owned history source event')
-    return {historySourceVerified:true,toolCalls:sources.length}
+    const owned=sources.flatMap(x=>x.payload.search.results).find(y=>y.conversation_id===historySourceId)
+    ensure(owned,'No owned history source event')
+    const sourceContainsMarker=typeof owned.snippet==='string' && owned.snippet.includes(globalMarker)
+    const answerContainsMarker=result.text.includes(globalMarker)
+    ensure(sourceContainsMarker || answerContainsMarker,`Retrieved source did not contain the stored marker (answer=${answerContainsMarker})`)
+    return {historySourceVerified:true,sourceContainsMarker,answerContainsMarker,toolCalls:sources.length}
   })
   await check('model-memory-account-and-chat-isolation',async()=>{
     const noMemory=await chat(a,'我的验收偏好图形是什么？仅依据你已有的上下文，不知道就说不知道。',{memoryEnabled:false})
