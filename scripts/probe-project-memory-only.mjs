@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'
 
 const origin = 'https://mychat-nm6x.onrender.com'
-const expectedRevision = 'dd8186889175'
+const expectedRevision = 'e56d295b130e'
 const output = 'audit-output'
 const report = { observedAt: new Date().toISOString(), expectedRevision, checks: [], cleanup: null, chatDiagnostics: [], answerSummaries: {} }
 mkdirSync(output, { recursive: true })
