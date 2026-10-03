@@ -260,7 +260,8 @@ test('custom project chats receive enabled project memories and project memory t
   const system = captured?.messages[0]?.content
   assert.equal(typeof system, 'string')
   assert.match(system as string, /项目规定先运行回归测试/)
-  assert.ok((system as string).includes('回答与某条项目记忆相关的问题时，优先依据该记忆'))
+  assert.ok((system as string).includes('用户询问本项目记忆中明确记录的信息时，必须直接依据对应记忆作答'))
+  assert.ok((system as string).includes('不得声称不知道、臆测或用全局记忆替代'))
   const toolNames = (captured?.tools ?? []).map(tool => {
     const definition = tool.function as { name?: string } | undefined
     return definition?.name

@@ -243,7 +243,8 @@ function renderProjectContext(project: ProjectContext | undefined, memoryEnabled
     parts.push(`【本项目的积累记忆】
 这些记忆只在当前项目内有效，与全局记忆完全独立。
 每条项目记忆带有 id；需要修改或删除时，使用对应 id。
-回答与某条项目记忆相关的问题时，优先依据该记忆；信息不足或有冲突时如实说明。不得将项目记忆用于其他项目、主聊天或全局记忆。
+匹配规则：用户询问本项目记忆中明确记录的信息时，必须直接依据对应记忆作答；不得声称不知道、臆测或用全局记忆替代。记忆没有直接答案或内容冲突时，再如实说明。
+范围规则：不得将项目记忆用于其他项目、主聊天或全局记忆。
 同一主题若有重复，优先合并更新，不要继续新增重复记忆。
 ${renderProjectMemoryBlock(project.projectMemories)}`)
   }
