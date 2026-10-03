@@ -5,6 +5,7 @@ import { prepareChatHistory } from '@/lib/chat/history'
 import { appendUserSystemPrompt, latestBeijingDateFromMessages } from '@/lib/chat/request-context'
 import { buildSystem } from '@/lib/llm/system'
 import { activeTools } from '@/lib/tools'
+import { ensureChatGPTPlanHistoryUserMessage } from '@/lib/chat/chatgpt-plan-history'
 import type { SupabaseServer } from '@/lib/api/guard'
 import type { SupabaseClient } from '@/lib/supabase/types'
 import {
@@ -19,7 +20,6 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 export type PlanContextBody = {
   conversationId?: unknown
   userMessageId?: unknown
-  assistantMessageId?: unknown
   createConversation?: unknown
   privateChat?: unknown
   title?: unknown
@@ -121,14 +121,29 @@ export async function ensurePlanCurrentMessages(input: {
   userId: string
   conversationId: string
   userMessageId: string
-  assistantMessageId: string
   body: PlanContextBody
 }): Promise<Response | null> {
   const current = validateCurrentPlanMessage(input.body)
   if (current instanceof Response) return current
-  const userError = await ensurePlanUserMessage({ ...input, ...current })
-  if (userError) return userError
-  return ensurePlanAssistantMessage(input)
+  const createdAt = typeof input.body.createdAt === 'string' && Number.isFinite(Date.parse(input.body.createdAt))
+    ? new Date(input.body.createdAt).toISOString()
+    : new Date().toISOString()
+  const persisted = await ensureChatGPTPlanHistoryUserMessage(
+    input.client,
+    input.userId,
+    input.conversationId,
+    {
+      id: input.userMessageId,
+      role: 'user',
+      content: current.content,
+      images: current.images,
+      createdAt,
+    },
+  )
+  if (persisted.kind === 'persisted') return null
+  if (persisted.kind === 'conflict') return planResponse({ error: '用户消息 ID 已用于其他内容' }, 409)
+  if (persisted.kind === 'not_found') return planResponse({ error: '对话不存在或不属于当前账号' }, 404)
+  return planResponse({ error: '用户消息保存失败，请重试' }, 503)
 }
 
 function validateCurrentPlanMessage(body: PlanContextBody): { content: string; images: string[] } | Response {
@@ -139,82 +154,6 @@ function validateCurrentPlanMessage(body: PlanContextBody): { content: string; i
     return planResponse({ error: '消息内容不能为空' }, 400)
   }
   return { content, images }
-}
-
-async function ensurePlanUserMessage(input: {
-  client: SupabaseClient
-  userId: string
-  conversationId: string
-  userMessageId: string
-  body: PlanContextBody
-  content: string
-  images: string[]
-}): Promise<Response | null> {
-  const priorUser = await input.client.from('messages').select('id,conversation_id,user_id,role,content')
-    .eq('id', input.userMessageId).maybeSingle()
-  if (priorUser.error) return planResponse({ error: '用户消息保存状态无法确认' }, 503)
-  if (priorUser.data) {
-    if (priorUser.data.conversation_id !== input.conversationId
-      || priorUser.data.user_id !== input.userId || priorUser.data.role !== 'user'
-      || priorUser.data.content !== input.content) {
-      return planResponse({ error: '用户消息 ID 已用于其他内容' }, 409)
-    }
-  } else {
-    const createdAt = typeof input.body.createdAt === 'string' && Number.isFinite(Date.parse(input.body.createdAt))
-      ? new Date(input.body.createdAt).toISOString()
-      : new Date().toISOString()
-    const inserted = await input.client.from('messages').insert({
-      id: input.userMessageId,
-      conversation_id: input.conversationId,
-      user_id: input.userId,
-      role: 'user',
-      content: input.content,
-      content_parts: input.content ? [{ type: 'text', text: input.content }] : [],
-      images: input.images.length ? { refs: input.images } : null,
-      media_refs: input.images,
-      // The database trigger owns sequence allocation and content hashing.
-      seq: 0,
-      content_hash: '',
-      status: 'terminal',
-      created_at: createdAt,
-    })
-    if (inserted.error) return planResponse({ error: '用户消息保存失败，请重试' }, 503)
-  }
-  return null
-}
-
-async function ensurePlanAssistantMessage(input: {
-  client: SupabaseClient
-  userId: string
-  conversationId: string
-  assistantMessageId: string
-}): Promise<Response | null> {
-  const priorAssistant = await input.client.from('messages').select('id,conversation_id,user_id,role')
-    .eq('id', input.assistantMessageId).maybeSingle()
-  if (priorAssistant.error) return planResponse({ error: '回复记录状态无法确认' }, 503)
-  if (priorAssistant.data) {
-    if (priorAssistant.data.conversation_id !== input.conversationId
-      || priorAssistant.data.user_id !== input.userId || priorAssistant.data.role !== 'assistant') {
-      return planResponse({ error: '回复 ID 已用于其他消息' }, 409)
-    }
-    return null
-  }
-  const assistant = await input.client.from('messages').insert({
-    id: input.assistantMessageId,
-    conversation_id: input.conversationId,
-    user_id: input.userId,
-    role: 'assistant',
-    content: '',
-    content_parts: [],
-    thinking: null,
-    thinking_parts: [],
-    media_refs: [],
-    seq: 0,
-    content_hash: '',
-    status: 'draft',
-  })
-  if (assistant.error) return planResponse({ error: '回复占位记录保存失败，请重试' }, 503)
-  return null
 }
 
 export async function connectorToolsForPlanRequest(input: {
@@ -254,7 +193,6 @@ async function loadStoredPlanContext(input: {
   userId: string
   conversationId: string
   userMessageId: string
-  assistantMessageId: string
   body: PlanContextBody
 }): Promise<StoredPlanContext | Response> {
   const conversation = await ensurePlanConversation(input)
@@ -376,7 +314,6 @@ export async function preparePlanContextResponse(input: {
   userId: string
   conversationId: string
   userMessageId: string
-  assistantMessageId: string
   body: PlanContextBody
   signal: AbortSignal
 }): Promise<object | Response> {

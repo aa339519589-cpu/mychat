@@ -4,6 +4,7 @@ import { NextRequest } from 'next/server'
 import type { SupabaseClient } from '../lib/supabase/types'
 import type { AuthCtx } from '../lib/api/guard'
 import { createChatGPTPlanHistoryPostHandler } from '../app/api/chat/chatgpt-plan-history/route'
+import { ensurePlanCurrentMessages } from '../lib/chat/chatgpt-plan-context'
 import {
   ChatGPTPlanHistoryInputError,
   persistChatGPTPlanHistoryTurn,
@@ -58,6 +59,13 @@ test('rejects invalid roles, message ids, and oversized image payloads', () => {
   const oversized = turn()
   oversized.userMessage.images = [`data:image/png;base64,${'a'.repeat(8 * 1024 * 1024)}`]
   assert.throws(() => validateChatGPTPlanHistoryTurn(oversized), ChatGPTPlanHistoryInputError)
+
+  const base = turn()
+  const withThinking = {
+    ...base,
+    assistantMessage: { ...base.assistantMessage, thinking: 'separate reasoning payload' },
+  }
+  assert.equal(validateChatGPTPlanHistoryTurn(withThinking).assistantMessage.thinking, 'separate reasoning payload')
 })
 
 type Row = Record<string, unknown>
@@ -77,6 +85,7 @@ class MemoryQuery {
   update(payload: Row) { this.operation = 'update'; this.payload = payload; return this }
   delete() { this.operation = 'delete'; return this }
   eq(key: string, value: unknown) { this.filters.push(row => row[key] === value); return this }
+  is(key: string, value: unknown) { this.filters.push(row => row[key] === value); return this }
   gt(key: string, value: number) { this.filters.push(row => typeof row[key] === 'number' && row[key] > value); return this }
   order(key: string, options: { ascending: boolean }) { this.orderBy = { key, ascending: options.ascending }; return this }
   limit(value: number) { this.take = value; return this }
@@ -98,6 +107,7 @@ class MemoryQuery {
       if (this.table === 'messages') {
         payload.seq = rows.reduce((max, row) => Math.max(max, Number(row.seq) || 0), 0) + 1
         payload.images = payload.images ?? null
+        payload.generation_id = payload.generation_id ?? null
       }
       rows.push({ ...payload })
       return { data: null, error: null }
@@ -200,6 +210,109 @@ test('saves a logged-in turn idempotently and blocks cross-account conversation 
   assert.equal(foreignResponse.status, 404)
   assert.equal(database.conversations.length, 1)
   assert.equal(database.messages.length, 2)
+})
+
+test('context preparation creates only the user row and completion appends the assistant idempotently', async () => {
+  const database = new MemoryDatabase()
+  const payload = turn()
+  payload.createConversation = false
+  payload.userMessage.images = []
+  database.conversations.push({
+    id: payload.conversationId,
+    user_id: USER_A,
+    project_id: null,
+    memory_enabled: true,
+  })
+
+  const prepared = await ensurePlanCurrentMessages({
+    client: database as unknown as SupabaseClient,
+    userId: USER_A,
+    conversationId: payload.conversationId,
+    userMessageId: payload.userMessage.id,
+    body: {
+      content: payload.userMessage.content,
+      images: [],
+      createdAt: payload.userMessage.createdAt,
+      hasAttachments: false,
+    },
+  })
+  assert.equal(prepared, null)
+  assert.equal(database.messages.length, 1)
+  assert.equal(database.messages[0]?.role, 'user')
+
+  const validated = validateChatGPTPlanHistoryTurn(payload)
+  assert.equal((await persistChatGPTPlanHistoryTurn(database as unknown as SupabaseClient, USER_A, validated)).kind,
+    'persisted')
+  assert.equal((await persistChatGPTPlanHistoryTurn(database as unknown as SupabaseClient, USER_A, validated)).kind,
+    'persisted')
+  assert.deepEqual(database.messages.map(message => [message.role, message.status]), [
+    ['user', 'terminal'],
+    ['assistant', 'terminal'],
+  ])
+})
+
+test('completes a legacy empty assistant draft in place rather than returning HTTP 409', async () => {
+  const database = new MemoryDatabase()
+  const payload = turn()
+  database.conversations.push({ id: payload.conversationId, user_id: USER_A, project_id: null })
+  database.messages.push({
+    id: payload.userMessage.id,
+    user_id: USER_A,
+    conversation_id: payload.conversationId,
+    role: 'user',
+    content: payload.userMessage.content,
+    thinking: null,
+    images: { refs: payload.userMessage.images },
+    content_parts: [{ type: 'text', text: payload.userMessage.content }],
+    thinking_parts: [],
+    media_refs: payload.userMessage.images,
+    created_at: payload.userMessage.createdAt,
+    seq: 1,
+    status: 'terminal',
+    generation_id: null,
+  })
+  database.messages.push({
+    id: payload.assistantMessage.id,
+    user_id: USER_A,
+    conversation_id: payload.conversationId,
+    role: 'assistant',
+    content: '',
+    thinking: null,
+    images: null,
+    content_parts: [],
+    thinking_parts: [],
+    media_refs: [],
+    created_at: '2026-10-03T10:00:01.000Z',
+    seq: 2,
+    status: 'draft',
+    generation_id: null,
+  })
+
+  const result = await persistChatGPTPlanHistoryTurn(
+    database as unknown as SupabaseClient,
+    USER_A,
+    validateChatGPTPlanHistoryTurn(payload),
+  )
+
+  assert.equal(result.kind, 'persisted')
+  assert.equal(database.messages.length, 2)
+  assert.equal(database.messages[1]?.id, payload.assistantMessage.id)
+  assert.equal(database.messages[1]?.content, payload.assistantMessage.content)
+  assert.equal(database.messages[1]?.status, 'terminal')
+  assert.equal(database.messages[1]?.created_at, '2026-10-03T10:00:01.000Z')
+})
+
+test('parallel retries result in one assistant row with the completed content', async () => {
+  const database = new MemoryDatabase()
+  const validated = validateChatGPTPlanHistoryTurn(turn())
+  const results = await Promise.all([
+    persistChatGPTPlanHistoryTurn(database as unknown as SupabaseClient, USER_A, validated),
+    persistChatGPTPlanHistoryTurn(database as unknown as SupabaseClient, USER_A, validated),
+  ])
+
+  assert.deepEqual(results.map(result => result.kind), ['persisted', 'persisted'])
+  assert.equal(database.messages.length, 2)
+  assert.equal(database.messages[1]?.content, validated.assistantMessage.content)
 })
 
 test('repeated regeneration replaces only the requested tail and stays idempotent', async () => {
