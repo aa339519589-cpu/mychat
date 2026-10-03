@@ -949,6 +949,7 @@ export type Database = {
           "id": string
           "user_id": string
           "title": string
+          "memory_enabled": boolean
           "created_at": string
           "updated_at": string
           "project_id": string | null
@@ -962,6 +963,7 @@ export type Database = {
           "id"?: string
           "user_id": string
           "title"?: string
+          "memory_enabled"?: boolean
           "created_at"?: string
           "updated_at"?: string
           "project_id"?: string | null
@@ -975,6 +977,7 @@ export type Database = {
           "id"?: string
           "user_id"?: string
           "title"?: string
+          "memory_enabled"?: boolean
           "created_at"?: string
           "updated_at"?: string
           "project_id"?: string | null
@@ -2164,6 +2167,92 @@ export type Database = {
 },
         ]
       },
+      "mcp_connectors": {
+        Row: {
+          "id": string
+          "user_id": string
+          "name": string
+          "server_url": string
+          "credential_ciphertext": string | null
+          "tools": Json
+          "enabled": boolean
+          "created_at": string
+          "updated_at": string
+          "auth_type": string
+          "oauth_status": string
+          "oauth_refresh_lease": string | null
+          "oauth_refresh_until": string | null
+        }
+        Insert: {
+          "id"?: string
+          "user_id": string
+          "name": string
+          "server_url": string
+          "credential_ciphertext"?: string | null
+          "tools"?: Json
+          "enabled"?: boolean
+          "created_at"?: string
+          "updated_at"?: string
+          "auth_type"?: string
+          "oauth_status"?: string
+          "oauth_refresh_lease"?: string | null
+          "oauth_refresh_until"?: string | null
+        }
+        Update: {
+          "id"?: string
+          "user_id"?: string
+          "name"?: string
+          "server_url"?: string
+          "credential_ciphertext"?: string | null
+          "tools"?: Json
+          "enabled"?: boolean
+          "created_at"?: string
+          "updated_at"?: string
+          "auth_type"?: string
+          "oauth_status"?: string
+          "oauth_refresh_lease"?: string | null
+          "oauth_refresh_until"?: string | null
+        }
+        Relationships: []
+      },
+      "mcp_oauth_sessions": {
+        Row: {
+          "state_hash": string
+          "user_id": string
+          "connector_id": string
+          "server_url": string
+          "secret_ciphertext": string
+          "expires_at": string
+          "created_at": string
+        }
+        Insert: {
+          "state_hash": string
+          "user_id": string
+          "connector_id": string
+          "server_url": string
+          "secret_ciphertext": string
+          "expires_at": string
+          "created_at"?: string
+        }
+        Update: {
+          "state_hash"?: string
+          "user_id"?: string
+          "connector_id"?: string
+          "server_url"?: string
+          "secret_ciphertext"?: string
+          "expires_at"?: string
+          "created_at"?: string
+        }
+        Relationships: [
+          {
+  foreignKeyName: "mcp_oauth_sessions_connector_id_user_id_fkey"
+  columns: ["connector_id","user_id"]
+  isOneToOne: false
+  referencedRelation: "mcp_connectors"
+  referencedColumns: ["id","user_id"]
+},
+        ]
+      },
       "medium_model_trial_calls": {
         Row: {
           "principal_id": string
@@ -2190,6 +2279,8 @@ export type Database = {
           "id": string
           "user_id": string
           "content": string
+          "topic": string
+          "sensitive": boolean
           "enabled": boolean
           "created_at": string
           "updated_at": string
@@ -2198,6 +2289,8 @@ export type Database = {
           "id"?: string
           "user_id": string
           "content": string
+          "topic"?: string
+          "sensitive"?: boolean
           "enabled"?: boolean
           "created_at"?: string
           "updated_at"?: string
@@ -2206,6 +2299,8 @@ export type Database = {
           "id"?: string
           "user_id"?: string
           "content"?: string
+          "topic"?: string
+          "sensitive"?: boolean
           "enabled"?: boolean
           "created_at"?: string
           "updated_at"?: string
@@ -2356,6 +2451,7 @@ export type Database = {
         Row: {
           "user_id": string
           "memory_enabled": boolean
+          "sensitive_memory_enabled": boolean
           "custom_system_prompt": string | null
           "tokens_5h": number
           "window_5h_start": string | null
@@ -2374,6 +2470,7 @@ export type Database = {
         Insert: {
           "user_id": string
           "memory_enabled"?: boolean
+          "sensitive_memory_enabled"?: boolean
           "custom_system_prompt"?: string | null
           "tokens_5h"?: number
           "window_5h_start"?: string | null
@@ -2392,6 +2489,7 @@ export type Database = {
         Update: {
           "user_id"?: string
           "memory_enabled"?: boolean
+          "sensitive_memory_enabled"?: boolean
           "custom_system_prompt"?: string | null
           "tokens_5h"?: number
           "window_5h_start"?: string | null
@@ -2457,6 +2555,8 @@ export type Database = {
           "user_id": string
           "project_id": string
           "content": string
+          "topic": string
+          "sensitive": boolean
           "created_at": string
           "updated_at": string | null
         }
@@ -2465,6 +2565,8 @@ export type Database = {
           "user_id": string
           "project_id": string
           "content": string
+          "topic"?: string
+          "sensitive"?: boolean
           "created_at"?: string
           "updated_at"?: string | null
         }
@@ -2473,6 +2575,8 @@ export type Database = {
           "user_id"?: string
           "project_id"?: string
           "content"?: string
+          "topic"?: string
+          "sensitive"?: boolean
           "created_at"?: string
           "updated_at"?: string | null
         }
@@ -2582,6 +2686,7 @@ export type Database = {
       "acquire_job_event_stream": { Args: { "input_stream_id": string | null; "input_principal_id": string | null; "input_job_id": string | null; "input_address_hash": string | null; "input_lease_seconds"?: number | null; "input_max_seconds"?: number | null }; Returns: Json }
       "adjust_tenant_resource_usage": { Args: { "input_principal_id": string | null; "input_project_file_count"?: number | null; "input_project_file_bytes"?: number | null; "input_message_count"?: number | null; "input_message_bytes"?: number | null; "input_payload_count"?: number | null; "input_payload_bytes"?: number | null }; Returns: undefined }
       "admit_chat_turn_v2": { Args: { "input_user_id": string | null; "input_conversation_id": string | null; "input_create_conversation": boolean | null; "input_project_id": string | null; "input_conversation_title": string | null; "input_user_message_id": string | null; "input_user_content": string | null; "input_user_images": Json | null; "input_user_created_at": string | null; "input_assistant_message_id": string | null; "input_job_id": string | null; "input_auth_class": string | null; "input_idempotency_key": string | null; "input_input_hash": string | null; "input_payload": Json | null; "input_budget": Json | null; "input_queue": string | null; "input_max_attempts": number | null }; Returns: Json }
+      "admit_chat_turn_v3": { Args: { "input_user_id": string | null; "input_conversation_id": string | null; "input_create_conversation": boolean | null; "input_project_id": string | null; "input_conversation_title": string | null; "input_user_message_id": string | null; "input_user_content": string | null; "input_user_images": Json | null; "input_user_created_at": string | null; "input_assistant_message_id": string | null; "input_job_id": string | null; "input_auth_class": string | null; "input_idempotency_key": string | null; "input_input_hash": string | null; "input_payload": Json | null; "input_budget": Json | null; "input_queue": string | null; "input_max_attempts": number | null; "input_memory_enabled": boolean | null }; Returns: Json }
       "advance_agent_workspace_head": { Args: { "input_job_id": string | null; "input_worker_id": string | null; "input_lease_version": number | null; "input_snapshot_id": string | null; "input_manifest_digest": string | null; "input_tree_digest": string | null; "input_head": string | null }; Returns: Json }
       "agent_confirmation_result": { Args: { "input_gate": Database["public"]["Tables"]["agent_confirmation_gates"]["Row"] | null }; Returns: Json }
       "append_job_events": { Args: { "input_job_id": string | null; "input_worker_id": string | null; "input_lease_version": number | null; "input_events": Json | null }; Returns: Json }
@@ -2598,6 +2703,7 @@ export type Database = {
       "checkpoint_job_with_accounting": { Args: { "input_job_id": string | null; "input_worker_id": string | null; "input_lease_version": number | null; "input_attempt": number | null; "input_expected_checkpoint_version": number | null; "input_checkpoint_key": string | null; "input_phase": string | null; "input_checkpoint": Json | null; "input_progress"?: Json | null; "input_resumable"?: boolean | null; "input_status"?: string | null; "input_ledger_entries"?: Json | null }; Returns: Json }
       "claim_agent_run": { Args: { "input_task_id": string | null; "input_run_id": string | null; "lease_seconds"?: number | null }; Returns: boolean }
       "claim_chat_generation": { Args: { "input_generation_id": string | null; "input_user_id": string | null; "input_conversation_id": string | null; "input_assistant_message_id": string | null; "input_runner_id": string | null; "lease_seconds"?: number | null }; Returns: Json }
+      "claim_connector_oauth_refresh": { Args: { "input_user_id": string | null; "input_connector_id": string | null; "input_lease": string | null }; Returns: Json }
       "claim_job_outbox": { Args: { "input_worker_id": string | null; "input_topics": string[] | null; "input_lock_seconds"?: number | null }; Returns: Json }
       "claim_next_job": { Args: { "input_worker_id": string | null; "input_queues"?: string[] | null; "input_lease_seconds"?: number | null }; Returns: Json }
       "complete_job_outbox": { Args: { "input_outbox_id": string | null; "input_worker_id": string | null; "input_lock_version": number | null; "input_succeeded": boolean | null; "input_error"?: string | null; "input_retry_seconds"?: number | null }; Returns: Json }
@@ -2661,6 +2767,7 @@ export type Database = {
       "renew_job_lease": { Args: { "input_job_id": string | null; "input_worker_id": string | null; "input_lease_version": number | null; "input_lease_seconds"?: number | null }; Returns: Json }
       "renew_job_outbox": { Args: { "input_outbox_id": string | null; "input_worker_id": string | null; "input_lock_version": number | null; "input_lock_seconds"?: number | null }; Returns: Json }
       "reserve_medium_model_trial": { Args: { "input_principal_id": string | null; "input_generation_id": string | null; "input_model_id": string | null }; Returns: Json }
+      "reset_user_memories": { Args: { "input_user_id": string | null }; Returns: number }
       "resolve_agent_confirmation_gate": { Args: { "input_user_id": string | null; "input_task_id": string | null; "input_confirmation_id": string | null; "input_operation": string | null; "input_token_sha256": string | null; "input_action": string | null; "input_reason"?: string | null }; Returns: Json }
       "resume_awaiting_job": { Args: { "input_job_id": string | null; "input_principal_id": string | null; "input_expected_checkpoint_version": number | null; "input_idempotency_key": string | null; "input_resume_input": Json | null }; Returns: Json }
       "retry_job": { Args: { "input_job_id": string | null; "input_worker_id": string | null; "input_lease_version": number | null; "input_error_class": string | null; "input_error_code": string | null; "input_delay_seconds"?: number | null }; Returns: Json }
@@ -2678,6 +2785,7 @@ export type Database = {
       "runtime_healthcheck_v6": { Args: never; Returns: boolean }
       "runtime_healthcheck_v7": { Args: never; Returns: boolean }
       "runtime_healthcheck_v8": { Args: never; Returns: boolean }
+      "set_user_sensitive_memory_enabled": { Args: { "input_user_id": string | null; "input_enabled": boolean | null }; Returns: number }
       "settle_job_admission": { Args: { "input_job_id": string | null; "input_reason"?: string | null }; Returns: Json }
       "sweep_job_lifecycle": { Args: { "input_batch_size"?: number | null; "input_published_before"?: string | null }; Returns: Json }
       "upsert_github_connection": { Args: { "input_user_id": string | null; "input_github_user_id": number | null; "input_login": string | null; "input_credential_ciphertext": string | null; "input_scopes": string[] | null; "input_expires_at": string | null; "input_actor_id": string | null; "input_request_id"?: string | null }; Returns: string }

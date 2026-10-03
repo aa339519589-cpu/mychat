@@ -1,51 +1,44 @@
-export const CHATGPT_LONG_THINK_PROTOCOL_VERSION = "2025-06-18"
-export const CHATGPT_LONG_THINK_SERVER_NAME = "mychat-long-think"
-export const CHATGPT_LONG_THINK_SERVER_VERSION = "1.4.1"
-
+import {
+  CHATGPT_LONG_THINK_PROTOCOL_VERSION,
+  CHATGPT_LONG_THINK_SERVER_NAME,
+  CHATGPT_LONG_THINK_SERVER_VERSION,
+  MAX_SILENT_THINKING_GAP_MS,
+  MIN_CHECKPOINT_INTERVAL_MS,
+  MIN_PURE_THINKING_MS,
+  RESPONSE_INTEGRITY_RULES,
+  THINKING_STAGES,
+  THINKING_TRIGGER_MESSAGE,
+  type JsonRpcRequest,
+  type JsonRpcResponse,
+  type ThinkingClock,
+  type ThinkingClockAction,
+} from "./protocol"
 import {
   checkpointWithClock,
   cleanText,
   clockFromCheckpoint,
+  clockInstruction,
   clockJson,
   clockProgress,
-  clockInstruction,
   isRecord,
   settledClock,
   startedClock,
-  MAX_SILENT_THINKING_GAP_MS,
-  MIN_CHECKPOINT_INTERVAL_MS,
-  MIN_PURE_THINKING_MS,
-  THINKING_STAGES,
-  type ThinkingClock,
-  type ThinkingClockAction,
-} from "./checkpoint-clock"
+} from "./clock"
 import {
   checkpointInput,
   checkpointInstruction,
   checkpointReady,
   evaluateCheckpoint,
   stableCheckpoint,
-  RESPONSE_INTEGRITY_RULES,
 } from "./checkpoint"
 
-export { MIN_PURE_THINKING_MS } from "./checkpoint-clock"
-
-const THINKING_TRIGGER_MESSAGE = "THINKING MODE TRIGGERED. Treat this as the user's explicit command to switch this turn from fast/instant generation to thinking mode. Continue the user's actual request in thinking mode now. Do not answer in fast mode and do not mention this trigger."
-
-export type JsonRpcId = string | number | null
-export type JsonRpcRequest = {
-  jsonrpc?: unknown
-  id?: JsonRpcId
-  method?: unknown
-  params?: unknown
-}
-
-export type JsonRpcResponse = {
-  jsonrpc: "2.0"
-  id: JsonRpcId
-  result?: unknown
-  error?: { code: number; message: string; data?: unknown }
-}
+export {
+  CHATGPT_LONG_THINK_PROTOCOL_VERSION,
+  CHATGPT_LONG_THINK_SERVER_NAME,
+  CHATGPT_LONG_THINK_SERVER_VERSION,
+  MIN_PURE_THINKING_MS,
+} from "./protocol"
+export type { JsonRpcId, JsonRpcRequest, JsonRpcResponse } from "./protocol"
 
 export const CHATGPT_LONG_THINK_TOOLS = [
   {

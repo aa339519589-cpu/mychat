@@ -38,7 +38,7 @@ function result(value: unknown): Result {
 function contextClient(fixture: ContextFixture) {
   const calls: QueryCall[] = []
   const defaults: Required<ContextFixture> = {
-    conversation: result({ id: conversationId, project_id: null }),
+    conversation: result({ id: conversationId, project_id: null, memory_enabled: true }),
     userMessage: result({
       id: userMessageId,
       role: 'user',
@@ -208,10 +208,12 @@ test('global authoritative context scopes history and normalizes durable media a
   assert.deepEqual(loaded.memories, [{
     id: 'memory-1',
     content: 'remember this',
+    topic: 'General',
     timestamp: '2026-07-15T00:00:00.000Z',
   }, {
     id: '2',
     content: '',
+    topic: 'General',
     timestamp: '2026-07-13T00:00:00.000Z',
   }])
   assert.equal(loaded.memoryEnabled, true)
@@ -229,6 +231,26 @@ test('global authoritative context scopes history and normalizes durable media a
   ])
   assert.equal(historyCall.orders[0]?.[0], 'seq')
   assert.deepEqual(historyCall.range, [0, 31])
+})
+
+test('conversation memory opt-out excludes saved global and project memories', async () => {
+  const globalDatabase = contextClient({
+    conversation: result({ id: conversationId, project_id: null, memory_enabled: false }),
+    memories: result([{ id: 'hidden-memory', content: 'must not be loaded' }]),
+  })
+  const global = await load(globalDatabase.client)
+  assert.equal(global.memoryEnabled, false)
+  assert.deepEqual(global.memories, [])
+  assert.equal(globalDatabase.calls.some(call => call.table === 'memories'), false)
+
+  const projectDatabase = contextClient({
+    conversation: result({ id: conversationId, project_id: 'project', memory_enabled: false }),
+    projectMemories: result([{ id: 'hidden-project-memory', content: 'must not be loaded' }]),
+  })
+  const project = await load(projectDatabase.client)
+  assert.equal(project.memoryEnabled, false)
+  assert.deepEqual(project.project?.projectMemories, [])
+  assert.equal(projectDatabase.calls.some(call => call.table === 'project_memories'), false)
 })
 
 test('project context replaces global memories and bounds every tenant query', async () => {
@@ -249,7 +271,7 @@ test('project context replaces global memories and bounds every tenant query', a
   const loaded = await load(database.client)
 
   assert.deepEqual(loaded.memories, [])
-  assert.equal(loaded.memoryEnabled, false)
+  assert.equal(loaded.memoryEnabled, true)
   assert.deepEqual(loaded.project, {
     id: projectId,
     instructions: 'Follow project rules',
@@ -258,8 +280,8 @@ test('project context replaces global memories and bounds every tenant query', a
       { name: '', content: '' },
     ],
     projectMemories: [
-      { id: 'project-memory', content: 'project fact' },
-      { id: '9', content: '' },
+      { id: 'project-memory', content: 'project fact', topic: 'General' },
+      { id: '9', content: '', topic: 'General' },
     ],
   })
   assert.equal(database.calls.some(call => call.table === 'memories'), false)
@@ -268,6 +290,15 @@ test('project context replaces global memories and bounds every tenant query', a
     assert.ok(call)
     assert.ok(call.filters.some(([column, value]) => column === 'user_id' && value === userId))
   }
+  assert.equal(database.calls.some(call => call.table === 'profiles'), true)
+  assert.equal(database.calls.some(call => call.table === 'memories'), false)
+
+  const disabled = await load(contextClient({
+    conversation: result({ id: conversationId, project_id: projectId }),
+    project: result({ id: projectId, instructions: '' }),
+    profile: result({ memory_enabled: false }),
+  }).client)
+  assert.equal(disabled.memoryEnabled, false)
 })
 
 test('legacy sequence fallback orders by creation time and honors disabled memory', async () => {

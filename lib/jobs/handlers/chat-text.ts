@@ -1,7 +1,9 @@
 import type { SupabaseClient } from '@/lib/supabase/types'
 import { hasScannedPdfAttachment, ocrScannedPdfs } from '@/lib/chat/attachments'
 import { prepareChatHistory, RECENT_CONTEXT_MESSAGES } from '@/lib/chat/history'
-import { latestBeijingDateFromMessages } from '@/lib/chat/request-context'
+import {
+  latestBeijingDateFromMessages,
+} from '@/lib/chat/request-context'
 import { log } from '@/lib/logger'
 import { runAgentLoop, type AgentLoopOpts, type ExecuteTool } from '@/lib/llm/agent-loop'
 import { buildModelContext } from '@/lib/llm/context'
@@ -37,7 +39,7 @@ const SAFETY_ROUNDS = 16
 const MAX_OUTPUT_TOKENS = 40_000
 const TRIAL_MAX_OUTPUT_TOKENS = 10_000
 const INSTANT_MAX_OUTPUT_TOKENS = 96
-const REPLAY_SAFE_TOOLS = new Set(['web_search', 'fetch_url'])
+const REPLAY_SAFE_TOOLS = new Set(['web_search', 'fetch_url', 'search_connector_tools'])
 
 export type ChatTextDependencies = ChatMediaPersistenceDependencies & {
   runAgentLoop: typeof runAgentLoop
@@ -164,7 +166,7 @@ async function prepareChat(
   const project = input.context.project
   const latestBeijingDate = latestBeijingDateFromMessages(input.context.messages)
   const instantMessages = instantModelMessages(input)
-  const configuredTools = buildChatTools(context, input, latestBeijingDate, Boolean(instantMessages))
+  const configuredTools = await buildChatTools(context, input, latestBeijingDate, Boolean(instantMessages))
   if (instantMessages) {
     const baseLength = await restoreChatTrajectory(context, runtime.writer, instantMessages)
     return { ...configuredTools, modelMessages: instantMessages, baseLength, instant: true }
@@ -180,6 +182,21 @@ async function prepareChat(
     customEndpoint: selection.customEndpoint,
     signal: context.signal,
   })
+  if (history.sources?.length) {
+    runtime.emit({
+      search: {
+        kind: 'history',
+        query: history.query ?? '',
+        results: history.sources.map(source => ({
+          title: source.conversationTitle?.trim() || '未命名聊天',
+          url: `mychat://conversation/${encodeURIComponent(source.conversationId)}`,
+          snippet: source.snippet,
+          conversation_id: source.conversationId,
+          message_start_id: source.messageStartId ?? undefined,
+        })),
+      },
+    })
+  }
   const preparedMessages = await recentModelMessages(context, input, runtime, dependencies)
   const modelMessages: AgentLoopOpts['messages'] = [
     { role: 'system', content: buildChatSystem(input, latestBeijingDate, history.renderedContext) },

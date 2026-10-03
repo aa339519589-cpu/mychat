@@ -24,6 +24,8 @@ import {
   getGitHubCredentialForUser,
 } from '@/lib/github-connection'
 import { repoMeta } from '@/lib/github'
+import type { Memory } from '@/lib/memory-data'
+import { loadSharedUserMemoryContext } from '@/lib/memory/shared-context'
 import { createAdminClient } from '@/lib/supabase/admin'
 import type { SupabaseClient } from '@/lib/supabase/types'
 import { JobRuntimeError } from '../errors'
@@ -65,6 +67,9 @@ export type LoadedAgentJob = {
   defaultBranch: string | null
   repoIsPrivate: boolean
   memories: string[]
+  userMemories: Memory[]
+  memoryEnabled: boolean
+  sensitiveMemoryEnabled: boolean
   mode: CodeAgentMode
   workspaceReady: boolean
   selection: ChatModelSelection
@@ -76,6 +81,7 @@ export type AgentInputDependencies = {
   credential: (context: JobExecutionContext, userId: string) => Promise<AgentCredential>
   githubIdentity: (context: JobExecutionContext, userId: string) => Promise<AgentGitHubIdentity>
   prepareWorkspace: typeof prepareWorkspace
+  loadSharedMemoryContext: typeof loadSharedUserMemoryContext
 }
 
 function object(value: unknown): Record<string, unknown> {
@@ -172,13 +178,15 @@ async function authorityRows(
   client: SupabaseClient,
   value: AgentIdentity,
   loadMemories: boolean,
+  loadSharedMemoryContext: typeof loadSharedUserMemoryContext,
 ) {
-  const [taskResult, sourceResult, memories] = await Promise.all([
+  const [taskResult, sourceResult, memories, userMemoryContext] = await Promise.all([
     client.from('agent_tasks').select('id,repo,goal,status,agent_branch')
       .eq('id', value.taskId).eq('user_id', value.userId).maybeSingle(),
     client.from('code_messages').select('id,created_at').eq('id', value.userMessageId)
       .eq('session_id', value.sessionId).eq('user_id', value.userId).eq('role', 'user').maybeSingle(),
     memoriesFor(client, value, loadMemories),
+    loadSharedMemoryContext(client, value.userId),
   ])
   if (taskResult.error || sourceResult.error) {
     throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'Agent context is unavailable')
@@ -188,7 +196,7 @@ async function authorityRows(
   if (!task || task.repo !== value.wireRepo || !source) {
     throw new JobRuntimeError('JOB_CONFLICT', 'Agent authority mismatch')
   }
-  return { task, source, memories }
+  return { task, source, memories, userMemoryContext }
 }
 
 async function githubCredential(context: JobExecutionContext, userId: string): Promise<AgentCredential> {
@@ -325,6 +333,7 @@ const DEFAULT_DEPENDENCIES: AgentInputDependencies = {
   credential: githubCredential,
   githubIdentity,
   prepareWorkspace,
+  loadSharedMemoryContext: loadSharedUserMemoryContext,
 }
 
 export async function loadAgentJob(
@@ -337,7 +346,9 @@ export async function loadAgentJob(
   const model = await selectedModel(context, client, value.userId)
   const provisional = isProvisionalRepositoryForSession(value.wireRepo, value.sessionId)
   const mode = codeAgentMode(!provisional)
-  const { task, source, memories } = await authorityRows(client, value, mode === 'workspace')
+  const { task, source, memories, userMemoryContext } = await authorityRows(
+    client, value, mode === 'workspace', dependencies.loadSharedMemoryContext,
+  )
   const messages = await loadAgentMessageHistory(client, value, source, mode)
   if (provisional) {
     const connection = await dependencies.githubIdentity(context, value.userId)
@@ -355,6 +366,9 @@ export async function loadAgentJob(
       defaultBranch: null,
       repoIsPrivate: false,
       memories: [],
+      userMemories: userMemoryContext.memories,
+      memoryEnabled: userMemoryContext.memoryEnabled,
+      sensitiveMemoryEnabled: userMemoryContext.sensitiveMemoryEnabled,
       mode,
       workspaceReady: false,
       ...model,
@@ -374,6 +388,9 @@ export async function loadAgentJob(
     token: credential.token,
     login: credential.login,
     memories,
+    userMemories: userMemoryContext.memories,
+    memoryEnabled: userMemoryContext.memoryEnabled,
+    sensitiveMemoryEnabled: userMemoryContext.sensitiveMemoryEnabled,
     mode,
     workspaceReady: true,
     ...workspace,

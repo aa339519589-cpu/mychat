@@ -55,7 +55,12 @@ test('current schema attestation is immutable, least-privileged, and bound to ru
   assert.match(originalSeal, /alter table public\.schema_contract_attestations enable row level security/)
   assert.match(originalSeal, /before update or delete[\s\S]*schema_contract_attestations_immutable/)
   assert.match(originalSeal, /raise exception 'schema_contract_attestation_is_immutable'/)
-  assert.match(migration, /select public\.runtime_healthcheck_v16\(\)/)
+  const runtimeSeal = readFileSync(resolve(
+    root,
+    'supabase/migrations/20261003060000_schema_contract_attestation_v8.sql',
+  ), 'utf8')
+  assert.match(migration, /verify_schema_contract_v8\(/)
+  assert.match(runtimeSeal, /select public\.runtime_healthcheck_v16\(\)/)
   assert.match(migration, /security definer[\s\S]*set search_path = pg_catalog, public, pg_temp/)
   assert.match(originalSeal, /revoke all on table public\.schema_contract_attestations[\s\S]*service_role/)
   assert.match(migration, new RegExp(`revoke all on function public\\.${functionName}\\(integer,text,integer\\)[\\s\\S]*service_role`))

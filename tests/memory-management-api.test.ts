@@ -78,6 +78,8 @@ function harness(options: {
     },
     createStore: () => store,
     now: () => FIXED_DATE,
+    rateLimit: async () => ({}),
+    sensitiveEnabled: async () => false,
   }
   return { calls, dependencies }
 }

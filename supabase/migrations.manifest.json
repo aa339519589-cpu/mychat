@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "contractVersion": 5,
-  "sealMigration": "20260802190000_schema_contract_attestation_v5.sql",
-  "migrationCount": 51,
+  "contractVersion": 10,
+  "sealMigration": "20261003100000_schema_contract_attestation_v10.sql",
+  "migrationCount": 61,
   "migrations": [
     {
       "file": "20260624_add_pr_mode_constraint.sql",
@@ -207,7 +207,47 @@
     {
       "file": "20260802181500_fix_service_role_claim_context.sql",
       "sha256": "ac48a81d806850af23d6d41af29fa651158e8d52a662fba3b42bca04a8bf0c5d"
+    },
+    {
+      "file": "20260802190000_schema_contract_attestation_v5.sql",
+      "sha256": "6e7e687e36e5d515d6ad35e0befd2bd94ec7ff7e337bea6342c355d240b932a4"
+    },
+    {
+      "file": "20261003010000_memory_topics.sql",
+      "sha256": "b1222c91b0639228b84421116857e3f5390eef5681f62d42dac3ac6f9cde3548"
+    },
+    {
+      "file": "20261003020000_schema_contract_attestation_v6.sql",
+      "sha256": "ded4e248baef1c71008081bf35621fc74a398813e3f6405a1b1fc56d79475a6a"
+    },
+    {
+      "file": "20261003030000_memory_sensitivity_and_reset.sql",
+      "sha256": "f7074ec404726ee4db98d5095dec67bfc46f41a90464893a9101860981eaddda"
+    },
+    {
+      "file": "20261003040000_schema_contract_attestation_v7.sql",
+      "sha256": "eebb01b941759e0c4a88d65e87ca490bb3d2d15d2c6fdf3033b6b520e7fccdf6"
+    },
+    {
+      "file": "20261003050000_conversation_memory_control.sql",
+      "sha256": "8f587910f48ea7fc250ea2103d44b09c1f541cb5504ef60f2c795a08faaa9115"
+    },
+    {
+      "file": "20261003060000_schema_contract_attestation_v8.sql",
+      "sha256": "e79c9cf2db98656cae8575bb82b0950e96bd70886056816c97c6996457a839b2"
+    },
+    {
+      "file": "20261003070000_remote_mcp_connectors.sql",
+      "sha256": "436fbb1d5f06c9ac18661b816bffcad3e4147a1c092d9a7ed89c47c7d10a578d"
+    },
+    {
+      "file": "20261003080000_schema_contract_attestation_v9.sql",
+      "sha256": "2b433ec4b04c8d8793b2518d35110e1624a445ac03f80e77ed3fbb625de7be68"
+    },
+    {
+      "file": "20261003090000_connector_oauth_lifecycle.sql",
+      "sha256": "6531c8961506d975f31a8bdf0cfc8d2d74d497e00d114977f432776225cf9f47"
     }
   ],
-  "contractDigest": "69e4973cfac2b9532f27b784257df991e09796c1bdf8a6872297806de0db4d74"
+  "contractDigest": "b8c2500aee3ef8059d6119387b9e08106175f407488a003ec982103964739a35"
 }

@@ -26,7 +26,7 @@ test('memory preference route supports verified mobile bearer tokens without wid
 
   assert.equal((memoryRoute.match(/resolveAuth\(request\)/g) ?? []).length, 1)
   assert.match(memoryRoute, /authenticatedUserId\(request\)/)
-  assert.match(memoryRoute, /\.upsert\(\{ user_id: auth\.userId, memory_enabled: enabled \}/)
+  assert.match(memoryRoute, /\.upsert\(\{ user_id: userId, memory_enabled: enabled \}/)
   assert.match(memoryRoute, /\.eq\('user_id', auth\.userId\)/)
   assert.doesNotMatch(memoryRoute, /GRANT\s+(?:INSERT|UPDATE|ALL)\s+ON\s+(?:TABLE\s+)?public\.profiles/i)
 })

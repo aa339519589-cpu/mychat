@@ -3,6 +3,8 @@ import type { Memory } from '@/lib/memory-data'
 type MemoryRow = {
   id: string
   content: string
+  topic?: string
+  sensitive?: boolean
   created_at?: string | null
   updated_at?: string | null
 }
@@ -46,6 +48,7 @@ function toMemory(row: MemoryRow): Memory {
   return {
     id: row.id,
     content: row.content,
+    topic: row.topic ?? 'General',
     timestamp: row.updated_at || row.created_at || undefined,
   }
 }
@@ -56,14 +59,14 @@ export async function fetchMemories(): Promise<Memory[]> {
   return result.memories.map(toMemory)
 }
 
-export async function insertMemory(content: string): Promise<Memory> {
-  const result = await memoryRequest('/api/memories', 'POST', { content })
+export async function insertMemory(content: string, topic = 'General'): Promise<Memory> {
+  const result = await memoryRequest('/api/memories', 'POST', { content, topic })
   if (!result.memory) throw new Error('记忆保存结果无效，请重试')
   return toMemory(result.memory)
 }
 
-export async function updateMemory(id: string, content: string): Promise<void> {
-  const result = await memoryRequest(`/api/memories/${encodeURIComponent(id)}`, 'PATCH', { content })
+export async function updateMemory(id: string, content: string, topic?: string): Promise<void> {
+  const result = await memoryRequest(`/api/memories/${encodeURIComponent(id)}`, 'PATCH', { content, ...(topic === undefined ? {} : { topic }) })
   if (!result.memory) throw new Error('记忆修改结果无效，请刷新后重试')
 }
 

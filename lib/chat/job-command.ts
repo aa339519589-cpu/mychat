@@ -125,6 +125,113 @@ function resolvedAccessClass(value: EnqueueChatJobInput['accessClass']): NonNull
   return value || 'legacy'
 }
 
+function buildChatCommand(
+  input: EnqueueChatJobInput,
+  accessClass: NonNullable<EnqueueChatJobInput['accessClass']>,
+  outputKind: 'text' | 'image' | 'video',
+  attachments: ReturnType<typeof sanitizedAttachments>,
+): JsonObject {
+  const { body } = input
+  const identity = {
+    schemaVersion: 1,
+    policyVersion: CHAT_POLICY_VERSION,
+    tier: body.tier ?? '绝句',
+    accessClass,
+    searchMode: input.searchMode,
+    historyRetrieval: body.historyRetrieval === true,
+    renderEnabled: body.renderEnabled === true,
+    ...(body.turn?.schemaVersion === 1 ? { memoryEnabled: body.turn.memoryEnabled !== false } : {}),
+    usingBalance: input.usingBalance,
+    outputKind,
+    requestedAt: input.requestedAt ?? new Date().toISOString(),
+  }
+  return {
+    ...identity,
+    ...optionalChatCommandFields(body),
+    ...(attachments ? { attachments } : {}),
+  }
+}
+
+function optionalChatCommandFields(body: EnqueueChatJobInput['body']): JsonObject {
+  return {
+    ...(body.modelId ? { modelId: body.modelId } : {}),
+    ...(body.reasoningEffort ? { reasoningEffort: body.reasoningEffort } : {}),
+    ...(body.connectorIds !== undefined ? { connectorIds: body.connectorIds } : {}),
+    ...(body.connectorAccessMode !== undefined ? { connectorAccessMode: body.connectorAccessMode } : {}),
+    ...(body.endpointId ? { endpointId: body.endpointId } : {}),
+  }
+}
+
+function chatQueuePolicy(
+  outputKind: 'text' | 'image' | 'video',
+  accessClass: NonNullable<EnqueueChatJobInput['accessClass']>,
+): { queue: string; budget: JsonObject; maxAttempts: number } {
+  if (outputKind === 'text') {
+    return {
+      queue: 'chat',
+      budget: { wallTimeMs: 10 * 60_000, tokenLimit: accessClass === 'trial' ? 30_000 : 160_000, toolCallLimit: 64 },
+      maxAttempts: 3,
+    }
+  }
+  return { queue: 'media', budget: { wallTimeMs: 15 * 60_000, costMicros: 50_000_000 }, maxAttempts: 2 }
+}
+
+async function admitWithPayloadCompensation(input: {
+  command: EnqueueChatJobInput
+  dependencies: EnqueueChatJobDependencies
+  prepared: PreparedChatPayload
+  budget: JsonObject
+  queue: string
+  maxAttempts: number
+}): Promise<{ created: boolean; job: ChatJobAdmission }> {
+  try {
+    return await admitChatJob({
+      command: input.command,
+      dependencies: input.dependencies,
+      payload: input.prepared.stored,
+      budget: input.budget,
+      queue: input.queue,
+      maxAttempts: input.maxAttempts,
+    })
+  } catch (error) {
+    const reference = input.prepared.reference
+    if (reference) {
+      await compensateRejectedPayload({
+        dependencies: input.dependencies,
+        reference,
+        userId: input.command.userId,
+        jobId: input.command.body.generationId,
+      })
+    }
+    throw error
+  }
+}
+
+function recordChatAdmission(
+  result: { created: boolean; job: ChatJobAdmission },
+  outputKind: 'text' | 'image' | 'video',
+): void {
+  if (!result.created) return
+  const metric = outputKind === 'text' ? 'chat_generation' : outputKind === 'image' ? 'media_image' : 'media_video'
+  jobMetrics.recordEnqueued(metric)
+}
+
+function logChatAdmission(input: {
+  command: EnqueueChatJobInput
+  prepared: PreparedChatPayload
+  startedAt: number
+  payloadPreparedAt: number
+}): void {
+  log.info('jobs', 'Chat job admission timing', {
+    jobId: input.command.body.generationId,
+    requestId: input.command.requestId,
+    payloadMode: input.prepared.mode,
+    payloadMs: input.payloadPreparedAt - input.startedAt,
+    admissionMs: Date.now() - input.payloadPreparedAt,
+    totalMs: Date.now() - input.startedAt,
+  })
+}
+
 export async function enqueueChatJob(input: EnqueueChatJobInput, dependencyOverrides: Partial<EnqueueChatJobDependencies> = {}): Promise<{ created: boolean; job: ChatJobAdmission }> {
   const startedAt = Date.now()
   const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides }
@@ -132,30 +239,14 @@ export async function enqueueChatJob(input: EnqueueChatJobInput, dependencyOverr
   const accessClass = resolvedAccessClass(input.accessClass)
   const outputKind = input.outputKind === 'chat' ? 'text' : input.outputKind
   const attachments = sanitizedAttachments(body.attachments)
-  const command: JsonObject = {
-    schemaVersion: 1,
-    policyVersion: CHAT_POLICY_VERSION,
-    tier: body.tier ?? '绝句',
-    ...(body.modelId ? { modelId: body.modelId } : {}),
-    ...(body.reasoningEffort ? { reasoningEffort: body.reasoningEffort } : {}),
-    accessClass,
-    searchMode: input.searchMode,
-    historyRetrieval: body.historyRetrieval === true,
-    renderEnabled: body.renderEnabled === true,
-    usingBalance: input.usingBalance,
-    outputKind,
-    requestedAt: input.requestedAt ?? new Date().toISOString(),
-    ...(body.endpointId ? { endpointId: body.endpointId } : {}),
-    ...(attachments ? { attachments } : {}),
-  }
+  const command = buildChatCommand(input, accessClass, outputKind, attachments)
   const prepared = await prepareChatPayload({ command, userId: input.userId, jobId: body.generationId, outputKind, billingClass: body.endpointId ? 'customer' : 'platform', requestId: input.requestId, persistPayload: dependencies.persistPayload })
   const payloadPreparedAt = Date.now()
-  const queue = outputKind === 'text' ? 'chat' : 'media'
-  const budget: JsonObject = outputKind === 'text' ? { wallTimeMs: 10 * 60_000, tokenLimit: accessClass === 'trial' ? 30_000 : 160_000, toolCallLimit: 64 } : { wallTimeMs: 15 * 60_000, costMicros: 50_000_000 }
-  const maxAttempts = outputKind === 'text' ? 3 : 2
-  let result: { created: boolean; job: ChatJobAdmission }
-  try { result = await admitChatJob({ command: input, dependencies, payload: prepared.stored, budget, queue, maxAttempts }) } catch (error) { const reference = prepared.reference; if (!reference) throw error; await compensateRejectedPayload({ dependencies, reference, userId: input.userId, jobId: body.generationId }); throw error }
-  if (result.created) jobMetrics.recordEnqueued(outputKind === 'text' ? 'chat_generation' : outputKind === 'image' ? 'media_image' : 'media_video')
-  log.info('jobs', 'Chat job admission timing', { jobId: body.generationId, requestId: input.requestId, payloadMode: prepared.mode, payloadMs: payloadPreparedAt - startedAt, admissionMs: Date.now() - payloadPreparedAt, totalMs: Date.now() - startedAt })
+  const policy = chatQueuePolicy(outputKind, accessClass)
+  const result = await admitWithPayloadCompensation({
+    command: input, dependencies, prepared, ...policy,
+  })
+  recordChatAdmission(result, outputKind)
+  logChatAdmission({ command: input, prepared, startedAt, payloadPreparedAt })
   return result
 }

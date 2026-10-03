@@ -328,7 +328,23 @@ async function retrieveUserAnchoredContexts(supabase: SupabaseServer, userId: st
   return hits
 }
 
-export async function retrieveHistoryContext(opts: {
+export type RetrievedHistorySource = {
+  conversationId: string
+  conversationTitle: string | null
+  messageStartId: string | null
+  snippet: string
+  createdAt: string | null
+}
+
+function historySourcePreview(content: string): string {
+  return content
+    .replace(/【[^】]*】/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 360)
+}
+
+export async function retrieveHistoryWithSources(opts: {
   supabase: SupabaseServer | null
   userId: string | null
   conversationId: string | null
@@ -336,9 +352,9 @@ export async function retrieveHistoryContext(opts: {
   query: string
   mode: HistoryRetrievalMode
   signal?: AbortSignal
-}): Promise<string> {
+}): Promise<{ renderedContext: string; sources: RetrievedHistorySource[] }> {
   const { supabase, userId, conversationId, projectId, query, mode, signal } = opts
-  if (!supabase || !userId || !query.trim()) return ''
+  if (!supabase || !userId || !query.trim()) return { renderedContext: '', sources: [] }
 
   const config = RETRIEVAL_CONFIG[mode] ?? RETRIEVAL_CONFIG.balanced
   try {
@@ -354,10 +370,23 @@ export async function retrieveHistoryContext(opts: {
       .sort((a, b) => b.similarity - a.similarity)
       .slice(0, INJECT_TOP_K)
 
-    return renderHits(hits, projectId, mode)
+    return {
+      renderedContext: renderHits(hits, projectId, mode),
+      sources: hits.map(hit => ({
+        conversationId: hit.conversation_id,
+        conversationTitle: hit.conversation_title,
+        messageStartId: hit.message_start_id,
+        snippet: historySourcePreview(hit.content),
+        createdAt: hit.created_at,
+      })),
+    }
   } catch (e) {
     if (signal?.aborted) throw e
     log.warn('activeRetrieval', 'Retrieval skipped', e)
-    return ''
+    return { renderedContext: '', sources: [] }
   }
+}
+
+export async function retrieveHistoryContext(opts: Parameters<typeof retrieveHistoryWithSources>[0]): Promise<string> {
+  return (await retrieveHistoryWithSources(opts)).renderedContext
 }

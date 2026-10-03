@@ -31,6 +31,10 @@ export type ChatRequestBody = {
   /** Canonical user message that caused this generation. */
   userMessageId?: string
   historyRetrieval?: boolean
+  /** Enabled remote MCP connectors selected for this conversation. Omitted means legacy default: all enabled connectors. */
+  connectorIds?: string[]
+  /** Connector tools are all loaded, automatically narrowed to the request, or searched on demand. */
+  connectorAccessMode?: 'auto' | 'always_available' | 'on_demand'
   endpointId?: string
   /** Durable generation id (server continues after client disconnect). */
   generationId?: string
@@ -48,6 +52,8 @@ export type ChatAppendAuthority = {
   createConversation: boolean
   title: string
   projectId: string | null
+  /** Saved-memory permission fixed atomically when a conversation is created. */
+  memoryEnabled?: boolean
 }
 
 export type ChatRegenerationAuthority = {
@@ -240,6 +246,7 @@ function validAppendTurn(turn: Record<string, unknown>): boolean {
     && typeof turn.title === 'string'
     && turn.title.length >= 1
     && turn.title.length <= 200
+    && (turn.memoryEnabled === undefined || typeof turn.memoryEnabled === 'boolean')
     && (turn.projectId === null || validUuid(turn.projectId))
 }
 
@@ -258,7 +265,7 @@ function validateTurn(value: unknown): void {
   }
 }
 
-function validateScalarFields(body: Record<string, unknown>): void {
+function validateIdentityFields(body: Record<string, unknown>): void {
   for (const field of [
     'conversationId', 'userMessageId', 'endpointId', 'generationId', 'assistantMessageId',
   ] as const) {
@@ -266,11 +273,17 @@ function validateScalarFields(body: Record<string, unknown>): void {
       throw new RequestError(400, `${field} 无效`)
     }
   }
+}
+
+function validateBooleanFields(body: Record<string, unknown>): void {
   for (const field of ['generateImage', 'generateVideo', 'historyRetrieval', 'renderEnabled'] as const) {
     if (body[field] !== undefined && typeof body[field] !== 'boolean') {
       throw new RequestError(400, `${field} 无效`)
     }
   }
+}
+
+function validateModelFields(body: Record<string, unknown>): void {
   if (body.modelId !== undefined
     && (typeof body.modelId !== 'string' || body.modelId.length > 160 || !MODEL_ID.test(body.modelId))) {
     throw new RequestError(400, 'modelId 无效')
@@ -287,6 +300,28 @@ function validateScalarFields(body: Record<string, unknown>): void {
     && (typeof body.searchMode !== 'string' || !['off', 'web'].includes(body.searchMode))) {
     throw new RequestError(400, 'searchMode 无效')
   }
+}
+
+function validateConnectorFields(body: Record<string, unknown>): void {
+  if (body.connectorIds !== undefined
+    && (!Array.isArray(body.connectorIds)
+      || body.connectorIds.length > 10
+      || !body.connectorIds.every(validUuid)
+      || new Set(body.connectorIds.map(id => id.toLowerCase())).size !== body.connectorIds.length)) {
+    throw new RequestError(400, 'connectorIds 无效')
+  }
+  if (body.connectorAccessMode !== undefined
+    && (typeof body.connectorAccessMode !== 'string'
+      || !['auto', 'always_available', 'on_demand'].includes(body.connectorAccessMode))) {
+    throw new RequestError(400, 'connectorAccessMode 无效')
+  }
+}
+
+function validateScalarFields(body: Record<string, unknown>): void {
+  validateIdentityFields(body)
+  validateBooleanFields(body)
+  validateModelFields(body)
+  validateConnectorFields(body)
 }
 
 export function validateChatRequest(value: unknown): ChatRequestBody {

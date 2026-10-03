@@ -94,6 +94,9 @@ function prepareAgentRun(
     input.memories,
     input.mode,
     canExecute,
+    input.userMemories,
+    input.memoryEnabled,
+    input.sensitiveMemoryEnabled,
   )
   const messages: ModelMessage[] = [{ role: 'system', content: system }, ...toOpenAI(input.messages)]
   const baseLength = messages.length

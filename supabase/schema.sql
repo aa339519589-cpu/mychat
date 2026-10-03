@@ -9,6 +9,8 @@ create table if not exists public.memories (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   content text not null,
+  topic text not null default 'General',
+  sensitive boolean not null default false,
   enabled boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -24,6 +26,7 @@ create table if not exists public.conversations (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   title text not null default '未命名的篇章',
+  memory_enabled boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -89,6 +92,32 @@ drop policy if exists "endpoints_update" on public.endpoints;
 create policy "endpoints_update" on public.endpoints for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create index if not exists idx_endpoints_user on public.endpoints(user_id);
 
+-- 自定义远程 MCP 连接器。凭据密文只允许服务端访问；浏览器通过带鉴权的 API route 管理。
+create table if not exists public.mcp_connectors (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  name text not null check (length(name) between 1 and 80),
+  server_url text not null check (length(server_url) between 9 and 2048),
+  credential_ciphertext text,
+  tools jsonb not null default '[]'::jsonb check (jsonb_typeof(tools) = 'array'),
+  enabled boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table public.mcp_connectors enable row level security;
+revoke all on table public.mcp_connectors from public, anon, authenticated;
+grant select, insert, update, delete on table public.mcp_connectors to service_role;
+create unique index if not exists mcp_connectors_user_name_unique
+  on public.mcp_connectors(user_id, lower(name));
+create index if not exists mcp_connectors_enabled_by_user
+  on public.mcp_connectors(user_id, created_at) where enabled;
+comment on table public.mcp_connectors is
+  'User-owned remote MCP servers. Access tokens are authenticated ciphertext and the table is service-role only.';
+comment on column public.mcp_connectors.credential_ciphertext is
+  'Optional Bearer token sealed with AES-256-GCM and bound to owner, connector id, and server URL.';
+comment on column public.mcp_connectors.tools is
+  'Bounded, sanitized MCP tools/list snapshot used to build model function schemas; refresh on demand.';
+
 -- ============================================
 -- 以下为新功能表，一次性建好，免得多次操作。
 -- 【现在就用】profiles.memory_enabled —— 记忆总开关
@@ -101,6 +130,7 @@ create index if not exists idx_endpoints_user on public.endpoints(user_id);
 create table if not exists public.profiles (
   user_id uuid primary key references auth.users(id) on delete cascade,
   memory_enabled boolean not null default true,
+  sensitive_memory_enabled boolean not null default false,
   custom_system_prompt text default '',
   -- 额度池（按真实 token 计；懒重置，无后台任务）
   tokens_5h bigint not null default 0,
@@ -226,6 +256,8 @@ create table if not exists public.project_memories (
   user_id uuid not null references auth.users(id) on delete cascade,
   project_id uuid not null references public.projects(id) on delete cascade,
   content text not null,
+  topic text not null default 'General',
+  sensitive boolean not null default false,
   created_at timestamptz not null default now()
 );
 alter table public.project_memories enable row level security;

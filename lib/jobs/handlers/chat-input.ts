@@ -27,6 +27,8 @@ export type LoadedChatJob = {
     endpointId?: string
     searchMode: SearchMode
     historyRetrieval: boolean
+    connectorIds?: string[]
+    connectorAccessMode: 'auto' | 'always_available' | 'on_demand'
     renderEnabled: boolean
     usingBalance: boolean
     outputKind: 'text' | 'image' | 'video'
@@ -70,12 +72,95 @@ function accessClass(value: unknown): ModelAccessClass | 'legacy' {
   if (value === 'quota' || value === 'trial' || value === 'premium' || value === 'legacy') return value
   throw new JobRuntimeError('JOB_INVALID_INPUT', 'Chat model access class is malformed')
 }
+function connectorIds(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (!Array.isArray(value) || value.length > 10
+    || !value.every((item): item is string => typeof item === 'string' && uuid.test(item))
+    || new Set(value.map(item => typeof item === 'string' ? item.toLowerCase() : item)).size !== value.length) {
+    throw new JobRuntimeError('JOB_INVALID_INPUT', 'Chat connector selection is malformed')
+  }
+  return value.map(item => item.toLowerCase())
+}
+function connectorAccessMode(value: unknown): LoadedChatJob['command']['connectorAccessMode'] {
+  if (value === undefined) return 'always_available'
+  if (value === 'auto' || value === 'always_available' || value === 'on_demand') return value
+  throw new JobRuntimeError('JOB_INVALID_INPUT', 'Chat connector access mode is malformed')
+}
+
+function validOutputFields(value: JsonObject): boolean {
+  return (value.outputKind === 'text' || value.outputKind === 'image' || value.outputKind === 'video')
+    && (value.searchMode === 'off' || value.searchMode === 'web')
+    && typeof value.historyRetrieval === 'boolean'
+    && typeof value.renderEnabled === 'boolean'
+    && typeof value.usingBalance === 'boolean'
+}
+
+function validOptionalStringFields(value: JsonObject): boolean {
+  return (value.endpointId === undefined || typeof value.endpointId === 'string')
+    && (value.modelId === undefined || typeof value.modelId === 'string')
+    && (value.reasoningEffort === undefined || typeof value.reasoningEffort === 'string')
+}
+
+function validateCommand(value: JsonObject): void {
+  if (typeof value.tier !== 'string' || !validOutputFields(value) || !validOptionalStringFields(value)) {
+    throw new JobRuntimeError('JOB_INVALID_INPUT', 'Chat job command is malformed')
+  }
+}
+
+function optionalCommandValues(value: JsonObject): Pick<LoadedChatJob['command'],
+  'modelId' | 'reasoningEffort' | 'endpointId' | 'attachments' | 'connectorIds'> {
+  return {
+    ...(typeof value.modelId === 'string' ? { modelId: value.modelId } : {}),
+    ...(typeof value.reasoningEffort === 'string' ? { reasoningEffort: value.reasoningEffort } : {}),
+    ...(typeof value.endpointId === 'string' ? { endpointId: value.endpointId } : {}),
+    ...(value.attachments !== undefined ? { attachments: attachments(value.attachments) } : {}),
+    ...(value.connectorIds !== undefined ? { connectorIds: connectorIds(value.connectorIds) } : {}),
+  }
+}
+
 function command(value: JsonObject): LoadedChatJob['command'] {
-  const outputKind = value.outputKind; const searchMode = value.searchMode
-  if (typeof value.tier !== 'string' || (outputKind !== 'text' && outputKind !== 'image' && outputKind !== 'video') || (searchMode !== 'off' && searchMode !== 'web') || typeof value.historyRetrieval !== 'boolean' || typeof value.renderEnabled !== 'boolean' || typeof value.usingBalance !== 'boolean' || (value.endpointId !== undefined && typeof value.endpointId !== 'string') || (value.modelId !== undefined && typeof value.modelId !== 'string') || (value.reasoningEffort !== undefined && typeof value.reasoningEffort !== 'string')) throw new JobRuntimeError('JOB_INVALID_INPUT', 'Chat job command is malformed')
-  return { tier: value.tier, outputKind, searchMode, historyRetrieval: value.historyRetrieval, renderEnabled: value.renderEnabled, usingBalance: value.usingBalance, accessClass: accessClass(value.accessClass), ...(typeof value.modelId === 'string' ? { modelId: value.modelId } : {}), ...(typeof value.reasoningEffort === 'string' ? { reasoningEffort: value.reasoningEffort } : {}), ...(typeof value.endpointId === 'string' ? { endpointId: value.endpointId } : {}), ...(value.attachments !== undefined ? { attachments: attachments(value.attachments) } : {}) }
+  validateCommand(value)
+  return {
+    tier: value.tier as string,
+    outputKind: value.outputKind as 'text' | 'image' | 'video',
+    searchMode: value.searchMode as SearchMode,
+    historyRetrieval: value.historyRetrieval as boolean,
+    connectorAccessMode: connectorAccessMode(value.connectorAccessMode),
+    renderEnabled: value.renderEnabled as boolean,
+    usingBalance: value.usingBalance as boolean,
+    accessClass: accessClass(value.accessClass),
+    ...optionalCommandValues(value),
+  }
 }
 function allowInstantContext(value: LoadedChatJob['command']): boolean { return value.outputKind === 'text' && value.searchMode === 'off' && !value.attachments?.length }
+
+function normalizeChatLoadError(error: unknown): JobRuntimeError {
+  if (error instanceof JobRuntimeError) return error
+  if (error instanceof AuthoritativeContextError) {
+    const code = error.code === 'CONTEXT_UNAVAILABLE' ? 'JOB_DEPENDENCY_UNAVAILABLE' : 'JOB_INVALID_INPUT'
+    return new JobRuntimeError(code, error.message, { cause: error })
+  }
+  if (error instanceof ChatModelSelectionError) {
+    return new JobRuntimeError('JOB_INVALID_INPUT', error.message, { cause: error, retryable: false })
+  }
+  return new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'Chat policy is unavailable', { cause: error })
+}
+
+function assertSelectedChatPolicy(
+  commandValue: LoadedChatJob['command'],
+  selection: ChatModelSelection,
+  billingClass: unknown,
+): void {
+  const selectedKind = selection.outputKind === 'chat' ? 'text' : selection.outputKind
+  if (selectedKind !== commandValue.outputKind || selection.accessClass !== commandValue.accessClass) {
+    throw new JobRuntimeError('JOB_CONFLICT', 'Model policy changed after enqueue')
+  }
+  if ((billingClass === 'customer') !== selection.customEndpoint
+    || (billingClass !== 'customer' && billingClass !== 'platform')) {
+    throw new JobRuntimeError('JOB_CONFLICT', 'Billing authority changed after enqueue')
+  }
+}
 
 export async function loadChatJob(job: JobRecord): Promise<LoadedChatJob> {
   const startedAt = Date.now()
@@ -103,17 +188,10 @@ export async function loadChatJob(job: JobRecord): Promise<LoadedChatJob> {
         allowPremium: true,
       }),
     ])
-    const selectedKind = selection.outputKind === 'chat' ? 'text' : selection.outputKind
-    if (selectedKind !== parsedCommand.outputKind || selection.accessClass !== parsedCommand.accessClass) throw new JobRuntimeError('JOB_CONFLICT', 'Model policy changed after enqueue')
-    if ((billingClass === 'customer') !== selection.customEndpoint || (billingClass !== 'customer' && billingClass !== 'platform')) throw new JobRuntimeError('JOB_CONFLICT', 'Billing authority changed after enqueue')
+    assertSelectedChatPolicy(parsedCommand, selection, billingClass)
     log.info('jobs', 'Chat job preparation timing', { jobId: job.id, payloadMode: loadedCommand.mode, payloadAndPromptMs: payloadReadyAt - startedAt, contextAndPolicyMs: Date.now() - payloadReadyAt, totalMs: Date.now() - startedAt })
     return { client, userId, conversationId, userMessageId, assistantMessageId, command: { ...parsedCommand, usingBalance: admission?.funding === 'balance' }, context: { ...authoritativeContext, customSystemPrompt }, selection }
   } catch (error) {
-    if (error instanceof JobRuntimeError) throw error
-    if (error instanceof AuthoritativeContextError) throw new JobRuntimeError(error.code === 'CONTEXT_UNAVAILABLE' ? 'JOB_DEPENDENCY_UNAVAILABLE' : 'JOB_INVALID_INPUT', error.message, { cause: error })
-    if (error instanceof ChatModelSelectionError) {
-      throw new JobRuntimeError('JOB_INVALID_INPUT', error.message, { cause: error, retryable: false })
-    }
-    throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'Chat policy is unavailable', { cause: error })
+    throw normalizeChatLoadError(error)
   }
 }

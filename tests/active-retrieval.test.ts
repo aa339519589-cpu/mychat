@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import type { SupabaseServer } from "../lib/api/guard"
-import { ensureConversationIndexed, retrieveHistoryContext } from "../lib/llm/active-retrieval"
+import { ensureConversationIndexed, retrieveHistoryContext, retrieveHistoryWithSources } from "../lib/llm/active-retrieval"
 
 const now = "2026-07-13T00:00:00.000Z"
 const userId = "20000000-0000-4000-8000-000000000001"
@@ -106,6 +106,16 @@ test("active retrieval indexes new chunks and injects only user-anchored scoped 
   const balanced = await retrieveHistoryContext({ supabase: client, userId, conversationId: "current-conversation", query: "咖啡 后端架构", mode: "balanced" })
   assert.match(balanced, /History/)
   assert.match(balanced, /用户锚点/)
+  const withSources = await retrieveHistoryWithSources({
+    supabase: client,
+    userId,
+    conversationId: "current-conversation",
+    query: "咖啡 后端架构",
+    mode: "balanced",
+  })
+  assert.match(withSources.renderedContext, /History/)
+  assert.ok(withSources.sources.some(source => source.conversationId === "history-conversation"))
+  assert.ok(withSources.sources.every(source => source.messageStartId && source.snippet.length > 0))
 })
 
 test("active retrieval treats missing identity and unavailable storage as empty context", async () => {

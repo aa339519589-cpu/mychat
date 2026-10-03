@@ -4,18 +4,19 @@ import type { Memory } from '@/lib/memory-data'
 import type { ProjectContext } from '@/lib/project-data'
 import type { RawMsg } from '@/lib/llm/types'
 import { isRecord } from '@/lib/unknown-value'
+import {
+  CONTEXT_PAGE_SIZE, MAX_AUTHORITATIVE_CONTEXT_BYTES, MAX_MEMORIES, AuthoritativeContextError,
+  jsonBytes, loadBoundedCollection, loadGlobalMemories, loadMemoryPreferences,
+  type MemoryPreferences,
+} from './authoritative-context-memory'
+export { MAX_MEMORIES, AuthoritativeContextError } from './authoritative-context-memory'
 
 export const MAX_CONTEXT_MESSAGES = 48
 export const MAX_MESSAGE_HISTORY_BYTES = 128 * 1024
 export const MAX_SINGLE_CONTEXT_MESSAGE_TOKENS = 30_000
-const MAX_AUTHORITATIVE_CONTEXT_BYTES = 256 * 1024
-export const MAX_MEMORIES = 200
 export const MAX_PROJECT_FILES = 8
 const MAX_PROJECT_INSTRUCTION_CHARS = 12_000
 const MAX_PROJECT_FILE_CHARS = 16_000
-// Keep bounded pagination, but avoid serializing a typical turn behind many
-// tiny database round trips. Byte and row limits below remain authoritative.
-const CONTEXT_PAGE_SIZE = 32
 
 export type MessageRow = {
   id: string
@@ -40,28 +41,11 @@ type AuthoritativeChatContext = {
   messages: RawMsg[]
   memories: Memory[]
   memoryEnabled: boolean
+  sensitiveMemoryEnabled: boolean
   project?: ProjectContext
 }
 
-export class AuthoritativeContextError extends Error {
-  constructor(
-    public readonly code:
-      | 'CONVERSATION_NOT_FOUND'
-      | 'USER_MESSAGE_NOT_FOUND'
-      | 'CONTEXT_TOO_LARGE'
-      | 'CONTEXT_UNAVAILABLE',
-    message: string,
-  ) {
-    super(message)
-    this.name = 'AuthoritativeContextError'
-  }
-}
-
 const encoder = new TextEncoder()
-
-function jsonBytes(value: unknown): number {
-  return encoder.encode(JSON.stringify(value)).byteLength
-}
 
 function estimateContextMessageTokens(message: RawMsg): number {
   const serialized = JSON.stringify(message.content ?? '') ?? ''
@@ -113,38 +97,6 @@ function assertContextBudget(value: unknown): void {
   }
 }
 
-type PageResult = { data: unknown; error: unknown }
-
-async function loadBoundedCollection<T>(input: {
-  maxRows: number
-  fetchPage: (from: number, to: number) => PromiseLike<PageResult>
-  map: (value: unknown) => T
-  unavailableMessage: string
-}): Promise<T[]> {
-  const values: T[] = []
-  let bytes = 2
-  for (let offset = 0; offset < input.maxRows; offset += CONTEXT_PAGE_SIZE) {
-    const pageSize = Math.min(CONTEXT_PAGE_SIZE, input.maxRows - offset)
-    const result = await input.fetchPage(offset, offset + pageSize - 1)
-    if (result.error || !Array.isArray(result.data)) {
-      throw new AuthoritativeContextError('CONTEXT_UNAVAILABLE', input.unavailableMessage)
-    }
-    for (const row of result.data) {
-      const mapped = input.map(row)
-      bytes += jsonBytes(mapped) + 1
-      if (bytes > MAX_AUTHORITATIVE_CONTEXT_BYTES) {
-        throw new AuthoritativeContextError(
-          'CONTEXT_TOO_LARGE',
-          '权威对话、项目或记忆上下文超过处理上限',
-        )
-      }
-      values.push(mapped)
-    }
-    if (result.data.length < pageSize) break
-  }
-  return values
-}
-
 function rawMessage(row: MessageRow): RawMsg {
   const authoritativeRefs = Array.isArray(row.media_refs)
     ? row.media_refs.filter((value): value is string => typeof value === 'string')
@@ -175,9 +127,13 @@ async function loadProjectContext(
   client: SupabaseClient,
   userId: string,
   projectId: string,
-): Promise<ProjectContext> {
-  const projectResult = await client.from('projects').select('id, instructions').eq('id', projectId)
-    .eq('user_id', userId).maybeSingle()
+  conversationMemoryEnabled: boolean,
+): Promise<{ project: ProjectContext; preferences: MemoryPreferences }> {
+  const [projectResult, preferences] = await Promise.all([
+    client.from('projects').select('id, instructions').eq('id', projectId)
+      .eq('user_id', userId).maybeSingle(),
+    loadMemoryPreferences(client, userId),
+  ])
   if (projectResult.error || !projectResult.data) {
     throw new AuthoritativeContextError('CONTEXT_UNAVAILABLE', '项目上下文暂时不可用')
   }
@@ -204,54 +160,28 @@ async function loadProjectContext(
       },
       unavailableMessage: '项目文件上下文暂时不可用',
     }),
-    loadBoundedCollection({
+    conversationMemoryEnabled && preferences.enabled ? loadBoundedCollection({
       maxRows: MAX_MEMORIES,
-      fetchPage: (from, to) => client.from('project_memories').select('id, content')
-        .eq('project_id', projectId).eq('user_id', userId).order('created_at').range(from, to),
+      fetchPage: (from, to) => {
+        let query = client.from('project_memories').select('id, content, topic, sensitive, updated_at')
+          .eq('project_id', projectId).eq('user_id', userId)
+        if (!preferences.sensitiveEnabled) query = query.eq('sensitive', false)
+        return query.order('updated_at', { ascending: false }).range(from, to)
+      },
       map: value => {
         const memory = isRecord(value) ? value : {}
         return {
           id: String(memory.id),
           content: typeof memory.content === 'string' ? memory.content : '',
+          topic: typeof memory.topic === 'string' ? memory.topic : 'General',
         }
       },
       unavailableMessage: '项目记忆上下文暂时不可用',
-    }),
+    }) : Promise.resolve([]),
   ])
-  return { ...base, files, projectMemories }
-}
-
-async function loadGlobalMemories(
-  client: SupabaseClient,
-  userId: string,
-): Promise<{ enabled: boolean; memories: Memory[] }> {
-  const profileResult = await client.from('profiles').select('memory_enabled')
-    .eq('user_id', userId).maybeSingle()
-  if (profileResult.error) {
-    throw new AuthoritativeContextError('CONTEXT_UNAVAILABLE', '记忆上下文暂时不可用')
-  }
-  const enabled = profileResult.data?.memory_enabled !== false
-  if (!enabled) return { enabled, memories: [] }
-  const memories = await loadBoundedCollection<Memory>({
-    maxRows: MAX_MEMORIES,
-    fetchPage: (from, to) => client.from('memories')
-      .select('id, content, created_at, updated_at').eq('user_id', userId)
-      .order('created_at').range(from, to),
-    map: value => {
-      const memory = isRecord(value) ? value : {}
-      return {
-        id: String(memory.id),
-        content: typeof memory.content === 'string' ? memory.content : '',
-        timestamp: typeof memory.updated_at === 'string'
-          ? memory.updated_at
-          : typeof memory.created_at === 'string' ? memory.created_at : undefined,
-      }
-    },
-    unavailableMessage: '记忆上下文暂时不可用',
-  })
   return {
-    enabled,
-    memories,
+    project: { ...base, files, projectMemories },
+    preferences: { ...preferences, enabled: preferences.enabled && conversationMemoryEnabled },
   }
 }
 
@@ -324,6 +254,7 @@ function instantContext(
     messages: [currentUserMessage],
     memories: [],
     memoryEnabled: false,
+    sensitiveMemoryEnabled: false,
   }
 }
 
@@ -331,6 +262,7 @@ async function fullContext(
   input: LoadContextInput,
   projectId: string | null,
   userMessageRow: MessageRow,
+  conversationMemoryEnabled: boolean,
 ): Promise<AuthoritativeChatContext> {
   const userSequence = Number(userMessageRow.seq)
   const historyInput = {
@@ -343,22 +275,29 @@ async function fullContext(
   // Message history and memories/project are independent — load in parallel to
   // shave a full Supabase RTT off every non-instant turn before the LLM starts.
   if (projectId) {
-    const [messages, project] = await Promise.all([
+    const [messages, loadedProject] = await Promise.all([
       loadMessageHistory(historyInput),
-      loadProjectContext(input.client, input.userId, projectId),
+      loadProjectContext(input.client, input.userId, projectId, conversationMemoryEnabled),
     ])
-    assertContextBudget({ messages, project })
-    return { messages, memories: [], memoryEnabled: false, project }
+    assertContextBudget({ messages, project: loadedProject.project })
+    return {
+      messages,
+      memories: [],
+      memoryEnabled: loadedProject.preferences.enabled,
+      sensitiveMemoryEnabled: loadedProject.preferences.sensitiveEnabled,
+      project: loadedProject.project,
+    }
   }
   const [messages, globalMemory] = await Promise.all([
     loadMessageHistory(historyInput),
-    loadGlobalMemories(input.client, input.userId),
+    loadGlobalMemories(input.client, input.userId, conversationMemoryEnabled),
   ])
   assertContextBudget({ messages, memories: globalMemory.memories })
   return {
     messages,
     memories: globalMemory.memories,
     memoryEnabled: globalMemory.enabled,
+    sensitiveMemoryEnabled: globalMemory.sensitiveEnabled,
   }
 }
 
@@ -376,7 +315,7 @@ export async function loadAuthoritativeChatContext(
   input: LoadContextInput,
 ): Promise<AuthoritativeChatContext> {
   const [conversationResult, userMessageResult] = await Promise.all([
-    input.client.from('conversations').select('id, project_id').eq('id', input.conversationId)
+    input.client.from('conversations').select('id, project_id, memory_enabled').eq('id', input.conversationId)
       .eq('user_id', input.userId).maybeSingle(),
     input.client.from('messages').select(userMessageColumns(input.allowInstant))
       .eq('id', input.userMessageId).eq('conversation_id', input.conversationId)
@@ -394,7 +333,8 @@ export async function loadAuthoritativeChatContext(
   const projectId = typeof conversationResult.data.project_id === 'string'
     ? conversationResult.data.project_id
     : null
+  const conversationMemoryEnabled = conversationResult.data.memory_enabled !== false
   const userMessageRow = userMessageResult.data as unknown as MessageRow
   const quick = input.allowInstant ? instantContext(input, projectId, rawMessage(userMessageRow)) : null
-  return quick ?? fullContext(input, projectId, userMessageRow)
+  return quick ?? fullContext(input, projectId, userMessageRow, conversationMemoryEnabled)
 }

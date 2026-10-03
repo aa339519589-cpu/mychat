@@ -211,8 +211,11 @@ function directTurnClient(
   } as unknown as SupabaseClient
 }
 
-async function runDirectTurn(createConversation: boolean) {
+async function runDirectTurn(createConversation: boolean, memoryEnabled?: boolean) {
   const input = directTurnInput(createConversation)
+  if (memoryEnabled !== undefined && input.body.turn?.schemaVersion === 1) {
+    input.body.turn.memoryEnabled = memoryEnabled
+  }
   const calls: Array<{ name: string; args: Record<string, unknown> }> = []
   const result = await enqueueChatJob(input, {
     persistPayload: async () => { throw new Error('inline chat must not upload a payload') },
@@ -227,8 +230,9 @@ test('new native turns use one atomic direct durable admission RPC', async () =>
   assert.equal(result.created, true)
   assert.equal(result.job.id, generationId)
   assert.equal(calls.length, 1)
-  assert.equal(calls[0]?.name, 'admit_chat_turn_v2')
+  assert.equal(calls[0]?.name, 'admit_chat_turn_v3')
   assert.equal(calls[0]?.args.input_create_conversation, true)
+  assert.equal(calls[0]?.args.input_memory_enabled, true)
   assert.equal(calls[0]?.args.input_user_content, 'first native turn')
   assert.equal(typeof calls[0]?.args.input_payload, 'object')
 })
@@ -238,9 +242,39 @@ test('existing native conversations use the same atomic admission RPC', async ()
   assert.equal(result.created, true)
   assert.equal(result.job.id, generationId)
   assert.equal(calls.length, 1)
-  assert.equal(calls[0]?.name, 'admit_chat_turn_v2')
+  assert.equal(calls[0]?.name, 'admit_chat_turn_v3')
   assert.equal(calls[0]?.args.input_create_conversation, false)
+  assert.equal(calls[0]?.args.input_memory_enabled, true)
   assert.equal(calls[0]?.args.input_user_content, 'next native turn')
+})
+
+test('new conversation memory opt-out is included in idempotent job input and admission', async () => {
+  const { result, calls } = await runDirectTurn(true, false)
+  assert.equal(result.created, true)
+  assert.equal(calls[0]?.name, 'admit_chat_turn_v3')
+  assert.equal(calls[0]?.args.input_memory_enabled, false)
+  assert.equal((calls[0]?.args.input_payload as { command?: { memoryEnabled?: boolean } })
+    .command?.memoryEnabled, false)
+})
+
+test('per-chat connector selection is preserved in the durable generation command', async () => {
+  const input = directTurnInput(true)
+  const connectorIds = [
+    '55000000-0000-4000-8000-000000000001',
+    '55000000-0000-4000-8000-000000000002',
+  ]
+  input.body.connectorIds = connectorIds
+  input.body.connectorAccessMode = 'on_demand'
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = []
+  const result = await enqueueChatJob(input, {
+    persistPayload: async () => { throw new Error('inline chat must not upload a payload') },
+    removePayload: async () => undefined,
+    createAdminClient: () => directTurnClient(input, calls),
+  })
+  const payload = calls[0]?.args.input_payload as { command?: { connectorIds?: string[]; connectorAccessMode?: string } }
+  assert.equal(result.created, true)
+  assert.deepEqual(payload.command?.connectorIds, connectorIds)
+  assert.equal(payload.command?.connectorAccessMode, 'on_demand')
 })
 
 test('native turn exposes the exact PostgreSQL failure', async () => {

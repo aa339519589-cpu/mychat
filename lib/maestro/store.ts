@@ -3,18 +3,16 @@ import type { SupabaseClient } from "@/lib/supabase/types"
 import {
   MAESTRO_BRANCH,
   MAESTRO_META_KIND,
-  maestroMeta,
   normalizeHardRules,
+  maestroMeta,
   publicMaestroTask,
-} from "./store-model"
-import type {
-  AgentTaskRow,
-  MaestroAction,
-  MaestroContract,
-  MaestroMeta,
-  MaestroPhase,
-  MaestroPublicTask,
-  MaestroReportState,
+  type AgentTaskRow,
+  type MaestroContract,
+  type MaestroMeta,
+  type MaestroAction,
+  type MaestroPhase,
+  type MaestroPublicTask,
+  type MaestroReportState,
 } from "./store-model"
 
 export * from "./store-model"
@@ -121,63 +119,6 @@ export async function cancelMaestroTask(client: SupabaseClient, userId: string, 
   return true
 }
 
-function verifiedMaestroCompletion(state: MaestroReportState): boolean {
-  return state.action === "finish"
-    && state.phase === "done"
-    && state.completionVerified === true
-    && state.criterionSatisfied === true
-    && state.reviewEvidence.length > 0
-    && Boolean(state.finalAnswer.trim())
-}
-
-function reportedMeta(meta: MaestroMeta, state: MaestroReportState, verified: boolean, now: string): MaestroMeta {
-  const safePhase: MaestroPhase = verified ? "done" : state.phase === "done" ? "work" : state.phase
-  const safeAction: MaestroAction = verified ? "finish" : state.action === "finish" ? "continue" : state.action
-  return {
-    ...meta,
-    round: state.round,
-    phase: safePhase,
-    checkpoint: state.checkpoint,
-    unresolved: state.unresolved,
-    nextActions: state.nextActions,
-    evidence: state.evidence,
-    candidateAnswer: state.candidateAnswer,
-    finalAnswer: verified ? state.finalAnswer : "",
-    criterionSatisfied: verified,
-    reviewEvidence: state.reviewEvidence,
-    completionVerified: verified,
-    lastAction: safeAction,
-    lastReportedAt: now,
-    currentInput: state.currentInput,
-    currentRoundStartedAt: state.currentRoundStartedAt,
-    totalElapsedMs: state.totalElapsedMs,
-    lastOutput: state.lastOutput,
-    history: state.history.slice(-100),
-  }
-}
-
-async function persistMaestroReport(
-  client: SupabaseClient,
-  userId: string,
-  row: AgentTaskRow,
-  meta: MaestroMeta,
-  verified: boolean,
-  now: string,
-): Promise<MaestroPublicTask | null> {
-  const { data, error } = await client.from("agent_tasks").update({
-    status: verified ? "completed" : "running",
-    started_at: row.started_at ?? now,
-    finished_at: verified ? now : null,
-    updated_at: now,
-    meta: toJson(meta),
-  }).eq("id", row.id).eq("user_id", userId).eq("branch", MAESTRO_BRANCH).eq("updated_at", row.updated_at).select(TASK_SELECT).maybeSingle()
-  if (error) throw new Error(error.message)
-  if (!data) return null
-  const result = publicMaestroTask(data as AgentTaskRow)
-  if (!result) throw new Error("Updated Maestro task is invalid")
-  return result
-}
-
 export async function applyMaestroReport(client: SupabaseClient, userId: string, jobId: string, state: MaestroReportState): Promise<MaestroPublicTask> {
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const row = await getMaestroTask(client, userId, jobId)
@@ -187,11 +128,51 @@ export async function applyMaestroReport(client: SupabaseClient, userId: string,
     if (!meta || !existing) throw new Error("Maestro task metadata is invalid")
     if (row.status === "cancelled" || row.status === "completed" || state.round < meta.round) return existing
 
-    const verified = verifiedMaestroCompletion(state)
+    const verifiedCompletion = state.action === "finish"
+      && state.phase === "done"
+      && state.completionVerified === true
+      && state.criterionSatisfied === true
+      && state.reviewEvidence.length > 0
+      && Boolean(state.finalAnswer.trim())
+
+    const safePhase: MaestroPhase = verifiedCompletion ? "done" : state.phase === "done" ? "work" : state.phase
+    const safeAction: MaestroAction = verifiedCompletion ? "finish" : state.action === "finish" ? "continue" : state.action
     const now = new Date().toISOString()
-    const nextMeta = reportedMeta(meta, state, verified, now)
-    const result = await persistMaestroReport(client, userId, row, nextMeta, verified, now)
-    if (result) return result
+    const nextMeta: MaestroMeta = {
+      ...meta,
+      round: state.round,
+      phase: safePhase,
+      checkpoint: state.checkpoint,
+      unresolved: state.unresolved,
+      nextActions: state.nextActions,
+      evidence: state.evidence,
+      candidateAnswer: state.candidateAnswer,
+      finalAnswer: verifiedCompletion ? state.finalAnswer : "",
+      criterionSatisfied: verifiedCompletion,
+      reviewEvidence: verifiedCompletion ? state.reviewEvidence : state.reviewEvidence,
+      completionVerified: verifiedCompletion,
+      lastAction: safeAction,
+      lastReportedAt: now,
+      currentInput: state.currentInput,
+      currentRoundStartedAt: state.currentRoundStartedAt,
+      totalElapsedMs: state.totalElapsedMs,
+      lastOutput: state.lastOutput,
+      history: state.history.slice(-100),
+    }
+    const patch = {
+      status: verifiedCompletion ? "completed" : "running",
+      started_at: row.started_at ?? now,
+      finished_at: verifiedCompletion ? now : null,
+      updated_at: now,
+      meta: toJson(nextMeta),
+    }
+    const { data, error } = await client.from("agent_tasks").update(patch).eq("id", row.id).eq("user_id", userId).eq("branch", MAESTRO_BRANCH).eq("updated_at", row.updated_at).select(TASK_SELECT).maybeSingle()
+    if (error) throw new Error(error.message)
+    if (data) {
+      const result = publicMaestroTask(data as AgentTaskRow)
+      if (!result) throw new Error("Updated Maestro task is invalid")
+      return result
+    }
   }
   throw new Error("Maestro task changed concurrently; retry the report")
 }

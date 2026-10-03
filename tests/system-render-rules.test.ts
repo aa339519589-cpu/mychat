@@ -33,12 +33,12 @@ test('web search prompt follows searchMode', () => {
     memoryEnabled: false,
   })
   assert.ok(enabled.includes('【联网搜索规则】'))
-  assert.ok(enabled.includes('当前用户已经开启联网。'))
+  assert.ok(enabled.includes('联网工具已启用'))
   assert.ok(enabled.includes('2026-08-02 北京时间'))
 
   const disabled = buildSystem([], { searchMode: 'off', memoryEnabled: false })
   assert.ok(!disabled.includes('【联网搜索规则】'))
-  assert.ok(!disabled.includes('当前用户已经开启联网。'))
+  assert.ok(!disabled.includes('联网工具已启用'))
   assert.ok(!disabled.includes('联网搜索'))
 })
 
@@ -67,6 +67,9 @@ test('memory prompt and stored memories follow memoryEnabled', () => {
   const enabled = buildSystem(memories, { memoryEnabled: true })
   assert.ok(enabled.includes('【Memory 规则】'))
   assert.ok(enabled.includes('当前用户已经开启 Memory：长期记忆。'))
+  assert.ok(enabled.includes('本轮必须调用对应的记忆工具'))
+  assert.ok(enabled.includes('主动调用对应工具保存'))
+  assert.ok(enabled.includes('不要假装保存成功'))
   assert.ok(enabled.includes('全局记忆工具'))
   assert.ok(enabled.includes('<memory id="memory-1"'))
   assert.ok(enabled.includes('长期偏好'))

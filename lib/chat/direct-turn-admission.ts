@@ -85,7 +85,7 @@ export function directAdmissionError(error: unknown): JobRuntimeError {
     },
   )
   log.error('jobs', 'Direct chat admission RPC failed', {
-    rpc: 'admit_chat_turn_v2',
+    rpc: 'admit_chat_turn_v3',
     ...details,
   })
   return normalized
@@ -106,7 +106,7 @@ function admissionResult(
     throw new JobRuntimeError(
       'JOB_DEPENDENCY_UNAVAILABLE',
       'Direct chat admission response was malformed',
-      { retryable: false, details: { rpc: 'admit_chat_turn_v2', expectedJobId } },
+      { retryable: false, details: { rpc: 'admit_chat_turn_v3', expectedJobId } },
     )
   }
   return {
@@ -131,10 +131,11 @@ export async function enqueueDirectTurn(
     : input.requestedAt ?? new Date().toISOString()
   let response: { data: unknown; error: unknown }
   try {
-    response = await input.client.rpc('admit_chat_turn_v2', {
+    response = await input.client.rpc('admit_chat_turn_v3', {
       input_user_id: input.userId,
       input_conversation_id: body.conversationId,
       input_create_conversation: authority.createConversation,
+      input_memory_enabled: authority.memoryEnabled !== false,
       input_project_id: authority.projectId,
       input_conversation_title: authority.title,
       input_user_message_id: body.userMessageId,

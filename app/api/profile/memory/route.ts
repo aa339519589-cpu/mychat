@@ -36,12 +36,71 @@ export async function GET(request: Request): Promise<Response> {
 
   const { data, error } = await admin
     .from('profiles')
-    .select('memory_enabled')
+    .select('memory_enabled,sensitive_memory_enabled')
     .eq('user_id', auth.userId)
     .maybeSingle()
 
   if (error) return response({ error: '记忆设置读取失败' }, 500)
-  return response({ enabled: data?.memory_enabled !== false })
+  return response({
+    enabled: data?.memory_enabled !== false,
+    sensitiveEnabled: data?.sensitive_memory_enabled === true,
+  })
+}
+
+type MemoryPreferenceUpdate = { key: 'enabled' | 'sensitiveEnabled'; value: boolean }
+
+function parseMemoryPreferenceUpdate(value: unknown): MemoryPreferenceUpdate | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const entries = Object.entries(value)
+  if (entries.length !== 1) return null
+  const [key, preference] = entries[0] ?? []
+  if ((key !== 'enabled' && key !== 'sensitiveEnabled') || typeof preference !== 'boolean') return null
+  return { key, value: preference }
+}
+
+async function saveSensitiveMemoryPreference(
+  admin: NonNullable<ReturnType<typeof createAdminClient>>,
+  userId: string,
+  enabled: boolean,
+): Promise<Response> {
+  const { error } = await admin.rpc('set_user_sensitive_memory_enabled', {
+    input_user_id: userId,
+    input_enabled: enabled,
+  })
+  if (error) {
+    console.error('sensitive memory setting save failed', { code: error.code })
+    return response({ error: '敏感记忆设置保存失败' }, 500)
+  }
+  const { data, error: readError } = await admin.from('profiles')
+    .select('memory_enabled,sensitive_memory_enabled').eq('user_id', userId).single()
+  if (readError || data?.sensitive_memory_enabled !== enabled) {
+    console.error('sensitive memory setting readback failed', { code: readError?.code ?? 'readback-mismatch' })
+    return response({ error: '敏感记忆设置保存失败' }, 500)
+  }
+  return response({
+    enabled: data.memory_enabled !== false,
+    sensitiveEnabled: data.sensitive_memory_enabled,
+  })
+}
+
+async function saveMemoryPreference(
+  admin: NonNullable<ReturnType<typeof createAdminClient>>,
+  userId: string,
+  enabled: boolean,
+): Promise<Response> {
+  const { data, error } = await admin
+    .from('profiles')
+    .upsert({ user_id: userId, memory_enabled: enabled }, { onConflict: 'user_id' })
+    .select('memory_enabled,sensitive_memory_enabled')
+    .single()
+  if (error || data?.memory_enabled !== enabled) {
+    console.error('memory setting save failed', { code: error?.code ?? 'readback-mismatch' })
+    return response({ error: '记忆设置保存失败' }, 500)
+  }
+  return response({
+    enabled: data.memory_enabled,
+    sensitiveEnabled: data.sensitive_memory_enabled === true,
+  })
 }
 
 export async function PUT(request: Request): Promise<Response> {
@@ -60,22 +119,12 @@ export async function PUT(request: Request): Promise<Response> {
     return response({ error: '记忆设置格式无效' }, 400)
   }
 
-  const enabled = (body as { enabled?: unknown } | null)?.enabled
-  if (typeof enabled !== 'boolean') return response({ error: '记忆设置格式无效' }, 400)
+  const update = parseMemoryPreferenceUpdate(body)
+  if (!update) return response({ error: '记忆设置格式无效' }, 400)
 
   const admin = createAdminClient()
   if (!admin) return response({ error: '记忆设置服务暂时不可用' }, 503)
-
-  const { data, error } = await admin
-    .from('profiles')
-    .upsert({ user_id: auth.userId, memory_enabled: enabled }, { onConflict: 'user_id' })
-    .select('memory_enabled')
-    .single()
-
-  if (error || data?.memory_enabled !== enabled) {
-    console.error('memory setting save failed', { code: error?.code ?? 'readback-mismatch' })
-    return response({ error: '记忆设置保存失败' }, 500)
-  }
-
-  return response({ enabled })
+  return update.key === 'sensitiveEnabled'
+    ? saveSensitiveMemoryPreference(admin, auth.userId, update.value)
+    : saveMemoryPreference(admin, auth.userId, update.value)
 }

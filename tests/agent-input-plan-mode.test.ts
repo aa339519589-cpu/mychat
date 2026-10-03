@@ -102,6 +102,9 @@ test('provisional Agent input re-resolves a persisted DeepSeek runtime model id'
       credentialCalls++
       throw new Error('credential must remain sealed during planning')
     },
+    loadSharedMemoryContext: async () => ({
+      memories: [], memoryEnabled: true, sensitiveMemoryEnabled: false,
+    }),
     prepareWorkspace: async () => {
       workspaceCalls++
       throw new Error('workspace must not be prepared during planning')
@@ -117,6 +120,9 @@ test('provisional Agent input re-resolves a persisted DeepSeek runtime model id'
   assert.equal(input.selection.platformTierLabel, 'DeepSeek V4 Flash')
   assert.equal(input.selection.capability.provider.id, 'deepseek')
   assert.deepEqual(input.memories, [])
+  assert.deepEqual(input.userMemories, [])
+  assert.equal(input.memoryEnabled, true)
+  assert.equal(input.sensitiveMemoryEnabled, false)
   assert.deepEqual(input.messages, [{ role: 'user', content: 'build it' }])
   assert.equal(credentialCalls, 0)
   assert.equal(workspaceCalls, 0)
