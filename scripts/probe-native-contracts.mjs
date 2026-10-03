@@ -12,12 +12,12 @@ const timedFetch = (url, options = {}) => fetch(url, { ...options, signal: Abort
 function ensure(value, message) { if (!value) throw new Error(message) }
 async function json(response) {
   const body = await response.json().catch(() => null)
-  ensure(response.ok, `HTTP ${response.status}`)
+  ensure(response.ok, `HTTP ${response.status}: ${typeof body?.error === 'string' ? body.error.slice(0,300) : body?.error?.code ?? body?.code ?? 'request failed'}`)
   return body
 }
 async function check(name, fn) {
-  try { const details = await fn(); report.checks.push({ name, passed: true, ...details }) }
-  catch (error) { report.checks.push({ name, passed: false, error: error.message }) }
+  try { const details = await fn(); report.checks.push({ name, passed: true, ...details }); console.log(`CHECK ${name}: PASS`) }
+  catch (error) { report.checks.push({ name, passed: false, error: error.message }); console.log(`CHECK ${name}: FAIL ${error.message}`) }
 }
 async function renderEnv(name) {
   const result = await json(await timedFetch(`https://api.render.com/v1/services/${process.env.RENDER_SERVICE_ID}/env-vars/${name}`, {
@@ -144,6 +144,17 @@ try {
   const models=await json(await api(a,'/api/models'))
   const model=models.models.find(x=>x.access==='quota' && x.tools && x.outputKind==='chat')
   ensure(model,'No configured base tool-capable model')
+  report.availableBaseModels=models.models.filter(x=>x.access==='quota').map(x=>x.id)
+  await check('synthetic-provider-diagnostic',async()=>{
+    const key=await renderEnv('OPENROUTER_API_KEY')
+    const results=[]
+    for(const cap of [64,40000]) {
+      const response=await timedFetch('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers:{Authorization:`Bearer ${key}`,'Content-Type':'application/json'},body:JSON.stringify({model:model.id,messages:[{role:'user',content:'Reply only hello.'}],max_tokens:cap})})
+      const body=await response.json().catch(()=>null)
+      results.push({maxTokens:cap,status:response.status,error:typeof body?.error?.message==='string'?body.error.message.replaceAll(key,'[redacted]').slice(0,500):null})
+    }
+    return {results}
+  })
   report.model=model.id
   async function chat(user,prompt,options={}) {
     const conversationId=randomUUID(), generationId=randomUUID(), userMessageId=randomUUID(), assistantMessageId=randomUUID()
@@ -161,10 +172,11 @@ try {
     let job
     for(let i=0;i<70;i++) {
       job=(await json(await api(user,`/api/v1/jobs/${generationId}`))).job
-      if(['succeeded','failed','cancelled','dead_letter'].includes(job.status))break
+      if(['completed','failed','cancelled'].includes(job.status))break
       await new Promise(resolve=>setTimeout(resolve,2000))
     }
-    ensure(job?.status==='succeeded',`Model job ${job?.status}/${job?.errorCode}`)
+    if(job?.status!=='completed') report.failedJobIds=(report.failedJobIds??[]).concat(generationId)
+    ensure(job?.status==='completed',`Model job ${job?.status}/${job?.errorCode}`)
     const messages=await rest(`messages?id=eq.${assistantMessageId}&select=content`,'GET')
     const events=await rest(`job_events?job_id=eq.${generationId}&select=kind,payload&order=seq.asc`,'GET')
     return {text:messages[0]?.content ?? '',events,conversationId,generationId}
@@ -229,6 +241,11 @@ try {
   for (const id of users) {
     await check('disposable-account-cleanup', async () => {
       const response = await timedFetch(`${sb}/auth/v1/admin/users/${id}`, { method: 'DELETE', headers: adminHeaders() })
+      if(!response.ok && response.status===500) {
+        const soft=await timedFetch(`${sb}/auth/v1/admin/users/${id}`,{method:'DELETE',headers:adminHeaders(),body:JSON.stringify({should_soft_delete:true})})
+        ensure(soft.ok,`Cleanup soft-delete HTTP ${soft.status}`)
+        return {softDeleted:true,billingEvidenceRetained:true}
+      }
       ensure(response.ok, `Cleanup HTTP ${response.status}`)
     })
   }
