@@ -1,14 +1,15 @@
-import { randomUUID, randomBytes } from 'node:crypto'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { randomUUID, randomBytes, createCipheriv, publicEncrypt, constants } from 'node:crypto'
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 
 const origin = 'https://mychat-nm6x.onrender.com'
-const report = { observedAt: new Date().toISOString(), phase: 'after-release', checks: [] }
+const report = { observedAt: new Date().toISOString(), phase: 'second-release', checks: [] }
 const output = 'audit-output'
 mkdirSync(output, { recursive: true })
 const users = []
+let nativeAcceptanceUserId
 let sb, anon, service
-const timedFetch = (url, options = {}) => fetch(url, { ...options, signal: AbortSignal.timeout(90_000) })
+const timedFetch = (url, options = {}) => fetch(url, { ...options, signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(90_000)]) : AbortSignal.timeout(90_000) })
 function ensure(value, message) { if (!value) throw new Error(message) }
 async function json(response) {
   const body = await response.json().catch(() => null)
@@ -38,7 +39,7 @@ async function account() {
     method: 'POST', headers: { apikey: anon, 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }),
   }))
   ensure(signed.access_token, 'Disposable authentication missing')
-  return { id: created.id, token: signed.access_token, refreshToken: signed.refresh_token }
+  return { id: created.id, token: signed.access_token, refreshToken: signed.refresh_token, expiresAt: signed.expires_at, email }
 }
 async function api(user, path, method = 'GET', body) {
   return timedFetch(`${origin}${path}`, { method,
@@ -51,21 +52,23 @@ async function rest(table, method, body) {
 }
 try {
   await check('production-readiness', async () => {
-    for (let attempt = 0; attempt < 12; attempt++) {
+    for (let attempt = 0; attempt < 120; attempt++) {
       const response = await timedFetch(`${origin}/api/ready`)
       report.readiness = await response.json()
-      if (response.ok && report.readiness.revision === '1cdd39f24e8e') return { warmupAttempts: attempt + 1 }
+      if (response.ok && report.readiness.revision === '8a073f5600bf') return { warmupAttempts: attempt + 1 }
       await new Promise(resolve => setTimeout(resolve, 5000))
     }
     ensure(false, 'Expected production revision is not ready')
   })
   ;[sb, anon, service] = await Promise.all(['NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY'].map(renderEnv))
-  await check('production-schema-v10-and-v5-rollback', async () => {
-    for (const [version,digest,count] of [[10,'b8c2500aee3ef8059d6119387b9e08106175f407488a003ec982103964739a35',61],[5,'69e4973cfac2b9532f27b784257df991e09796c1bdf8a6872297806de0db4d74',51]]) {
+  await check('production-schema-v11-and-v10-v5-rollback', async () => {
+    for (const [version,digest,count] of [[11,'dd6230a4f2aa3533f4bfac894ff38a10432c91003353535bc48eac7a11ca562d',63],[10,'b8c2500aee3ef8059d6119387b9e08106175f407488a003ec982103964739a35',61],[5,'69e4973cfac2b9532f27b784257df991e09796c1bdf8a6872297806de0db4d74',51]]) {
       const ok = await rest('rpc/verify_schema_contract_v3','POST',{input_contract_version:version,input_manifest_sha256:digest,input_migration_count:count})
       ensure(ok === true, `Contract v${version} did not verify`)
     }
   })
+  ensure(report.readiness?.revision === '8a073f5600bf', 'Stop acceptance until the intended release is ready')
+  await check('oauth-encryption-configured', async()=>{ ensure((await renderEnv('AGENT_CREDENTIAL_KEY')).length>=32,'OAuth credential encryption unavailable'); return {configured:true} })
   const a = await account(), b = await account()
   await check('authenticated-fish-audio', async () => {
     const began = Date.now()
@@ -145,21 +148,11 @@ try {
   const model=models.models.find(x=>x.access==='quota' && x.tools && x.outputKind==='chat')
   ensure(model,'No configured base tool-capable model')
   report.availableBaseModels=models.models.filter(x=>x.access==='quota').map(x=>x.id)
-  await check('synthetic-provider-diagnostic',async()=>{
-    const key=await renderEnv('OPENROUTER_API_KEY')
-    const results=[]
-    for(const cap of [64,40000]) {
-      const response=await timedFetch('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers:{Authorization:`Bearer ${key}`,'Content-Type':'application/json'},body:JSON.stringify({model:model.id,messages:[{role:'user',content:'Reply only hello.'}],max_tokens:cap})})
-      const body=await response.json().catch(()=>null)
-      results.push({maxTokens:cap,status:response.status,error:typeof body?.error?.message==='string'?body.error.message.replaceAll(key,'[redacted]').slice(0,500):null})
-    }
-    return {results}
-  })
   report.model=model.id
   async function chat(user,prompt,options={}) {
     const conversationId=randomUUID(), generationId=randomUUID(), userMessageId=randomUUID(), assistantMessageId=randomUUID()
     const request={modelId:model.id,messages:[{id:userMessageId,role:'user',content:prompt,ts:new Date().toISOString()}],
-      searchMode:'off',historyRetrieval:false,connectorIds:options.connectorIds ?? [],connectorAccessMode:'always_available',renderEnabled:false,
+      searchMode:'off',historyRetrieval:options.historyRetrieval===true,connectorIds:options.connectorIds ?? [],connectorAccessMode:'always_available',renderEnabled:false,
       conversationId,generationId,userMessageId,assistantMessageId,
       turn:{schemaVersion:1,createConversation:true,title:'隔离模型验收',projectId:options.projectId ?? null,memoryEnabled:options.memoryEnabled ?? true}}
     if (model.reasoningEfforts?.includes('none')) request.reasoningEffort='none'
@@ -181,11 +174,13 @@ try {
     const events=await rest(`job_events?job_id=eq.${generationId}&select=kind,payload&order=seq.asc`,'GET')
     return {text:messages[0]?.content ?? '',events,conversationId,generationId}
   }
+  let historySourceId
   const globalMarker=`枫叶${randomBytes(5).toString('hex')}`
   await check('model-reads-global-memory-and-active-delete-conflicts',async()=>{
     await json(await api(a,'/api/memories','POST',{content:`我的验收偏好图形是${globalMarker}。`,topic:'验收偏好'}))
     const result=await chat(a,'从已保存的记忆中找出我的验收偏好图形，原样回答名称。先列出三个验证步骤，然后回答。',{testActiveDelete:true})
     ensure(result.text.includes(globalMarker),'Model did not read the saved memory')
+    historySourceId=result.conversationId
     return {model:model.id,activeDeleteStatus:409,outputCharacters:result.text.length}
   })
   await check('model-writes-memory-through-tool',async()=>{
@@ -195,6 +190,14 @@ try {
     ensure(list.memories.some(x=>x.content.includes(marker)),'Model did not persist requested memory')
     ensure(result.events.some(x=>x.kind==='tool.memory' && x.payload?.memory?.ok),'No successful memory tool event')
     return {memoryToolEvent:true}
+  })
+  await check('actual-history-retrieval-with-owned-source',async()=>{
+    ensure(historySourceId,'Saved source conversation missing')
+    const result=await chat(a,'请实际使用历史检索工具搜索“验收偏好图形”，找出以前回复中的名称并给出会话来源。',{historyRetrieval:true,memoryEnabled:false})
+    const sources=result.events.filter(x=>x.kind==='tool.search' && x.payload?.search?.kind==='history')
+    ensure(result.text.includes(globalMarker),'History retrieval missed the saved answer')
+    ensure(sources.some(x=>x.payload.search.results.some(y=>y.conversation_id===historySourceId)),'No owned history source event')
+    return {historySourceVerified:true,toolCalls:sources.length}
   })
   await check('model-memory-account-and-chat-isolation',async()=>{
     const noMemory=await chat(a,'我的验收偏好图形是什么？仅依据你已有的上下文，不知道就说不知道。',{memoryEnabled:false})
@@ -224,29 +227,65 @@ try {
     await json(await api(a,`/api/connectors/${connector.id}`,'DELETE'))
     return {discoveredTools:connector.toolCount,completedCalls:calls.length}
   })
-  await check('private-chat-route-and-no-history',async()=>{
-    const privateID=randomUUID()
+  await check('private-chat-content-isolation-and-real-billing',async()=>{
+    const privateID=randomUUID(), marker=`临时${randomBytes(5).toString('hex')}`
     const response=await api(a,'/api/chat/private','POST',{modelId:model.id,conversationId:privateID,
-      messages:[{role:'user',content:'请简短回答：你好',ts:new Date().toISOString()}],searchMode:'off',historyRetrieval:false,renderEnabled:false})
+      messages:[{role:'user',content:`这是临时标记${marker}。请原样回答临时标记，并说明是否知道我的验收偏好图形；不知道就说不知道。`,ts:new Date().toISOString()}],searchMode:'off',historyRetrieval:false,renderEnabled:false})
     ensure(response.status===200,`Private chat HTTP ${response.status}`)
+    const jobID=response.headers.get('x-private-usage-job'); ensure(jobID,'Private accounting identity missing')
     const stream=await response.text()
-    ensure(stream.includes('text.delta'),'Private stream did not emit text')
-    const stored=await rest(`conversations?id=eq.${privateID}&select=id`,'GET')
-    ensure(stored.length===0,'Private conversation persisted to history')
+    const events=stream.split('\n').filter(x=>x.startsWith('data: ')).map(x=>JSON.parse(x.slice(6)))
+    const terminal=events.find(x=>x.kind==='job.terminal')
+    ensure(terminal?.payload?.status==='completed','Private generation did not complete')
+    const content=terminal.payload.result.content
+    ensure(content.includes(marker) && !content.includes(globalMarker),'Private output or saved-memory isolation failed')
+    const [conversations,messages,jobs,storedEvents,checkpoints,effects,ledger,reservations]=await Promise.all([
+      rest(`conversations?id=eq.${privateID}&select=id`,'GET'),rest(`messages?conversation_id=eq.${privateID}&select=id`,'GET'),
+      rest(`jobs?id=eq.${jobID}&select=type,status,subject,payload,progress,result,cancel_reason`,'GET'),
+      rest(`job_events?job_id=eq.${jobID}&select=kind,payload`,'GET'),rest(`job_checkpoints?job_id=eq.${jobID}&select=job_id`,'GET'),
+      rest(`job_tool_effects?job_id=eq.${jobID}&select=job_id`,'GET'),rest(`ledger_entries?job_id=eq.${jobID}&select=raw_tokens,weighted_tokens,metadata`,'GET'),
+      rest(`job_admission_reservations?job_id=eq.${jobID}&select=status,actual_tokens,sku`,'GET')])
+    ensure(conversations.length===0 && messages.length===0 && checkpoints.length===0 && effects.length===0,'Private content reached durable conversation/recovery tables')
+    ensure(jobs[0]?.type==='chat.private' && jobs[0].status==='completed','Private accounting job mismatch')
+    ensure(ledger.some(x=>x.raw_tokens>0 && x.metadata?.private===true),'Private work bypassed usage charging')
+    ensure(reservations[0]?.status==='settled' && reservations[0].actual_tokens>0 && reservations[0].sku==='chat.text','Private reservation did not settle')
+    const persisted=JSON.stringify({jobs,storedEvents,ledger,reservations})
+    ensure(!persisted.includes(marker) && !persisted.includes(content) && !persisted.includes(globalMarker),'Private plaintext reached metadata storage')
+    ensure(storedEvents.every(x=>['job.accepted','job.leased','job.terminal','job.cancel_requested'].includes(x.kind)),'Private stream deltas persisted')
+    return {contentTablesEmpty:true,usageCharged:true,metadataOnly:true,outputCharacters:content.length}
   })
+  await check('native-acceptance-encrypted-session',async()=>{
+    const native=await account()
+    nativeAcceptanceUserId=native.id
+    const key=randomBytes(32), iv=randomBytes(12)
+    const cipher=createCipheriv('aes-256-gcm',key,iv)
+    const packet=Buffer.from(JSON.stringify({userId:native.id,email:native.email,accessToken:native.token,refreshToken:native.refreshToken,expiresAt:native.expiresAt,modelId:model.id}))
+    const ciphertext=Buffer.concat([cipher.update(packet),cipher.final()])
+    const wrappedKey=publicEncrypt({key:readFileSync('scripts/native-audit-public.pem'),padding:constants.RSA_PKCS1_OAEP_PADDING,oaepHash:'sha256'},key)
+    writeFileSync(`${output}/native-session.encrypted.json`,JSON.stringify({version:1,wrappedKey:wrappedKey.toString('base64'),iv:iv.toString('base64'),tag:cipher.getAuthTag().toString('base64'),ciphertext:ciphertext.toString('base64')}))
+    report.nativeAcceptanceUserId=native.id
+    return {encrypted:true,cleanupDeferredUntilNativeAcceptance:true}
+  })
+
 
 } catch (error) {
   report.fatal = error.message
 } finally {
-  for (const id of users) {
+  for (const id of users.filter(value=>value!==nativeAcceptanceUserId)) {
     await check('disposable-account-cleanup', async () => {
+      const failedTables=[]
+      for(const table of ['memories','project_memories','mcp_connectors','conversations','projects']) {
+        try { await rest(`${table}?user_id=eq.${id}`,'DELETE') } catch { failedTables.push(table) }
+      }
       const response = await timedFetch(`${sb}/auth/v1/admin/users/${id}`, { method: 'DELETE', headers: adminHeaders() })
       if(!response.ok && response.status===500) {
         const soft=await timedFetch(`${sb}/auth/v1/admin/users/${id}`,{method:'DELETE',headers:adminHeaders(),body:JSON.stringify({should_soft_delete:true})})
         ensure(soft.ok,`Cleanup soft-delete HTTP ${soft.status}`)
+        ensure(failedTables.length===0,`Cleanup tables failed: ${failedTables.join(',')}`)
         return {softDeleted:true,billingEvidenceRetained:true}
       }
       ensure(response.ok, `Cleanup HTTP ${response.status}`)
+      ensure(failedTables.length===0,`Cleanup tables failed: ${failedTables.join(',')}`)
     })
   }
   writeFileSync(`${output}/report.json`, JSON.stringify(report, null, 2))
