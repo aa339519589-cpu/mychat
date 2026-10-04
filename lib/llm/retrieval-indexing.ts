@@ -8,6 +8,7 @@ const MAX_CHUNK_CHARS = 4200
 
 export type MessageRow = {
   id: string
+  seq?: number
   role: 'user' | 'assistant'
   content: string | null
   images?: unknown

@@ -2,12 +2,22 @@ import type { SupabaseServer } from '@/lib/api/guard'
 import { log } from '@/lib/logger'
 import type { TablesInsert } from '@/lib/supabase/types'
 import {
+  buildAnchoredHit,
+  fetchAllConversationMessages,
+  fetchConversationEdges,
+  fetchRowsAroundAnchor,
+  messagesForChunkHit,
+  MESSAGE_FIELDS,
+  type ConversationEdges,
+  type ConversationRow,
+  type RetrievalConfig,
+} from '@/lib/llm/active-retrieval-context'
+import {
   chunkMessages,
   embed,
   embeddingEnabled,
   estimateTokens,
   hash,
-  normalizeMessage,
   type MessageRow,
 } from '@/lib/llm/retrieval-indexing'
 import {
@@ -24,16 +34,9 @@ const INJECT_TOP_K = 8
 const INJECT_CHAR_BUDGET = 18_000
 const DEFAULT_SIMILARITY_THRESHOLD = 0.24
 const FORCE_SIMILARITY_THRESHOLD = 0.08
+const HASH_QUERY_BATCH_SIZE = 100
 
 export type HistoryRetrievalMode = 'light' | 'balanced' | 'deep'
-
-type RetrievalConfig = {
-  anchorLimit: number
-  before: number
-  after: number
-  semantic: boolean
-  keyword: boolean
-}
 
 const RETRIEVAL_CONFIG: Record<HistoryRetrievalMode, RetrievalConfig> = {
   light: { anchorLimit: 3, before: 2, after: 3, semantic: false, keyword: false },
@@ -42,47 +45,52 @@ const RETRIEVAL_CONFIG: Record<HistoryRetrievalMode, RetrievalConfig> = {
 }
 
 
-type ConversationRow = {
-  id: string
-  title: string | null
-  project_id: string | null
-  updated_at?: string | null
-}
-
 function inScope(hitProjectId: string | null | undefined, projectId: string | null | undefined): boolean {
   return projectId ? hitProjectId === projectId : !hitProjectId
 }
 
 async function scopedConversationIds(supabase: SupabaseServer, userId: string, projectId: string | null | undefined, currentConversationId: string | null, limit = 240): Promise<string[]> {
-  let req = supabase.from('conversations').select('id').eq('user_id', userId)
-  req = projectId ? req.eq('project_id', projectId) : req.is('project_id', null)
-  if (currentConversationId) req = req.neq('id', currentConversationId)
-  const { data, error } = await req.order('updated_at', { ascending: false }).limit(limit)
-  if (error || !data) return []
-  return (data as Array<{ id?: unknown }>).map(row => row.id).filter((id): id is string => typeof id === 'string')
+  const queryIds = async (ascending: boolean) => {
+    let req = supabase.from('conversations').select('id').eq('user_id', userId)
+    req = projectId ? req.eq('project_id', projectId) : req.is('project_id', null)
+    if (currentConversationId) req = req.neq('id', currentConversationId)
+    return req.order('updated_at', { ascending }).limit(Math.ceil(limit / 2))
+  }
+  const [recent, oldest] = await Promise.all([queryIds(false), queryIds(true)])
+  const ids = [
+    ...((recent.error ? [] : recent.data ?? []) as Array<{ id?: unknown }>),
+    ...((oldest.error ? [] : oldest.data ?? []) as Array<{ id?: unknown }>),
+  ].map(row => row.id).filter((id): id is string => typeof id === 'string')
+  return Array.from(new Set(ids)).slice(0, limit)
 }
 
 export async function ensureConversationIndexed(supabase: SupabaseServer | null, userId: string | null, conversationId: string | null, signal?: AbortSignal): Promise<void> {
   if (!supabase || !userId || !conversationId) return
 
   try {
-    const [{ data: conversation }, { data: messages, error: msgError }] = await Promise.all([
+    const [{ data: conversation }, messageResult] = await Promise.all([
       supabase.from('conversations').select('id, title, project_id, updated_at').eq('id', conversationId).eq('user_id', userId).maybeSingle(),
-      supabase.from('messages').select('id, role, content, images, created_at').eq('conversation_id', conversationId).eq('user_id', userId).order('created_at', { ascending: true }),
+      fetchAllConversationMessages(supabase, userId, conversationId),
     ])
-    if (msgError || !conversation) return
+    if (messageResult.error || !conversation) return
 
-    const rows = (messages ?? []) as MessageRow[]
+    const rows = messageResult.rows
     const chunks = chunkMessages(rows)
     if (!chunks.length) return
 
     const hashes = chunks.map(c => hash(c.content))
-    const { data: existing } = await supabase.from('conversation_chunks').select('content_hash').eq('conversation_id', conversationId).in('content_hash', hashes)
+    const existingBatches = await Promise.all(Array.from({ length: Math.ceil(hashes.length / HASH_QUERY_BATCH_SIZE) }, (_, index) =>
+      supabase.from('conversation_chunks').select('content_hash').eq('conversation_id', conversationId)
+        .in('content_hash', hashes.slice(index * HASH_QUERY_BATCH_SIZE, (index + 1) * HASH_QUERY_BATCH_SIZE))))
+    const existing = existingBatches.flatMap(result => result.error ? [] : result.data ?? [])
 
     const seen = new Set(((existing ?? []) as Array<{ content_hash?: unknown }>)
       .map(row => row.content_hash)
       .filter((value): value is string => typeof value === 'string'))
-    const pending = chunks.filter(c => !seen.has(hash(c.content))).slice(0, 24)
+    const pendingChunks = chunks.filter(c => !seen.has(hash(c.content)))
+    const pending = pendingChunks.length <= 24
+      ? pendingChunks
+      : [...pendingChunks.slice(0, 12), ...pendingChunks.slice(-12)]
     if (!pending.length) return
 
     const conv = conversation as ConversationRow
@@ -117,49 +125,6 @@ export async function ensureConversationIndexed(supabase: SupabaseServer | null,
   }
 }
 
-function renderAnchoredContext(anchor: MessageRow, rows: MessageRow[], config: RetrievalConfig): string {
-  const anchorIndex = rows.findIndex(m => m.id === anchor.id)
-  const safeAnchorIndex = anchorIndex >= 0 ? anchorIndex : 0
-  const start = Math.max(0, safeAnchorIndex - config.before)
-  const end = Math.min(rows.length, safeAnchorIndex + config.after + 1)
-  const windowRows = rows.slice(start, end)
-
-  return [
-    '【用户锚点｜只以这条用户消息作为事实核心】',
-    normalizeMessage(anchor),
-    '',
-    `【上下文窗口｜前 ${config.before} 条 + 后 ${config.after} 条】`,
-    windowRows.map(normalizeMessage).join('\n\n'),
-  ].join('\n').trim()
-}
-
-function buildAnchoredHit(args: {
-  anchor: MessageRow
-  rows: MessageRow[]
-  conversation: ConversationRow
-  config: RetrievalConfig
-  similarity: number
-}): RetrievalHit | null {
-  const { anchor, rows, conversation, config, similarity } = args
-  const anchorIndex = rows.findIndex(m => m.id === anchor.id)
-  if (anchorIndex < 0 || anchor.role !== 'user' || !(anchor.content ?? '').trim()) return null
-  const start = Math.max(0, anchorIndex - config.before)
-  const end = Math.min(rows.length, anchorIndex + config.after + 1)
-  const windowRows = rows.slice(start, end)
-
-  return {
-    id: `user-anchor-${anchor.id}`,
-    conversation_id: conversation.id,
-    conversation_title: conversation.title ?? null,
-    project_id: conversation.project_id ?? null,
-    message_start_id: windowRows[0]?.id ?? anchor.id,
-    message_end_id: windowRows[windowRows.length - 1]?.id ?? anchor.id,
-    content: renderAnchoredContext(anchor, rows, config),
-    similarity,
-    created_at: anchor.created_at ?? null,
-  }
-}
-
 function renderHits(hits: RetrievalHit[], projectId: string | null | undefined, mode: HistoryRetrievalMode): string {
   if (!hits.length) return ''
   const parts: string[] = []
@@ -181,40 +146,39 @@ function renderHits(hits: RetrievalHit[], projectId: string | null | undefined, 
 
 async function retrieveAnchorsFromChunkHits(supabase: SupabaseServer, userId: string, projectId: string | null | undefined, query: string, config: RetrievalConfig, hits: RetrievalHit[]): Promise<RetrievalHit[]> {
   const out: RetrievalHit[] = []
-  const seenConversations = new Map<string, { conversation: ConversationRow; rows: MessageRow[] } | null>()
+  const seenConversations = new Map<string, { conversation: ConversationRow; edges: ConversationEdges } | null>()
 
   for (const hit of hits) {
     if (!inScope(hit.project_id, projectId)) continue
 
     let cached = seenConversations.get(hit.conversation_id)
     if (cached === undefined) {
-      const [{ data: conversation }, { data: threadRows }] = await Promise.all([
+      const [{ data: conversation }, edges] = await Promise.all([
         supabase.from('conversations').select('id, title, project_id').eq('id', hit.conversation_id).eq('user_id', userId).maybeSingle(),
-        supabase.from('messages').select('id, role, content, images, created_at, conversation_id').eq('conversation_id', hit.conversation_id).eq('user_id', userId).order('created_at', { ascending: true }).limit(260),
+        fetchConversationEdges(supabase, userId, hit.conversation_id),
       ])
       const conv = conversation as ConversationRow | null
       cached = conv && inScope(conv.project_id, projectId)
-        ? { conversation: conv, rows: (threadRows ?? []) as MessageRow[] }
+        ? { conversation: conv, edges }
         : null
       seenConversations.set(hit.conversation_id, cached)
     }
     if (!cached) continue
 
-    const startIndex = hit.message_start_id ? cached.rows.findIndex(m => m.id === hit.message_start_id) : -1
-    const endIndex = hit.message_end_id ? cached.rows.findIndex(m => m.id === hit.message_end_id) : -1
-    const rangeStart = startIndex >= 0 ? startIndex : 0
-    const rangeEnd = endIndex >= rangeStart ? endIndex + 1 : cached.rows.length
-    const candidates = cached.rows
-      .slice(rangeStart, rangeEnd)
+    const chunkRows = await messagesForChunkHit(supabase, userId, hit)
+    if (!chunkRows.length) continue
+    const candidates = chunkRows
       .filter(m => m.role === 'user' && !!(m.content ?? '').trim())
       .map((m, index) => ({ row: m, score: keywordScore(query, m.content ?? '') - index * 0.001 }))
       .sort((a, b) => b.score - a.score)
 
     const anchor = candidates[0]?.row
     if (!anchor) continue
+    const rows = await fetchRowsAroundAnchor(supabase, userId, hit.conversation_id, anchor, config)
     const anchored = buildAnchoredHit({
       anchor,
-      rows: cached.rows,
+      rows,
+      edges: cached.edges,
       conversation: cached.conversation,
       config,
       similarity: hit.similarity + keywordScore(query, anchor.content ?? ''),
@@ -266,28 +230,32 @@ async function retrieveByTextSearch(supabase: SupabaseServer, userId: string, pr
   return retrieveAnchorsFromChunkHits(supabase, userId, projectId, query, config, hits)
 }
 
-async function retrieveUserAnchoredContexts(supabase: SupabaseServer, userId: string, projectId: string | null | undefined, conversationId: string | null, query: string, config: RetrievalConfig): Promise<RetrievalHit[]> {
+async function findUserAnchors(supabase: SupabaseServer, userId: string, projectId: string | null | undefined, conversationId: string | null, query: string, limit: number): Promise<Array<{ row: MessageRow; score: number }>> {
   const scopedIds = await scopedConversationIds(supabase, userId, projectId, conversationId, 260)
   if (!scopedIds.length) return []
 
-  const { data: anchorsRaw, error } = await supabase
-    .from('messages')
-    .select('id, role, content, images, created_at, conversation_id')
-    .eq('user_id', userId)
-    .eq('role', 'user')
-    .in('conversation_id', scopedIds)
-    .order('created_at', { ascending: false })
-    .limit(180)
+  const queryAnchors = (ascending: boolean) => supabase.from('messages')
+    .select(MESSAGE_FIELDS).eq('user_id', userId).eq('role', 'user').in('conversation_id', scopedIds)
+    .order('created_at', { ascending }).limit(180)
+  const [recent, oldest] = await Promise.all([queryAnchors(false), queryAnchors(true)])
+  const anchorsRaw = [
+    ...((recent.error ? [] : recent.data ?? []) as MessageRow[]),
+    ...((oldest.error ? [] : oldest.data ?? []) as MessageRow[]),
+  ]
+  if (!anchorsRaw.length) return []
 
-  if (error || !anchorsRaw?.length) return []
-
-  const anchors = (anchorsRaw as MessageRow[])
+  return Array.from(new Map(anchorsRaw.map(row => [row.id, row])).values())
     .filter(m => !!m.conversation_id && !!(m.content ?? '').trim())
     .map((m, index) => ({ row: m, relevance: keywordScore(query, m.content ?? ''), index }))
     .filter(item => item.relevance > 0)
     .map(item => ({ row: item.row, score: item.relevance - item.index * 0.002 }))
     .sort((a, b) => b.score - a.score)
-    .slice(0, config.anchorLimit)
+    .slice(0, limit)
+}
+
+async function retrieveUserAnchoredContexts(supabase: SupabaseServer, userId: string, projectId: string | null | undefined, conversationId: string | null, query: string, config: RetrievalConfig): Promise<RetrievalHit[]> {
+  const anchors = await findUserAnchors(supabase, userId, projectId, conversationId, query, config.anchorLimit)
+  if (!anchors.length) return []
 
   const convIds = Array.from(new Set(anchors.map(a => a.row.conversation_id).filter(Boolean))) as string[]
   const { data: conversations } = convIds.length
@@ -296,19 +264,16 @@ async function retrieveUserAnchoredContexts(supabase: SupabaseServer, userId: st
   const convMap = new Map(((conversations ?? []) as ConversationRow[]).map(conversation => [conversation.id, conversation]))
 
   const hits: RetrievalHit[] = []
+  const edgesByConversation = new Map<string, ConversationEdges>()
   for (const [index, anchor] of anchors.entries()) {
     const cid = anchor.row.conversation_id
     if (!cid) continue
 
-    const { data: threadRows } = await supabase
-      .from('messages')
-      .select('id, role, content, images, created_at, conversation_id')
-      .eq('user_id', userId)
-      .eq('conversation_id', cid)
-      .order('created_at', { ascending: true })
-      .limit(260)
-
-    const rows = (threadRows ?? []) as MessageRow[]
+    const [rows, edges] = await Promise.all([
+      fetchRowsAroundAnchor(supabase, userId, cid, anchor.row, config),
+      edgesByConversation.get(cid) ? Promise.resolve(edgesByConversation.get(cid)!) : fetchConversationEdges(supabase, userId, cid),
+    ])
+    edgesByConversation.set(cid, edges)
     const anchorIndex = rows.findIndex(m => m.id === anchor.row.id)
     if (anchorIndex < 0) continue
 
@@ -318,6 +283,7 @@ async function retrieveUserAnchoredContexts(supabase: SupabaseServer, userId: st
     const hit = buildAnchoredHit({
       anchor: anchor.row,
       rows,
+      edges,
       conversation: conv,
       config,
       similarity: anchor.score - index * 0.01,
@@ -337,11 +303,25 @@ export type RetrievedHistorySource = {
 }
 
 function historySourcePreview(content: string): string {
-  return content
-    .replace(/【[^】]*】/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 360)
+  const section = (heading: string) => {
+    const start = content.indexOf(heading)
+    if (start < 0) return ''
+    const bodyStart = content.indexOf('\n', start)
+    if (bodyStart < 0) return ''
+    const nextHeading = content.indexOf('\n【', bodyStart + 1)
+    return content.slice(bodyStart + 1, nextHeading < 0 ? undefined : nextHeading)
+      .replace(/【[^】]*】/g, ' ').replace(/\s+/g, ' ').trim()
+  }
+  const opening = section('【对话开篇')
+  const anchor = section('【用户锚点')
+  const recent = section('【最近对话')
+  if (!opening && !anchor && !recent) return content.replace(/【[^】]*】/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 360)
+  const parts = [
+    opening ? `开篇：${opening.slice(0, 86)}` : '',
+    anchor ? `匹配：${anchor.slice(0, 130)}` : '',
+    recent ? `最近：${recent.slice(0, 86)}` : '',
+  ].filter(Boolean)
+  return parts.join(' · ').slice(0, 360)
 }
 
 export async function retrieveHistoryWithSources(opts: {

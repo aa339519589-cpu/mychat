@@ -451,11 +451,6 @@
         86
       ]
     },
-    "lib/llm/active-retrieval.ts": {
-      "complexity": [
-        16
-      ]
-    },
     "lib/llm/anthropic-turn-accumulator.ts": {
       "complexity": [
         19,

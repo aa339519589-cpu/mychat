@@ -24,6 +24,9 @@ function retrievalClient(projectId: string | null = null) {
     is(field: string, value: unknown) { this.filters.set(field, value); return this }
     neq() { return this }
     in() { return this }
+    gt() { return this }
+    gte() { return this }
+    lte() { return this }
     order() { return this }
     limit() { return this }
 
@@ -44,17 +47,17 @@ function retrievalClient(projectId: string | null = null) {
       }
       if (this.filters.get("conversation_id") === "current-conversation") {
         return { data: [
-          { id: "current-user", role: "user", content: "current question", created_at: now, conversation_id: "current-conversation" },
-          { id: "current-answer", role: "assistant", content: "current answer", created_at: now, conversation_id: "current-conversation" },
+          { id: "current-user", seq: 1, role: "user", content: "current question", created_at: now, conversation_id: "current-conversation" },
+          { id: "current-answer", seq: 2, role: "assistant", content: "current answer", created_at: now, conversation_id: "current-conversation" },
         ], error: null }
       }
       if (this.filters.get("role") === "user") {
-        return { data: [{ id: "history-user", role: "user", content: "用户喜欢咖啡和后端架构", created_at: now, conversation_id: "history-conversation" }], error: null }
+        return { data: [{ id: "history-user", seq: 2, role: "user", content: "用户喜欢咖啡和后端架构", created_at: now, conversation_id: "history-conversation" }], error: null }
       }
       return { data: [
-        { id: "history-before", role: "assistant", content: "What do you like?", created_at: now, conversation_id: "history-conversation" },
-        { id: "history-user", role: "user", content: "用户喜欢咖啡和后端架构", created_at: now, conversation_id: "history-conversation" },
-        { id: "history-after", role: "assistant", content: "Noted", created_at: now, conversation_id: "history-conversation" },
+        { id: "history-before", seq: 1, role: "assistant", content: "What do you like?", created_at: now, conversation_id: "history-conversation" },
+        { id: "history-user", seq: 2, role: "user", content: "用户喜欢咖啡和后端架构", created_at: now, conversation_id: "history-conversation" },
+        { id: "history-after", seq: 3, role: "assistant", content: "Noted", created_at: now, conversation_id: "history-conversation" },
       ], error: null }
     }
 
@@ -185,6 +188,7 @@ test("active retrieval returns empty for empty storage and propagates cancellati
     is() { return this }
     neq() { return this }
     in() { return this }
+    gt() { return this }
     order() { return this }
     limit() { return this }
     upsert() { return this }
@@ -220,4 +224,139 @@ test("active retrieval returns empty for empty storage and propagates cancellati
     mode: "balanced",
     signal: controller.signal,
   }), /cancelled/)
+})
+
+test("active retrieval finds a mid-thread match and supplies the opening and latest messages", { concurrency: false }, async t => {
+  const previousEmbedding = process.env.EMBEDDING_API_KEY
+  const previousOpenAi = process.env.OPENAI_API_KEY
+  delete process.env.EMBEDDING_API_KEY
+  delete process.env.OPENAI_API_KEY
+  t.after(() => {
+    if (previousEmbedding === undefined) delete process.env.EMBEDDING_API_KEY
+    else process.env.EMBEDDING_API_KEY = previousEmbedding
+    if (previousOpenAi === undefined) delete process.env.OPENAI_API_KEY
+    else process.env.OPENAI_API_KEY = previousOpenAi
+  })
+
+  const messages = Array.from({ length: 1200 }, (_, index) => {
+    const seq = index + 1
+    const role = seq % 2 === 1 ? "user" : "assistant"
+    let content = `thread message ${seq}`
+    if (seq === 1) content = "conversation opening: sunrise in the mountains"
+    if (seq === 605) content = "needle historical fact: the launch date was June 12"
+    if (seq === 1199) content = "latest update: the launch moved to Friday"
+    return {
+      id: `message-${seq}`,
+      seq,
+      role,
+      content,
+      user_id: userId,
+      created_at: new Date(Date.UTC(2026, 0, 1, 0, 0, seq)).toISOString(),
+      conversation_id: "long-history",
+    }
+  })
+  type Result = { data: unknown; error: null }
+  const indexedChunks: unknown[] = []
+  class Query {
+    private filters = new Map<string, unknown>()
+    private ranges = new Map<string, { gt?: number; gte?: number; lte?: number }>()
+    private sort: { field: string; ascending: boolean } | null = null
+    private maxRows: number | null = null
+    private operation: "select" | "upsert" = "select"
+    private payload: unknown = null
+    constructor(private readonly table: string) {}
+    select() { return this }
+    upsert(payload: unknown) { this.operation = "upsert"; this.payload = payload; return this }
+    eq(field: string, value: unknown) { this.filters.set(field, value); return this }
+    is(field: string, value: unknown) { this.filters.set(field, value); return this }
+    neq(field: string, value: unknown) { this.filters.set(`neq:${field}`, value); return this }
+    in(field: string, value: unknown[]) { this.filters.set(`in:${field}`, value); return this }
+    gt(field: string, value: number) { this.ranges.set(field, { ...this.ranges.get(field), gt: value }); return this }
+    gte(field: string, value: number) { this.ranges.set(field, { ...this.ranges.get(field), gte: value }); return this }
+    lte(field: string, value: number) { this.ranges.set(field, { ...this.ranges.get(field), lte: value }); return this }
+    order(field: string, options: { ascending: boolean }) { this.sort = { field, ascending: options.ascending }; return this }
+    limit(value: number) { this.maxRows = value; return this }
+    private result(): Result {
+      if (this.table === "conversation_chunks") {
+        if (this.operation === "upsert" && Array.isArray(this.payload)) indexedChunks.push(...this.payload)
+        return { data: [], error: null }
+      }
+      let rows: Array<Record<string, unknown>> = this.table === "conversations"
+        ? [{ id: "long-history", user_id: userId, title: "Long history", project_id: null, updated_at: now }]
+        : this.table === "messages" ? messages : []
+      rows = rows.filter(row => {
+        for (const [field, value] of this.filters) {
+          if (field.startsWith("neq:")) {
+            if (row[field.slice(4)] === value) return false
+          } else if (field.startsWith("in:")) {
+            if (!(value as unknown[]).includes(row[field.slice(3)])) return false
+          } else if (row[field] !== value) return false
+        }
+        for (const [field, range] of this.ranges) {
+          const value = row[field]
+          if (typeof value !== "number") return false
+          if (range.gt !== undefined && value <= range.gt) return false
+          if (range.gte !== undefined && value < range.gte) return false
+          if (range.lte !== undefined && value > range.lte) return false
+        }
+        return true
+      })
+      if (this.sort) {
+        const { field, ascending } = this.sort
+        rows = [...rows].sort((a, b) => {
+          const left = a[field]
+          const right = b[field]
+          const order = typeof left === "number" && typeof right === "number"
+            ? left - right
+            : String(left ?? "").localeCompare(String(right ?? ""))
+          return ascending ? order : -order
+        })
+      }
+      if (this.maxRows !== null) rows = rows.slice(0, this.maxRows)
+      return { data: rows, error: null }
+    }
+    maybeSingle() {
+      const result = this.result()
+      const rows = result.data as Array<Record<string, unknown>>
+      return Promise.resolve({ ...result, data: rows[0] ?? null })
+    }
+    then<TResult1 = Result, TResult2 = never>(
+      onfulfilled?: ((value: Result) => TResult1 | PromiseLike<TResult1>) | null,
+      onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+    ): Promise<TResult1 | TResult2> {
+      return Promise.resolve(this.result()).then(onfulfilled, onrejected)
+    }
+  }
+  const client = {
+    from: (table: string) => new Query(table),
+    rpc: async (name: string) => name === "match_conversation_chunks_text"
+      ? { data: [{
+          id: "long-thread-chunk",
+          conversation_id: "long-history",
+          conversation_title: "Long history",
+          project_id: null,
+          message_start_id: "message-601",
+          message_end_id: "message-608",
+          content: "needle historical fact: the launch date was June 12",
+          similarity: 0.8,
+          created_at: now,
+        }], error: null }
+      : { data: [], error: null },
+  } as unknown as SupabaseServer
+
+  await ensureConversationIndexed(client, userId, "long-history")
+  assert.equal(indexedChunks.length, 24)
+  assert.ok(indexedChunks.some(chunk => JSON.stringify(chunk).includes("message-1200")))
+
+  const result = await retrieveHistoryWithSources({
+    supabase: client,
+    userId,
+    conversationId: "current-conversation",
+    query: "needle historical fact",
+    mode: "balanced",
+  })
+  assert.match(result.renderedContext, /conversation opening: sunrise in the mountains/)
+  assert.match(result.renderedContext, /needle historical fact: the launch date was June 12/)
+  assert.match(result.renderedContext, /latest update: the launch moved to Friday/)
+  assert.ok(result.sources.some(source => source.snippet.includes("开篇：") && source.snippet.includes("最近：")))
 })
