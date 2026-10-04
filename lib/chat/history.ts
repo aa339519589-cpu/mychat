@@ -48,14 +48,12 @@ export async function prepareChatHistory(options: {
     allowCompaction: !options.customEndpoint,
   })
 
-  if (!options.customEndpoint) {
-    await ensureConversationIndexed(
-      options.supabase,
-      options.userId,
-      summary.conversationId,
-      options.signal,
-    )
-  }
+  await ensureConversationIndexed(
+    options.supabase,
+    options.userId,
+    summary.conversationId,
+    options.signal,
+  )
   const query = latestUserQuery(options.messages)
   const history = await retrieveHistoryWithSources({
     supabase: options.supabase,
@@ -63,7 +61,7 @@ export async function prepareChatHistory(options: {
     conversationId: summary.conversationId,
     projectId: options.projectId,
     query,
-    mode: options.customEndpoint ? 'light' : historyRetrievalModeForTier(options.tier),
+    mode: options.customEndpoint ? 'balanced' : historyRetrievalModeForTier(options.tier),
     signal: options.signal,
   })
   return {
