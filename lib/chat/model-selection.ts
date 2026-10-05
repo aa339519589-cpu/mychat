@@ -1,6 +1,6 @@
 import type { SupabaseServer } from '@/lib/api/guard'
 import { TIER_MAP } from '@/lib/chat-data'
-import type { ModelAccessClass } from '@/lib/model-catalog'
+import type { ModelAccessClass, ModelCatalogItem } from '@/lib/model-catalog'
 import { customModelReasoningProfile, normalizeReasoningEffort, type ReasoningEffort } from '@/lib/model-reasoning'
 import { getOpenRouterModel } from '@/lib/openrouter-catalog'
 import { endpointAuthType, getOwnedModelEndpoint, resolveModelEndpointKey, type ModelEndpointRow } from '@/lib/model-endpoint-server'
@@ -13,6 +13,7 @@ import {
   type ModelCapability,
 } from '@/lib/llm/models'
 import { ModelEndpointError, validateModelEndpointNetwork } from '@/lib/llm/openai-compatible'
+import { isClaudeModelId, type ChatModelPolicy } from '@/lib/chat/model-policy'
 
 export type ChatModelSelection = {
   customEndpoint: boolean
@@ -37,11 +38,13 @@ export class ChatModelSelectionError extends Error {
 }
 
 type ModelSelectionDependencies = {
+  getCatalogModel: typeof getOpenRouterModel
   getOwnedEndpoint: (supabase: SupabaseServer, userId: string, endpointId: string) => Promise<ModelEndpointRow | null>
   resolveEndpointKey: (endpoint: ModelEndpointRow, userId: string) => string
   validateEndpointNetwork: (baseUrl: string) => Promise<string>
 }
 const DEFAULT_DEPENDENCIES: ModelSelectionDependencies = {
+  getCatalogModel: getOpenRouterModel,
   getOwnedEndpoint: (supabase, userId, endpointId) => getOwnedModelEndpoint(supabase, userId, endpointId),
   resolveEndpointKey: resolveModelEndpointKey,
   validateEndpointNetwork: validateModelEndpointNetwork,
@@ -106,48 +109,69 @@ function customReasoningEffort(model: string, requestedValue: string | undefined
   return resolved
 }
 
-export async function resolveChatModelSelection(options: {
+type ChatModelSelectionOptions = {
   tier: string
   endpointId?: string
   modelId?: string
+  modelPolicy?: ChatModelPolicy
   reasoningEffort?: string
   supabase: SupabaseServer | null
   userId: string | null
   allowPremium?: boolean
-}, dependencies: ModelSelectionDependencies = DEFAULT_DEPENDENCIES): Promise<ChatModelSelection> {
-  if (options.modelId) {
-    const directDeepSeek = resolveDirectDeepSeekSelection({
-      modelId: options.modelId,
-      reasoningEffort: options.reasoningEffort,
-      allowPremium: options.allowPremium,
-    })
-    if (directDeepSeek) return directDeepSeek
+}
 
-    const model = await getOpenRouterModel(options.modelId)
-    if (!model) throw new ChatModelSelectionError(404, { error: '该模型当前未在 OpenRouter 提供' })
-    if (model.access === 'premium' && options.allowPremium !== true) throw new ChatModelSelectionError(403, { error: '该模型需要会员' })
-    const apiKey = process.env.OPENROUTER_API_KEY?.trim() ?? ''
-    if (!apiKey) throw new ChatModelSelectionError(500, { error: '服务未配置（OPENROUTER_API_KEY 未设置）' }, true, 'OPENROUTER_API_KEY not configured')
-    const requested = options.reasoningEffort?.toLowerCase()
-    const effort = requested && model.reasoningEfforts.includes(requested)
-      ? requested
-      : model.defaultReasoningEffort
-    if (requested && !model.reasoningEfforts.includes(requested)) {
-      throw new ChatModelSelectionError(409, { error: '当前模型不支持所选思考深度' })
-    }
-    return {
-      customEndpoint: false,
-      model: model.id,
-      thinking: Boolean(effort && effort !== 'none'),
-      reasoningEffort: effort,
-      accessClass: model.access,
-      capability: openRouterModelCapability(model),
-      apiKey,
-      authType: 'bearer',
-      outputKind: model.outputKind,
-      platformTierLabel: model.name,
-    }
+function assertProductModelIdentity(options: ChatModelSelectionOptions): void {
+  if (options.modelPolicy === 'claude-only' && (!isClaudeModelId(options.modelId) || options.endpointId !== undefined)) {
+    throw new ChatModelSelectionError(400, { error: 'Choose an available Claude model. This app does not support other models or custom endpoints.' })
   }
+}
+
+async function resolveCatalogSelection(options: ChatModelSelectionOptions & { modelId: string }, dependencies: ModelSelectionDependencies): Promise<ChatModelSelection> {
+  const directDeepSeek = resolveDirectDeepSeekSelection({
+    modelId: options.modelId,
+    reasoningEffort: options.reasoningEffort,
+    allowPremium: options.allowPremium,
+  })
+  if (directDeepSeek) return directDeepSeek
+
+  const model = await dependencies.getCatalogModel(options.modelId)
+  if (!model) throw new ChatModelSelectionError(404, { error: options.modelPolicy === 'claude-only' ? 'The selected Claude model is unavailable. Choose another Claude model.' : '该模型当前未在 OpenRouter 提供' })
+  assertCatalogModelIdentity(options, model)
+  if (model.access === 'premium' && options.allowPremium !== true) throw new ChatModelSelectionError(403, { error: '该模型需要会员' })
+  const apiKey = process.env.OPENROUTER_API_KEY?.trim() ?? ''
+  if (!apiKey) throw new ChatModelSelectionError(500, { error: '服务未配置（OPENROUTER_API_KEY 未设置）' }, true, 'OPENROUTER_API_KEY not configured')
+  const requested = options.reasoningEffort?.toLowerCase()
+  const effort = requested && model.reasoningEfforts.includes(requested)
+    ? requested
+    : model.defaultReasoningEffort
+  if (requested && !model.reasoningEfforts.includes(requested)) {
+    throw new ChatModelSelectionError(409, { error: '当前模型不支持所选思考深度' })
+  }
+  return {
+    customEndpoint: false,
+    model: model.id,
+    thinking: Boolean(effort && effort !== 'none'),
+    reasoningEffort: effort,
+    accessClass: model.access,
+    capability: openRouterModelCapability(model),
+    apiKey,
+    authType: 'bearer',
+    outputKind: model.outputKind,
+    platformTierLabel: model.name,
+  }
+}
+
+function assertCatalogModelIdentity(options: ChatModelSelectionOptions, model: ModelCatalogItem): void {
+  if (options.modelPolicy === 'claude-only'
+    && (model.id !== options.modelId || model.provider !== 'Anthropic' || model.outputKind !== 'chat')) {
+    throw new ChatModelSelectionError(409, { error: 'The selected Claude model is unavailable. Choose another Claude model.' })
+  }
+}
+
+export async function resolveChatModelSelection(options: ChatModelSelectionOptions, dependencyOverrides: Partial<ModelSelectionDependencies> = {}): Promise<ChatModelSelection> {
+  const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides }
+  assertProductModelIdentity(options)
+  if (options.modelId) return resolveCatalogSelection({ ...options, modelId: options.modelId }, dependencies)
 
   const customEndpoint = typeof options.endpointId === 'string'
   if (customEndpoint) {

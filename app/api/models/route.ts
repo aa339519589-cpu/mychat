@@ -1,6 +1,7 @@
 import { resolveAuth } from '@/lib/api/guard'
 import { getOpenRouterCatalog } from '@/lib/openrouter-catalog'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { catalogForModelPolicy } from '@/lib/chat/model-policy'
 
 const SHARED_TRIAL_LIMIT = 3
 
@@ -18,6 +19,8 @@ async function resolveTrialRemaining(userId: string | null, owner: boolean): Pro
 }
 
 export async function GET(request: Request) {
+  const policy = new URL(request.url).searchParams.get('modelPolicy') ?? undefined
+  if (policy !== undefined && policy !== 'claude-only') return Response.json({ error: 'Invalid model policy' }, { status: 400 })
   try {
     const [models, auth] = await Promise.all([
       getOpenRouterCatalog(),
@@ -31,7 +34,7 @@ export async function GET(request: Request) {
       owner,
       trialLimit: SHARED_TRIAL_LIMIT,
       trialRemaining,
-      models: models.map(model => {
+      models: catalogForModelPolicy(models, policy).map(model => {
         const baseModel = model.access === 'quota'
         const activeSharedTrial = !owner && trialRemaining !== null && trialRemaining > 0
         return {

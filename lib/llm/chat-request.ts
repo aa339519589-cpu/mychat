@@ -3,6 +3,7 @@ import type { ProjectContext } from "@/lib/project-data"
 import type { Attachment, RawMsg } from "./types"
 import { RequestError } from "@/lib/api/request"
 import { isRecord } from '@/lib/unknown-value'
+import { validateChatModelPolicy, type ChatModelPolicy } from '@/lib/chat/model-policy'
 
 const MAX_MESSAGES = 500
 const MAX_MESSAGE_CHARS = 100_000
@@ -19,6 +20,7 @@ const REASONING_EFFORT = /^(none|minimal|low|medium|high|xhigh|max)$/
 export type ChatRequestBody = {
   tier?: string
   modelId?: string
+  modelPolicy?: ChatModelPolicy
   reasoningEffort?: string
   messages: RawMsg[]
   memories?: Memory[]
@@ -292,6 +294,7 @@ function validateRenderProfile(body: Record<string, unknown>): void {
 }
 
 function validateModelFields(body: Record<string, unknown>): void {
+  validateChatModelPolicy(body)
   validateRenderProfile(body)
   if (body.modelId !== undefined
     && (typeof body.modelId !== 'string' || body.modelId.length > 160 || !MODEL_ID.test(body.modelId))) {

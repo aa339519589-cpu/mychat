@@ -6,6 +6,7 @@ import { enqueueChatJob } from '@/lib/chat/job-command'
 import { acceptedLiveChatResponse } from '@/lib/chat/live-response'
 import { clampTrialInput, releaseTrialCall, reserveTrialCall } from '@/lib/chat/model-access'
 import { ChatModelSelectionError, resolveChatModelSelection } from '@/lib/chat/model-selection'
+import { usageLimitMessage } from '@/lib/chat/model-policy'
 import { hasScannedPdfAttachment } from '@/lib/chat/attachments'
 import { resolveDeepTierImageConfig, resolveDeepTierVideoConfig } from '@/lib/llm/models'
 import { requireDurableChatIdentity, validateChatRequest } from '@/lib/llm/chat-request'
@@ -94,7 +95,7 @@ function modelSelectionResponse(request: Request, error: ChatModelSelectionError
 async function resolveAdmissionPolicy(request: Request, auth: AuthCtx, body: DurableChatRequestBody): Promise<AdmissionPolicy> {
   let selection: ChatModelSelection
   try {
-    selection = await resolveChatModelSelection({ tier: body.tier ?? '绝句', endpointId: body.endpointId, modelId: body.modelId, reasoningEffort: body.reasoningEffort, supabase: auth.supabase, userId: auth.userId, allowPremium: true })
+    selection = await resolveChatModelSelection({ tier: body.tier ?? '绝句', endpointId: body.endpointId, modelId: body.modelId, modelPolicy: body.modelPolicy, reasoningEffort: body.reasoningEffort, supabase: auth.supabase, userId: auth.userId, allowPremium: true })
   } catch (error) {
     if (error instanceof ChatModelSelectionError) return { response: modelSelectionResponse(request, error) }
     return { response: configurationError(request, '模型策略暂时不可用') }
@@ -140,7 +141,7 @@ export async function POST(request: NextRequest) {
       if (!trial.allowed) return apiErrorResponseV1(request, {
         status: 403,
         code: 'QUOTA_EXCEEDED',
-        message: '其他模型共享的 3 次额度已用完，当前剩余 0 次。请切换到上方 3 个基础模型继续使用。',
+        message: usageLimitMessage(body.modelPolicy, '其他模型共享的 3 次额度已用完，当前剩余 0 次。请切换到上方 3 个基础模型继续使用。'),
         retryable: false,
         details: { trialLimit: 3, trialRemaining: 0 },
       })

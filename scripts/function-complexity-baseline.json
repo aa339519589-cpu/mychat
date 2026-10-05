@@ -296,10 +296,7 @@
     },
     "lib/chat/model-selection.ts": {
       "complexity": [
-        44
-      ],
-      "maxLines": [
-        104
+        31
       ]
     },
     "lib/chat/request-context.ts": {
