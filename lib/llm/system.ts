@@ -141,6 +141,27 @@ flowchart LR
 
 Artifact 用于需要"可预览、可保存"的产物：3D、完整网页、交互页面、复杂动画、大型可视化、研究报告或需长期保存继续编辑的内容。是否需要用户打开后看到完整结果、是否需要保存、是否需要交互、是否结构复杂、是否具有长期价值——满足任一项优先 Artifact；简单示意图、轻量流程图、小型表格则优先 Vega-Lite、Mermaid、函数图或内联 SVG。`
 
+const NATIVE_RENDER_RULES = `【渲染模式】
+当前是 MyChat 原生 iOS 对话。你可以自然地选择在正文中画图：当空间关系、过程、结构、数量变化或形状通过图形更容易解释时，主动使用内联示意图，不必等待用户点名渲染。简单文字更清楚的任务正常使用文字，不要为每个回答硬加图。
+
+【渐进内联画布】
+小型示意图、流程图、函数曲线和轻量数据图表优先输出：
+<inline-artifact>
+<svg viewBox="0 0 400 240" xmlns="http://www.w3.org/2000/svg">
+<title>简短描述</title>
+<circle cx="80" cy="120" r="28" fill="#708CB8" data-label="点击显示的说明"/>
+<text x="80" y="170" text-anchor="middle" fill="currentColor" font-size="14">标签</text>
+</svg>
+</inline-artifact>
+原生客户端保留同一画布，完整的元素到达时就追加到画面。按有意义的视觉顺序输出：先结构，再图形，再标签；尽早输出 viewBox 与第一批图形，不要先铺长篇说明。每个元素使用完整的 XML 属性与闭合标签，文本中的 & 和 < 必须转义。
+支持 circle、ellipse、rect、line、path、polyline、polygon、text，以及 g 分组。允许基础 fill/stroke/opacity/transform 属性。用纯几何图形画箭头；不要依赖 defs、marker、gradient、clipPath、foreignObject、外链图片、style、script 或事件处理器。
+主题文字使用 currentColor，强调色优先 #708CB8；直接指定的其他颜色保持足够对比度。对有说明价值的形状可加 data-label，点击会显示说明。不要声称具有实际没有实现的滑块、按钮或计算交互。
+多个图形可以在解释之间分别输出，解释文字置于标签外。原生版本暂不识别 vega、mermaid、function-plot 标签，因此用 SVG 表达这些图形，不能把其他格式伪装为 SVG。
+
+【独立产物】
+用户确实需要完整网页、复杂交互、保存后独立使用的内容时，使用 <artifact> 完整单文件 HTML </artifact>。CSS 与 JavaScript 内联，使用原生浏览器 API。预览无网络、无设备权限、无跨文档访问，因此不要依赖 CDN、远程字体、远程图片、fetch、下载、相机或麦克风。普通解释里的小图仍放在正文画布，避免每次都要求用户打开一个独立面板。
+公式需要准确；当前原生版本可用普通 Unicode 数学符号与清楚的文字说明，不要声称美元符号里的 LaTeX 已被自动排版。`
+
 type SystemFlags = {
   searchMode?: SearchMode
   latestBeijingDate?: string | null
@@ -154,6 +175,7 @@ type SystemFlags = {
   modelId?: string | null
   endpointName?: string | null
   renderRules?: boolean
+  renderProfile?: 'native-v1'
 }
 
 function escapePromptXml(value: string): string {
@@ -278,7 +300,7 @@ export function buildSystem(memories?: Memory[], flags?: SystemFlags): string {
     renderConversationScope(isInProject, memoryEnabled),
     renderGlobalMemorySection(memories, memoryEnabled, isInProject),
     renderSearchSection(flags),
-    flags?.renderRules ? `\n${RENDER_RULES}` : '',
+    flags?.renderRules ? `\n${flags.renderProfile === 'native-v1' ? NATIVE_RENDER_RULES : RENDER_RULES}` : '',
     renderProjectContext(flags?.project, memoryEnabled),
   ].join('')
 }

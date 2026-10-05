@@ -227,3 +227,10 @@ test('chat request boundary accepts both fenced regeneration operations', () => 
     expectedTailMessageId: identity.assistantMessageId,
   })
 })
+
+test('render capability profile accepts only a known version', () => {
+  assert.doesNotThrow(() => validateChatRequest({ messages: [{ role: 'user', content: 'draw' }], renderProfile: 'native-v1' }))
+  for (const renderProfile of ['native-v2', 'web', '', null, {}, true]) {
+    assert.throws(() => validateChatRequest({ messages: [{ role: 'user', content: 'draw' }], renderProfile }), /renderProfile/)
+  }
+})

@@ -113,7 +113,7 @@ class PrivateStreamSession {
     const searchMode = body.searchMode === 'web' ? 'web' : 'off'
     const tools = activeTools({ loggedIn: false, searchMode, memoryEnabled: false })
     const messages: ModelMessage[] = [{ role: 'system', content: buildSystem(undefined, {
-      searchMode, memoryEnabled: false, sensitiveMemoryEnabled: false, renderRules: body.renderEnabled === true,
+      searchMode, memoryEnabled: false, sensitiveMemoryEnabled: false, renderRules: body.renderEnabled === true, renderProfile: body.renderProfile,
       modelId: selection.model, tierLabel: selection.platformTierLabel,
     }) }, ...buildModelContext(body.messages, selection.capability)]
     this.fallbackInputTokens = contextCost(messages)

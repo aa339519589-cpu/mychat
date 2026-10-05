@@ -30,6 +30,7 @@ export type LoadedChatJob = {
     connectorIds?: string[]
     connectorAccessMode: 'auto' | 'always_available' | 'on_demand'
     renderEnabled: boolean
+    renderProfile?: 'native-v1'
     usingBalance: boolean
     outputKind: 'text' | 'image' | 'video'
     attachments?: Attachment[]
@@ -93,6 +94,7 @@ function validOutputFields(value: JsonObject): boolean {
     && (value.searchMode === 'off' || value.searchMode === 'web')
     && typeof value.historyRetrieval === 'boolean'
     && typeof value.renderEnabled === 'boolean'
+    && (value.renderProfile === undefined || value.renderProfile === 'native-v1')
     && typeof value.usingBalance === 'boolean'
 }
 
@@ -128,6 +130,7 @@ function command(value: JsonObject): LoadedChatJob['command'] {
     historyRetrieval: value.historyRetrieval as boolean,
     connectorAccessMode: connectorAccessMode(value.connectorAccessMode),
     renderEnabled: value.renderEnabled as boolean,
+    ...(value.renderProfile === 'native-v1' ? { renderProfile: value.renderProfile } : {}),
     usingBalance: value.usingBalance as boolean,
     accessClass: accessClass(value.accessClass),
     ...optionalCommandValues(value),
