@@ -140,6 +140,7 @@ function buildChatCommand(
     searchMode: input.searchMode,
     historyRetrieval: body.historyRetrieval === true,
     renderEnabled: body.renderEnabled === true,
+    ...(body.renderProfile === 'native-v1' ? { renderProfile: body.renderProfile } : {}),
     ...(body.turn?.schemaVersion === 1 ? { memoryEnabled: body.turn.memoryEnabled !== false } : {}),
     usingBalance: input.usingBalance,
     outputKind,

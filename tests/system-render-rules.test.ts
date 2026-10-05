@@ -101,3 +101,17 @@ test('project memories are omitted when memory is disabled', () => {
   assert.ok(!disabled.includes('<project_memory'))
   assert.ok(!disabled.includes('项目长期记忆'))
 })
+
+test('native profile prefers progressive inline SVG without changing legacy web rendering', () => {
+  const native = buildSystem([], { renderRules: true, renderProfile: 'native-v1', memoryEnabled: false })
+  assert.ok(native.includes('主动使用内联示意图'))
+  assert.ok(native.includes('完整的元素到达时就追加到画面'))
+  assert.ok(native.includes('data-label'))
+  assert.ok(native.includes('无网络、无设备权限'))
+  assert.ok(!native.includes('Vega-Lite 图表 > Mermaid'))
+  const web = buildSystem([], { renderRules: true })
+  assert.ok(web.includes('Vega-Lite 图表 > Mermaid'))
+  assert.ok(!web.includes('当前是 MyChat 原生 iOS 对话'))
+  const disabled = buildSystem([], { renderRules: false, renderProfile: 'native-v1' })
+  assert.ok(!disabled.includes('渐进内联画布'))
+})

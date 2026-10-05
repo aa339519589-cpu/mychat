@@ -26,6 +26,8 @@ export type ChatRequestBody = {
   searchMode?: unknown
   webSearch?: unknown
   renderEnabled?: boolean
+  /** Versioned renderer capability advertised by a native client. */
+  renderProfile?: 'native-v1'
   project?: ProjectContext
   conversationId?: string
   /** Canonical user message that caused this generation. */
@@ -283,7 +285,14 @@ function validateBooleanFields(body: Record<string, unknown>): void {
   }
 }
 
+function validateRenderProfile(body: Record<string, unknown>): void {
+  if (body.renderProfile !== undefined && body.renderProfile !== 'native-v1') {
+    throw new RequestError(400, 'renderProfile 无效')
+  }
+}
+
 function validateModelFields(body: Record<string, unknown>): void {
+  validateRenderProfile(body)
   if (body.modelId !== undefined
     && (typeof body.modelId !== 'string' || body.modelId.length > 160 || !MODEL_ID.test(body.modelId))) {
     throw new RequestError(400, 'modelId 无效')
