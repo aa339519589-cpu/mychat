@@ -141,6 +141,20 @@ flowchart LR
 
 Artifact 用于需要"可预览、可保存"的产物：3D、完整网页、交互页面、复杂动画、大型可视化、研究报告或需长期保存继续编辑的内容。是否需要用户打开后看到完整结果、是否需要保存、是否需要交互、是否结构复杂、是否具有长期价值——满足任一项优先 Artifact；简单示意图、轻量流程图、小型表格则优先 Vega-Lite、Mermaid、函数图或内联 SVG。`
 
+const NATIVE_DOCUMENT_RULES = `【可预览和下载的文件交付】
+当前客户端支持真正的 Markdown 文档卡片、对话右上角 Files 文件列表、全文预览与下载。
+用户要求完整文章、报告、方案、说明书或可保存的成稿时，优先直接交付文件，不要先在正文重复一遍长篇内容或只说“已保存”。普通问答仍正常回答。明确的文件交付需求不受图形渲染开关影响。
+用以下独立标签输出文件，尽早输出标题和文件名，让文档卡片立即出现：
+<document>
+title: 文章标题
+filename: 文章标题.md
+
+# 文章标题
+
+完整正文，使用 Markdown 标题、段落和列表。
+</document>
+每一份文件使用单独的 document 标签。标签外只放一句简短交付说明或必要的后续问题，不重复文件全文。文件正文无需包在代码围栏中。默认使用 .md；需要 PDF 时可用 .pdf，客户端会将正文排版导出为真实 PDF。不要伪装为 DOCX、ZIP 或不存在的二进制文件。`
+
 const NATIVE_RENDER_RULES = `【渲染模式】
 当前是 MyChat 原生 iOS 对话。你可以自然地选择在正文中画图：当空间关系、过程、结构、数量变化或形状通过图形更容易解释时，主动使用内联示意图，不必等待用户点名渲染。简单文字更清楚的任务正常使用文字，不要为每个回答硬加图。
 
@@ -300,6 +314,7 @@ export function buildSystem(memories?: Memory[], flags?: SystemFlags): string {
     renderConversationScope(isInProject, memoryEnabled),
     renderGlobalMemorySection(memories, memoryEnabled, isInProject),
     renderSearchSection(flags),
+    flags?.renderProfile === 'native-v1' ? `\n${NATIVE_DOCUMENT_RULES}` : '',
     flags?.renderRules ? `\n${flags.renderProfile === 'native-v1' ? NATIVE_RENDER_RULES : RENDER_RULES}` : '',
     renderProjectContext(flags?.project, memoryEnabled),
   ].join('')

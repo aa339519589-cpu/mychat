@@ -115,3 +115,13 @@ test('native profile prefers progressive inline SVG without changing legacy web 
   const disabled = buildSystem([], { renderRules: false, renderProfile: 'native-v1' })
   assert.ok(!disabled.includes('渐进内联画布'))
 })
+
+test('native file delivery works without enabling drawings and preserves web/Code behavior', () => {
+  const native = buildSystem([], { renderRules: false, renderProfile: 'native-v1', memoryEnabled: false })
+  assert.ok(native.includes('<document>'))
+  assert.ok(native.includes('filename: 文章标题.md'))
+  assert.ok(native.includes('Files'))
+  assert.ok(!native.includes('<inline-artifact>'))
+  const ordinary = buildSystem([], { renderRules: false, memoryEnabled: false })
+  assert.ok(!ordinary.includes('<document>'))
+})

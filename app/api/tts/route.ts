@@ -4,6 +4,7 @@ import { enforceRequestRateLimit, resolveAuth } from '@/lib/api/guard'
 import { log } from '@/lib/logger'
 import { readJson, RequestError } from '@/lib/api/request'
 import { prepareBoundedAudioStream } from '@/lib/api/tts-audio-stream'
+import { PCM_SAMPLE_RATE, SARAH_VOICE_ID, preparePCMStream } from '@/lib/api/tts-pcm-stream'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -13,8 +14,8 @@ const REFERENCE_ID = '652f3d49b41e4e4b8ce3ca8ee2380bd5'
 const MAX_TEXT_LENGTH = 50_000
 const MAX_AUDIO_BYTES = 20 * 1024 * 1024
 
-type TTSRequest = { text?: unknown }
-type ParsedTTSRequest = { text: string }
+type TTSRequest = { text?: unknown; format?: unknown }
+type ParsedTTSRequest = { text: string; format: 'mp3' | 'pcm' }
 
 function failure(
   request: NextRequest,
@@ -24,6 +25,11 @@ function failure(
   retryable: boolean,
 ): Response {
   return apiErrorResponseV1(request, { status, code, message, retryable })
+}
+
+function parsedAudioFormat(value: unknown): 'mp3' | 'pcm' | null {
+  if (value == null || value === 'mp3') return 'mp3'
+  return value === 'pcm' ? 'pcm' : null
 }
 
 async function parseTTSRequest(request: NextRequest): Promise<ParsedTTSRequest | Response> {
@@ -40,19 +46,22 @@ async function parseTTSRequest(request: NextRequest): Promise<ParsedTTSRequest |
     )
   }
 
+  if (body == null || typeof body !== 'object' || Array.isArray(body)) return failure(request, 400, 'INVALID_REQUEST', '请求内容无效', false)
   const text = typeof body.text === 'string' ? body.text.trim() : ''
   if (!text || text.length > MAX_TEXT_LENGTH) {
     return failure(request, 400, 'INVALID_REQUEST', '朗读文本为空或过长', false)
   }
-  return { text }
+  const format = parsedAudioFormat(body.format)
+  if (!format) return failure(request, 400, 'INVALID_REQUEST', '不支持的音频格式', false)
+  return { text, format }
 }
 
-async function requestFishAudio(request: NextRequest, text: string, apiKey: string): Promise<Response> {
+async function requestFishAudio(request: NextRequest, text: string, apiKey: string, fetcher: typeof fetch): Promise<Response> {
   const providerTimeout = AbortSignal.timeout(60_000)
   const signal = AbortSignal.any([request.signal, providerTimeout])
 
   try {
-    const providerResponse = await fetch(FISH_AUDIO_URL, {
+    const providerResponse = await fetcher(FISH_AUDIO_URL, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -117,19 +126,55 @@ async function requestFishAudio(request: NextRequest, text: string, apiKey: stri
   }
 }
 
-export async function POST(request: NextRequest): Promise<Response> {
-  const auth = await resolveAuth(request)
-  if (auth.authUnavailable) return failure(request, 503, 'AUTH_DEPENDENCY_UNAVAILABLE', '认证服务暂时不可用', true)
-
-  const rateGate = await enforceRequestRateLimit(auth, request)
-  if (rateGate.response) return rateGate.response
-  if (!auth.userId) return failure(request, 401, 'AUTH_REQUIRED', '请先登录后再朗读', false)
-
-  const parsed = await parseTTSRequest(request)
-  if (parsed instanceof Response) return parsed
-
-  const apiKey = process.env.FISH_AUDIO_API_KEY?.trim()
-  if (!apiKey) return failure(request, 503, 'DEPENDENCY_UNAVAILABLE', '语音服务暂时不可用', true)
-
-  return requestFishAudio(request, parsed.text, apiKey)
+async function requestPCM(request: NextRequest, text: string, apiKey: string, fetcher: typeof fetch): Promise<Response> {
+  const started = performance.now()
+  try {
+    const stream = await preparePCMStream({ text, apiKey, signal: request.signal, fetcher })
+    return new Response(stream, { headers: {
+      'Content-Type': 'audio/pcm',
+      'X-Audio-Sample-Rate': String(PCM_SAMPLE_RATE),
+      'X-Audio-Channels': '1',
+      'X-Audio-Format': 's16le',
+      'X-TTS-Voice-ID': SARAH_VOICE_ID,
+      'X-TTS-First-Audio-Ms': String(Math.round(performance.now() - started)),
+      'Cache-Control': 'private, no-store, no-transform',
+      'X-Accel-Buffering': 'no',
+      'X-Content-Type-Options': 'nosniff',
+    } })
+  } catch {
+    return failure(request, 502, 'DEPENDENCY_UNAVAILABLE', '语音未及时返回，请重试', true)
+  }
 }
+
+type TTSRouteDependencies = {
+  resolveAuth: typeof resolveAuth
+  enforceRequestRateLimit: typeof enforceRequestRateLimit
+  fetch: typeof fetch
+  getApiKey: () => string | undefined
+  getPCMApiKey: () => string | undefined
+}
+
+export function createTTSHandler(overrides: Partial<TTSRouteDependencies> = {}) {
+  const dependencies = {
+    resolveAuth, enforceRequestRateLimit, fetch,
+    getApiKey: () => process.env.FISH_AUDIO_API_KEY,
+    getPCMApiKey: () => process.env.ELEVENLABS_API_KEY,
+    ...overrides,
+  }
+  return async function handleTTS(request: NextRequest): Promise<Response> {
+    const auth = await dependencies.resolveAuth(request)
+    if (auth.authUnavailable) return failure(request, 503, 'AUTH_DEPENDENCY_UNAVAILABLE', '认证服务暂时不可用', true)
+    const rateGate = await dependencies.enforceRequestRateLimit(auth, request)
+    if (rateGate.response) return rateGate.response
+    if (!auth.userId) return failure(request, 401, 'AUTH_REQUIRED', '请先登录后再朗读', false)
+    const parsed = await parseTTSRequest(request)
+    if (parsed instanceof Response) return parsed
+    const apiKey = (parsed.format === 'pcm' ? dependencies.getPCMApiKey() : dependencies.getApiKey())?.trim()
+    if (!apiKey) return failure(request, 503, 'DEPENDENCY_UNAVAILABLE', '语音服务暂时不可用', true)
+    return parsed.format === 'pcm'
+      ? requestPCM(request, parsed.text, apiKey, dependencies.fetch)
+      : requestFishAudio(request, parsed.text, apiKey, dependencies.fetch)
+  }
+}
+const handler = createTTSHandler()
+export async function POST(request: NextRequest): Promise<Response> { return handler(request) }
