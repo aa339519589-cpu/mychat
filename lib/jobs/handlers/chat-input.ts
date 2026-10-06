@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@/lib/supabase/types'
 import type { SupabaseServer } from '@/lib/api/guard'
 import { AuthoritativeContextError, loadAuthoritativeChatContext } from '@/lib/chat/authoritative-context'
 import { ChatModelSelectionError, resolveChatModelSelection, type ChatModelSelection } from '@/lib/chat/model-selection'
+import type { ChatModelPolicy } from '@/lib/chat/model-policy'
 import type { ModelAccessClass } from '@/lib/model-catalog'
 import type { SearchMode } from '@/lib/chat/request-context'
 import { loadCustomSystemPrompt } from '@/lib/chat/user-system-prompt'
@@ -22,6 +23,7 @@ export type LoadedChatJob = {
   command: {
     tier: string
     modelId?: string
+    modelPolicy?: ChatModelPolicy
     reasoningEffort?: string
     accessClass: ModelAccessClass | 'legacy'
     endpointId?: string
@@ -100,6 +102,7 @@ function validOutputFields(value: JsonObject): boolean {
 
 function validOptionalStringFields(value: JsonObject): boolean {
   return (value.endpointId === undefined || typeof value.endpointId === 'string')
+    && (value.modelPolicy === undefined || value.modelPolicy === 'claude-only')
     && (value.modelId === undefined || typeof value.modelId === 'string')
     && (value.reasoningEffort === undefined || typeof value.reasoningEffort === 'string')
 }
@@ -111,9 +114,10 @@ function validateCommand(value: JsonObject): void {
 }
 
 function optionalCommandValues(value: JsonObject): Pick<LoadedChatJob['command'],
-  'modelId' | 'reasoningEffort' | 'endpointId' | 'attachments' | 'connectorIds'> {
+  'modelId' | 'modelPolicy' | 'reasoningEffort' | 'endpointId' | 'attachments' | 'connectorIds'> {
   return {
     ...(typeof value.modelId === 'string' ? { modelId: value.modelId } : {}),
+    ...(value.modelPolicy === 'claude-only' ? { modelPolicy: value.modelPolicy } : {}),
     ...(typeof value.reasoningEffort === 'string' ? { reasoningEffort: value.reasoningEffort } : {}),
     ...(typeof value.endpointId === 'string' ? { endpointId: value.endpointId } : {}),
     ...(value.attachments !== undefined ? { attachments: attachments(value.attachments) } : {}),
@@ -185,6 +189,7 @@ export async function loadChatJob(job: JobRecord): Promise<LoadedChatJob> {
         tier: parsedCommand.tier,
         endpointId: parsedCommand.endpointId,
         modelId: parsedCommand.modelId,
+        modelPolicy: parsedCommand.modelPolicy,
         reasoningEffort: parsedCommand.reasoningEffort,
         supabase: client as unknown as SupabaseServer,
         userId,

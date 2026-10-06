@@ -5,6 +5,7 @@ import { apiErrorResponseV1 } from '@/lib/api/errors'
 import { expensiveWriteMaintenanceResponse } from '@/lib/api/maintenance'
 import { validateChatRequest } from '@/lib/llm/chat-request'
 import { resolveChatModelSelection, ChatModelSelectionError, type ChatModelSelection } from '@/lib/chat/model-selection'
+import { usageLimitMessage } from '@/lib/chat/model-policy'
 import { privateChatResponse, privateUsageIdentity } from '@/lib/chat/private-stream'
 import { reserveTrialCall, releaseTrialCall } from '@/lib/chat/model-access'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -47,7 +48,7 @@ async function reservePrivateTrial(auth: PrivateAuth, body: ReturnType<typeof pr
   identity: ReturnType<typeof privateUsageIdentity>): Promise<boolean> {
   if (!body.modelId || selection.accessClass === 'quota' || auth.isOwner) return false
   const trial = await reserveTrialCall(auth.supabase, auth.userId, identity.jobId, selection.model)
-  if (!trial.allowed) throw new RequestError(403, '其他模型共享的 3 次额度已用完，请切换基础模型')
+  if (!trial.allowed) throw new RequestError(403, usageLimitMessage(body.modelPolicy, '其他模型共享的 3 次额度已用完，请切换基础模型'))
   return !trial.duplicate
 }
 
@@ -71,6 +72,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = privateBody(await readJson(request, { maxBytes: 8 * 1024 * 1024 }))
     const selection = await resolveChatModelSelection({ tier: body.tier ?? '绝句', modelId: body.modelId,
+      modelPolicy: body.modelPolicy,
       reasoningEffort: body.reasoningEffort, supabase: auth.supabase, userId: auth.userId, allowPremium: true })
     if (selection.outputKind !== 'chat') throw new RequestError(400, '私密聊天仅支持文字回复模型')
     const quota = await enforceQuotaLimit(auth, { quota: true })

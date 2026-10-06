@@ -277,6 +277,21 @@ test('per-chat connector selection is preserved in the durable generation comman
   assert.equal(payload.command?.connectorAccessMode, 'on_demand')
 })
 
+test('Claude product policy survives durable command persistence', async () => {
+  const input = directTurnInput(true)
+  input.body.modelPolicy = 'claude-only'
+  input.body.modelId = 'anthropic/claude-sonnet-5'
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = []
+  await enqueueChatJob(input, {
+    persistPayload: async () => { throw new Error('inline chat must not upload a payload') },
+    removePayload: async () => undefined,
+    createAdminClient: () => directTurnClient(input, calls),
+  })
+  const payload = calls[0]?.args.input_payload as { command?: { modelPolicy?: string; modelId?: string } }
+  assert.equal(payload.command?.modelPolicy, 'claude-only')
+  assert.equal(payload.command?.modelId, input.body.modelId)
+})
+
 test('native turn exposes the exact PostgreSQL failure', async () => {
   const input = directTurnInput(false)
   const client = {
