@@ -88,6 +88,7 @@ export class JobEventWriter {
   private readonly onLiveEvent?: (event: LiveJobEventInput) => void
   private queue: JobEventDraft[] = []
   private chain: Promise<void> = Promise.resolve()
+  private flushing = false
   private failure: unknown = null
   private timer: ReturnType<typeof setTimeout> | null = null
   private fullText = ''
@@ -153,6 +154,7 @@ export class JobEventWriter {
     const persistence = this.flush()
     if (kind === 'job.started') return
     await persistence
+    await this.drainEvents()
   }
 
   async checkpoint(input: {
@@ -221,9 +223,10 @@ export class JobEventWriter {
   private scheduleAfterEmit(isText: boolean): void {
     if (isText && !this.firstTextFlushed) {
       this.firstTextFlushed = true
-      this.scheduleFlush(0)
+      if (!this.flushing) this.scheduleFlush(0)
       return
     }
+    if (this.flushing) return
     if (this.queue.length >= FLUSH_BATCH_SIZE) {
       this.scheduleFlush(0)
       return
@@ -244,23 +247,35 @@ export class JobEventWriter {
   }
 
   private async drainEvents(): Promise<void> {
-    await this.flush()
-    await this.chain
+    do {
+      await this.flush()
+      await this.chain
+    } while (!this.failure && this.queue.length > 0)
     if (this.failure) throw this.failure
   }
 
-  private flush(): Promise<void> {
-    if (this.failure || this.queue.length === 0) return this.chain
-    const batch = this.queue.splice(0, FLUSH_BATCH_SIZE)
-    this.chain = this.chain.then(async () => {
+  private async persistQueuedBatches(): Promise<void> {
+    while (this.queue.length > 0 && !this.failure) {
+      const batch = this.queue.splice(0, FLUSH_BATCH_SIZE)
       this.context.assertAuthority()
       await this.context.appendEvents(batch)
-    }).catch(error => {
+    }
+  }
+
+  private flush(): Promise<void> {
+    if (this.failure || this.queue.length === 0 || this.flushing) return this.chain
+    this.flushing = true
+    // Keep arriving deltas in the coalescing queue while one RPC is pending.
+    // Splicing a batch per timer used to build an unbounded promise/RPC backlog.
+    this.chain = this.chain.then(() => this.persistQueuedBatches()).catch(error => {
       this.failure = error
+    }).finally(() => {
+      this.flushing = false
+      if (!this.failure && this.queue.length > 0) this.scheduleFlush(0)
     })
-    if (this.queue.length > 0) this.scheduleFlush(0)
     return this.chain
   }
+
 }
 
 export function jsonResult(value: unknown): JsonValue {
