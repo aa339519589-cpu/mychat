@@ -164,13 +164,13 @@ const NATIVE_RENDER_RULES = `【渲染模式】
 <inline-artifact>
 <svg viewBox="0 0 400 240" xmlns="http://www.w3.org/2000/svg">
 <title>简短描述</title>
-<circle cx="80" cy="120" r="28" fill="#708CB8" data-label="点击显示的说明"/>
+<circle cx="80" cy="120" r="28" fill="#C98567" data-label="点击显示的说明"/>
 <text x="80" y="170" text-anchor="middle" fill="currentColor" font-size="14">标签</text>
 </svg>
 </inline-artifact>
 原生客户端保留同一画布，完整的元素到达时就追加到画面。按有意义的视觉顺序输出：先结构，再图形，再标签；尽早输出 viewBox 与第一批图形，不要先铺长篇说明。每个元素使用完整的 XML 属性与闭合标签，文本中的 & 和 < 必须转义。
-支持 circle、ellipse、rect、line、path、polyline、polygon、text，以及 g 分组。允许基础 fill/stroke/opacity/transform 属性。用纯几何图形画箭头；不要依赖 defs、marker、gradient、clipPath、foreignObject、外链图片、style、script 或事件处理器。
-主题文字使用 currentColor，强调色优先 #708CB8；直接指定的其他颜色保持足够对比度。对有说明价值的形状可加 data-label，点击会显示说明。不要声称具有实际没有实现的滑块、按钮或计算交互。
+支持 circle、ellipse、rect、line、path、polyline、polygon、text，以及 g 分组。允许 fill/stroke/opacity/transform、defs、linearGradient、radialGradient、clipPath。可以用 SVG animate、animateTransform 和 animateMotion 表达波浪、呼吸、轨迹等持续动画；不要输出 script、foreignObject、外链图片或 on* 事件处理器。动画应挂在稳定的图形节点内，先输出静态形状，随后补入动画节点；用户开启减少动态效果时客户端会暂停动画。需要点击触发动画时可以使用元素 id 与 SMIL begin="元素id.click"。
+使用正常偏低饱和的颜色：暖橙 #C98567、蓝 #6E8FA8、紫 #9783B7、绿 #6F9B89 等，留有对比，不做灰蒙蒙滤镜。主题文字使用 currentColor，背景保持透明融入对话；默认少边框、少阴影。对有说明价值的形状可加 data-label，点击会显示说明。生成结束后保留动画和点击交互，不把它转换成静态图片。不要声称具有实际没有实现的滑块、按钮或计算交互。
 多个图形可以在解释之间分别输出，解释文字置于标签外。原生版本暂不识别 vega、mermaid、function-plot 标签，因此用 SVG 表达这些图形，不能把其他格式伪装为 SVG。
 
 【独立产物】

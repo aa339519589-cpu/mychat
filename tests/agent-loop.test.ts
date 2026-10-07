@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { runAgentLoop } from "../lib/llm/agent-loop"
+import { ProviderResponseError } from "../lib/llm/turn-response"
 import type { ModelMessage, ModelToolDefinition } from "../lib/llm/types"
 
 const tool: ModelToolDefinition = {
@@ -211,3 +212,16 @@ test("agent loop stops after consecutive upstream failures", async () => {
     maxRounds: 1,
   }), /模型服务.*503|模型连接连续失败/)
 })
+
+for (const status of [401, 402, 403, 404]) {
+  test(`agent loop does not replay a permanent provider rejection (${status})`, async () => {
+    let calls = 0
+    const fetcher: typeof fetch = async () => {
+      calls++
+      return new Response('request rejected', { status })
+    }
+    await assert.rejects(runAgentLoop(baseOptions([{ role: 'user', content: 'hello' }], fetcher)),
+      error => error instanceof ProviderResponseError && error.status === status && !error.retryable)
+    assert.equal(calls, 1, 'changing tool payload cannot repair credentials, credit or model routing')
+  })
+}

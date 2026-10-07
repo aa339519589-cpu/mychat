@@ -8,6 +8,17 @@ export const MAX_GENERIC_SUCCESS_RESPONSE_BYTES = 17 * 1024 * 1024
 export const MAX_GENERIC_ACCUMULATED_TEXT_CHARS = 1024 * 1024
 const GENERIC_RESPONSE_LIMIT_MESSAGE = '模型服务响应超过安全限制，已终止读取。'
 
+/** A rejected request cannot succeed by replaying identical credentials or model IDs. */
+export class ProviderResponseError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message)
+    this.name = 'ProviderResponseError'
+  }
+  get retryable(): boolean {
+    return this.status === 408 || this.status === 425 || this.status === 429 || this.status >= 500
+  }
+}
+
 export class GenericResponseLimitError extends Error {
   constructor() {
     super(GENERIC_RESPONSE_LIMIT_MESSAGE)

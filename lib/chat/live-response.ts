@@ -25,6 +25,8 @@ export type AcceptedLiveChat = {
   status: string
   created: boolean
   streamUrl: string
+  trialRemaining?: number
+  trialLimit?: number
 }
 
 function acceptedHeaders(accepted: AcceptedLiveChat): Headers {
@@ -37,6 +39,8 @@ function acceptedHeaders(accepted: AcceptedLiveChat): Headers {
     'X-MyChat-Job-Status': accepted.status,
     'X-MyChat-Job-Created': accepted.created ? '1' : '0',
     'X-MyChat-Stream-Url': accepted.streamUrl,
+    ...(accepted.trialRemaining !== undefined ? { 'X-MyChat-Trial-Remaining': String(accepted.trialRemaining) } : {}),
+    ...(accepted.trialLimit !== undefined ? { 'X-MyChat-Trial-Limit': String(accepted.trialLimit) } : {}),
   })
 }
 

@@ -17,6 +17,8 @@ test('accepted chat POST flushes SSE headers before live-stream setup finishes',
       status: 'queued',
       created: true,
       streamUrl: `/api/v1/jobs/${jobId}/live?from_seq=0`,
+      trialRemaining: 0,
+      trialLimit: 3,
     },
   }, {
     readJob: async () => {
@@ -33,6 +35,8 @@ test('accepted chat POST flushes SSE headers before live-stream setup finishes',
   assert.equal(response.status, 200)
   assert.match(response.headers.get('content-type') ?? '', /text\/event-stream/)
   assert.equal(response.headers.get('X-MyChat-Job-Id'), jobId)
+  assert.equal(response.headers.get('X-MyChat-Trial-Remaining'), '0')
+  assert.equal(response.headers.get('X-MyChat-Trial-Limit'), '3')
 
   const reader = response.body?.getReader()
   assert.ok(reader)

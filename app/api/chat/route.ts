@@ -66,6 +66,7 @@ function acceptedChatResponse(input: { request: NextRequest; auth: AuthCtx; body
         status: input.enqueued.job.status,
         created: input.enqueued.created,
         streamUrl,
+        ...(input.trialRemaining !== null ? { trialRemaining: input.trialRemaining, trialLimit: 3 } : {}),
       },
     })
   }
