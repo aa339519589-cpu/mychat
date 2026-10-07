@@ -1,3 +1,8 @@
+import { log } from '@/lib/logger'
+import type { AgentLoopOpts } from '@/lib/llm/agent-loop'
+import { JobRuntimeError } from '../errors'
+import type { JobEventWriter } from '../event-writer'
+import type { JobExecutionContext, JobHandlerResult } from '../worker'
 import { createHash } from 'node:crypto'
 import type { ModelMessage } from '@/lib/llm/types'
 import { weightedTokenUsage } from '@/lib/quota'
@@ -85,4 +90,40 @@ export function chatTokenAccounting(
       priceVersion: BILLING_PRICE_VERSION,
     },
   }]
+}
+
+export async function restoreChatTrajectory(
+  context: JobExecutionContext, writer: JobEventWriter, modelMessages: AgentLoopOpts['messages'],
+): Promise<number> {
+  const baseLength = modelMessages.length
+  if (context.job.checkpoint && !context.job.checkpoint.resumable) {
+    throw new JobRuntimeError('JOB_RETRY_UNSAFE', 'Chat checkpoint is explicitly non-resumable', {
+      class: 'internal', retryable: false,
+    })
+  }
+  const restored = restoredTrajectory(context.job.checkpoint?.data)
+  if (restored.length) {
+    modelMessages.push(...restored)
+    await writer.append('job.resumed', { checkpointMessages: restored.length })
+  }
+  return baseLength
+}
+
+export async function timedChatPreparation<T>(jobId: string, stage: string, operation: () => Promise<T>): Promise<T> {
+  const startedAt = Date.now()
+  try { return await operation() } finally {
+    log.info('jobs', 'Chat preparation stage timing', { jobId, stage, elapsedMs: Date.now() - startedAt })
+  }
+}
+
+export function withHistoryIndexOutbox(result: JobHandlerResult, input: {
+  jobId: string; conversationId: string; enabled: boolean
+}): JobHandlerResult {
+  // Finalization commits this item atomically with the completed reply. The
+  // outbox owns durable retries, so embeddings never delay chat terminal.
+  if (result.status !== 'completed' || !input.enabled) return result
+  return { ...result, outbox: [...(result.outbox ?? []), {
+    kind: 'history.index', dedupeKey: `${input.jobId}:history-index`,
+    payload: { conversationId: input.conversationId },
+  }] }
 }
