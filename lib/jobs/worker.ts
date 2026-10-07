@@ -15,6 +15,7 @@ import {
   nextJobBackoff, nextJobLeaseRenewalDelay,
 } from './worker-config'
 import { createActiveExecution, type ActiveExecution } from './worker-execution'
+import { observeJobCancellation } from './worker-cancellation'
 import {
   createJobExecutionContext,
   observeJobFinalization,
@@ -185,6 +186,7 @@ export class JobWorker {
       job, fence, execution, budget, repository: this.repository, now: this.now,
     })
     const renewal = this.renewLease(fence, execution)
+    const cancellation = observeJobCancellation({ repository: this.repository, fence, execution, sleep: this.sleep })
     try {
       budget.armWallTimer()
       budget.assertWithinLimits()
@@ -252,7 +254,7 @@ export class JobWorker {
     } finally {
       budget.dispose()
       execution.renewStop.abort()
-      await renewal
+      await Promise.all([renewal, cancellation])
       this.active.delete(job.id)
     }
   }

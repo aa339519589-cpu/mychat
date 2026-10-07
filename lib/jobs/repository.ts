@@ -44,6 +44,8 @@ export interface JobRepository {
     leaseSeconds: number
   }): Promise<JobClaimResult>
   renew(input: JobFence & { leaseSeconds: number }): Promise<JobRenewResult>
+  /** Read-only cancellation observation; never renews or grants authority. */
+  cancellationRequested?(fence: JobFence, signal?: AbortSignal): Promise<boolean>
   retry(input: JobFence & {
     error: JobFailure
     delaySeconds: number
