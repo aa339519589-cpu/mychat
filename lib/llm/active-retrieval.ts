@@ -64,63 +64,79 @@ async function scopedConversationIds(supabase: SupabaseServer, userId: string, p
   return Array.from(new Set(ids)).slice(0, limit)
 }
 
-export async function ensureConversationIndexed(supabase: SupabaseServer | null, userId: string | null, conversationId: string | null, signal?: AbortSignal): Promise<void> {
+type IndexMaintenance = {
+  strict?: boolean
+  beforeWrite?: () => Promise<void>
+}
+
+function indexingReadSucceeded(error: unknown, maintenance: IndexMaintenance): boolean {
+  if (!error) return true
+  if (maintenance.strict) throw error
+  return false
+}
+
+async function buildIndexRows(pending: ReturnType<typeof chunkMessages>, conversation: ConversationRow, userId: string, signal?: AbortSignal): Promise<TablesInsert<'conversation_chunks'>[]> {
+  const rows: TablesInsert<'conversation_chunks'>[] = []
+  let cursor = 0
+  const workers = Array.from({ length: Math.min(4, pending.length) }, async () => {
+    while (cursor < pending.length) {
+      const chunk = pending[cursor++]
+      const vector = embeddingEnabled() ? await embed(chunk.content, signal) : null
+      rows.push({
+        user_id: userId, conversation_id: conversation.id, project_id: conversation.project_id ?? null,
+        conversation_title: conversation.title ?? null, message_start_id: chunk.start.id,
+        message_end_id: chunk.end.id, content: chunk.content, content_hash: hash(chunk.content),
+        token_count: estimateTokens(chunk.content), embedding: vector,
+      })
+    }
+  })
+  await Promise.all(workers)
+  return rows
+}
+
+async function existingChunkHashes(supabase: SupabaseServer, conversationId: string, hashes: string[], maintenance: IndexMaintenance): Promise<Set<string>> {
+  const batches = await Promise.all(Array.from({ length: Math.ceil(hashes.length / HASH_QUERY_BATCH_SIZE) }, (_, index) =>
+    supabase.from('conversation_chunks').select('content_hash').eq('conversation_id', conversationId)
+      .in('content_hash', hashes.slice(index * HASH_QUERY_BATCH_SIZE, (index + 1) * HASH_QUERY_BATCH_SIZE))))
+  if (maintenance.strict && batches.some(result => result.error)) throw new Error('Conversation index hash lookup failed')
+  const existing = batches.flatMap(result => result.error ? [] : result.data ?? [])
+  return new Set((existing as Array<{ content_hash?: unknown }>)
+    .map(row => row.content_hash).filter((value): value is string => typeof value === 'string'))
+}
+
+async function persistIndexRows(supabase: SupabaseServer, rows: TablesInsert<'conversation_chunks'>[], maintenance: IndexMaintenance): Promise<void> {
+  await maintenance.beforeWrite?.()
+  const { error } = await supabase.from('conversation_chunks').upsert(rows, { onConflict: 'conversation_id,content_hash' })
+  if (!indexingReadSucceeded(error, maintenance)) log.warn('activeRetrieval', 'Failed to save chunks', error)
+}
+
+export async function ensureConversationIndexed(supabase: SupabaseServer | null, userId: string | null, conversationId: string | null, signal?: AbortSignal, maintenance: IndexMaintenance = {}): Promise<void> {
   if (!supabase || !userId || !conversationId) return
 
   try {
-    const [{ data: conversation }, messageResult] = await Promise.all([
+    const [{ data: conversation, error: conversationError }, messageResult] = await Promise.all([
       supabase.from('conversations').select('id, title, project_id, updated_at').eq('id', conversationId).eq('user_id', userId).maybeSingle(),
       fetchAllConversationMessages(supabase, userId, conversationId),
     ])
-    if (messageResult.error || !conversation) return
+    if (!indexingReadSucceeded(conversationError ?? messageResult.error, maintenance)) return
+    if (!conversation) return
 
     const rows = messageResult.rows
     const chunks = chunkMessages(rows)
     if (!chunks.length) return
 
-    const hashes = chunks.map(c => hash(c.content))
-    const existingBatches = await Promise.all(Array.from({ length: Math.ceil(hashes.length / HASH_QUERY_BATCH_SIZE) }, (_, index) =>
-      supabase.from('conversation_chunks').select('content_hash').eq('conversation_id', conversationId)
-        .in('content_hash', hashes.slice(index * HASH_QUERY_BATCH_SIZE, (index + 1) * HASH_QUERY_BATCH_SIZE))))
-    const existing = existingBatches.flatMap(result => result.error ? [] : result.data ?? [])
-
-    const seen = new Set(((existing ?? []) as Array<{ content_hash?: unknown }>)
-      .map(row => row.content_hash)
-      .filter((value): value is string => typeof value === 'string'))
+    const seen = await existingChunkHashes(supabase, conversationId, chunks.map(c => hash(c.content)), maintenance)
     const pendingChunks = chunks.filter(c => !seen.has(hash(c.content)))
     const pending = pendingChunks.length <= 24
       ? pendingChunks
       : [...pendingChunks.slice(0, 12), ...pendingChunks.slice(-12)]
     if (!pending.length) return
 
-    const conv = conversation as ConversationRow
-    const rowsToInsert: TablesInsert<'conversation_chunks'>[] = []
-    let cursor = 0
-    const workers = Array.from({ length: Math.min(4, pending.length) }, async () => {
-      while (cursor < pending.length) {
-        const chunk = pending[cursor++]
-        const vector = embeddingEnabled() ? await embed(chunk.content, signal) : null
-        rowsToInsert.push({
-        user_id: userId,
-        conversation_id: conversationId,
-        project_id: conv.project_id ?? null,
-        conversation_title: conv.title ?? null,
-        message_start_id: chunk.start.id,
-        message_end_id: chunk.end.id,
-        content: chunk.content,
-        content_hash: hash(chunk.content),
-        token_count: estimateTokens(chunk.content),
-        embedding: vector,
-        })
-      }
-    })
-    await Promise.all(workers)
+    const rowsToInsert = await buildIndexRows(pending, conversation as ConversationRow, userId, signal)
 
-    if (!rowsToInsert.length) return
-    const { error } = await supabase.from('conversation_chunks').upsert(rowsToInsert, { onConflict: 'conversation_id,content_hash' })
-    if (error) log.warn('activeRetrieval', 'Failed to save chunks', error)
+    await persistIndexRows(supabase, rowsToInsert, maintenance)
   } catch (e) {
-    if (signal?.aborted) throw e
+    if (signal?.aborted || maintenance.strict) throw e
     log.warn('activeRetrieval', 'Indexing skipped', e)
   }
 }
@@ -145,37 +161,32 @@ function renderHits(hits: RetrievalHit[], projectId: string | null | undefined, 
 }
 
 async function retrieveAnchorsFromChunkHits(supabase: SupabaseServer, userId: string, projectId: string | null | undefined, query: string, config: RetrievalConfig, hits: RetrievalHit[]): Promise<RetrievalHit[]> {
-  const out: RetrievalHit[] = []
-  const seenConversations = new Map<string, { conversation: ConversationRow; edges: ConversationEdges } | null>()
-
-  for (const hit of hits) {
-    if (!inScope(hit.project_id, projectId)) continue
-
-    let cached = seenConversations.get(hit.conversation_id)
-    if (cached === undefined) {
-      const [{ data: conversation }, edges] = await Promise.all([
-        supabase.from('conversations').select('id, title, project_id').eq('id', hit.conversation_id).eq('user_id', userId).maybeSingle(),
-        fetchConversationEdges(supabase, userId, hit.conversation_id),
-      ])
+  const seenConversations = new Map<string, Promise<{ conversation: ConversationRow; edges: ConversationEdges } | null>>()
+  const scoped = hits.filter(hit => inScope(hit.project_id, projectId))
+  for (const hit of scoped) {
+    if (seenConversations.has(hit.conversation_id)) continue
+    seenConversations.set(hit.conversation_id, Promise.all([
+      supabase.from('conversations').select('id, title, project_id').eq('id', hit.conversation_id).eq('user_id', userId).maybeSingle(),
+      fetchConversationEdges(supabase, userId, hit.conversation_id),
+    ]).then(([{ data: conversation }, edges]) => {
       const conv = conversation as ConversationRow | null
-      cached = conv && inScope(conv.project_id, projectId)
-        ? { conversation: conv, edges }
-        : null
-      seenConversations.set(hit.conversation_id, cached)
-    }
-    if (!cached) continue
-
-    const chunkRows = await messagesForChunkHit(supabase, userId, hit)
-    if (!chunkRows.length) continue
+      return conv && inScope(conv.project_id, projectId) ? { conversation: conv, edges } : null
+    }))
+  }
+  const expanded = await Promise.all(scoped.map(async hit => {
+    const [cached, chunkRows] = await Promise.all([
+      seenConversations.get(hit.conversation_id), messagesForChunkHit(supabase, userId, hit),
+    ])
+    if (!cached || !chunkRows.length) return null
     const candidates = chunkRows
       .filter(m => m.role === 'user' && !!(m.content ?? '').trim())
       .map((m, index) => ({ row: m, score: keywordScore(query, m.content ?? '') - index * 0.001 }))
       .sort((a, b) => b.score - a.score)
 
     const anchor = candidates[0]?.row
-    if (!anchor) continue
+    if (!anchor) return null
     const rows = await fetchRowsAroundAnchor(supabase, userId, hit.conversation_id, anchor, config)
-    const anchored = buildAnchoredHit({
+    return buildAnchoredHit({
       anchor,
       rows,
       edges: cached.edges,
@@ -183,10 +194,8 @@ async function retrieveAnchorsFromChunkHits(supabase: SupabaseServer, userId: st
       config,
       similarity: hit.similarity + keywordScore(query, anchor.content ?? ''),
     })
-    if (anchored) out.push(anchored)
-  }
-
-  return out
+  }))
+  return expanded.filter((hit): hit is RetrievalHit => hit !== null)
 }
 
 async function retrieveBySemanticChunks(supabase: SupabaseServer, userId: string, projectId: string | null | undefined, conversationId: string | null, query: string, mode: HistoryRetrievalMode, config: RetrievalConfig, signal?: AbortSignal): Promise<RetrievalHit[]> {
@@ -263,24 +272,23 @@ async function retrieveUserAnchoredContexts(supabase: SupabaseServer, userId: st
     : { data: [] as ConversationRow[] }
   const convMap = new Map(((conversations ?? []) as ConversationRow[]).map(conversation => [conversation.id, conversation]))
 
-  const hits: RetrievalHit[] = []
-  const edgesByConversation = new Map<string, ConversationEdges>()
-  for (const [index, anchor] of anchors.entries()) {
+  const edgesByConversation = new Map<string, Promise<ConversationEdges>>()
+  for (const cid of convIds) edgesByConversation.set(cid, fetchConversationEdges(supabase, userId, cid))
+  const hits = await Promise.all(anchors.map(async (anchor, index) => {
     const cid = anchor.row.conversation_id
-    if (!cid) continue
+    if (!cid) return null
 
     const [rows, edges] = await Promise.all([
       fetchRowsAroundAnchor(supabase, userId, cid, anchor.row, config),
-      edgesByConversation.get(cid) ? Promise.resolve(edgesByConversation.get(cid)!) : fetchConversationEdges(supabase, userId, cid),
+      edgesByConversation.get(cid)!,
     ])
-    edgesByConversation.set(cid, edges)
     const anchorIndex = rows.findIndex(m => m.id === anchor.row.id)
-    if (anchorIndex < 0) continue
+    if (anchorIndex < 0) return null
 
     const conv = convMap.get(cid)
-    if (!conv || !inScope(conv.project_id, projectId)) continue
+    if (!conv || !inScope(conv.project_id, projectId)) return null
 
-    const hit = buildAnchoredHit({
+    return buildAnchoredHit({
       anchor: anchor.row,
       rows,
       edges,
@@ -288,10 +296,8 @@ async function retrieveUserAnchoredContexts(supabase: SupabaseServer, userId: st
       config,
       similarity: anchor.score - index * 0.01,
     })
-    if (hit) hits.push(hit)
-  }
-
-  return hits
+  }))
+  return hits.filter((hit): hit is RetrievalHit => hit !== null)
 }
 
 export type RetrievedHistorySource = {
@@ -338,12 +344,21 @@ export async function retrieveHistoryWithSources(opts: {
 
   const config = RETRIEVAL_CONFIG[mode] ?? RETRIEVAL_CONFIG.balanced
   try {
-    const allHits: RetrievalHit[] = []
-
-    allHits.push(...await retrieveUserAnchoredContexts(supabase, userId, projectId, conversationId, query, config))
-
-    if (config.semantic) allHits.push(...await retrieveBySemanticChunks(supabase, userId, projectId, conversationId, query, mode, config, signal))
-    if (config.keyword) allHits.push(...await retrieveByTextSearch(supabase, userId, projectId, conversationId, query, mode, config))
+    signal?.throwIfAborted()
+    const startedAt = Date.now()
+    const timed = async (name: string, retrieve: () => Promise<RetrievalHit[]>) => {
+      const hits = await retrieve()
+      log.info('activeRetrieval', 'History retrieval branch timing', {
+        conversationId, branch: name, elapsedMs: Date.now() - startedAt, hits: hits.length,
+      })
+      return hits
+    }
+    const branches = await Promise.all([
+      timed('user_anchors', () => retrieveUserAnchoredContexts(supabase, userId, projectId, conversationId, query, config)),
+      config.semantic ? timed('semantic', () => retrieveBySemanticChunks(supabase, userId, projectId, conversationId, query, mode, config, signal)) : [],
+      config.keyword ? timed('text', () => retrieveByTextSearch(supabase, userId, projectId, conversationId, query, mode, config)) : [],
+    ])
+    const allHits = branches.flat()
 
     const hits = dedupeHits(allHits)
       .filter(hit => inScope(hit.project_id, projectId))

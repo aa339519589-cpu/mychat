@@ -111,6 +111,11 @@ export class JobOutboxDispatcher {
           jobId: message.jobId,
           deleted,
         })
+      } else if (message.topic === 'history.index' && this.repository.indexHistory) {
+        await this.repository.indexHistory({ message, workerId: this.workerId })
+        log.info('outbox', 'Conversation history index published', {
+          outboxId: message.id, jobId: message.jobId,
+        })
       } else throw new TypeError(`Outbox topic has no durable consumer: ${message.topic}`)
       if (renewalError) throw renewalError
       await this.repository.publish({

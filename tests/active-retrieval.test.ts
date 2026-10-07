@@ -7,6 +7,42 @@ import { ensureConversationIndexed, retrieveHistoryContext, retrieveHistoryWithS
 const now = "2026-07-13T00:00:00.000Z"
 const userId = "20000000-0000-4000-8000-000000000001"
 
+test('history lookup starts independent text search while anchor storage is still pending', { concurrency: false, timeout: 2_000 }, async t => {
+  const previousEmbedding = process.env.EMBEDDING_API_KEY
+  const previousOpenAi = process.env.OPENAI_API_KEY
+  delete process.env.EMBEDDING_API_KEY
+  delete process.env.OPENAI_API_KEY
+  t.after(() => {
+    if (previousEmbedding === undefined) delete process.env.EMBEDDING_API_KEY
+    else process.env.EMBEDDING_API_KEY = previousEmbedding
+    if (previousOpenAi === undefined) delete process.env.OPENAI_API_KEY
+    else process.env.OPENAI_API_KEY = previousOpenAi
+  })
+  let releaseAnchors: (() => void) | undefined
+  const anchorGate = new Promise<void>(resolve => { releaseAnchors = resolve })
+  let textSearchStarted = false
+  class Query {
+    select() { return this } eq() { return this } is() { return this }
+    neq() { return this } order() { return this } limit() { return this }
+    async then(resolve: (value: { data: unknown[]; error: null }) => unknown) {
+      await anchorGate
+      return resolve({ data: [], error: null })
+    }
+  }
+  const client = {
+    from: () => new Query(), rpc: async () => {
+      textSearchStarted = true
+      releaseAnchors?.()
+      return { data: [], error: null }
+    },
+  } as unknown as SupabaseServer
+  const result = await retrieveHistoryWithSources({
+    supabase: client, userId, conversationId: 'current', query: 'previous coffee plan', mode: 'balanced',
+  })
+  assert.equal(textSearchStarted, true)
+  assert.deepEqual(result, { renderedContext: '', sources: [] })
+})
+
 function retrievalClient(projectId: string | null = null) {
   const indexedRows: unknown[] = []
   type Result = { data: unknown; error: null }

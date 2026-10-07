@@ -12,14 +12,18 @@ function rawMessageText(m: RawMsg): string {
   return ''
 }
 
-export function latestUserQuery(messages: RawMsg[]): string {
-  let lastUser = ''
+export function latestUserText(messages: RawMsg[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i]
     if (m.role !== 'user') continue
     const text = rawMessageText(messages[i])
-    if (text) { lastUser = text; break }
+    if (text) return text
   }
+  return ''
+}
+
+export function latestUserQuery(messages: RawMsg[]): string {
+  const lastUser = latestUserText(messages)
 
   const recent = messages
     .slice(-8)
@@ -36,4 +40,3 @@ export function latestUserQuery(messages: RawMsg[]): string {
     recent ? `【最近几轮上下文】\n${recent}` : '',
   ].filter(Boolean).join('\n\n')
 }
-
