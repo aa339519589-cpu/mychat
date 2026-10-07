@@ -80,6 +80,31 @@ test('job event writer hydrates the materialized checkpoint prefix without emitt
 })
 
 
+test('durable drain does not wait for best-effort live relay cleanup', async () => {
+  const target = context()
+  const writer = new JobEventWriter(target.value, () => undefined)
+  let closeStarted = false
+  let finishClose!: () => void
+  const cleanup = new Promise<void>(resolve => { finishClose = resolve })
+  Object.defineProperty(writer, 'livePublisher', {
+    value: { close: () => { closeStarted = true; return cleanup } },
+  })
+  writer.emit({ text: 'durable reply' })
+  const deadline = setTimeout(() => finishClose(), 1_000)
+  try {
+    await writer.drain()
+    assert.equal(closeStarted, true)
+    assert.equal(target.batches.flat()[0]?.payload.text, 'durable reply')
+    let cleanupFinished = false
+    void cleanup.then(() => { cleanupFinished = true })
+    await Promise.resolve()
+    assert.equal(cleanupFinished, false, 'preview cleanup must not block durable completion')
+  } finally {
+    clearTimeout(deadline)
+    finishClose()
+  }
+})
+
 test('model output completion is relayed immediately as a live control event', async () => {
   const target = context()
   const live: Array<{ kind: string; payload: JsonObject }> = []

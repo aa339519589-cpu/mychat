@@ -44,6 +44,31 @@ type ChatHistoryDependencies = {
   retrieveHistory: typeof retrieveHistoryWithSources
 }
 
+type TimedHistory = {
+  value: Awaited<ReturnType<typeof retrieveHistoryWithSources>>
+  elapsedMs: number
+}
+
+function startParallelHistory(
+  options: { deferIndexing?: boolean; conversationId?: string },
+  crossConversation: boolean,
+  retrieve: (id: string | null) => ReturnType<typeof retrieveHistoryWithSources>,
+): Promise<TimedHistory | null> {
+  if (!options.deferIndexing || !options.conversationId || !crossConversation) {
+    return Promise.resolve(null)
+  }
+  return timedHistory(retrieve, options.conversationId)
+}
+
+async function timedHistory(
+  retrieve: (id: string | null) => ReturnType<typeof retrieveHistoryWithSources>,
+  conversationId: string | null,
+): Promise<TimedHistory> {
+  const startedAt = Date.now()
+  const value = await retrieve(conversationId)
+  return { value, elapsedMs: Date.now() - startedAt }
+}
+
 export async function prepareChatHistory(options: {
   supabase: SupabaseServer | null
   userId: string | null
@@ -96,13 +121,9 @@ export async function prepareChatHistory(options: {
   // Worker admission supplies the current conversation ID and defers indexing.
   // Cross-conversation lookup does not depend on its summary, so do both reads
   // together while still waiting for both before assembling model context.
-  const parallelRetrieval = options.deferIndexing && !!options.conversationId && crossConversation
-  const retrievalStartedAt = parallelRetrieval ? Date.now() : 0
   const [summary, parallelHistory] = await Promise.all([
     summaryPromise.then(value => ({ ...value, elapsedMs: Date.now() - summaryStartedAt })),
-    parallelRetrieval
-      ? retrieve(options.conversationId!).then(value => ({ value, elapsedMs: Date.now() - retrievalStartedAt }))
-      : Promise.resolve(null),
+    startParallelHistory(options, crossConversation, retrieve),
   ])
   const summaryMs = summary.elapsedMs
 
@@ -116,11 +137,11 @@ export async function prepareChatHistory(options: {
     })
     return { conversationId: summary.conversationId, renderedContext: summary.renderedSummary }
   }
-  const historyStartedAt = parallelRetrieval ? retrievalStartedAt : Date.now()
-  const history = parallelHistory?.value ?? await retrieve(summary.conversationId)
+  const historyResult = parallelHistory ?? await timedHistory(retrieve, summary.conversationId)
+  const history = historyResult.value
   log.info('jobs', 'Chat history preparation timing', {
     conversationId: summary.conversationId, summaryMs,
-    retrievalMs: parallelHistory?.elapsedMs ?? Date.now() - historyStartedAt, socialOnly: false,
+    retrievalMs: historyResult.elapsedMs, socialOnly: false,
   })
   return {
     conversationId: summary.conversationId,
