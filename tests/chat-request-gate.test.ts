@@ -10,10 +10,10 @@ import type { RateLimitResult } from '../lib/rate-limit'
 
 test('chat authenticates and applies distributed rate limiting before reading the large body', () => {
   const route = readFileSync(new URL('../app/api/chat/route.ts', import.meta.url), 'utf8')
-  const auth = route.indexOf('await resolveAuth(request)')
+  const auth = route.indexOf('await resolveAuth(request')
   const rate = route.indexOf('await enforceRequestRateLimit(auth, request)')
   const body = route.indexOf('await readJson(request, { maxBytes: 8 * 1024 * 1024 })')
-  const policy = route.indexOf('await resolveAdmissionPolicy(request, auth, body)')
+  const policy = route.indexOf('await resolveAdmissionPolicy(request, auth, body')
   const selection = route.indexOf('selection = await resolveChatModelSelection')
   const quota = route.indexOf("await enforceQuotaLimit(auth, { quota: true })")
 
@@ -23,9 +23,9 @@ test('chat authenticates and applies distributed rate limiting before reading th
   assert.ok(body < policy)
   assert.ok(selection >= 0)
   assert.ok(selection < quota)
-  assert.equal(route.match(/await resolveAuth\(request\)/g)?.length, 1)
+  assert.equal(route.match(/await resolveAuth\(request[,)]/g)?.length, 1)
   assert.equal(route.match(/await enforceRequestRateLimit\(auth, request\)/g)?.length, 1)
-  assert.equal(route.match(/await resolveAdmissionPolicy\(request, auth, body\)/g)?.length, 1)
+  assert.equal(route.match(/await resolveAdmissionPolicy\(request, auth, body[,)]/g)?.length, 1)
   assert.equal(route.match(/enforceQuotaLimit\(auth, \{ quota: true \}\)/g)?.length, 1)
   assert.match(route, /selection\.accessClass === 'quota'/)
   assert.match(route, /allowPremium: true/)

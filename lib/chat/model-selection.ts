@@ -106,6 +106,12 @@ function customReasoningEffort(model: string, requestedValue: string | undefined
   return resolved
 }
 
+function ownedEndpointWithPrefetch(client: SupabaseServer, userId: string, endpointId: string,
+  rows: readonly ModelEndpointRow[] | null | undefined, dependencies: ModelSelectionDependencies) {
+  const owned = rows?.find(row => row.id.toLowerCase() === endpointId.toLowerCase() && row.user_id === userId)
+  return owned ? Promise.resolve(owned) : dependencies.getOwnedEndpoint(client, userId, endpointId)
+}
+
 export async function resolveChatModelSelection(options: {
   tier: string
   endpointId?: string
@@ -114,6 +120,7 @@ export async function resolveChatModelSelection(options: {
   supabase: SupabaseServer | null
   userId: string | null
   allowPremium?: boolean
+  prefetchedEndpoints?: readonly ModelEndpointRow[] | null
 }, dependencies: ModelSelectionDependencies = DEFAULT_DEPENDENCIES): Promise<ChatModelSelection> {
   if (options.modelId) {
     const directDeepSeek = resolveDirectDeepSeekSelection({
@@ -149,11 +156,10 @@ export async function resolveChatModelSelection(options: {
     }
   }
 
-  const customEndpoint = typeof options.endpointId === 'string'
-  if (customEndpoint) {
+  if (typeof options.endpointId === 'string') {
     if (!options.supabase || !options.userId) throw new ChatModelSelectionError(401, { error: '请先登录后使用自定义模型' })
     try {
-      const endpoint = await dependencies.getOwnedEndpoint(options.supabase, options.userId, options.endpointId!)
+      const endpoint = await ownedEndpointWithPrefetch(options.supabase, options.userId, options.endpointId, options.prefetchedEndpoints, dependencies)
       if (!endpoint) throw new ChatModelSelectionError(404, { error: '自定义模型不存在或无权访问' })
       if (!isModelOutputKind(endpoint.output_kind)) throw new ChatModelSelectionError(409, { error: '自定义模型用途无效，请在设置中重新连接' })
       const reasoningEffort = endpoint.output_kind === 'chat'

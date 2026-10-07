@@ -227,3 +227,34 @@ test('Code selection rejects custom image and video endpoints', async () => {
       && error.message === 'Code 仅支持文本模型',
   )
 })
+
+
+test('an authenticated prefetched endpoint preserves route checks without a second lookup', async () => {
+  const calls: string[] = []
+  const result = await resolveChatModelSelection({
+    tier: '绝句', endpointId: 'endpoint-id', supabase: {} as never, userId: 'user-id',
+    prefetchedEndpoints: [endpoint],
+  }, {
+    getOwnedEndpoint: async () => { throw new Error('Unexpected repeated lookup') },
+    resolveEndpointKey: () => { calls.push('key'); return 'secret' },
+    validateEndpointNetwork: async () => { calls.push('network'); return 'https://safe.example/v1' },
+  })
+  assert.deepEqual(calls, ['key', 'network'])
+  assert.equal(result.model, endpoint.model)
+  assert.equal(result.outputKind, 'image')
+})
+
+test('prefetched endpoint data never bypasses authentication or ownership', async () => {
+  let lookedUp = false
+  await resolveChatModelSelection({
+    tier: '绝句', endpointId: 'endpoint-id', supabase: {} as never, userId: 'user-id',
+    prefetchedEndpoints: [{ ...endpoint, user_id: 'another-user' }],
+  }, {
+    getOwnedEndpoint: async () => { lookedUp = true; return endpoint },
+    resolveEndpointKey: () => 'secret', validateEndpointNetwork: async () => 'https://safe.example/v1',
+  })
+  assert.equal(lookedUp, true)
+  await assert.rejects(resolveChatModelSelection({
+    tier: '绝句', endpointId: 'endpoint-id', supabase: null, userId: null, prefetchedEndpoints: [endpoint],
+  }), (error: unknown) => error instanceof ChatModelSelectionError && error.status === 401)
+})
