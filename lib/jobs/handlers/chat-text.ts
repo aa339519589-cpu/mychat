@@ -309,6 +309,8 @@ async function runPreparedChat(
   const { selection } = input
   const isDeepTierProxy = selection.capability.provider.id === 'deep-tier'
   const trial = selection.accessClass === 'trial'
+  const providerStartedAt = Date.now()
+  let firstTextLogged = false
   const result = await dependencies.runAgentLoop({
     url: chatCompletionsUrl(selection.capability.provider.baseUrl),
     apiKey: selection.apiKey,
@@ -318,7 +320,16 @@ async function runPreparedChat(
     reasoningEffort: prepared.instant ? null : selection.reasoningEffort as ReasoningEffort | null,
     messages: prepared.modelMessages,
     tools: toOpenAITools(prepared.tools),
-    emit: runtime.emit,
+    emit: event => {
+      if ('text' in event && event.text && !firstTextLogged) {
+        firstTextLogged = true
+        log.info('jobs', 'Chat first model text timing', {
+          jobId: context.job.id, model: selection.model,
+          providerToFirstTextMs: Date.now() - providerStartedAt,
+        })
+      }
+      runtime.emit(event)
+    },
     executeTool: createToolExecutor(context, input, runtime, prepared, dependencies),
     maxRounds: prepared.instant ? 1 : SAFETY_ROUNDS,
     leakedRetry: !prepared.instant,
