@@ -122,3 +122,36 @@ test('model output completion is relayed immediately as a live control event', a
   assert.equal(live[0]?.payload.phase, 'provider_complete')
   assert.ok(target.batches.flat().some(event => event.kind === 'model.output_completed'))
 })
+
+
+test('slow durable writes coalesce waiting deltas instead of building a per-timer RPC backlog', async () => {
+  const target = context()
+  let release!: () => void
+  const blocked = new Promise<void>(resolve => { release = resolve })
+  let calls = 0
+  target.value.appendEvents = async events => {
+    calls++
+    if (calls === 1) await blocked
+    target.batches.push([...events])
+  }
+  const live: Array<{ kind: string; payload: JsonObject }> = []
+  const writer = new JobEventWriter(target.value, event => { live.push(event) })
+  await writer.append('job.started', { phase: 'preparing' })
+  try {
+    for (let index = 0; index < 20; index++) {
+      writer.emit({ text: '中文' })
+      await new Promise(resolve => setTimeout(resolve, 16))
+    }
+    assert.equal(live.filter(event => event.kind === 'text.delta').length, 20,
+      'Live streaming must stay immediate while persistence is blocked')
+    const completed = writer.append('model.output_completed', { contentLength: 40 })
+    assert.equal(live.at(-1)?.kind, 'model.output_completed')
+    release()
+    await completed
+    await writer.drain()
+    assert.ok(target.batches.length <= 3, 'Timer ticks must not each reserve another database RPC')
+    assert.equal(target.batches.flat().filter(event => event.kind === 'text.delta')
+      .map(event => event.payload.text).join(''), '中文'.repeat(20))
+    assert.equal(target.batches.flat().at(-1)?.kind, 'model.output_completed')
+  } finally { release() }
+})
