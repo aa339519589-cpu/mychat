@@ -4,6 +4,8 @@ import { enforceQuotaLimit, enforceRequestRateLimit, resolveAuth } from '@/lib/a
 import { clientAddress, readJson, requestId, RequestError } from '@/lib/api/request'
 import { enqueueChatJob } from '@/lib/chat/job-command'
 import { acceptedLiveChatResponse } from '@/lib/chat/live-response'
+import { prefetchChatEndpoints } from '@/lib/chat/admission-prefetch'
+import type { ModelEndpointRow } from '@/lib/model-endpoint-server'
 import { clampTrialInput, releaseTrialCall, reserveTrialCall } from '@/lib/chat/model-access'
 import { ChatModelSelectionError, resolveChatModelSelection } from '@/lib/chat/model-selection'
 import { hasScannedPdfAttachment } from '@/lib/chat/attachments'
@@ -92,10 +94,10 @@ function modelSelectionResponse(request: Request, error: ChatModelSelectionError
   })
 }
 
-async function resolveAdmissionPolicy(request: Request, auth: AuthCtx, body: DurableChatRequestBody): Promise<AdmissionPolicy> {
+async function resolveAdmissionPolicy(request: Request, auth: AuthCtx, body: DurableChatRequestBody, prefetchedEndpoints?: Promise<ModelEndpointRow[] | null>): Promise<AdmissionPolicy> {
   let selection: ChatModelSelection
   try {
-    selection = await resolveChatModelSelection({ tier: body.tier ?? '绝句', endpointId: body.endpointId, modelId: body.modelId, reasoningEffort: body.reasoningEffort, supabase: auth.supabase, userId: auth.userId, allowPremium: true })
+    selection = await resolveChatModelSelection({ tier: body.tier ?? '绝句', endpointId: body.endpointId, modelId: body.modelId, reasoningEffort: body.reasoningEffort, supabase: auth.supabase, userId: auth.userId, allowPremium: true, prefetchedEndpoints: body.endpointId ? await prefetchedEndpoints : undefined })
   } catch (error) {
     if (error instanceof ChatModelSelectionError) return { response: modelSelectionResponse(request, error) }
     return { response: configurationError(request, '模型策略暂时不可用') }
@@ -114,7 +116,8 @@ async function resolveAdmissionPolicy(request: Request, auth: AuthCtx, body: Dur
 export async function POST(request: NextRequest) {
   const startedAt = Date.now(); const traceId = requestId(request)
   const maintenance = expensiveWriteMaintenanceResponse(request); if (maintenance) return maintenance
-  const auth = await resolveAuth(request); const authenticatedAt = Date.now()
+  let endpointRead: Promise<ModelEndpointRow[] | null> | undefined
+  const auth = await resolveAuth(request, client => { endpointRead = prefetchChatEndpoints(client) }); const authenticatedAt = Date.now()
   const rate = await enforceRequestRateLimit(auth, request); const rateLimitedAt = Date.now(); if (rate.response) return rate.response
   if (!auth.supabase || !auth.userId) return apiErrorResponseV1(request, { status: auth.authUnavailable ? 503 : 401, code: auth.authUnavailable ? 'AUTH_DEPENDENCY_UNAVAILABLE' : 'AUTH_REQUIRED', message: auth.authUnavailable ? '认证服务暂时不可用' : '请先建立登录或访客会话', retryable: auth.authUnavailable === true, ...(auth.authUnavailable ? { headers: { 'Retry-After': '5' } } : {}) })
 
@@ -128,7 +131,7 @@ export async function POST(request: NextRequest) {
   }
 
   const parsedAt = Date.now()
-  const policy = await resolveAdmissionPolicy(request, auth, body)
+  const policy = await resolveAdmissionPolicy(request, auth, body, endpointRead)
   if (policy.response) return policy.response
   const selection = policy.selection
   if (!selection || policy.usingBalance === undefined) return configurationError(request, '聊天准入策略暂时不可用')

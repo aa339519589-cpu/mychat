@@ -22,13 +22,19 @@ function json(obj: unknown, status: number): Response {
   return new Response(JSON.stringify(obj), { status, headers: { 'Content-Type': 'application/json' } })
 }
 
+function startOptionalClientRead(client: SupabaseServer, read?: (client: SupabaseServer) => void): void {
+  // Optional read preparation must never replace or break user verification.
+  try { read?.(client) } catch {}
+}
+
 // A missing session is a valid anonymous request. An authentication dependency
 // exception is different: mark it unavailable so protected traffic fails closed.
-export async function resolveAuth(request?: Request): Promise<AuthCtx> {
+export async function resolveAuth(request?: Request, onClientReady?: (client: SupabaseServer) => void): Promise<AuthCtx> {
   try {
     const authorization = request?.headers.get('authorization')
     const accessToken = authorization?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim()
     const supabase = accessToken ? createBearerClient(accessToken) : await createClient()
+    startOptionalClientRead(supabase, onClientReady)
     const { data, error } = accessToken
       ? await supabase.auth.getUser(accessToken)
       : await supabase.auth.getUser()
