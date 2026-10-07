@@ -30,7 +30,7 @@ export const handleChatGeneration: JobHandler = async context => {
     const input = await loadChatJob(context.job)
     return await (input.command.outputKind === 'text'
       ? runChatTextJob(context, input, {}, writer)
-      : runChatMediaJob(context, input))
+      : runChatMediaJob(context, input, {}, writer))
   } finally {
     void writer.closeLive().catch(() => undefined)
   }

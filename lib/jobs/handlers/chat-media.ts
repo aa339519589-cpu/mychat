@@ -99,13 +99,18 @@ function parsedPersistence(value: string): DurableMediaPersistence {
   return parsed as DurableMediaPersistence
 }
 
+function mediaRuntime(context: JobExecutionContext,
+  overrides: Partial<ChatMediaDependencies>, writer?: JobEventWriter) {
+  return { dependencies: { ...DEFAULT_DEPENDENCIES, ...overrides }, writer: writer ?? new JobEventWriter(context) }
+}
+
 export async function runChatMediaJob(
   context: JobExecutionContext,
   input: LoadedChatJob,
   dependencyOverrides: Partial<ChatMediaDependencies> = {},
+  sharedWriter?: JobEventWriter,
 ): Promise<JobHandlerResult> {
-  const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides }
-  const writer = new JobEventWriter(context)
+  const { dependencies, writer } = mediaRuntime(context, dependencyOverrides, sharedWriter)
   const config = transport(input)
   const rawPrompt = latestUserPrompt(input.context.messages)
   const prompt = input.selection.customEndpoint ? rawPrompt : extractImagePrompt(rawPrompt)
