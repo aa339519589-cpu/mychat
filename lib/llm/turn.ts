@@ -33,6 +33,7 @@ export type TurnResult = {
   hasIncompleteToolCall: boolean
   reasoningContent: string
   error?: string
+  errorStatus?: number
 }
 
 export type RunTurnOptions = {
@@ -63,7 +64,7 @@ export function retryableTurnStatus(status: number): boolean {
   return status === 408 || status === 425 || status === 429 || status >= 500
 }
 
-function failedTurn(error: string): TurnResult {
+function failedTurn(error: string, errorStatus?: number): TurnResult {
   return {
     assistantMessage: null,
     toolCalls: [],
@@ -76,6 +77,7 @@ function failedTurn(error: string): TurnResult {
     hasIncompleteToolCall: false,
     reasoningContent: '',
     error,
+    ...(errorStatus === undefined ? {} : { errorStatus }),
   }
 }
 
@@ -91,7 +93,7 @@ async function responseFailure(
     : await response.text()
   const error = upstreamError(response.status, rawError, '模型服务', [apiKey])
   if (emitErrors) emit({ error })
-  return failedTurn(error)
+  return failedTurn(error, response.status)
 }
 
 function retryDelay(delayMs: number, signal: AbortSignal | undefined): Promise<void> {

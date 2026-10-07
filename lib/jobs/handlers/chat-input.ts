@@ -172,14 +172,14 @@ export async function loadChatJob(job: JobRecord): Promise<LoadedChatJob> {
   if (!client) throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'Database authority is unavailable')
   const userId = job.principal.id; const conversationId = identity(job, 'conversationId'); const userMessageId = identity(job, 'userMessageId'); const assistantMessageId = identity(job, 'assistantMessageId')
   try {
-    const [loadedCommand, customSystemPrompt] = await Promise.all([loadCommandPayload(job, { userId, jobId: job.id }), loadCustomSystemPrompt(client, userId)])
+    const loadedCommand = await loadCommandPayload(job, { userId, jobId: job.id })
     const payloadReadyAt = Date.now()
     const parsedCommand = command(loadedCommand.payload)
     const jobInput = record(job.input); const admission = record(jobInput?.admission); const billingClass = jobInput?.billingClass
     // Admission already authorized premium access at enqueue time. Worker must
     // re-resolve the same route with allowPremium, or every premium model fails
     // with 403 after the client already accepted the job.
-    const [authoritativeContext, selection] = await Promise.all([
+    const [authoritativeContext, selection, customSystemPrompt] = await Promise.all([
       loadAuthoritativeChatContext({ client, userId, conversationId, userMessageId, allowInstant: allowInstantContext(parsedCommand) }),
       resolveChatModelSelection({
         tier: parsedCommand.tier,
@@ -190,9 +190,10 @@ export async function loadChatJob(job: JobRecord): Promise<LoadedChatJob> {
         userId,
         allowPremium: true,
       }),
+      loadCustomSystemPrompt(client, userId),
     ])
     assertSelectedChatPolicy(parsedCommand, selection, billingClass)
-    log.info('jobs', 'Chat job preparation timing', { jobId: job.id, payloadMode: loadedCommand.mode, payloadAndPromptMs: payloadReadyAt - startedAt, contextAndPolicyMs: Date.now() - payloadReadyAt, totalMs: Date.now() - startedAt })
+    log.info('jobs', 'Chat job preparation timing', { jobId: job.id, payloadMode: loadedCommand.mode, payloadMs: payloadReadyAt - startedAt, contextPolicyAndPromptMs: Date.now() - payloadReadyAt, totalMs: Date.now() - startedAt })
     return { client, userId, conversationId, userMessageId, assistantMessageId, command: { ...parsedCommand, usingBalance: admission?.funding === 'balance' }, context: { ...authoritativeContext, customSystemPrompt }, selection }
   } catch (error) {
     throw normalizeChatLoadError(error)

@@ -35,7 +35,7 @@
     },
     "app/api/endpoints/route.ts": {
       "complexity": [
-        23
+        17
       ]
     },
     "app/api/redeem-code/route.ts": {

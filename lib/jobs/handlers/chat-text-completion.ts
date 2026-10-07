@@ -1,4 +1,5 @@
 import { JobRuntimeError } from '../errors'
+import { ProviderResponseError } from '@/lib/llm/turn-response'
 import { jsonResult } from '../event-writer'
 import type { JobExecutionContext, JobHandlerResult } from '../worker'
 import type { LoadedChatJob } from './chat-input'
@@ -65,6 +66,9 @@ export async function rethrowChatTextFailure(
   if (context.signal.aborted) throw context.signal.reason
   throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'Chat generation dependency failed', {
     class: 'provider',
+    ...(error instanceof ProviderResponseError ? {
+      retryable: error.retryable, details: { providerStatus: error.status },
+    } : {}),
     cause: error,
   })
 }

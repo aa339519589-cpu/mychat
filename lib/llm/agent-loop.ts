@@ -3,6 +3,7 @@
 import { addTokenUsage, type TokenUsage } from '@/lib/token-usage'
 import { runTurn, type RunTurnOptions, type TurnResult } from './turn'
 import type { Emit } from './events'
+import { ProviderResponseError } from './turn-response'
 import type { ProviderAdapterId } from './provider-adapters'
 import type { ModelMessage, ModelToolDefinition } from './types'
 
@@ -118,6 +119,7 @@ async function executeTurn(
 
 function shouldFallbackWithoutTools(context: AgentLoopContext, turn: TurnResult): boolean {
   return turn.failed
+    && (turn.errorStatus === undefined || turn.errorStatus === 400 || turn.errorStatus === 422)
     && context.options.adapter === 'generic-openai'
     && context.state.activeTurnTools.length > 0
 }
@@ -130,6 +132,10 @@ async function executeRoundTurn(
   if (shouldFallbackWithoutTools(context, turn)) {
     context.state.activeTurnTools = []
     turn = await executeTurn(context, context.state.activeTurnTools, 'round', round)
+  }
+  if (turn.failed && turn.errorStatus !== undefined) {
+    const failure = new ProviderResponseError(turn.error || '模型请求被拒绝', turn.errorStatus)
+    if (!failure.retryable) throw failure
   }
   if (turn.failed && context.state.consecutiveFailures < MAX_CONSECUTIVE_FAILURES) {
     context.state.consecutiveFailures++

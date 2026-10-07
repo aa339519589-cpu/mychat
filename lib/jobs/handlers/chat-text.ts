@@ -166,22 +166,31 @@ async function prepareChat(
   const project = input.context.project
   const latestBeijingDate = latestBeijingDateFromMessages(input.context.messages)
   const instantMessages = instantModelMessages(input)
-  const configuredTools = await buildChatTools(context, input, latestBeijingDate, Boolean(instantMessages))
   if (instantMessages) {
-    const baseLength = await restoreChatTrajectory(context, runtime.writer, instantMessages)
+    const [configuredTools, baseLength] = await Promise.all([
+      buildChatTools(context, input, latestBeijingDate, true),
+      restoreChatTrajectory(context, runtime.writer, instantMessages),
+    ])
     return { ...configuredTools, modelMessages: instantMessages, baseLength, instant: true }
   }
-  const history = await dependencies.prepareHistory({
-    supabase: input.client as Parameters<typeof prepareChatHistory>[0]['supabase'],
-    userId: input.userId,
-    conversationId: input.conversationId,
-    messages: input.context.messages,
-    projectId: project?.id ?? null,
-    tier: command.tier,
-    historyRetrievalEnabled: command.historyRetrieval,
-    customEndpoint: selection.customEndpoint,
-    signal: context.signal,
-  })
+  // Connector discovery, cross-conversation retrieval and image context are
+  // independent reads. Do not put all three round trips before the first model
+  // request in series; still await every required input before calling it.
+  const [configuredTools, history, preparedMessages] = await Promise.all([
+    buildChatTools(context, input, latestBeijingDate, false),
+    dependencies.prepareHistory({
+      supabase: input.client as Parameters<typeof prepareChatHistory>[0]['supabase'],
+      userId: input.userId,
+      conversationId: input.conversationId,
+      messages: input.context.messages,
+      projectId: project?.id ?? null,
+      tier: command.tier,
+      historyRetrievalEnabled: command.historyRetrieval,
+      customEndpoint: selection.customEndpoint,
+      signal: context.signal,
+    }),
+    recentModelMessages(context, input, runtime, dependencies),
+  ])
   if (history.sources?.length) {
     runtime.emit({
       search: {
@@ -197,7 +206,6 @@ async function prepareChat(
       },
     })
   }
-  const preparedMessages = await recentModelMessages(context, input, runtime, dependencies)
   const modelMessages: AgentLoopOpts['messages'] = [
     { role: 'system', content: buildChatSystem(input, latestBeijingDate, history.renderedContext) },
     ...buildModelContext(preparedMessages, selection.capability),
@@ -284,6 +292,8 @@ function logTurn(jobId: string): NonNullable<AgentLoopOpts['onTurn']> {
     phase,
     round: round ?? null,
     finishReason: turn.finishReason,
+    failed: turn.failed,
+    providerStatus: turn.errorStatus ?? null,
     toolCalls: turn.toolCalls.length,
     contentLength: turn.content.length,
   })
@@ -299,6 +309,8 @@ async function runPreparedChat(
   const { selection } = input
   const isDeepTierProxy = selection.capability.provider.id === 'deep-tier'
   const trial = selection.accessClass === 'trial'
+  const providerStartedAt = Date.now()
+  let firstTextLogged = false
   const result = await dependencies.runAgentLoop({
     url: chatCompletionsUrl(selection.capability.provider.baseUrl),
     apiKey: selection.apiKey,
@@ -308,7 +320,16 @@ async function runPreparedChat(
     reasoningEffort: prepared.instant ? null : selection.reasoningEffort as ReasoningEffort | null,
     messages: prepared.modelMessages,
     tools: toOpenAITools(prepared.tools),
-    emit: runtime.emit,
+    emit: event => {
+      if ('text' in event && event.text && !firstTextLogged) {
+        firstTextLogged = true
+        log.info('jobs', 'Chat first model text timing', {
+          jobId: context.job.id, model: selection.model,
+          providerToFirstTextMs: Date.now() - providerStartedAt,
+        })
+      }
+      runtime.emit(event)
+    },
     executeTool: createToolExecutor(context, input, runtime, prepared, dependencies),
     maxRounds: prepared.instant ? 1 : SAFETY_ROUNDS,
     leakedRetry: !prepared.instant,
