@@ -8,6 +8,7 @@ import { ChatModelSelectionError, type ChatModelSelection } from '@/lib/chat/mod
 import { CodeAgentEnqueueContextError, parseAgentEnqueueResult, resolveCodeAgentEnqueueContext } from '@/lib/code-agent/enqueue-context'
 import { resolveCodeModelSelection } from '@/lib/code-agent/model-selection'
 import { parseCodeChatRequest, type CodeChatRequest } from '@/lib/code-agent/request'
+import { shouldReserveCodeTrial } from '@/lib/code-agent/runtime'
 import { getCurrentGitHubConnectionStatus } from '@/lib/github-session'
 import { sha256JobValue } from '@/lib/jobs/canonical'
 import type { JsonObject } from '@/lib/jobs/contracts'
@@ -97,7 +98,7 @@ async function reserveModelTrial(
   body: BoundCodeChatRequest,
   selection: ChatModelSelection,
 ): Promise<TrialPolicy> {
-  if (selection.accessClass === 'quota' || auth.isOwner === true) {
+  if (!shouldReserveCodeTrial(selection, auth.isOwner === true)) {
     return { reserved: false, remaining: null }
   }
   try {

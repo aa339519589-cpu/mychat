@@ -174,7 +174,10 @@ export class JobEventWriter {
     if (this.timer) clearTimeout(this.timer)
     this.timer = null
     await this.drainEvents()
-    await this.closeLive()
+    // Live broadcasts are a best-effort preview, not the durable completion
+    // authority. Finish their cleanup without holding the generation lock on
+    // outstanding HTTP broadcasts; the persisted log remains replayable.
+    void this.closeLive().catch(() => undefined)
     if (this.failure) throw this.failure
     this.context.assertAuthority()
   }

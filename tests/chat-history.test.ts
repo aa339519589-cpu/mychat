@@ -52,6 +52,32 @@ test('isolated reactions skip cross-conversation retrieval without losing stored
   assert.equal(result.sources, undefined)
 })
 
+test('worker history lookup starts before summary finishes and waits for both contexts', async () => {
+  let finishSummary!: (value: { conversationId: string; renderedSummary: string }) => void
+  let finishHistory!: (value: { renderedContext: string; sources: [] }) => void
+  let retrievalStarted = false
+  let finished = false
+  const pending = prepareChatHistory({
+    supabase: null, userId, conversationId, tier: '绝句',
+    historyRetrievalEnabled: true, customEndpoint: true, deferIndexing: true,
+    messages: [{ role: 'user', content: '继续昨天的项目计划' }],
+  }, {
+    prepareSummary: () => new Promise(resolve => { finishSummary = resolve }),
+    retrieveHistory: options => {
+      retrievalStarted = true
+      assert.equal(options.conversationId, conversationId)
+      return new Promise(resolve => { finishHistory = resolve })
+    },
+  }).then(value => { finished = true; return value })
+  assert.equal(retrievalStarted, true, 'retrieval must not wait for the summary read')
+  finishHistory({ renderedContext: 'history-context', sources: [] })
+  await Promise.resolve()
+  assert.equal(finished, false, 'model context still needs the current summary')
+  finishSummary({ conversationId, renderedSummary: 'summary-context' })
+  const result = await pending
+  assert.equal(result.renderedContext, 'summary-contexthistory-context')
+})
+
 test('history lookup remains enabled for every contextual or factual request', () => {
   for (const query of ['哈哈哈', '呵呵', '你好呀！', '谢谢', 'hello']) {
     assert.equal(needsCrossConversationHistory(query), false, query)
