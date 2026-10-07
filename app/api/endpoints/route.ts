@@ -1,18 +1,17 @@
 import { NextRequest } from "next/server"
 import { resolveAuth, enforceLimits } from "@/lib/api/guard"
 import { readJson, requestErrorResponse } from "@/lib/api/request"
-import { ModelEndpointError, normalizeOpenAIBaseUrl } from "@/lib/llm/openai-compatible"
+import { ModelEndpointError } from "@/lib/llm/openai-compatible"
 import {
   endpointSummary,
+  getOwnedModelEndpoint,
   probeModelEndpointAuthentication,
   resolveMediaEndpointConnection,
-  type EndpointAuthSelection,
   type ModelEndpointRow,
 } from "@/lib/model-endpoint-server"
 import { isKnownTextOnlyModel, isModelOutputKind, isSafeModelId, modelDisplayName, type EndpointAuthType } from "@/lib/model-endpoints"
 import { modelEndpointEncryptionConfigured, sealModelEndpointKey } from "@/lib/model-endpoint-secret"
-
-const AUTH_TYPES = new Set<EndpointAuthSelection>(["auto", "bearer", "x-api-key", "api-key", "none"])
+import { resolveEndpointCreationConnection } from "@/lib/model-endpoint-creation"
 
 function endpointStorageError(): Response {
   return Response.json({ error: "模型端点存储未就绪，请先执行最新 Supabase migration" }, { status: 503 })
@@ -51,18 +50,17 @@ export async function POST(req: NextRequest) {
   catch (error) { return requestErrorResponse(error) }
 
   try {
-    let baseUrl = normalizeOpenAIBaseUrl(typeof body.baseUrl === "string" ? body.baseUrl : "")
-    const apiKey = typeof body.apiKey === "string" ? body.apiKey.trim() : ""
+    const { supabase, userId } = auth
+    const connection = await resolveEndpointCreationConnection(body, userId,
+      id => getOwnedModelEndpoint(supabase, userId, id))
+    let { baseUrl } = connection
+    const { apiKey, authType: requestedAuthType } = connection
     const model = typeof body.model === "string" ? body.model.replace(/[\u0000-\u001f\u007f]/g, "").trim() : ""
     if (!isModelOutputKind(body.outputKind)) return Response.json({ error: "请选择模型用途" }, { status: 400 })
     const outputKind = body.outputKind
     if (outputKind !== "chat" && isKnownTextOnlyModel(model)) {
       return Response.json({ error: "当前模型是文本/对话模型，不能保存为图片或视频用途" }, { status: 400 })
     }
-    if (body.authType !== undefined && (typeof body.authType !== "string" || !AUTH_TYPES.has(body.authType as EndpointAuthSelection))) {
-      return Response.json({ error: "鉴权方式无效" }, { status: 400 })
-    }
-    const requestedAuthType = (body.authType ?? "auto") as EndpointAuthSelection
     if (apiKey.length > 4096 || !isSafeModelId(model, apiKey)) return Response.json({ error: "API Key 或模型 ID 无效；模型字段不能填写 URL 或 API Key" }, { status: 400 })
 
     let authType: EndpointAuthType
