@@ -497,11 +497,8 @@
       ]
     },
     "lib/llm/openai-compatible/safe-fetch.ts": {
-      "complexity": [
-        19
-      ],
       "maxLines": [
-        117
+        105
       ]
     },
     "lib/llm/provider-adapters.ts": {

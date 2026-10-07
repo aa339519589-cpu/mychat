@@ -78,9 +78,8 @@ export function applyOffsetDelta(current: string, offset: number, value: string)
 }
 
 /**
- * Sends every provider delta immediately through Realtime's HTTP broadcast
- * endpoint. It deliberately does not wait for a WebSocket subscription and it
- * never merges adjacent deltas into a large visible block.
+ * Starts the ordered WebSocket while context is prepared. Before it is ready,
+ * HTTP remains the immediate fallback; no provider delta waits for a handshake.
  */
 export class LiveJobPublisher {
   private readonly client: SupabaseClient
@@ -90,6 +89,8 @@ export class LiveJobPublisher {
   private readonly drainWaiters: Array<() => void> = []
   private revision = 0
   private closing = false
+  private subscribed = false
+  private started = false
 
   constructor(
     client: SupabaseClient,
@@ -98,11 +99,18 @@ export class LiveJobPublisher {
   ) {
     this.client = client
     const channelName = liveJobChannelName(jobId, channelSecret)
-    this.channel = channelName ? client.channel(channelName) : null
+    this.channel = channelName
+      ? client.channel(channelName, { config: { broadcast: { ack: false, self: false } } })
+      : null
   }
 
   start(): void {
-    // HTTP broadcast needs no channel subscription handshake.
+    if (this.started || !this.channel) return
+    this.started = true
+    this.channel.subscribe(status => {
+      this.subscribed = status === 'SUBSCRIBED'
+      this.pump()
+    })
   }
 
   publish(input: LiveJobEventInput): void {
@@ -123,7 +131,7 @@ export class LiveJobPublisher {
   private pump(): void {
     while (this.channel
       && this.queue.length > 0
-      && this.inFlight.size < MAX_IN_FLIGHT_BROADCASTS) {
+      && (this.subscribed || this.inFlight.size < MAX_IN_FLIGHT_BROADCASTS)) {
       const event = this.queue.shift()
       if (!event) break
       this.launch(event)
@@ -144,6 +152,12 @@ export class LiveJobPublisher {
   private async send(event: LiveJobEvent): Promise<void> {
     if (!this.channel) return
     try {
+      if (this.subscribed) {
+        const result = await this.channel.send({
+          type: 'broadcast', event: LIVE_JOB_BROADCAST_EVENT, payload: event,
+        })
+        if (result === 'ok') return
+      }
       await this.channel.httpSend(LIVE_JOB_BROADCAST_EVENT, event)
     } catch {
       // Durable events remain the recovery source when a live broadcast fails.

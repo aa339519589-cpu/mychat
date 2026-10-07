@@ -185,6 +185,74 @@ test("pins the socket to the validated DNS answer while preserving the original 
   assert.equal(receivedHost, `rebind.invalid:${address.port}`)
 })
 
+test("reuses a verified endpoint connection but rechecks DNS before every request", { concurrency: false }, async t => {
+  const mutableEnv = process.env as Record<string, string | undefined>
+  const previousNodeEnv = mutableEnv.NODE_ENV
+  const originalLookup = dns.lookup
+  mutableEnv.NODE_ENV = "test"
+  let lookups = 0
+  let connections = 0
+  let requests = 0
+  const server = createServer((_request, response) => {
+    requests++
+    response.end("ok")
+  })
+  server.on("connection", () => { connections++ })
+  server.listen(0, "127.0.0.1")
+  await once(server, "listening")
+  const address = server.address()
+  assert.ok(address && typeof address === "object")
+  t.after(() => {
+    dns.lookup = originalLookup
+    if (previousNodeEnv === undefined) delete mutableEnv.NODE_ENV
+    else mutableEnv.NODE_ENV = previousNodeEnv
+    server.closeAllConnections()
+    server.close()
+  })
+  dns.lookup = (async () => {
+    lookups++
+    return [{ address: lookups <= 2 ? "127.0.0.1" : "169.254.169.254", family: 4 }]
+  }) as unknown as typeof dns.lookup
+  const url = `http://pooled.invalid:${address.port}/stream`
+  for (let trial = 0; trial < 2; trial++) {
+    const response = await safeModelEndpointFetch(url)
+    assert.equal(await response.text(), "ok")
+  }
+  assert.equal(connections, 1, "The second request must not repeat the transport handshake")
+  assert.equal(lookups, 2, "Connection reuse must not cache network authorization")
+  await assert.rejects(safeModelEndpointFetch(url),
+    (error: unknown) => error instanceof ModelEndpointError && error.code === "blocked_address")
+  assert.equal(requests, 2, "A blocked DNS answer must not reuse an already-open socket")
+})
+
+test("endpoint streaming releases its first tiny chunk before upstream completion", async t => {
+  let release!: () => void
+  const released = new Promise<void>(resolve => { release = resolve })
+  const server = createServer(async (_request, response) => {
+    response.writeHead(200, { "Content-Type": "text/event-stream" })
+    response.flushHeaders()
+    response.write("data: 中\n\n")
+    await released
+    response.end("data: end\n\n")
+  })
+  server.listen(0, "127.0.0.1")
+  await once(server, "listening")
+  const address = server.address()
+  assert.ok(address && typeof address === "object")
+  t.after(() => { release(); server.closeAllConnections(); server.close() })
+  const response = await safeModelEndpointFetch(`http://127.0.0.1:${address.port}/stream`, {
+    signal: AbortSignal.timeout(2_000),
+  })
+  const reader = response.body!.getReader()
+  const first = await reader.read()
+  assert.equal(first.done, false)
+  assert.equal(new TextDecoder().decode(first.value), "data: 中\n\n")
+  release()
+  const rest = await reader.read()
+  assert.equal(new TextDecoder().decode(rest.value), "data: end\n\n")
+  assert.equal((await reader.read()).done, true)
+})
+
 test("production refuses to send endpoint credentials over public HTTP", { concurrency: false }, async t => {
   const mutableEnv = process.env as Record<string, string | undefined>
   const previousNodeEnv = mutableEnv.NODE_ENV
