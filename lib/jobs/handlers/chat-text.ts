@@ -90,8 +90,7 @@ function safeToolCallId(value: string | undefined): string {
   return value
 }
 
-function createRuntime(context: JobExecutionContext): ChatTextRuntime {
-  const writer = new JobEventWriter(context)
+function createRuntime(context: JobExecutionContext, writer = new JobEventWriter(context)): ChatTextRuntime {
   const pendingMedia: GeneratedMedia[] = []
   const historicalTokens = restoredHistoricalTokens(context.job)
   return {
@@ -359,9 +358,10 @@ export async function runChatTextJob(
   context: JobExecutionContext,
   input: LoadedChatJob,
   dependencyOverrides: Partial<ChatTextDependencies> = {},
+  writer?: JobEventWriter,
 ): Promise<JobHandlerResult> {
   const dependencies: ChatTextDependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides }
-  const runtime = createRuntime(context)
+  const runtime = createRuntime(context, writer)
   try {
     context.assertAuthority()
     await runtime.writer.append('job.started', {

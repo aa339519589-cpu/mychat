@@ -24,13 +24,14 @@ export const handleChatGeneration: JobHandler = async context => {
       },
       `${context.job.id}:started-early:${context.fence.leaseVersion}`,
     )
+    // One relay survives preparation and generation. Closing the early relay
+    // used to await an HTTP broadcast before even loading context, then restart
+    // another publisher for text. Keep the handshake outside that critical path.
+    const input = await loadChatJob(context.job)
+    return await (input.command.outputKind === 'text'
+      ? runChatTextJob(context, input, {}, writer)
+      : runChatMediaJob(context, input))
   } finally {
-    // Release the live channel so the text/media writer owns a clean publisher.
-    await writer.closeLive()
+    void writer.closeLive().catch(() => undefined)
   }
-
-  const input = await loadChatJob(context.job)
-  return input.command.outputKind === 'text'
-    ? runChatTextJob(context, input)
-    : runChatMediaJob(context, input)
 }

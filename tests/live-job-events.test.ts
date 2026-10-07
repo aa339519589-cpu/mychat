@@ -54,6 +54,7 @@ test('live event parser rejects malformed broadcast payloads', () => {
 test('publisher sends adjacent provider deltas separately without subscribing', async () => {
   const sent: unknown[] = []
   const channel = {
+    subscribe: () => channel,
     httpSend: async (_event: string, payload: unknown) => {
       sent.push(payload)
       return 'ok'
@@ -74,4 +75,73 @@ test('publisher sends adjacent provider deltas separately without subscribing', 
     { revision: 1, kind: 'text.delta', offset: 0, payload: { text: '你' } },
     { revision: 2, kind: 'text.delta', offset: 1, payload: { text: '好' } },
   ])
+})
+
+test('subscribed relay sends each small delta through the ordered socket without HTTP latency', async () => {
+  let status: ((value: string) => void) | undefined
+  const socket: unknown[] = []
+  const http: unknown[] = []
+  const channel = {
+    subscribe: (callback: (value: string) => void) => { status = callback; return channel },
+    send: async (value: { payload: unknown }) => { socket.push(value.payload); return 'ok' },
+    httpSend: async (_event: string, payload: unknown) => { http.push(payload) },
+  }
+  const client = { channel: () => channel, removeChannel: async () => undefined }
+  const publisher = new LiveJobPublisher(client as never, JOB_ID, CHANNEL_HASH_INPUT)
+  publisher.start()
+  status?.('SUBSCRIBED')
+  const source = '中文 English **Markdown** 👨‍👩‍👧‍👦'.repeat(10)
+  let offset = 0
+  for (const text of source) {
+    publisher.publish({ kind: 'text.delta', offset, payload: { text } })
+    offset += text.length
+  }
+  await publisher.close()
+  assert.equal(http.length, 0)
+  assert.equal(socket.length, [...source].length)
+  assert.equal(socket.map(value => (value as { payload: { text: string } }).payload.text).join(''), source)
+})
+
+test('relay uses immediate HTTP before subscription and after a socket failure', async () => {
+  let status: ((value: string) => void) | undefined
+  const delivered: unknown[] = []
+  const channel = {
+    subscribe: (callback: (value: string) => void) => { status = callback; return channel },
+    send: async () => 'error',
+    httpSend: async (_event: string, payload: unknown) => { delivered.push(payload) },
+  }
+  const client = { channel: () => channel, removeChannel: async () => undefined }
+  const publisher = new LiveJobPublisher(client as never, JOB_ID, CHANNEL_HASH_INPUT)
+  publisher.start()
+  publisher.publish({ kind: 'text.delta', offset: 0, payload: { text: 'a' } })
+  status?.('SUBSCRIBED')
+  publisher.publish({ kind: 'text.delta', offset: 1, payload: { text: 'b' } })
+  await publisher.close()
+  assert.equal(delivered.length, 2)
+})
+
+
+test('a ready socket releases queued deltas without waiting for older HTTP requests', async () => {
+  let status: ((value: string) => void) | undefined
+  let release!: () => void
+  const blockedHttp = new Promise<void>(resolve => { release = resolve })
+  const socket: unknown[] = []
+  const channel = {
+    subscribe: (callback: (value: string) => void) => { status = callback; return channel },
+    httpSend: async () => blockedHttp,
+    send: async (value: { payload: unknown }) => { socket.push(value.payload); return 'ok' },
+  }
+  const client = { channel: () => channel, removeChannel: async () => undefined }
+  const publisher = new LiveJobPublisher(client as never, JOB_ID, CHANNEL_HASH_INPUT)
+  publisher.start()
+  for (let offset = 0; offset < 10; offset++) {
+    publisher.publish({ kind: 'text.delta', offset, payload: { text: 'a' } })
+  }
+  assert.equal(socket.length, 0)
+  status?.('SUBSCRIBED')
+  assert.equal(socket.length, 2, 'Subscription must release the pending queue immediately')
+  publisher.publish({ kind: 'text.delta', offset: 10, payload: { text: 'b' } })
+  assert.equal(socket.length, 3, 'New text must not wait behind the eight HTTP requests')
+  release()
+  await publisher.close()
 })

@@ -1,5 +1,5 @@
-import { request as httpRequest, type IncomingMessage } from 'node:http'
-import { request as httpsRequest } from 'node:https'
+import { Agent as HttpAgent, request as httpRequest, type IncomingMessage, type RequestOptions } from 'node:http'
+import { Agent as HttpsAgent, request as httpsRequest } from 'node:https'
 import { isIP, type LookupFunction } from 'node:net'
 import { Readable } from 'node:stream'
 import {
@@ -10,6 +10,30 @@ import {
   type ResolvedAddress,
 } from './addresses'
 import { ModelEndpointError } from './contracts'
+
+type PinnedRequestOptions = RequestOptions & { myChatPinnedAddress?: string }
+
+// Reuse transport connections without reusing a DNS authorization decision.
+// The verified address partitions the pool as well as the original hostname;
+// a new DNS answer can never borrow a socket authorized for the previous one.
+class PinnedHttpAgent extends HttpAgent {
+  override getName(options: PinnedRequestOptions): string {
+    return `${super.getName(options)}:${options.myChatPinnedAddress ?? ''}`
+  }
+}
+
+class PinnedHttpsAgent extends HttpsAgent {
+  override getName(options: PinnedRequestOptions): string {
+    return `${super.getName(options)}:${options.myChatPinnedAddress ?? ''}`
+  }
+}
+
+const POOL_OPTIONS = {
+  keepAlive: true, maxSockets: 32, maxTotalSockets: 128, maxFreeSockets: 8,
+  timeout: 30_000,
+}
+const httpAgent = new PinnedHttpAgent(POOL_OPTIONS)
+const httpsAgent = new PinnedHttpsAgent(POOL_OPTIONS)
 
 function pinnedLookup(target: ResolvedAddress): LookupFunction {
   return (_hostname, _options, callback) => callback(null, target.address, target.family)
@@ -32,15 +56,7 @@ function requestBody(body: BodyInit | null | undefined): string | Uint8Array | u
   throw new TypeError('模型端点请求只支持字符串或字节请求体')
 }
 
-/**
- * Fetch without a second DNS resolution. HTTP Host, certificate verification,
- * and HTTPS SNI retain the original hostname while lookup stays pinned to the
- * address that passed the SSRF policy.
- */
-export async function safeModelEndpointFetch(
-  input: string | URL,
-  init: RequestInit = {},
-): Promise<Response> {
+function endpointUrl(input: string | URL): URL {
   const raw = input.toString()
   if (!raw || raw.length > 2048 || /[\u0000-\u001f\u007f]/.test(raw)) {
     throw new ModelEndpointError('服务地址为空或格式无效', 'url', 'invalid_url')
@@ -57,6 +73,19 @@ export async function safeModelEndpointFetch(
   }
   if (url.hash) throw new ModelEndpointError('服务地址不能包含锚点', 'url', 'url_query')
 
+  return url
+}
+
+/**
+ * Fetch without a second DNS resolution. HTTP Host, certificate verification,
+ * and HTTPS SNI retain the original hostname while lookup stays pinned to the
+ * address that passed the SSRF policy.
+ */
+export async function safeModelEndpointFetch(
+  input: string | URL,
+  init: RequestInit = {},
+): Promise<Response> {
+  const url = endpointUrl(input)
   const target = await resolveModelEndpoint(url, init.signal ?? undefined)
   const headers = new Headers(init.headers)
   headers.delete('host')
@@ -81,7 +110,7 @@ export async function safeModelEndpointFetch(
   const method = init.method ?? (body === undefined ? 'GET' : 'POST')
 
   return new Promise<Response>((resolve, reject) => {
-    const request = (url.protocol === 'https:' ? httpsRequest : httpRequest)({
+    const options: PinnedRequestOptions = {
       protocol: url.protocol,
       hostname,
       port: url.port || undefined,
@@ -90,11 +119,13 @@ export async function safeModelEndpointFetch(
       headers: Object.fromEntries(headers.entries()),
       lookup: pinnedLookup(target),
       family: target.family,
-      agent: false,
+      agent: url.protocol === 'https:' ? httpsAgent : httpAgent,
+      myChatPinnedAddress: `${target.family}:${target.address}`,
       maxHeaderSize: 64 * 1024,
       signal: init.signal ?? undefined,
       ...(url.protocol === 'https:' && !isIP(hostname) ? { servername: hostname } : {}),
-    }, message => {
+    }
+    const request = (url.protocol === 'https:' ? httpsRequest : httpRequest)(options, message => {
       const status = message.statusCode ?? 502
       if (!Number.isInteger(status) || status < 200 || status > 599) {
         message.resume()

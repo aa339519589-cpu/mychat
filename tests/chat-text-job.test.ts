@@ -6,6 +6,7 @@ import { customModelCapability } from '../lib/llm/models'
 import type { JobAccounting } from '../lib/jobs/repository'
 import type { JobEventDraft, JsonObject } from '../lib/jobs/contracts'
 import { JobRuntimeError } from '../lib/jobs/errors'
+import { JobEventWriter } from '../lib/jobs/event-writer'
 import type { JobExecutionContext } from '../lib/jobs/worker'
 import type { LoadedChatJob } from '../lib/jobs/handlers/chat-input'
 import {
@@ -349,4 +350,25 @@ test('chat text Job compensates durable media when authority is lost after uploa
     error => error instanceof JobRuntimeError && error.code === 'JOB_DEPENDENCY_UNAVAILABLE',
   )
   assert.equal(cleanupCalls, 1)
+})
+
+
+test('chat generation retains the preparing relay through its first text and terminal snapshot', async () => {
+  const context = executionContext()
+  const input = chatInput()
+  const live: Array<{ kind: string; offset?: number }> = []
+  const writer = new JobEventWriter(context.value, event => { live.push(event) })
+  await writer.append('job.started', { phase: 'preparing' })
+  const result = await runChatTextJob(context.value, input, {
+    ...baseDependencies(async options => {
+      options.emit({ text: '你' })
+      options.emit({ text: '好' })
+      return { totalTokens: 0 }
+    }),
+  }, writer)
+  assert.equal(result.status, 'completed')
+  assert.equal(writer.text(), '你好')
+  assert.deepEqual(live.filter(event => event.kind === 'text.delta').map(event => event.offset), [0, 1])
+  assert.equal(live[0].kind, 'job.started')
+  assert.ok(live.some(event => event.kind === 'model.output_completed'))
 })
