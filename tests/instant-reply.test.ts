@@ -20,6 +20,18 @@ test('accepts only strict greeting and connectivity prompts', () => {
   assert.equal(candidate('👋'), true)
 })
 
+test('accepts pure laughter without routing meaningful short requests through the greeting path', () => {
+  for (const text of ['哈哈', '哈哈哈', '哈哈哈！', 'hahaha', 'HaHa!']) {
+    assert.equal(candidate(text), true, text)
+  }
+  for (const text of ['哈哈哈，接着上面的内容说', '哈哈哈帮我搜索一下', '哈利波特', '哈'.repeat(25), '仅回复 OK。']) {
+    assert.equal(candidate(text), false, text)
+  }
+  assert.equal(candidate('哈哈哈', { searchMode: 'web' }), false)
+  assert.equal(candidate('哈哈哈', { attachments: [{}] }), false)
+  assert.equal(candidate('哈哈哈', { inProject: true }), false)
+})
+
 test('rejects prompts that need normal context or tools', () => {
   assert.equal(candidate('你好，帮我分析这个项目'), false)
   assert.equal(candidate('你好', { searchMode: 'web' }), false)

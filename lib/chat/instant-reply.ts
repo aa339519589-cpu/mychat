@@ -2,7 +2,7 @@ import type { RawMsg } from '@/lib/llm/types'
 import type { SearchMode } from '@/lib/search-mode'
 import { isRecord } from '@/lib/unknown-value'
 
-const INSTANT_GREETING = /^(?:(?:你|您)好(?:呀|啊|呢)?|嗨(?:呀|啊)?|哈[喽啰](?:呀|啊)?|嘿(?:呀|啊)?|在吗|早安|早上好|下午好|晚上好|晚安|hello|hi|hey|yo|test|测试|👋)[\s!！?？。.]*$/iu
+const INSTANT_GREETING = /^(?:(?:你|您)好(?:呀|啊|呢)?|嗨(?:呀|啊)?|哈[喽啰](?:呀|啊)?|嘿(?:呀|啊)?|在吗|早安|早上好|下午好|晚上好|晚安|hello|hi|hey|yo|test|测试|哈{2,}|[hH][aA](?:[hH][aA])+|👋)[\s!！?？。.]*$/iu
 
 function messageText(message: RawMsg): string {
   if (typeof message.content === 'string') return message.content

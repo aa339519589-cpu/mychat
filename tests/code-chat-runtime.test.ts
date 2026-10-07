@@ -6,7 +6,35 @@ import {
   createCodeEventCollector,
   createCodeRunProgress,
   finalCodeTaskStatus,
+  isCodeReplyComplete,
+  shouldReserveCodeTrial,
 } from '../lib/code-agent/runtime'
+
+test('custom Code endpoints never reserve platform trial calls', () => {
+  assert.equal(shouldReserveCodeTrial({ customEndpoint: true, accessClass: 'legacy' }, false), false)
+  assert.equal(shouldReserveCodeTrial({ customEndpoint: true, accessClass: 'trial' }, false), false)
+  assert.equal(shouldReserveCodeTrial({ customEndpoint: false, accessClass: 'quota' }, false), false)
+  assert.equal(shouldReserveCodeTrial({ customEndpoint: false, accessClass: 'trial' }, true), false)
+  assert.equal(shouldReserveCodeTrial({ customEndpoint: false, accessClass: 'trial' }, false), true)
+})
+
+test('a successful no-tool Code reply completes without inventing a project', () => {
+  const progress = createCodeRunProgress(() => false)
+  const turn = { failed: false, truncated: false, leaked: false, hasIncompleteToolCall: false, toolCalls: [], content: 'OK' }
+  assert.equal(isCodeReplyComplete(progress.snapshot(false), turn), true)
+  assert.equal(isCodeReplyComplete(progress.snapshot(true), turn), true)
+  for (const partial of [{ failed: true }, { truncated: true }, { leaked: true }, { hasIncompleteToolCall: true }, { content: ' ' }]) {
+    assert.equal(isCodeReplyComplete(progress.snapshot(false), { ...turn, ...partial }), false)
+  }
+  progress.toolState.markCompleted()
+  assert.equal(finalCodeTaskStatus(false, progress.snapshot(false)), 'completed')
+  progress.toolState.markUsedTool()
+  assert.equal(isCodeReplyComplete(progress.snapshot(false), turn), false)
+  const planned = createCodeRunProgress(() => false)
+  planned.toolState.markPlannedRepo()
+  assert.equal(isCodeReplyComplete(planned.snapshot(false), turn), false)
+  assert.equal(isCodeReplyComplete(createCodeRunProgress(() => true).snapshot(true), turn), false)
+})
 
 const MODEL_ID = 'openai/gpt-5.6-sol'
 

@@ -125,7 +125,7 @@ test('chat history index is atomically scheduled with completion instead of dela
   const context = executionContext()
   const input = chatInput()
   input.command.historyRetrieval = true
-  input.context.messages = [{ role: 'user', content: '哈哈哈' }]
+  input.context.messages = [{ role: 'user', content: '回顾一下之前讨论的方案' }]
   let historyDeferred = false
   const result = await runChatTextJob(context.value, input, {
     ...baseDependencies(async options => {
@@ -144,6 +144,33 @@ test('chat history index is atomically scheduled with completion instead of dela
     kind: 'history.index', dedupeKey: `${context.value.job.id}:history-index`,
     payload: { conversationId: input.conversationId },
   }])
+  assert.ok(context.events.some(event => event.kind === 'text.delta'))
+  assert.ok(context.events.some(event => event.kind === 'model.output_completed'))
+})
+
+test('pure laughter requests skip history preparation and use one real model turn', async () => {
+  const context = executionContext()
+  const input = chatInput()
+  input.command.historyRetrieval = true
+  input.context.messages = [{ role: 'user', content: '哈哈哈' }]
+  let historyCalls = 0
+  const captured: { modelOptions?: AgentLoopOpts } = {}
+  const result = await runChatTextJob(context.value, input, {
+    ...baseDependencies(async options => {
+      captured.modelOptions = options
+      options.emit({ text: '哈哈 😄' })
+      return { totalTokens: 0 }
+    }),
+    prepareHistory: async () => {
+      historyCalls++
+      return { conversationId: input.conversationId, renderedContext: '' }
+    },
+  })
+  assert.equal(historyCalls, 0)
+  assert.equal(result.status, 'completed')
+  assert.equal(captured.modelOptions?.thinking, false)
+  assert.equal(captured.modelOptions?.maxRounds, 1)
+  assert.equal(captured.modelOptions?.tools?.length, 0)
   assert.ok(context.events.some(event => event.kind === 'text.delta'))
   assert.ok(context.events.some(event => event.kind === 'model.output_completed'))
 })

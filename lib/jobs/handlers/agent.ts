@@ -1,6 +1,6 @@
 import { codeContinuationPrompt } from '@/lib/agent/continuation'
 import { saveAgentRunState } from '@/lib/agent/run-state'
-import { finalCodeTaskStatus } from '@/lib/code-agent/runtime'
+import { finalCodeTaskStatus, isCodeReplyComplete } from '@/lib/code-agent/runtime'
 import { buildCodeSystem } from '@/lib/code-agent/system-prompt'
 import { runAgentLoop, type AgentLoopOpts } from '@/lib/llm/agent-loop'
 import { chatCompletionsUrl, toOpenAI } from '@/lib/llm/openai'
@@ -181,7 +181,14 @@ function agentLoopOptions(input: {
     autoContinue: trial ? undefined : { maxContinuations: 6 },
     idleContinuation: {
       maxContinuations: trial ? 6 : 20,
-      prompt: () => codeContinuationPrompt(runtime.progress.snapshot(job.workspaceReady)),
+      prompt: ({ turn }) => {
+        const progress = runtime.progress.snapshot(job.workspaceReady)
+        if (isCodeReplyComplete(progress, turn)) {
+          runtime.progress.toolState.markCompleted()
+          return null
+        }
+        return codeContinuationPrompt(progress)
+      },
     },
     ...callbacks,
     turnOptions: {

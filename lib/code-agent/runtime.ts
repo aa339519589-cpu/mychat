@@ -1,5 +1,24 @@
 import type { AgentTaskStatus } from '@/lib/agent/types'
 import type { ChatEvent, Emit } from '@/lib/llm/events'
+import type { TurnResult } from '@/lib/llm/turn'
+import type { ChatModelSelection } from '@/lib/chat/model-selection'
+
+export function shouldReserveCodeTrial(
+  selection: Pick<ChatModelSelection, 'customEndpoint' | 'accessClass'>,
+  isOwner: boolean,
+): boolean {
+  return !selection.customEndpoint && selection.accessClass === 'trial' && !isOwner
+}
+
+export function isCodeReplyComplete(
+  progress: CodeProgressSnapshot,
+  turn: Pick<TurnResult, 'failed' | 'truncated' | 'leaked' | 'hasIncompleteToolCall' | 'toolCalls' | 'content'>,
+): boolean {
+  return !progress.usedTools && !progress.hasChanges && !progress.plannedRepo
+    && progress.plannedFiles === 0 && !turn.failed && !turn.truncated
+    && !turn.leaked && !turn.hasIncompleteToolCall && turn.toolCalls.length === 0
+    && turn.content.trim().length > 0
+}
 
 export type CodeProgressSnapshot = {
   workspace: boolean

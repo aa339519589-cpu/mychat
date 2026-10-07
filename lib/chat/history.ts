@@ -39,6 +39,11 @@ export async function refreshChatHistoryIndex(options: {
   })
 }
 
+type ChatHistoryDependencies = {
+  prepareSummary: typeof prepareConversationSummary
+  retrieveHistory: typeof retrieveHistoryWithSources
+}
+
 export async function prepareChatHistory(options: {
   supabase: SupabaseServer | null
   userId: string | null
@@ -50,6 +55,9 @@ export async function prepareChatHistory(options: {
   customEndpoint: boolean
   signal?: AbortSignal
   deferIndexing?: boolean
+}, dependencies: ChatHistoryDependencies = {
+  prepareSummary: prepareConversationSummary,
+  retrieveHistory: retrieveHistoryWithSources,
 }): Promise<{
   conversationId: string | null
   renderedContext: string
@@ -67,7 +75,7 @@ export async function prepareChatHistory(options: {
 
   const query = latestUserQuery(options.messages)
   const summaryStartedAt = Date.now()
-  const summary = await prepareConversationSummary({
+  const summaryPromise = dependencies.prepareSummary({
     supabase: options.supabase,
     userId: options.userId,
     explicitConversationId: options.conversationId,
@@ -75,31 +83,44 @@ export async function prepareChatHistory(options: {
     signal: options.signal,
     allowCompaction: !options.customEndpoint,
   })
-  const summaryMs = Date.now() - summaryStartedAt
-
-  if (!options.deferIndexing) await refreshChatHistoryIndex({
-    supabase: options.supabase, userId: options.userId,
-    conversationId: summary.conversationId, signal: options.signal,
-  })
-  if (!needsCrossConversationHistory(latestUserText(options.messages))) {
-    log.info('jobs', 'Chat history preparation timing', {
-      conversationId: summary.conversationId, summaryMs, retrievalMs: 0, socialOnly: true,
-    })
-    return { conversationId: summary.conversationId, renderedContext: summary.renderedSummary }
-  }
-  const retrievalStartedAt = Date.now()
-  const history = await retrieveHistoryWithSources({
+  const retrieve = (id: string | null) => dependencies.retrieveHistory({
     supabase: options.supabase,
     userId: options.userId,
-    conversationId: summary.conversationId,
+    conversationId: id,
     projectId: options.projectId,
     query,
     mode: options.customEndpoint ? 'balanced' : historyRetrievalModeForTier(options.tier),
     signal: options.signal,
   })
+  const crossConversation = needsCrossConversationHistory(latestUserText(options.messages))
+  // Worker admission supplies the current conversation ID and defers indexing.
+  // Cross-conversation lookup does not depend on its summary, so do both reads
+  // together while still waiting for both before assembling model context.
+  const parallelRetrieval = options.deferIndexing && !!options.conversationId && crossConversation
+  const retrievalStartedAt = parallelRetrieval ? Date.now() : 0
+  const [summary, parallelHistory] = await Promise.all([
+    summaryPromise.then(value => ({ ...value, elapsedMs: Date.now() - summaryStartedAt })),
+    parallelRetrieval
+      ? retrieve(options.conversationId!).then(value => ({ value, elapsedMs: Date.now() - retrievalStartedAt }))
+      : Promise.resolve(null),
+  ])
+  const summaryMs = summary.elapsedMs
+
+  if (!options.deferIndexing) await refreshChatHistoryIndex({
+    supabase: options.supabase, userId: options.userId,
+    conversationId: summary.conversationId, signal: options.signal,
+  })
+  if (!crossConversation) {
+    log.info('jobs', 'Chat history preparation timing', {
+      conversationId: summary.conversationId, summaryMs, retrievalMs: 0, socialOnly: true,
+    })
+    return { conversationId: summary.conversationId, renderedContext: summary.renderedSummary }
+  }
+  const historyStartedAt = parallelRetrieval ? retrievalStartedAt : Date.now()
+  const history = parallelHistory?.value ?? await retrieve(summary.conversationId)
   log.info('jobs', 'Chat history preparation timing', {
     conversationId: summary.conversationId, summaryMs,
-    retrievalMs: Date.now() - retrievalStartedAt, socialOnly: false,
+    retrievalMs: parallelHistory?.elapsedMs ?? Date.now() - historyStartedAt, socialOnly: false,
   })
   return {
     conversationId: summary.conversationId,
