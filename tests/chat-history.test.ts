@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { prepareChatHistory } from '../lib/chat/history'
+import { needsCrossConversationHistory, prepareChatHistory } from '../lib/chat/history'
 import type { SupabaseServer } from '../lib/api/guard'
 
 const conversationId = '20000000-0000-4000-8000-000000000001'
@@ -27,4 +27,36 @@ test('disabled history retrieval bypasses all summary and retrieval storage work
 
   assert.equal(storageCalls, 0)
   assert.deepEqual(result, { conversationId, renderedContext: '' })
+})
+
+test('isolated reactions skip cross-conversation retrieval without losing stored current context', async () => {
+  const touched: string[] = []
+  const query = {
+    select() { return query }, eq() { return query },
+    async maybeSingle() {
+      return { data: { context_summary: '当前对话约定使用中文', summary_until_message_id: 'previous-message' }, error: null }
+    },
+  }
+  const storage = { from(table: string) {
+    touched.push(table)
+    assert.equal(table, 'conversations')
+    return query
+  } } as unknown as SupabaseServer
+  const result = await prepareChatHistory({
+    supabase: storage, userId, conversationId, tier: '绝句',
+    historyRetrievalEnabled: true, customEndpoint: true, deferIndexing: true,
+    messages: [{ role: 'user', content: '哈哈哈' }],
+  })
+  assert.deepEqual(touched, ['conversations'])
+  assert.match(result.renderedContext, /当前对话约定使用中文/)
+  assert.equal(result.sources, undefined)
+})
+
+test('history lookup remains enabled for every contextual or factual request', () => {
+  for (const query of ['哈哈哈', '呵呵', '你好呀！', '谢谢', 'hello']) {
+    assert.equal(needsCrossConversationHistory(query), false, query)
+  }
+  for (const query of ['哈哈哈 上次那项目', '你好，上次我的名字是什么？', '谢谢，继续昨天的计划', '好，那个文件呢', 'hello remember my project', '哈雷发动机']) {
+    assert.equal(needsCrossConversationHistory(query), true, query)
+  }
 })

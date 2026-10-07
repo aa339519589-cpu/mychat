@@ -2,6 +2,7 @@ import { typedRpc, type RpcArgs, type SupabaseClient } from '@/lib/supabase/type
 import { createAdminClient } from '@/lib/supabase/admin'
 import { isIsoTimestamp, isJsonValue, type JsonObject } from './contracts'
 import { JobRuntimeError } from './errors'
+import { consumeHistoryIndexOutbox } from './history-index-outbox'
 import {
   JOB_OUTBOX_TOPICS,
   type JobOutboxClaim,
@@ -255,5 +256,15 @@ export class SupabaseJobOutboxRepository implements JobOutboxRepository {
     })
     if (finished.finished !== true) rejected('finish_payload_cleanup', finished.reason)
     return typeof objectKey === 'string'
+  }
+
+  async indexHistory(input: { message: JobOutboxMessage; workerId: string }): Promise<void> {
+    await consumeHistoryIndexOutbox({
+      client: this.client(), message: input.message,
+      verifyAuthority: () => this.renew({
+        outboxId: input.message.id, workerId: input.workerId,
+        lockVersion: input.message.lockVersion, lockSeconds: 60,
+      }),
+    })
   }
 }

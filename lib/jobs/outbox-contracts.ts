@@ -3,6 +3,7 @@ import type { JsonObject } from './contracts'
 export const JOB_OUTBOX_TOPICS = [
   'assets.cleanup',
   'payloads.cleanup',
+  'history.index',
   'jobs.cancel_requested',
   'jobs.poison',
   'jobs.ready',
@@ -13,6 +14,7 @@ export const JOB_OUTBOX_TOPICS = [
 export const DELIVERABLE_JOB_OUTBOX_TOPICS = [
   'assets.cleanup',
   'payloads.cleanup',
+  'history.index',
 ] as const satisfies readonly JobOutboxTopic[]
 
 export type JobOutboxTopic = typeof JOB_OUTBOX_TOPICS[number]
@@ -56,4 +58,5 @@ export interface JobOutboxRepository {
   }): Promise<void>
   cleanupAssets(input: { message: JobOutboxMessage; workerId: string }): Promise<number>
   cleanupPayload(input: { message: JobOutboxMessage; workerId: string }): Promise<boolean>
+  indexHistory?(input: { message: JobOutboxMessage; workerId: string }): Promise<void>
 }

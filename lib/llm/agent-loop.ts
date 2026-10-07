@@ -35,6 +35,8 @@ export type AgentLoopOpts = {
     prompt: (info: { turn: TurnResult; idleCount: number }) => string | null | Promise<string | null>
   }
   onTurn?: (info: { phase: TurnPhase; round?: number; turn: TurnResult }) => void
+  /** Final model output is visible; durable accounting and job finalization may still be pending. */
+  onOutputCompleted?: () => void
   onCheckpoint?: (messages: ModelMessage[]) => void | Promise<void>
   onUsage?: (totalTokens: number) => void | Promise<void>
   turnOptions?: Omit<RunTurnOptions, 'thinking' | 'adapter'>
@@ -48,6 +50,7 @@ type AgentLoopState = {
   consecutiveFailures: number
   idleCount: number
   activeTurnTools: ModelToolDefinition[]
+  outputCompleted: boolean
 }
 
 type AgentLoopContext = {
@@ -72,6 +75,7 @@ function createContext(options: AgentLoopOpts): AgentLoopContext {
       consecutiveFailures: 0,
       idleCount: 0,
       activeTurnTools: options.tools,
+      outputCompleted: false,
     },
     sharedTurnOptions: {
       ...options.turnOptions,
@@ -88,6 +92,23 @@ async function recordUsage(context: AgentLoopContext, turn: TurnResult): Promise
       : turn.tokenUsage
   }
   await context.options.onUsage?.(context.state.totalTokens)
+}
+
+function reportOutputCompleted(context: AgentLoopContext): void {
+  if (context.state.outputCompleted) return
+  context.state.outputCompleted = true
+  context.options.onOutputCompleted?.()
+}
+
+function isFinalOutputTurn(context: AgentLoopContext, turn: TurnResult, phase: TurnPhase): boolean {
+  // Leaked retries return to the outer loop; idle continuation decides after
+  // usage durability. Neither may announce a final response from this point.
+  return !turn.failed
+    && turn.toolCalls.length === 0
+    && phase !== 'leaked-retry'
+    && !context.options.idleContinuation
+    && !needsLeakedRetry(context, turn)
+    && !needsOutputContinuation(turn)
 }
 
 async function executeTurn(
@@ -112,6 +133,7 @@ async function executeTurn(
       emitErrors: false,
     },
   )
+  if (isFinalOutputTurn(context, turn, phase)) reportOutputCompleted(context)
   await recordUsage(context, turn)
   options.onTurn?.(round === undefined ? { phase, turn } : { phase, round, turn })
   return turn
@@ -328,6 +350,7 @@ export async function runAgentLoop(options: AgentLoopOpts): Promise<{
   await executeRounds(context)
   await requestFinalText(context)
   await continueOutput(context)
+  if (context.state.lastTurn && !context.state.lastTurn.failed) reportOutputCompleted(context)
   return {
     totalTokens: context.state.totalTokens,
     ...(context.state.tokenUsage ? { tokenUsage: context.state.tokenUsage } : {}),

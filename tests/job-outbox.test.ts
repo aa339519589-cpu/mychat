@@ -140,9 +140,35 @@ test('a non-deliverable lifecycle topic is never acknowledged as published', asy
     sleep: abortableSleep,
   })
   assert.equal(await dispatcher.runOnce(), false)
-  assert.deepEqual(claimedTopics, ['assets.cleanup', 'payloads.cleanup'])
+  assert.deepEqual(claimedTopics, ['assets.cleanup', 'payloads.cleanup', 'history.index'])
   assert.equal(claimedTopics.includes(lifecycle.topic), false)
   assert.deepEqual(fixture.calls.published, [])
+})
+
+test('history indexing is durably published only after its consumer finishes', async () => {
+  const fixture = repositoryFixture({ claimed: message({ topic: 'history.index' }) })
+  let indexed = false
+  const dispatcher = new JobOutboxDispatcher({
+    repository: { ...fixture.repository, indexHistory: async () => {
+      assert.equal(fixture.calls.published.length, 0)
+      indexed = true
+    } }, workerId: 'outbox-worker', sleep: abortableSleep,
+  })
+  await dispatcher.runOnce()
+  assert.equal(indexed, true)
+  assert.equal(fixture.calls.published.length, 1)
+})
+
+test('history indexing failures retain the outbox item for a fenced retry', async () => {
+  const fixture = repositoryFixture({ claimed: message({ topic: 'history.index' }) })
+  const dispatcher = new JobOutboxDispatcher({
+    repository: { ...fixture.repository, indexHistory: async () => {
+      throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'index unavailable')
+    } }, workerId: 'outbox-worker', sleep: abortableSleep,
+  })
+  await dispatcher.runOnce()
+  assert.equal(fixture.calls.published.length, 0)
+  assert.equal(fixture.calls.failed.length, 1)
 })
 
 test('empty outbox performs no delivery mutation', async () => {

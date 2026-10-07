@@ -30,8 +30,10 @@ import { completeChatTextRun, rethrowChatTextFailure } from './chat-text-complet
 import { buildChatSystem, buildChatTools, type ActiveChatTools } from './chat-text-context'
 import {
   chatTokenAccounting,
+  restoreChatTrajectory,
+  timedChatPreparation,
+  withHistoryIndexOutbox,
   restoredHistoricalTokens,
-  restoredTrajectory,
   trajectoryCheckpoint,
 } from './chat-text-runtime'
 
@@ -136,26 +138,6 @@ async function appendAttachments(
   await dependencies.injectAttachments(modelMessages, attachments)
 }
 
-async function restoreChatTrajectory(
-  context: JobExecutionContext,
-  writer: JobEventWriter,
-  modelMessages: AgentLoopOpts['messages'],
-): Promise<number> {
-  const baseLength = modelMessages.length
-  if (context.job.checkpoint && !context.job.checkpoint.resumable) {
-    throw new JobRuntimeError('JOB_RETRY_UNSAFE', 'Chat checkpoint is explicitly non-resumable', {
-      class: 'internal',
-      retryable: false,
-    })
-  }
-  const restored = restoredTrajectory(context.job.checkpoint?.data)
-  if (restored.length) {
-    modelMessages.push(...restored)
-    await writer.append('job.resumed', { checkpointMessages: restored.length })
-  }
-  return baseLength
-}
-
 async function prepareChat(
   context: JobExecutionContext,
   input: LoadedChatJob,
@@ -168,7 +150,7 @@ async function prepareChat(
   const instantMessages = instantModelMessages(input)
   if (instantMessages) {
     const [configuredTools, baseLength] = await Promise.all([
-      buildChatTools(context, input, latestBeijingDate, true),
+      timedChatPreparation(context.job.id, 'tools', () => buildChatTools(context, input, latestBeijingDate, true)),
       restoreChatTrajectory(context, runtime.writer, instantMessages),
     ])
     return { ...configuredTools, modelMessages: instantMessages, baseLength, instant: true }
@@ -177,8 +159,8 @@ async function prepareChat(
   // independent reads. Do not put all three round trips before the first model
   // request in series; still await every required input before calling it.
   const [configuredTools, history, preparedMessages] = await Promise.all([
-    buildChatTools(context, input, latestBeijingDate, false),
-    dependencies.prepareHistory({
+    timedChatPreparation(context.job.id, 'tools', () => buildChatTools(context, input, latestBeijingDate, false)),
+    timedChatPreparation(context.job.id, 'history', () => dependencies.prepareHistory({
       supabase: input.client as Parameters<typeof prepareChatHistory>[0]['supabase'],
       userId: input.userId,
       conversationId: input.conversationId,
@@ -188,8 +170,9 @@ async function prepareChat(
       historyRetrievalEnabled: command.historyRetrieval,
       customEndpoint: selection.customEndpoint,
       signal: context.signal,
-    }),
-    recentModelMessages(context, input, runtime, dependencies),
+      deferIndexing: true,
+    })),
+    timedChatPreparation(context.job.id, 'images', () => recentModelMessages(context, input, runtime, dependencies)),
   ])
   if (history.sources?.length) {
     runtime.emit({
@@ -210,7 +193,7 @@ async function prepareChat(
     { role: 'system', content: buildChatSystem(input, latestBeijingDate, history.renderedContext) },
     ...buildModelContext(preparedMessages, selection.capability),
   ]
-  await appendAttachments(context, input, runtime, dependencies, modelMessages)
+  await timedChatPreparation(context.job.id, 'attachments', () => appendAttachments(context, input, runtime, dependencies, modelMessages))
   const baseLength = await restoreChatTrajectory(context, runtime.writer, modelMessages)
   return { ...configuredTools, modelMessages, baseLength, instant: false }
 }
@@ -311,6 +294,21 @@ async function runPreparedChat(
   const trial = selection.accessClass === 'trial'
   const providerStartedAt = Date.now()
   let firstTextLogged = false
+  let outputCompletionPersistence: Promise<void> | null = null
+  const reportOutputCompleted = () => {
+    if (outputCompletionPersistence) return
+    // The model has stopped producing output. Publish that fact before usage
+    // durability; this is not a completed job or an accounting acknowledgement.
+    outputCompletionPersistence = runtime.writer.append(
+      'model.output_completed',
+      {
+        phase: 'provider_complete',
+        contentLength: runtime.writer.text().length,
+        thinkingLength: runtime.writer.thinking().length,
+      },
+      `${context.job.id}:model-output-completed:${context.fence.leaseVersion}`,
+    )
+  }
   const result = await dependencies.runAgentLoop({
     url: chatCompletionsUrl(selection.capability.provider.baseUrl),
     apiKey: selection.apiKey,
@@ -347,20 +345,14 @@ async function runPreparedChat(
       idempotencyNamespace: context.job.id,
     },
     onTurn: logTurn(context.job.id),
+    onOutputCompleted: reportOutputCompleted,
   })
   runtime.tokenUsage = result.tokenUsage
   // This is the semantic end of model output. Durable accounting, media
   // persistence, and job finalization continue afterwards, but the composer
   // must stop presenting an active "stop generation" control immediately.
-  await runtime.writer.append(
-    'model.output_completed',
-    {
-      phase: 'provider_complete',
-      contentLength: runtime.writer.text().length,
-      thinkingLength: runtime.writer.thinking().length,
-    },
-    `${context.job.id}:model-output-completed:${context.fence.leaseVersion}`,
-  )
+  reportOutputCompleted()
+  await outputCompletionPersistence
 }
 
 export async function runChatTextJob(
@@ -377,9 +369,18 @@ export async function runChatTextJob(
       attempt: context.job.attempt,
       model: input.selection.model,
     }, `${context.job.id}:started:${context.fence.leaseVersion}`)
+    const preparedStartedAt = Date.now()
     const prepared = await prepareChat(context, input, runtime, dependencies)
+    log.info('jobs', 'Chat model input preparation timing', {
+      jobId: context.job.id, preparationMs: Date.now() - preparedStartedAt,
+      instant: prepared.instant, tools: prepared.tools.length,
+    })
     await runPreparedChat(context, input, runtime, prepared, dependencies)
-    return await completeChatTextRun(context, input, runtime, dependencies)
+    const result = await completeChatTextRun(context, input, runtime, dependencies)
+    return withHistoryIndexOutbox(result, {
+      jobId: context.job.id, conversationId: input.conversationId,
+      enabled: input.command.historyRetrieval,
+    })
   } catch (error) {
     return rethrowChatTextFailure(error, context, input, runtime, dependencies)
   }

@@ -121,6 +121,33 @@ function baseDependencies(run: ChatTextDependencies['runAgentLoop']): Partial<Ch
   }
 }
 
+test('chat history index is atomically scheduled with completion instead of delaying model output or terminal', async () => {
+  const context = executionContext()
+  const input = chatInput()
+  input.command.historyRetrieval = true
+  input.context.messages = [{ role: 'user', content: '哈哈哈' }]
+  let historyDeferred = false
+  const result = await runChatTextJob(context.value, input, {
+    ...baseDependencies(async options => {
+      options.emit({ text: '哈哈 😄' })
+      return { totalTokens: 0 }
+    }),
+    prepareHistory: async options => {
+      historyDeferred = options.deferIndexing === true
+      return { conversationId: input.conversationId, renderedContext: '' }
+    },
+  })
+  assert.equal(historyDeferred, true)
+  assert.equal(result.status, 'completed')
+  if (result.status !== 'completed') return
+  assert.deepEqual(result.outbox, [{
+    kind: 'history.index', dedupeKey: `${context.value.job.id}:history-index`,
+    payload: { conversationId: input.conversationId },
+  }])
+  assert.ok(context.events.some(event => event.kind === 'text.delta'))
+  assert.ok(context.events.some(event => event.kind === 'model.output_completed'))
+})
+
 test('chat text Job flushes current-attempt accounting before writing its checkpoint', async () => {
   const context = executionContext()
   const captured: { modelOptions?: AgentLoopOpts } = {}
