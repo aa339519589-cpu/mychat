@@ -17,6 +17,7 @@ import {
   isJobIdentifier,
   isTerminalJobStatus,
   type JsonObject,
+  type JobFence,
 } from './contracts'
 import { JobRuntimeError } from './errors'
 import type { JobRepository } from './repository'
@@ -100,6 +101,17 @@ export class SupabaseJobRepository implements JobRepository {
 
   constructor(dependencies: Partial<SupabaseJobRepositoryDependencies> = {}) {
     this.dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencies }
+  }
+
+  async cancellationRequested(fence: JobFence, signal?: AbortSignal): Promise<boolean> {
+    assertJobFence(fence)
+    const timeout = AbortSignal.timeout(this.dependencies.rpcTimeoutMs)
+    const response = await this.client().from('jobs').select('cancel_requested_at')
+      .eq('id', fence.jobId).eq('lease_owner', fence.workerId).eq('lease_version', fence.leaseVersion)
+      .abortSignal(signal ? AbortSignal.any([signal, timeout]) : timeout).maybeSingle()
+    if (response.error) throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'Cancellation observation unavailable')
+    return typeof response.data?.cancel_requested_at === 'string'
+      && response.data.cancel_requested_at.length > 0
   }
 
   private client(): SupabaseClient {

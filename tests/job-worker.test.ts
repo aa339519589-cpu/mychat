@@ -35,6 +35,36 @@ function claimedJob(overrides: Partial<JobRecord> = {}): JobRecord {
   }
 }
 
+test('a silent provider observes cancellation without waiting for the forty-second lease renewal', async () => {
+  const shutdown = new AbortController()
+  let claims = 0
+  let checks = 0
+  let renewals = 0
+  let status: string | undefined
+  const started = performance.now()
+  const repository = fakeRepository({
+    claim: async () => ++claims === 1 ? { acquired: true, reason: 'claimed', job: claimedJob() }
+      : { acquired: false, reason: 'empty', job: null },
+    cancellationRequested: async () => { checks += 1; return true },
+    renew: async () => { renewals += 1; throw new Error('renewal should not be needed') },
+    finalize: async input => {
+      status = input.status
+      shutdown.abort()
+      return { accepted: true, replayed: false, status: input.status, result: null, error: input.error ?? null, eventSeq: 2 }
+    },
+  })
+  const worker = new JobWorker({ repository, workerId: 'worker-1', queues: ['chat'], leaseSeconds: 120,
+    handlers: { 'chat.generation': async context => new Promise<never>((_, reject) => {
+      context.signal.addEventListener('abort', () => reject(context.signal.reason), { once: true })
+    }) },
+  })
+  await worker.run(shutdown.signal)
+  assert.equal(status, 'cancelled')
+  assert.equal(checks, 1)
+  assert.equal(renewals, 0)
+  assert.ok(performance.now() - started < 5_000)
+})
+
 type RepositoryOverrides = Partial<{ [Key in keyof JobRepository]: JobRepository[Key] }>
 
 function fakeRepository(overrides: RepositoryOverrides = {}): JobRepository {
