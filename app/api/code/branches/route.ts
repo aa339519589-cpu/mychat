@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server'
 import { getGitHubSession } from '@/lib/github-session'
 import { requestId } from '@/lib/api/request'
 import { isValidGitHubRepository } from '@/lib/agent/git-publish/shared'
-import { repoMeta } from '@/lib/github'
+import { githubApiFetch, repoMeta } from '@/lib/github'
 
 function branchRows(data: unknown): Array<{ name: string; protected: boolean }> {
   if (!Array.isArray(data)) throw new Error('invalid branches')
@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
   let truncated = false
   try {
     for (let page = 1; page <= 3; page++) {
-      const response = await fetch(`https://api.github.com/repos/${repo}/branches?per_page=100&page=${page}`, {
+      const response = await githubApiFetch(`https://api.github.com/repos/${repo}/branches?per_page=100&page=${page}`, {
         headers: { Authorization: `Bearer ${session.token}`, Accept: 'application/vnd.github+json', 'User-Agent': 'mychat-app' },
         signal: AbortSignal.any([request.signal, AbortSignal.timeout(10_000)]), redirect: 'error',
       })

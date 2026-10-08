@@ -13,9 +13,21 @@ async function responseRecord(response: Response | null | undefined): Promise<Un
 }
 
 function boundedFetch(input: string, init: RequestInit = {}, timeoutMs = 30_000): Promise<Response> {
+  const parsed = new URL(input)
+  if (parsed.protocol !== 'https:' || parsed.hostname !== 'api.github.com'
+    || parsed.username || parsed.password || parsed.port || parsed.hash) {
+    throw new Error('GitHub API URL is outside the permitted origin')
+  }
+  // Rebuild from a fixed origin: caller input can only supply path/query,
+  // never the network destination or credentials.
+  const target = new URL('https://api.github.com')
+  target.pathname = parsed.pathname
+  target.search = parsed.search
   const signals = [init.signal, AbortSignal.timeout(timeoutMs)].filter(Boolean) as AbortSignal[]
-  return fetch(input, { ...init, signal: signals.length === 1 ? signals[0] : AbortSignal.any(signals) })
+  return fetch(target, { ...init, redirect: 'error', signal: signals.length === 1 ? signals[0] : AbortSignal.any(signals) })
 }
+
+export { boundedFetch as githubApiFetch }
 
 function ghHeaders(token: string, json = false): Record<string, string> {
   const h: Record<string, string> = {
