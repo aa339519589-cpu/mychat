@@ -17,9 +17,11 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 24
-      - name: Read only the known disposable acceptance principal
+      - run: npm ci --ignore-scripts --legacy-peer-deps
+      - name: One bounded provider compatibility request, no tool execution
         env:
           PRODUCTION_URL: https://mychat-nm6x.onrender.com
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-        run: node scripts/diagnose-cloud-code-acceptance.mjs
+          CODE_MODEL_COMPATIBILITY_CONFIRM_ONCE: 37786907076:fa56ac8d-562b-4085-85c8-f747d6aa4a39
+        run: npx tsx scripts/probe-code-model-compatibility.mjs
