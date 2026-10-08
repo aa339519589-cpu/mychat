@@ -56,3 +56,25 @@ test("turn response consumer rejects oversized declared generic streams", async 
     GenericResponseLimitError,
   )
 })
+
+for (const marker of ['data: [DONE]\n\n', 'event: message_stop\ndata: {"type":"message_stop"}\n\n']) {
+  test(`terminal ${marker.split('\n')[0]} releases the turn even if the provider keeps HTTP open`, async () => {
+    let cancelled = false
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new TextEncoder().encode(marker)) },
+      cancel() { cancelled = true },
+    })
+    const result = await Promise.race([
+      consumeTurnResponse(new Response(stream), false, () => undefined),
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error('waiting for EOF')), 100)),
+    ])
+    assert.equal(result.sawDone, true)
+    assert.equal(cancelled, true)
+  })
+}
+
+test('valid SSE handler failures are surfaced immediately rather than silently swallowed', async () => {
+  const failure = new Error('provider/application failure')
+  await assert.rejects(consumeTurnResponse(new Response('data: {"text":"first"}\n\n'), false,
+    () => { throw failure }), error => error === failure)
+})

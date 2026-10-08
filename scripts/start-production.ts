@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { parseProcessLiveMessage } from '../lib/jobs/process-live-events'
 import {
   resolveRuntimeConfiguration,
   runtimeRole,
@@ -60,10 +61,17 @@ export async function startProduction(options: StartProductionOptions = {}): Pro
   const children = services.map(service => ({
     ...service,
     child: spawnChild(service.command, service.args, {
-      env: environment as NodeJS.ProcessEnv,
-      stdio: 'inherit',
+      env: { ...environment, MYCHAT_LOCAL_LIVE_RELAY: configuration.role === 'all' ? '1' : '0' } as NodeJS.ProcessEnv,
+      stdio: configuration.role === 'all' ? ['inherit', 'inherit', 'inherit', 'ipc'] : 'inherit',
     }) as ChildProcess,
   }))
+  const web = children.find(service => service.name === 'web')?.child
+  const worker = children.find(service => service.name === 'worker')?.child
+  worker?.on('message', value => {
+    const message = parseProcessLiveMessage(value)
+    if (!message || !web?.connected) return
+    try { web.send(message, () => undefined) } catch { /* Durable/cross-host fallback is still active. */ }
+  })
 
   let stopping = false
   let exitCode = 0

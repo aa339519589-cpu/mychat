@@ -4,6 +4,7 @@ import type { Memory } from '@/lib/memory-data'
 import type { ProjectContext } from '@/lib/project-data'
 import type { RawMsg } from '@/lib/llm/types'
 import { isRecord } from '@/lib/unknown-value'
+import { contextBudgetMessage, contextBudgetValue, contextMessageBytes, contextMediaChars } from './context-media-budget'
 import {
   CONTEXT_PAGE_SIZE, MAX_AUTHORITATIVE_CONTEXT_BYTES, MAX_MEMORIES, AuthoritativeContextError,
   jsonBytes, loadBoundedCollection, loadGlobalMemories, loadMemoryPreferences,
@@ -48,7 +49,7 @@ type AuthoritativeChatContext = {
 const encoder = new TextEncoder()
 
 function estimateContextMessageTokens(message: RawMsg): number {
-  const serialized = JSON.stringify(message.content ?? '') ?? ''
+  const serialized = JSON.stringify(contextBudgetMessage(message).content ?? '') ?? ''
   let asciiChars = 0
   for (let index = 0; index < serialized.length; index += 1) {
     if (serialized.charCodeAt(index) <= 0x7f) asciiChars += 1
@@ -80,11 +81,12 @@ export function compileAuthoritativeMessages(
       row.id !== userMessageId &&
       estimateContextMessageTokens(message) > MAX_SINGLE_CONTEXT_MESSAGE_TOKENS
     ) continue
-    const messageBytes = jsonBytes(message)
+    const messageBytes = contextMessageBytes(message)
     if (row.id === userMessageId && messageBytes > maxBytes) {
       throw new AuthoritativeContextError('CONTEXT_TOO_LARGE', '当前消息超过模型上下文上限')
     }
     if (bytes + messageBytes > maxBytes) break
+    contextMediaChars([...compiled, message])
     compiled.push(message)
     bytes += messageBytes
   }
@@ -92,7 +94,7 @@ export function compileAuthoritativeMessages(
 }
 
 function assertContextBudget(value: unknown): void {
-  if (jsonBytes(value) > MAX_AUTHORITATIVE_CONTEXT_BYTES) {
+  if (jsonBytes(contextBudgetValue(value)) > MAX_AUTHORITATIVE_CONTEXT_BYTES) {
     throw new AuthoritativeContextError('CONTEXT_TOO_LARGE', '权威对话、项目或记忆上下文超过处理上限')
   }
 }
@@ -218,7 +220,7 @@ async function loadMessageHistory(input: {
         !isCurrentUserMessage &&
         estimateContextMessageTokens(message) > MAX_SINGLE_CONTEXT_MESSAGE_TOKENS
       ) continue
-      const messageBytes = jsonBytes(message)
+      const messageBytes = contextMessageBytes(message)
       if (isCurrentUserMessage) {
         foundUserMessage = true
         if (messageBytes > MAX_MESSAGE_HISTORY_BYTES) {
@@ -229,6 +231,7 @@ async function loadMessageHistory(input: {
         budgetReached = true
         break
       }
+      contextMediaChars([...compiled, message])
       compiled.push(message)
       bytes += messageBytes
     }

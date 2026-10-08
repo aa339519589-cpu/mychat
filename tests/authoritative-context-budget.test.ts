@@ -44,3 +44,29 @@ test('the current user message is never silently truncated', () => {
       && error.code === 'CONTEXT_TOO_LARGE',
   )
 })
+
+test('a normal photo larger than 128 KiB reaches the vision context unchanged', () => {
+  const photo = 'data:image/jpeg;base64,' + 'A'.repeat(220_000)
+  const current = { ...row('photo', '请描述图片'), images: { refs: [photo] } }
+  const messages = compileAuthoritativeMessages([current, row('previous', '原来的上下文')], 'photo')
+  assert.equal(messages.length, 2)
+  assert.deepEqual(messages[1]?.images, [photo])
+  assert.equal(messages[1]?.content, '请描述图片')
+})
+
+test('embedded image parts use the image budget instead of masquerading as 200k text tokens', () => {
+  const photo = 'data:image/png;base64,' + 'A'.repeat(240_000)
+  const previous = { ...row('previous', ''), content_parts: [
+    { type: 'text', text: '前面的图片' },
+    { type: 'image_url', image_url: { url: photo } },
+  ] }
+  const messages = compileAuthoritativeMessages([row('current', '继续描述'), previous], 'current')
+  assert.equal(messages.length, 2)
+  assert.deepEqual(messages[0]?.content, previous.content_parts)
+})
+
+test('image transport remains bounded even though it has a separate budget', () => {
+  const current = { ...row('photo', '图片'), images: { refs: ['data:image/jpeg;base64,' + 'A'.repeat(8_000_001)] } }
+  assert.throws(() => compileAuthoritativeMessages([current], 'photo'),
+    (error: unknown) => error instanceof AuthoritativeContextError && error.code === 'CONTEXT_TOO_LARGE')
+})

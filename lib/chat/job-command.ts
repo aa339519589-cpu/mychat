@@ -6,6 +6,7 @@ import { jobMetrics } from '@/lib/observability/job-metrics'
 import { log } from '@/lib/logger'
 import { isRecord } from '@/lib/unknown-value'
 import { JobRuntimeError } from '@/lib/jobs/errors'
+import { isBillingReconciliationUnavailable, withAdmissionReconciliation } from '@/lib/jobs/admission-reconciliation'
 import { sha256JobValue } from '@/lib/jobs/canonical'
 import { loadRegenerationCleanupKeys } from './regeneration-cleanup'
 import { enqueueDirectTurn, requiredAdminClient } from './direct-turn-admission'
@@ -38,7 +39,7 @@ function authoritativeRpcError(error: unknown, fallback: string): JobRuntimeErro
   const code = typeof details.databaseCode === 'string' ? details.databaseCode : ''
   const databaseMessage = typeof details.databaseMessage === 'string' ? details.databaseMessage : ''
   const deterministicInfrastructure = ['42501', '42P01', '42703', '42883'].includes(code)
-  const conflict = ['22023', '22P02', '23502', '23503', '23505', '23514', '40001', '54000', '55000'].includes(code)
+  const conflict = ['22023', '22P02', '23502', '23503', '23505', '23514', '40001', '54000', '55000'].includes(code) && !isBillingReconciliationUnavailable(error)
   return new JobRuntimeError(conflict ? 'JOB_CONFLICT' : 'JOB_DEPENDENCY_UNAVAILABLE', databaseMessage ? `${fallback}${code ? ` (${code})` : ''}: ${databaseMessage}` : fallback, { retryable: !conflict && !deterministicInfrastructure, details })
 }
 function thrownAuthoritativeRpcError(error: unknown, fallback: string): JobRuntimeError { if (error instanceof JobRuntimeError) return error; return new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', fallback, { cause: error, details: { name: error instanceof Error ? error.name : 'unknown' } }) }
@@ -76,7 +77,7 @@ async function enqueueAuthoritativeRegeneration(input: { client: NonNullable<Ret
   const cleanupObjectKeys = await input.loadCleanupKeys({ client: input.client, userId: input.command.userId, conversationId: body.conversationId, sourceUserMessageId: body.userMessageId, authority: input.authority })
   return callRegenerationRpc({
     rpcName: 'enqueue_chat_regeneration_v1', fallback: 'Authoritative regeneration enqueue failed', jobId: body.generationId, sleep: input.sleep,
-    invoke: () => input.client.rpc('enqueue_chat_regeneration_v1', {
+    invoke: () => withAdmissionReconciliation(input.client, () => input.client.rpc('enqueue_chat_regeneration_v1', {
       input_user_id: input.command.userId,
       input_conversation_id: body.conversationId,
       input_operation: input.authority.operation,
@@ -94,7 +95,7 @@ async function enqueueAuthoritativeRegeneration(input: { client: NonNullable<Ret
       input_queue: input.queue,
       input_max_attempts: input.maxAttempts,
       input_cleanup_object_keys: cleanupObjectKeys,
-    }) as unknown as PromiseLike<AuthoritativeRpcResponse>,
+    }) as unknown as PromiseLike<AuthoritativeRpcResponse>),
   })
 }
 

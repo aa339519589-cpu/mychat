@@ -95,7 +95,10 @@ test('publisher sends adjacent provider deltas separately without subscribing', 
   await publisher.close()
 
   assert.equal(sent.length, 2)
-  assert.deepEqual(sent, [
+  assert.deepEqual(sent.map(value => {
+    const { streamId: _streamId, ...event } = value as Record<string, unknown>
+    return event
+  }), [
     { revision: 1, kind: 'text.delta', offset: 0, payload: { text: '你' } },
     { revision: 2, kind: 'text.delta', offset: 1, payload: { text: '好' } },
   ])
