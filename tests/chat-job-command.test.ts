@@ -219,16 +219,18 @@ async function runDirectTurn(createConversation: boolean, memoryEnabled?: boolea
     input.body.turn.memoryEnabled = memoryEnabled
   }
   const calls: Array<{ name: string; args: Record<string, unknown> }> = []
+  const wakes: Array<{ queue: string; jobId: string }> = []
   const result = await enqueueChatJob(input, {
     persistPayload: async () => { throw new Error('inline chat must not upload a payload') },
     removePayload: async () => undefined,
     createAdminClient: () => directTurnClient(input, calls),
+    publishWake: (queue, jobId) => { wakes.push({ queue, jobId }) },
   })
-  return { input, result, calls }
+  return { input, result, calls, wakes }
 }
 
 test('new native turns use one atomic direct durable admission RPC', async () => {
-  const { result, calls } = await runDirectTurn(true)
+  const { result, calls, wakes } = await runDirectTurn(true)
   assert.equal(result.created, true)
   assert.equal(result.job.id, generationId)
   assert.equal(calls.length, 1)
@@ -237,6 +239,7 @@ test('new native turns use one atomic direct durable admission RPC', async () =>
   assert.equal(calls[0]?.args.input_memory_enabled, true)
   assert.equal(calls[0]?.args.input_user_content, 'first native turn')
   assert.equal(typeof calls[0]?.args.input_payload, 'object')
+  assert.deepEqual(wakes, [{ queue: 'chat', jobId: generationId }])
 })
 
 test('existing native conversations use the same atomic admission RPC', async () => {

@@ -8,11 +8,10 @@ import { handleAgentOperation } from '@/lib/jobs/handlers/agent-operation'
 import { SupabaseJobRepository } from '@/lib/jobs/supabase-repository'
 import { SupabaseJobOutboxRepository } from '@/lib/jobs/supabase-outbox'
 import { JobOutboxDispatcher } from '@/lib/jobs/outbox-dispatcher'
-import { JobWorker } from '@/lib/jobs/worker'
+import { JobWorker, parseProcessJobWakeMessage, type JobHandler } from '@/lib/jobs/worker'
 import { log } from '@/lib/logger'
 import { jobMetrics, type JobMetricType } from '@/lib/observability/job-metrics'
 import { normalizeJobError } from '@/lib/jobs/errors'
-import type { JobHandler } from '@/lib/jobs/worker'
 import { JobWorkerHeartbeat } from '@/lib/jobs/worker-heartbeat'
 import { safeRevision } from '@/lib/supabase/health'
 import { JobLifecycleSweeper } from '@/lib/jobs/lifecycle-sweeper'
@@ -124,14 +123,20 @@ const heartbeat = new JobWorkerHeartbeat({
   draining: maintenanceMode === 'drain',
   startedAt: workerStartedAt,
 })
+const workersByQueue = new Map<string, JobWorker[]>()
 const workers = workerSpecs.flatMap(spec => {
   if (maintenanceMode === 'drain' && spec.queue === 'agent') return []
-  if (spec.queue !== 'chat') return [createWorker(spec, spec.name, spec.concurrency)]
-  const hotWorker = createWorker(spec, 'chat-hot', 1, true)
-  const remainingConcurrency = spec.concurrency - 1
-  return remainingConcurrency > 0
-    ? [hotWorker, createWorker(spec, 'chat-bulk', remainingConcurrency)]
-    : [hotWorker]
+  const queueWorkers = spec.queue !== 'chat'
+    ? [createWorker(spec, spec.name, spec.concurrency)]
+    : (() => {
+        const hotWorker = createWorker(spec, 'chat-hot', 1, true)
+        const remainingConcurrency = spec.concurrency - 1
+        return remainingConcurrency > 0
+          ? [hotWorker, createWorker(spec, 'chat-bulk', remainingConcurrency)]
+          : [hotWorker]
+      })()
+  workersByQueue.set(spec.queue, queueWorkers)
+  return queueWorkers
 })
 const longThinkWorker = new JobWorker({
   repository,
@@ -142,6 +147,12 @@ const longThinkWorker = new JobWorker({
   leaseSeconds: 120,
   shutdownGraceMs: 240_000,
   onFinalized: finalized,
+})
+workersByQueue.set('longthink', [longThinkWorker])
+process.on('message', value => {
+  const message = parseProcessJobWakeMessage(value)
+  if (!message) return
+  for (const worker of workersByQueue.get(message.queue) ?? []) worker.wake()
 })
 const outbox = new JobOutboxDispatcher({
   repository: new SupabaseJobOutboxRepository(),

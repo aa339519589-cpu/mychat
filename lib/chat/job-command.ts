@@ -6,6 +6,7 @@ import { jobMetrics } from '@/lib/observability/job-metrics'
 import { log } from '@/lib/logger'
 import { isRecord } from '@/lib/unknown-value'
 import { JobRuntimeError } from '@/lib/jobs/errors'
+import { publishProcessJobWake } from '@/lib/jobs/process-worker-wake'
 import { isBillingReconciliationUnavailable, withAdmissionReconciliation } from '@/lib/jobs/admission-reconciliation'
 import { sha256JobValue } from '@/lib/jobs/canonical'
 import { loadRegenerationCleanupKeys } from './regeneration-cleanup'
@@ -26,9 +27,10 @@ type EnqueueChatJobDependencies = {
   removePayload: typeof removeJobPayload
   createAdminClient: typeof createAdminClient
   loadRegenerationCleanupKeys: typeof loadRegenerationCleanupKeys
+  publishWake: typeof publishProcessJobWake
   sleep: (milliseconds: number) => Promise<void>
 }
-const DEFAULT_DEPENDENCIES: EnqueueChatJobDependencies = { persistPayload: persistJobPayload, removePayload: removeJobPayload, createAdminClient, loadRegenerationCleanupKeys, sleep: milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)) }
+const DEFAULT_DEPENDENCIES: EnqueueChatJobDependencies = { persistPayload: persistJobPayload, removePayload: removeJobPayload, createAdminClient, loadRegenerationCleanupKeys, publishWake: publishProcessJobWake, sleep: milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)) }
 
 function authoritativeDatabaseDetails(error: unknown): JsonObject {
   if (!isRecord(error)) return {}
@@ -250,6 +252,7 @@ export async function enqueueChatJob(input: EnqueueChatJobInput, dependencyOverr
     command: input, dependencies, prepared, ...policy,
   })
   recordChatAdmission(result, outputKind)
+  if (result.created) dependencies.publishWake(policy.queue, result.job.id)
   logChatAdmission({ command: input, prepared, startedAt, payloadPreparedAt })
   return result
 }
