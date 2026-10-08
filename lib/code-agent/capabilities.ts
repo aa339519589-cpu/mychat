@@ -14,5 +14,13 @@ export function codeCapabilities(environment: AgentExecutionEnvironment = proces
     modes: ['plan', 'code'],
     planReadOnly: true,
     durableQueue: true,
+    // Protocol availability does not assert that a task has a readable cloud snapshot.
+    workspaceDiff: {
+      schemaVersion: 1,
+      formats: ['cas-change-summary', 'unified'],
+      requiresSnapshotBinding: true,
+      maxFileBytes: 256 * 1024,
+      maxPatchBytes: 1024 * 1024,
+    },
   }
 }
