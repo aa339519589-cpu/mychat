@@ -37,17 +37,21 @@ export function isAdminConfigured(environment: ServerEnvironment = process.env):
 }
 
 /** Server-only client used for infrastructure RPCs that are unavailable to browser roles. */
-export function createAdminClient(): SupabaseClient | null {
+export function createAdminClient(signal?: AbortSignal): SupabaseClient | null {
   const config = resolveAdminConfig()
   if (!config) return null
-  if (globalAdmin.__mychatSupabaseAdmin) return globalAdmin.__mychatSupabaseAdmin
+  if (!signal && globalAdmin.__mychatSupabaseAdmin) return globalAdmin.__mychatSupabaseAdmin
 
-  globalAdmin.__mychatSupabaseAdmin = createClient<Database>(config.url, config.serviceRoleKey, {
+  const client = createClient<Database>(config.url, config.serviceRoleKey, {
     auth: {
       autoRefreshToken: false,
       detectSessionInUrl: false,
       persistSession: false,
     },
+    ...(signal ? { global: { fetch: (input: RequestInfo | URL, init?: RequestInit) => fetch(input, {
+      ...init, signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal,
+    }) } } : {}),
   })
-  return globalAdmin.__mychatSupabaseAdmin
+  if (!signal) globalAdmin.__mychatSupabaseAdmin = client
+  return client
 }

@@ -13,6 +13,7 @@ import type { RawMsg } from '@/lib/llm/types'
 import { log } from '@/lib/logger'
 import { latestUserText } from '@/lib/llm/retrieval-query'
 import { historyRetrievalModeForTier } from './request-context'
+import { createAdminClient } from '@/lib/supabase/admin'
 
 export { RECENT_CONTEXT_MESSAGES }
 
@@ -69,7 +70,7 @@ async function timedHistory(
   return { value, elapsedMs: Date.now() - startedAt }
 }
 
-export async function prepareChatHistory(options: {
+async function prepareChatHistoryUnbounded(options: {
   supabase: SupabaseServer | null
   userId: string | null
   conversationId?: string
@@ -149,4 +150,50 @@ export async function prepareChatHistory(options: {
     query,
     sources: history.sources,
   }
+}
+
+type HistoryOptions = Parameters<typeof prepareChatHistoryUnbounded>[0] & { deadlineMs?: number }
+type HistoryResult = Awaited<ReturnType<typeof prepareChatHistoryUnbounded>> & { degraded?: boolean }
+
+/** Optional cross-conversation I/O cannot indefinitely block the main model.
+ * The scoped client aborts every underlying read, not merely its observer. */
+export async function prepareChatHistory(options: HistoryOptions,
+  dependencies: ChatHistoryDependencies = { prepareSummary: prepareConversationSummary, retrieveHistory: retrieveHistoryWithSources },
+): Promise<HistoryResult> {
+  if (!options.historyRetrievalEnabled) return prepareChatHistoryUnbounded(options, dependencies)
+  options.signal?.throwIfAborted()
+  const controller = new AbortController()
+  const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal
+  const deadlineMs = options.deadlineMs ?? (historyRetrievalModeForTier(options.tier) === 'light' ? 1_500 : 3_000)
+  let completedSummary = ''
+  let completedHistory: Awaited<ReturnType<typeof retrieveHistoryWithSources>> = { renderedContext: '', sources: [] }
+  const observed: ChatHistoryDependencies = {
+    prepareSummary: async input => {
+      const result = await dependencies.prepareSummary(input)
+      completedSummary = result.renderedSummary
+      return result
+    },
+    retrieveHistory: async input => {
+      const result = await dependencies.retrieveHistory(input)
+      completedHistory = result
+      return result
+    },
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const scoped = createAdminClient(signal)
+    const work = prepareChatHistoryUnbounded({ ...options, supabase: scoped as SupabaseServer | null ?? options.supabase, signal }, observed)
+    return await Promise.race([work, new Promise<HistoryResult>((resolve, reject) => {
+      timer = setTimeout(() => {
+        if (options.signal?.aborted) reject(options.signal.reason)
+        else {
+          log.warn('jobs', 'Optional history retrieval deadline reached', { conversationId: options.conversationId, deadlineMs })
+          resolve({ conversationId: options.conversationId ?? null,
+            renderedContext: completedSummary + completedHistory.renderedContext,
+            sources: completedHistory.sources, degraded: true })
+        }
+        controller.abort(new Error('Optional history retrieval deadline'))
+      }, deadlineMs)
+    })])
+  } finally { if (timer) clearTimeout(timer) }
 }
