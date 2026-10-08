@@ -4,7 +4,7 @@ import { AuthoritativeContextError, loadAuthoritativeChatContext } from '@/lib/c
 import { ChatModelSelectionError, resolveChatModelSelection, type ChatModelSelection } from '@/lib/chat/model-selection'
 import type { ModelAccessClass } from '@/lib/model-catalog'
 import type { SearchMode } from '@/lib/chat/request-context'
-import { loadCustomSystemPrompt } from '@/lib/chat/user-system-prompt'
+import { loadChatUserProfile } from '@/lib/chat/user-system-prompt'
 import type { Attachment } from '@/lib/llm/types'
 import { validatedHealthContext } from '@/lib/chat/native-health-context'
 import { log } from '@/lib/logger'
@@ -182,8 +182,9 @@ export async function loadChatJob(job: JobRecord): Promise<LoadedChatJob> {
     // Admission already authorized premium access at enqueue time. Worker must
     // re-resolve the same route with allowPremium, or every premium model fails
     // with 403 after the client already accepted the job.
+    const profile = loadChatUserProfile(client, userId)
     const [authoritativeContext, selection, customSystemPrompt] = await Promise.all([
-      loadAuthoritativeChatContext({ client, userId, conversationId, userMessageId, allowInstant: allowInstantContext(parsedCommand) }),
+      loadAuthoritativeChatContext({ client, userId, conversationId, userMessageId, allowInstant: allowInstantContext(parsedCommand), preferences: profile.then(value => value.preferences) }),
       resolveChatModelSelection({
         tier: parsedCommand.tier,
         endpointId: parsedCommand.endpointId,
@@ -193,7 +194,7 @@ export async function loadChatJob(job: JobRecord): Promise<LoadedChatJob> {
         userId,
         allowPremium: true,
       }),
-      loadCustomSystemPrompt(client, userId),
+      profile.then(value => value.customSystemPrompt),
     ])
     assertSelectedChatPolicy(parsedCommand, selection, billingClass)
     log.info('jobs', 'Chat job preparation timing', { jobId: job.id, payloadMode: loadedCommand.mode, payloadMs: payloadReadyAt - startedAt, contextPolicyAndPromptMs: Date.now() - payloadReadyAt, totalMs: Date.now() - startedAt })

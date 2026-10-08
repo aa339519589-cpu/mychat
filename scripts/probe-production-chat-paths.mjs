@@ -130,7 +130,8 @@ async function probe(config, test) {
   let reachedTerminal = false
   try {
     const photo = test.kind === 'photo' ? diagnosticPhoto() : null
-    const body = { tier: '绝句', modelId: test.model, reasoningEffort: 'none',
+    const body = { tier: '绝句', modelId: test.model,
+      ...(test.model !== 'anthropic/claude-fable-5.1' ? { reasoningEffort: 'none' } : {}),
       messages: [{ id: userMessageId, role: 'user', content: test.prompt, ts: new Date().toISOString(), ...(photo ? { images: [photo] } : {}) }],
       searchMode: test.kind === 'web' ? 'web' : 'off', historyRetrieval: false, renderEnabled: false,
       connectorIds: [], conversationId: randomUUID(), userMessageId, generationId, assistantMessageId: randomUUID(),
@@ -140,11 +141,24 @@ async function probe(config, test) {
     const admittedMs = Math.round(performance.now() - start)
     if (response.status !== 200) throw new Error(`Admission HTTP ${response.status}`)
     const state = await consume(response, start)
+    let recovered = false
+    if (!state.status) {
+      // A deployment may close a live socket after text was delivered. Recover
+      // only the same durable job; never create another model turn.
+      const snapshot = await json(await fetch(`${base}/api/v1/jobs/${generationId}`, {
+        headers, signal: AbortSignal.timeout(20_000),
+      }), 'Same-job terminal snapshot')
+      if (['completed', 'failed', 'cancelled'].includes(snapshot.job?.status)) {
+        state.status = snapshot.job.status
+        state.terminalMs = Math.round(performance.now() - start)
+        recovered = true
+      }
+    }
     reachedTerminal = ['completed', 'failed', 'cancelled'].includes(state.status)
     const result = { kind: test.kind, model: test.model, generationId, admittedMs,
       firstTextMs: state.firstTextMs, terminalMs: state.terminalMs, status: state.status,
       characters: state.text.length, textEvents: state.textEvents, webSources: state.webSources,
-      photoChars: photo?.length ?? 0, errorCode: state.errorCode,
+      photoChars: photo?.length ?? 0, errorCode: state.errorCode, recovered,
       ok: state.status === 'completed' && state.firstTextMs !== null && state.text.length > 10
         && (test.kind !== 'web' || state.webSources > 0)
         && (test.kind !== 'photo' || /红|red/i.test(state.text)) }
