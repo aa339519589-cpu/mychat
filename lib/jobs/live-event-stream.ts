@@ -25,17 +25,21 @@ const MAX_PENDING_LIVE_DELTAS = 512
 const encoder = new TextEncoder()
 
 type RealtimeChannel = ReturnType<SupabaseClient['channel']>
-type DeltaField = 'content' | 'thinking'
-
+type DeltaField = 'content' | 'thinking' | 'reasoningSummary'
+const DELTA_LENGTH_FIELDS = {
+  content: 'databaseContentLength', thinking: 'databaseThinkingLength',
+  reasoningSummary: 'databaseReasoningSummaryLength',
+} as const
 type LiveStreamState = {
   sequence: number
   databaseSequence: number
   content: string
   thinking: string
+  reasoningSummary: string
   databaseContentLength: number
   databaseThinkingLength: number
+  databaseReasoningSummaryLength: number
 }
-
 type StreamEmitter = (kind: string, payload: JsonObject) => void
 
 type LiveJobEventStreamOptions = {
@@ -96,6 +100,8 @@ function snapshotPayload(job: PublicJobSnapshot, state: LiveStreamState): JsonOb
   return {
     content: authoritativeText(job, state.content, source.content),
     thinking: authoritativeText(job, state.thinking, source.thinking),
+    ...(state.reasoningSummary || typeof source.reasoningSummary === 'string'
+      ? { reasoningSummary: authoritativeText(job, state.reasoningSummary, source.reasoningSummary) } : {}),
     ...(Array.isArray(source.media) ? { media: source.media } : {}),
   }
 }
@@ -139,8 +145,10 @@ class LiveJobEventStreamSession {
       databaseSequence: 0,
       content: '',
       thinking: '',
+      reasoningSummary: '',
       databaseContentLength: 0,
       databaseThinkingLength: 0,
+      databaseReasoningSummaryLength: 0,
     }
     const channelName = liveJobChannelName(options.jobId)
     this.channel = channelName
@@ -200,8 +208,10 @@ class LiveJobEventStreamSession {
   private resetState(): void {
     this.state.content = ''
     this.state.thinking = ''
+    this.state.reasoningSummary = ''
     this.state.databaseContentLength = 0
     this.state.databaseThinkingLength = 0
+    this.state.databaseReasoningSummaryLength = 0
     this.pendingLiveDeltas.splice(0)
   }
 
@@ -258,20 +268,14 @@ class LiveJobEventStreamSession {
       if (emitMissing) this.emit(event.kind, event.payload)
       return
     }
-    if (event.kind === 'text.delta' && typeof event.payload.text === 'string') {
-      const offset = this.state.databaseContentLength
-      this.state.databaseContentLength += event.payload.text.length
-      const applied = this.applyText('content', offset, event.payload.text)
-      if (emitMissing && applied.appended) this.emit('text.delta', { text: applied.appended })
-      this.drainPendingDeltas('content')
-      return
-    }
-    if (event.kind === 'thinking.delta' && typeof event.payload.thinking === 'string') {
-      const offset = this.state.databaseThinkingLength
-      this.state.databaseThinkingLength += event.payload.thinking.length
-      const applied = this.applyText('thinking', offset, event.payload.thinking)
-      if (emitMissing && applied.appended) this.emit('thinking.delta', { thinking: applied.appended })
-      this.drainPendingDeltas('thinking')
+    const delta = liveDelta(event)
+    if (delta) {
+      const lengthField = DELTA_LENGTH_FIELDS[delta.field]
+      const offset = this.state[lengthField]
+      this.state[lengthField] += delta.value.length
+      const applied = this.applyText(delta.field, offset, delta.value)
+      if (emitMissing && applied.appended) this.emit(event.kind, { [delta.payloadField]: applied.appended })
+      this.drainPendingDeltas(delta.field)
       return
     }
     if (emitMissing && event.kind !== 'job.terminal') this.emit(event.kind, event.payload)
@@ -324,6 +328,7 @@ class LiveJobEventStreamSession {
     const payload = snapshotPayload(job, this.state)
     this.state.content = typeof payload.content === 'string' ? payload.content : this.state.content
     this.state.thinking = typeof payload.thinking === 'string' ? payload.thinking : this.state.thinking
+    this.state.reasoningSummary = typeof payload.reasoningSummary === 'string' ? payload.reasoningSummary : this.state.reasoningSummary
     this.emit('job.snapshot', payload)
   }
 

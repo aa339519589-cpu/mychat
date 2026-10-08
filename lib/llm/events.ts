@@ -57,6 +57,7 @@ export type CodePlan =
 export type ChatEvent =
   | { text: string }
   | { thinking: string }
+  | { reasoningSummary: string }
   | { error: string }
   | { memory: MemoryEvent }
   | { search: SearchEvent }

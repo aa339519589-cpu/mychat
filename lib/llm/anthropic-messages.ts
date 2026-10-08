@@ -18,6 +18,12 @@ export type AnthropicRequestOptions = {
 }
 
 type AnthropicContentBlock = Record<string, unknown>
+// Claude 4+ returns provider-generated summaries. Legacy raw thinking must
+// never be re-labelled as a public summary by a generic/custom endpoint.
+export function anthropicThinkingIsSummary(model: string): boolean {
+  return /^claude-(?:opus|sonnet|haiku|fable|mythos)-(?:[4-9]|[1-9]\d)(?:-|$)/
+    .test(model.toLowerCase().replace(/^anthropic\//, '').replace(/[._]/g, '-'))
+}
 type AnthropicMessage = { role: 'user' | 'assistant'; content: AnthropicContentBlock[] }
 
 function cleanBaseUrl(baseUrl: string): string {

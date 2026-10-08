@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { AnthropicTurnAccumulator } from '../lib/llm/anthropic-turn-accumulator'
 import type { ChatEvent } from '../lib/llm/events'
+import { anthropicThinkingIsSummary } from '../lib/llm/anthropic-messages'
 
 function accumulator(events: ChatEvent[]) {
   return new AnthropicTurnAccumulator({
@@ -12,6 +13,21 @@ function accumulator(events: ChatEvent[]) {
     maxOutputTokens: 40_000,
   })
 }
+
+test('Claude provider summaries are visible before final text while signed blocks stay intact', () => {
+  const events: ChatEvent[] = []
+  const value = new AnthropicTurnAccumulator({ model: 'claude-fable-5-1', summarizedThinking: true,
+    emit: event => events.push(event), timingEnabled: false, startedAt: 0 })
+  value.handle({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } })
+  value.handle({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: '核对文件目录' } })
+  assert.deepEqual(events, [{ reasoningSummary: '核对文件目录' }])
+  value.handle({ type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'encrypted' } })
+  value.handle({ type: 'content_block_start', index: 1, content_block: { type: 'text', text: '首' } })
+  assert.deepEqual(events.at(-1), { text: '首' })
+  assert.equal(anthropicThinkingIsSummary('anthropic/claude-sonnet-5.5'), true)
+  assert.equal(anthropicThinkingIsSummary('claude-3-7-sonnet'), false)
+  assert.equal(anthropicThinkingIsSummary('unknown-private-endpoint'), false)
+})
 
 test('Anthropic stream preserves signed thinking and tool_use blocks', () => {
   const events: ChatEvent[] = []

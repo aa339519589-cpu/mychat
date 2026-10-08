@@ -4,6 +4,7 @@ import type { MemoryEvent } from '@/lib/llm/events'
 import type { ToolContext } from '@/lib/tools/types'
 import { createFileToolHandlers } from './file-handlers'
 import { createWorkflowToolHandlers } from './workflow-handlers'
+import { createCodeInspectionHandlers } from './inspection-handlers'
 import type { CodeToolExecutorOptions } from './definitions'
 import type { CodeToolContext } from './executor-types'
 
@@ -42,6 +43,7 @@ export function createCodeToolExecutor(options: CodeToolExecutorOptions) {
   const handlers = {
     ...createFileToolHandlers(context),
     ...createWorkflowToolHandlers(context),
+    ...createCodeInspectionHandlers(context),
     ...accountMemoryHandlers,
   }
 

@@ -62,13 +62,11 @@ function reasoningValue(delta: Record<string, unknown>): unknown {
   for (const field of [
     'reasoning_content',
     'reasoning_text',
-    'reasoning_summary',
-    'reasoning_summary_text',
   ]) {
     if (delta[field]) return delta[field]
   }
   if (!isRecord(delta.reasoning)) return delta.reasoning
-  return delta.reasoning.content ?? delta.reasoning.text ?? delta.reasoning.summary
+  return delta.reasoning.content ?? delta.reasoning.text
 }
 
 function streamErrorMessage(value: unknown): string | null {
@@ -158,6 +156,13 @@ export class TurnAccumulator {
     this.options.emit({ thinking: text })
   }
 
+  private acceptReasoningSummary(value: unknown): void {
+    if (typeof value !== 'string' || !value) return
+    // Only explicitly labelled provider summaries are user-visible. Raw
+    // reasoning_content/text and encrypted details remain private.
+    this.options.emit({ reasoningSummary: this.boundedText(value) })
+  }
+
   private acceptReasoningDetails(value: unknown): void {
     if (!Array.isArray(value)) return
     for (const item of value) {
@@ -213,7 +218,8 @@ export class TurnAccumulator {
   private handleResponsesApiEvent(value: Record<string, unknown>): boolean {
     if (typeof value.type !== 'string') return false
     if (REASONING_EVENT_TYPES.has(value.type)) {
-      this.acceptReasoning(value.delta ?? value.text ?? '')
+      if (value.type.includes('summary')) this.acceptReasoningSummary(value.delta ?? value.text ?? '')
+      else this.acceptReasoning(value.delta ?? value.text ?? '')
       return true
     }
     if (value.type === 'response.output_text.delta') {
@@ -242,6 +248,8 @@ export class TurnAccumulator {
     const deltaValue = choice.delta ?? choice.message
     const delta = isRecord(deltaValue) ? deltaValue : {}
     this.acceptReasoning(reasoningValue(delta))
+    this.acceptReasoningSummary(delta.reasoning_summary_text ?? delta.reasoning_summary
+      ?? (isRecord(delta.reasoning) ? delta.reasoning.summary : undefined))
     this.acceptReasoningDetails(delta.reasoning_details)
     this.handleContent(delta.content)
     this.handleContent(delta.images)

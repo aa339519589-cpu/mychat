@@ -14,6 +14,11 @@ import { BILLING_PRICE_VERSION, platformModelCostMicros } from '../pricing'
 
 const MAX_CHECKPOINT_BYTES = 850_000
 
+export function nativeHealthContextMetadata(value: string | undefined): JsonObject {
+  return value ? { nativeHealthContextChars: value.length,
+    nativeHealthContextSha256: createHash('sha256').update(value).digest('hex') } : {}
+}
+
 export function trajectoryCheckpoint(messages: ModelMessage[], baseLength: number, round: number): {
   data: JsonObject
   resumable: boolean

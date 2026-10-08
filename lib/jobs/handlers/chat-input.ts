@@ -139,7 +139,6 @@ function command(value: JsonObject): LoadedChatJob['command'] {
     ...optionalCommandValues(value),
   }
 }
-function allowInstantContext(value: LoadedChatJob['command']): boolean { return value.outputKind === 'text' && value.searchMode === 'off' && !value.attachments?.length }
 
 function normalizeChatLoadError(error: unknown): JobRuntimeError {
   if (error instanceof JobRuntimeError) return error
@@ -184,7 +183,7 @@ export async function loadChatJob(job: JobRecord): Promise<LoadedChatJob> {
     // with 403 after the client already accepted the job.
     const profile = loadChatUserProfile(client, userId)
     const [authoritativeContext, selection, customSystemPrompt] = await Promise.all([
-      loadAuthoritativeChatContext({ client, userId, conversationId, userMessageId, allowInstant: allowInstantContext(parsedCommand), preferences: profile.then(value => value.preferences) }),
+      loadAuthoritativeChatContext({ client, userId, conversationId, userMessageId, preferences: profile.then(value => value.preferences) }),
       resolveChatModelSelection({
         tier: parsedCommand.tier,
         endpointId: parsedCommand.endpointId,

@@ -11,6 +11,7 @@ import {
 } from './turn-response'
 import { consumeTurnResponse } from './turn-stream'
 import { AnthropicTurnAccumulator } from './anthropic-turn-accumulator'
+import { anthropicThinkingIsSummary } from './anthropic-messages'
 import { TurnAccumulator, type AccumulatedToolCall } from './turn-accumulator'
 import { openTurnResponse, type OpenTurnResponse } from './turn-transport'
 import type { ModelMessage, ModelToolDefinition } from './types'
@@ -231,7 +232,9 @@ function createAccumulator(input: {
     contentPolicy: input.options?.contentPolicy,
     maxOutputTokens: input.options?.maxOutputTokens,
   }
-  if (input.options?.adapter === 'anthropic-messages') return new AnthropicTurnAccumulator(common)
+  if (input.options?.adapter === 'anthropic-messages') return new AnthropicTurnAccumulator({
+    ...common, summarizedThinking: anthropicThinkingIsSummary(input.model),
+  })
   return new TurnAccumulator({
     ...common,
     generic: input.opened.generic,
