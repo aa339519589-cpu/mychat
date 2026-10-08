@@ -1,4 +1,7 @@
 import type { SupabaseClient } from '@/lib/supabase/types'
+import { log } from '@/lib/logger'
+import { subscribeProcessLiveEvents } from './process-live-events'
+import { liveDelta, resetEvent, type ParsedLiveDelta } from './live-stream-event'
 import { isJsonValue, type JsonObject } from './contracts'
 import {
   LIVE_JOB_BROADCAST_EVENT,
@@ -23,12 +26,6 @@ const encoder = new TextEncoder()
 
 type RealtimeChannel = ReturnType<SupabaseClient['channel']>
 type DeltaField = 'content' | 'thinking'
-type DeltaPayloadField = 'text' | 'thinking'
-type ParsedLiveDelta = {
-  field: DeltaField
-  payloadField: DeltaPayloadField
-  value: string
-}
 
 type LiveStreamState = {
   sequence: number
@@ -68,21 +65,6 @@ function jsonObject(value: unknown): JsonObject | null {
 
 function terminal(status: string): boolean {
   return status === 'completed' || status === 'failed' || status === 'cancelled'
-}
-
-function resetEvent(kind: string, payload: JsonObject): boolean {
-  return kind === 'job.retry_scheduled'
-    || (kind === 'job.leased' && typeof payload.attempt === 'number' && payload.attempt > 1)
-}
-
-function liveDelta(event: LiveJobEvent): ParsedLiveDelta | null {
-  if (event.kind === 'text.delta' && typeof event.payload.text === 'string') {
-    return { field: 'content', payloadField: 'text', value: event.payload.text }
-  }
-  if (event.kind === 'thinking.delta' && typeof event.payload.thinking === 'string') {
-    return { field: 'thinking', payloadField: 'thinking', value: event.payload.thinking }
-  }
-  return null
 }
 
 function frame(jobId: string, sequence: number, kind: string, payload: JsonObject): Uint8Array {
@@ -145,6 +127,9 @@ class LiveJobEventStreamSession {
   private closed = false
   private lastHeartbeatAt = Date.now()
   private lastAdmissionRenewAt = Date.now()
+  private stopProcessEvents: (() => void) | null = null
+  private firstTextRelayed = false
+  private readonly seenLiveEvents = new Set<string>()
 
   constructor(options: LiveJobEventStreamOptions) {
     this.options = options
@@ -165,6 +150,17 @@ class LiveJobEventStreamSession {
 
   start(controller: ReadableStreamDefaultController<Uint8Array>): void {
     this.controller = controller
+    this.stopProcessEvents = subscribeProcessLiveEvents(this.options.jobId, (event, publishedAt) => {
+      if (this.closed) return
+      if (!this.firstTextRelayed && event.kind === 'text.delta'
+        && typeof event.payload.text === 'string' && event.payload.text.length > 0) {
+        this.firstTextRelayed = true
+        log.info('jobs', 'Chat first text process relay timing', {
+          jobId: this.options.jobId, relayMs: Math.max(0, Date.now() - publishedAt),
+        })
+      }
+      this.processing = this.processing.then(() => this.applyLiveEvent(event)).catch(() => undefined)
+    })
     if (this.channel) {
       this.channel.on('broadcast', { event: LIVE_JOB_BROADCAST_EVENT }, message => {
         const event = parseLiveJobEvent(record(message)?.payload)
@@ -181,6 +177,8 @@ class LiveJobEventStreamSession {
   async close(): Promise<void> {
     if (this.closed) return
     this.closed = true
+    this.stopProcessEvents?.()
+    this.stopProcessEvents = null
     this.lifetime.abort(new DOMException('Live stream closed', 'AbortError'))
     if (this.channel) {
       try { await this.options.client.removeChannel(this.channel) } catch {}
@@ -299,6 +297,12 @@ class LiveJobEventStreamSession {
   }
 
   private async applyLiveEvent(event: LiveJobEvent): Promise<void> {
+    if (event.streamId) {
+      const identity = `${event.streamId}:${event.revision}`
+      if (this.seenLiveEvents.has(identity)) return
+      this.seenLiveEvents.add(identity)
+      if (this.seenLiveEvents.size > 2_048) this.seenLiveEvents.delete(this.seenLiveEvents.values().next().value ?? '')
+    }
     if (resetEvent(event.kind, event.payload)) {
       this.resetState()
       this.emit(event.kind, event.payload)

@@ -5,6 +5,7 @@ import { JobRuntimeError } from '@/lib/jobs/errors'
 import { log } from '@/lib/logger'
 import type { createAdminClient } from '@/lib/supabase/admin'
 import { isRecord } from '@/lib/unknown-value'
+import { isBillingReconciliationUnavailable, withAdmissionReconciliation } from '@/lib/jobs/admission-reconciliation'
 
 type ChatJobAdmission = {
   id: string
@@ -73,6 +74,7 @@ export function directAdmissionError(error: unknown): JobRuntimeError {
   const deterministicInfrastructure = ['42501', '42P01', '42703', '42883'].includes(code)
   const invalidInput = ['22023', '22P02', '23502', '23514'].includes(code)
   const conflict = ['23503', '23505', '40001', '55000'].includes(code)
+    && !isBillingReconciliationUnavailable(error)
   const normalized = new JobRuntimeError(
     invalidInput ? 'JOB_INVALID_INPUT' : conflict ? 'JOB_CONFLICT' : 'JOB_DEPENDENCY_UNAVAILABLE',
     message,
@@ -129,9 +131,10 @@ export async function enqueueDirectTurn(
   const createdAt = typeof userMessage.ts === 'string'
     ? userMessage.ts
     : input.requestedAt ?? new Date().toISOString()
+  const userContent = userMessage.content
   let response: { data: unknown; error: unknown }
   try {
-    response = await input.client.rpc('admit_chat_turn_v3', {
+    response = await withAdmissionReconciliation(input.client, () => input.client.rpc('admit_chat_turn_v3', {
       input_user_id: input.userId,
       input_conversation_id: body.conversationId,
       input_create_conversation: authority.createConversation,
@@ -139,7 +142,7 @@ export async function enqueueDirectTurn(
       input_project_id: authority.projectId,
       input_conversation_title: authority.title,
       input_user_message_id: body.userMessageId,
-      input_user_content: userMessage.content,
+      input_user_content: userContent,
       input_user_images: messageImages(userMessage),
       input_user_created_at: createdAt,
       input_assistant_message_id: body.assistantMessageId,
@@ -151,7 +154,7 @@ export async function enqueueDirectTurn(
       input_budget: input.budget,
       input_queue: input.queue,
       input_max_attempts: input.maxAttempts,
-    })
+    }))
   } catch (error) {
     throw directAdmissionError(error)
   }

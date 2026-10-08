@@ -9,6 +9,7 @@ import { privateChatResponse, privateUsageIdentity } from '@/lib/chat/private-st
 import { reserveTrialCall, releaseTrialCall } from '@/lib/chat/model-access'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { parseJobRecord } from '@/lib/jobs/supabase-job-record'
+import { withAdmissionReconciliation } from '@/lib/jobs/admission-reconciliation'
 
 type PrivateAuth = AuthCtx & { userId: string; supabase: NonNullable<AuthCtx['supabase']> }
 
@@ -31,10 +32,10 @@ function authenticationResponse(request: Request, auth: AuthCtx): Response {
 async function admitPrivate(auth: PrivateAuth, selection: ChatModelSelection, identity: ReturnType<typeof privateUsageIdentity>) {
   const admin = createAdminClient()
   if (!admin) throw new Error('Private admission unavailable')
-  const admitted = await admin.rpc('admit_private_chat_v1', { input_job_id: identity.jobId,
+  const admitted = await withAdmissionReconciliation(admin, () => admin.rpc('admit_private_chat_v1', { input_job_id: identity.jobId,
     input_principal_id: auth.userId, input_auth_class: auth.isAnonymous ? 'anonymous' : 'registered',
     input_model_id: selection.model, input_worker_id: identity.workerId,
-    input_token_limit: selection.accessClass === 'trial' ? 30_000 : 160_000 })
+    input_token_limit: selection.accessClass === 'trial' ? 30_000 : 160_000 }))
   if (admitted.error?.message === 'insufficient_job_credit') throw new RequestError(403, '可用额度不足，请稍后重试')
   if (admitted.error) throw new Error('Private admission unavailable')
   const job = parseJobRecord(admitted.data, 'admit_private_chat_v1')

@@ -17,12 +17,22 @@ type ConsumeResult = {
   callerLimitReached: boolean
 }
 
-function handlePayload(payload: string, handle: (value: unknown) => void) {
-  try {
-    handle(JSON.parse(payload))
-  } catch (error) {
-    if (error instanceof GenericResponseLimitError || error instanceof CallerOutputLimitReached) throw error
-  }
+function handlePayload(payload: string, handle: (value: unknown) => void): boolean {
+  let value: unknown
+  try { value = JSON.parse(payload) } catch { return false }
+  // Invalid JSON framing is ignorable; handler failures are not. Silencing a
+  // budget/provider/application error can leave the request open indefinitely.
+  handle(value)
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value)
+    && ['message_stop', 'error'].includes(String((value as { type?: unknown }).type)))
+}
+
+function handleSseLine(rawLine: string, handle: (value: unknown) => void): boolean {
+  const line = rawLine.trim()
+  if (!line) return false
+  if (line === 'data: [DONE]') return true
+  const payload = line.startsWith('data:') ? line.slice(5).trim() : line
+  return payload.length > 0 && handlePayload(payload, handle)
 }
 
 export async function consumeTurnResponse(
@@ -68,25 +78,15 @@ export async function consumeTurnResponse(
       const lines = buffer.split(/\r?\n/)
       buffer = lines.pop() ?? ""
       for (const rawLine of lines) {
-        const line = rawLine.trim()
-        if (!line) continue
-        if (line === "data: [DONE]") {
-          sawDone = true
-          continue
+        if (handleSseLine(rawLine, handle)) {
+          await reader.cancel().catch(() => undefined)
+          return { sawDone: true, callerLimitReached: false }
         }
-        const payload = line.startsWith("data:") ? line.slice(5).trim() : line
-        if (payload) handlePayload(payload, handle)
       }
     }
 
     buffer += decoder.decode()
-    const finalLine = buffer.trim()
-    if (finalLine === "data: [DONE]") {
-      sawDone = true
-    } else if (finalLine) {
-      const payload = finalLine.startsWith("data:") ? finalLine.slice(5).trim() : finalLine
-      if (payload) handlePayload(payload, handle)
-    }
+    sawDone = handleSseLine(buffer, handle)
     return { sawDone, callerLimitReached: false }
   } catch (error) {
     if (error instanceof CallerOutputLimitReached) {

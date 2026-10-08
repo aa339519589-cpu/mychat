@@ -1,6 +1,7 @@
-import { createHmac } from 'node:crypto'
+import { createHmac, randomUUID } from 'node:crypto'
 import type { SupabaseClient } from '@/lib/supabase/types'
 import { isJsonValue, type JsonObject } from './contracts'
+import { publishProcessLiveEvent } from './process-live-events'
 
 export const LIVE_JOB_BROADCAST_EVENT = 'job.event'
 const MAX_IN_FLIGHT_BROADCASTS = 8
@@ -16,6 +17,7 @@ export type LiveJobEventInput = {
 
 export type LiveJobEvent = LiveJobEventInput & {
   revision: number
+  streamId?: string
 }
 
 export type AppliedOffsetDelta = {
@@ -64,6 +66,7 @@ export function parseLiveJobEvent(value: unknown): LiveJobEvent | null {
     kind: source.kind,
     payload,
     ...(offset.value === undefined ? {} : { offset: offset.value }),
+    ...(typeof source.streamId === 'string' ? { streamId: source.streamId } : {}),
   }
 }
 
@@ -92,6 +95,8 @@ export class LiveJobPublisher {
   private subscribed = false
   private started = false
   private firstTextPublished = false
+  private readonly jobId: string
+  private readonly streamId = randomUUID()
 
   constructor(
     client: SupabaseClient,
@@ -99,6 +104,7 @@ export class LiveJobPublisher {
     channelSecret = process.env.AGENT_CREDENTIAL_KEY,
   ) {
     this.client = client
+    this.jobId = jobId
     const channelName = liveJobChannelName(jobId, channelSecret)
     this.channel = channelName
       ? client.channel(channelName, { config: { broadcast: { ack: false, self: false } } })
@@ -115,8 +121,10 @@ export class LiveJobPublisher {
   }
 
   publish(input: LiveJobEventInput): void {
-    if (!this.channel || this.closing) return
-    const event = { ...input, revision: ++this.revision }
+    if (this.closing) return
+    const event = { ...input, revision: ++this.revision, streamId: this.streamId }
+    publishProcessLiveEvent(this.jobId, event)
+    if (!this.channel) return
     if (!this.firstTextPublished && input.kind === 'text.delta'
       && typeof input.payload.text === 'string' && input.payload.text.length > 0) {
       this.firstTextPublished = true

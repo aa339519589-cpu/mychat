@@ -1,5 +1,6 @@
 import { JobRuntimeError } from '../errors'
 import { ProviderResponseError } from '@/lib/llm/turn-response'
+import { log } from '@/lib/logger'
 import { jsonResult } from '../event-writer'
 import type { JobExecutionContext, JobHandlerResult } from '../worker'
 import type { LoadedChatJob } from './chat-input'
@@ -53,7 +54,14 @@ export async function rethrowChatTextFailure(
   runtime: ChatTextRuntime,
   dependencies: ChatTextDependencies,
 ): Promise<never> {
-  await runtime.writer.closeLive().catch(() => undefined)
+  log.warn('jobs', 'Chat generation failed before completion', {
+    jobId: context.job.id, model: input.selection.model,
+    adapter: input.selection.capability.provider.adapter,
+    searchMode: input.command.searchMode,
+    errorName: error instanceof Error ? error.name : 'unknown',
+    ...(error instanceof ProviderResponseError ? { providerStatus: error.status } : {}),
+  })
+  void runtime.writer.closeLive().catch(() => undefined)
   if (runtime.persistedMedia) {
     await cleanupChatInlineMedia(
       context,
