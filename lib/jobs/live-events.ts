@@ -91,6 +91,7 @@ export class LiveJobPublisher {
   private closing = false
   private subscribed = false
   private started = false
+  private firstTextPublished = false
 
   constructor(
     client: SupabaseClient,
@@ -115,7 +116,16 @@ export class LiveJobPublisher {
 
   publish(input: LiveJobEventInput): void {
     if (!this.channel || this.closing) return
-    this.queue.push({ ...input, revision: ++this.revision })
+    const event = { ...input, revision: ++this.revision }
+    if (!this.firstTextPublished && input.kind === 'text.delta'
+      && typeof input.payload.text === 'string' && input.payload.text.length > 0) {
+      this.firstTextPublished = true
+      // First ink has one reserved in-flight slot. A backlog of reasoning
+      // broadcasts cannot make the first answer token wait for an HTTP ACK.
+      this.launch(event)
+      return
+    }
+    this.queue.push(event)
     this.pump()
   }
 

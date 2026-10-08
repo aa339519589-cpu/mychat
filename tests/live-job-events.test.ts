@@ -11,6 +11,30 @@ import {
 const JOB_ID = '00000000-0000-4000-8000-000000000001'
 const CHANNEL_HASH_INPUT = 'test key for channel hashing only'
 
+test('the first answer character bypasses a saturated reasoning broadcast queue', async () => {
+  let release!: () => void
+  const blocked = new Promise<void>(resolve => { release = resolve })
+  const sent: Array<{ kind: string; payload: { text?: string } }> = []
+  const channel = {
+    subscribe: () => channel,
+    httpSend: async (_name: string, event: { kind: string; payload: { text?: string } }) => {
+      sent.push(event)
+      await blocked
+      return 'ok'
+    },
+  }
+  const publisher = new LiveJobPublisher({ channel: () => channel, removeChannel: async () => undefined } as never,
+    JOB_ID, CHANNEL_HASH_INPUT)
+  publisher.start()
+  for (let index = 0; index < 10; index++) publisher.publish({ kind: 'thinking.delta', offset: index, payload: { thinking: '.' } })
+  assert.equal(sent.length, 8)
+  publisher.publish({ kind: 'text.delta', offset: 0, payload: { text: '你' } })
+  assert.equal(sent.at(-1)?.payload.text, '你', 'First text must be sent synchronously without a timer, batch, or ACK')
+  assert.equal(sent.length, 9, 'Exactly one reserved first-text slot')
+  release()
+  await publisher.close()
+})
+
 test('live job channel names are stable and do not expose job ids', () => {
   const first = liveJobChannelName(JOB_ID, CHANNEL_HASH_INPUT)
   const second = liveJobChannelName(JOB_ID, CHANNEL_HASH_INPUT)

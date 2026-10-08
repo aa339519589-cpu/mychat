@@ -6,7 +6,7 @@ import {
 } from '@/lib/chat/request-context'
 import { log } from '@/lib/logger'
 import { runAgentLoop, type AgentLoopOpts, type ExecuteTool } from '@/lib/llm/agent-loop'
-import { buildModelContext } from '@/lib/llm/context'
+import { buildModelContext, appendNativeHealthContext } from '@/lib/llm/context'
 import type { ChatEvent } from '@/lib/llm/events'
 import { ensureImageSummaries } from '@/lib/llm/image-context'
 import { chatCompletionsUrl, injectAttachmentsOpenAI } from '@/lib/llm/openai'
@@ -148,6 +148,7 @@ async function prepareChat(
   const latestBeijingDate = latestBeijingDateFromMessages(input.context.messages)
   const instantMessages = instantModelMessages(input)
   if (instantMessages) {
+    appendNativeHealthContext(instantMessages, command.healthContext)
     const [configuredTools, baseLength] = await Promise.all([
       timedChatPreparation(context.job.id, 'tools', () => buildChatTools(context, input, latestBeijingDate, true)),
       restoreChatTrajectory(context, runtime.writer, instantMessages),
@@ -193,6 +194,7 @@ async function prepareChat(
     ...buildModelContext(preparedMessages, selection.capability),
   ]
   await timedChatPreparation(context.job.id, 'attachments', () => appendAttachments(context, input, runtime, dependencies, modelMessages))
+  appendNativeHealthContext(modelMessages, command.healthContext)
   const baseLength = await restoreChatTrajectory(context, runtime.writer, modelMessages)
   return { ...configuredTools, modelMessages, baseLength, instant: false }
 }

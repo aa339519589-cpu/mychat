@@ -156,6 +156,7 @@ function buildChatCommand(
 function optionalChatCommandFields(body: EnqueueChatJobInput['body']): JsonObject {
   return {
     ...(body.modelId ? { modelId: body.modelId } : {}),
+    ...(body.healthContext ? { healthContext: body.healthContext } : {}),
     ...(body.reasoningEffort ? { reasoningEffort: body.reasoningEffort } : {}),
     ...(body.connectorIds !== undefined ? { connectorIds: body.connectorIds } : {}),
     ...(body.connectorAccessMode !== undefined ? { connectorAccessMode: body.connectorAccessMode } : {}),

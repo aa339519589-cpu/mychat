@@ -6,6 +6,7 @@ import type { ModelAccessClass } from '@/lib/model-catalog'
 import type { SearchMode } from '@/lib/chat/request-context'
 import { loadCustomSystemPrompt } from '@/lib/chat/user-system-prompt'
 import type { Attachment } from '@/lib/llm/types'
+import { validatedHealthContext } from '@/lib/chat/native-health-context'
 import { log } from '@/lib/logger'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sha256JobValue } from '../canonical'
@@ -34,6 +35,7 @@ export type LoadedChatJob = {
     usingBalance: boolean
     outputKind: 'text' | 'image' | 'video'
     attachments?: Attachment[]
+    healthContext?: string
   }
   context: Awaited<ReturnType<typeof loadAuthoritativeChatContext>> & { customSystemPrompt: string }
   selection: ChatModelSelection
@@ -111,8 +113,9 @@ function validateCommand(value: JsonObject): void {
 }
 
 function optionalCommandValues(value: JsonObject): Pick<LoadedChatJob['command'],
-  'modelId' | 'reasoningEffort' | 'endpointId' | 'attachments' | 'connectorIds'> {
+  'modelId' | 'reasoningEffort' | 'endpointId' | 'attachments' | 'connectorIds' | 'healthContext'> {
   return {
+    ...(value.healthContext ? { healthContext: validatedHealthContext(value.healthContext) } : {}),
     ...(typeof value.modelId === 'string' ? { modelId: value.modelId } : {}),
     ...(typeof value.reasoningEffort === 'string' ? { reasoningEffort: value.reasoningEffort } : {}),
     ...(typeof value.endpointId === 'string' ? { endpointId: value.endpointId } : {}),
