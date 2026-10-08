@@ -110,36 +110,29 @@ function createdSandboxCleanup(sandbox: Sandbox): () => Promise<void> {
   }
 }
 
-async function getSandbox(
-  supabase: SupabaseClient,
-  userId: string,
-  taskId: string,
-  repoIsPrivate: boolean,
+async function connectExistingSandbox(
+  existingId: string,
+  syncInitialized: boolean,
+  allowOut: string[],
   signal?: AbortSignal,
+): Promise<SandboxConnection | null> {
+  try {
+    const existing = await Sandbox.connect(existingId, { timeoutMs: SANDBOX_TIMEOUT })
+    signal?.throwIfAborted()
+    await existing.updateNetwork({ allowOut })
+    signal?.throwIfAborted()
+    return { sandbox: existing, syncInitialized }
+  } catch {
+    // Cancellation cannot become an instruction to provision a replacement.
+    signal?.throwIfAborted()
+    return null // expired, unreachable, or unable to enforce the egress policy
+  }
+}
+
+async function createOwnedSandbox(
+  supabase: SupabaseClient, userId: string, taskId: string, allowOut: string[], signal?: AbortSignal,
 ): Promise<SandboxConnection> {
   signal?.throwIfAborted()
-  const allowOut = sandboxEgressForRepository(repoIsPrivate)
-  const meta = await taskMeta(supabase, userId, taskId)
-  signal?.throwIfAborted()
-  const existingId = typeof meta.e2bSandboxId === "string" ? meta.e2bSandboxId : null
-  const syncVersion = meta.e2bSyncVersion
-  if (syncVersion !== undefined && syncVersion !== null && syncVersion !== E2B_SYNC_VERSION) {
-    throw new Error("沙箱同步协议版本非法，拒绝连接")
-  }
-  if (existingId) {
-    try {
-      const existing = await Sandbox.connect(existingId, { timeoutMs: SANDBOX_TIMEOUT })
-      signal?.throwIfAborted()
-      await existing.updateNetwork({ allowOut })
-      signal?.throwIfAborted()
-      return { sandbox: existing, syncInitialized: syncVersion === E2B_SYNC_VERSION }
-    } catch {
-      // Cancellation cannot become an instruction to provision a replacement.
-      signal?.throwIfAborted()
-      /* expired, unreachable, or unable to enforce the egress policy */
-    }
-  }
-
   const options = {
     timeoutMs: SANDBOX_TIMEOUT,
     lifecycle: { onTimeout: "pause" as const, autoResume: false },
@@ -165,6 +158,39 @@ async function getSandbox(
     try { await cleanupCreated() } catch { throw new Error("新建隔离沙箱清理未确认") }
     throw error
   }
+}
+
+async function getSandbox(
+  supabase: SupabaseClient, userId: string, taskId: string, repoIsPrivate: boolean, signal?: AbortSignal,
+): Promise<SandboxConnection> {
+  signal?.throwIfAborted()
+  const allowOut = sandboxEgressForRepository(repoIsPrivate)
+  const meta = await taskMeta(supabase, userId, taskId)
+  signal?.throwIfAborted()
+  const existingId = typeof meta.e2bSandboxId === "string" ? meta.e2bSandboxId : null
+  const syncVersion = meta.e2bSyncVersion
+  if (syncVersion !== undefined && syncVersion !== null && syncVersion !== E2B_SYNC_VERSION) {
+    throw new Error("沙箱同步协议版本非法，拒绝连接")
+  }
+  if (existingId) {
+    const connected = await connectExistingSandbox(existingId, syncVersion === E2B_SYNC_VERSION, allowOut, signal)
+    if (connected) return connected
+  }
+  return createOwnedSandbox(supabase, userId, taskId, allowOut, signal)
+}
+
+async function initializeSandbox(
+  connection: SandboxConnection, supabase: SupabaseClient, userId: string, taskId: string, signal?: AbortSignal,
+) {
+  signal?.throwIfAborted()
+  const hydration = await hydrateIsolatedWorkspace(connection.sandbox, userId, taskId, connection.syncInitialized)
+  signal?.throwIfAborted()
+  if (hydration.initial) {
+    const saved = await mergeTaskMeta(supabase, userId, taskId, { e2bSyncVersion: E2B_SYNC_VERSION })
+    if (!saved) throw new Error("无法持久化隔离沙箱同步协议版本")
+  }
+  signal?.throwIfAborted()
+  return hydration
 }
 
 async function syncWorkspace(
@@ -255,6 +281,28 @@ async function syncWorkspace(
   return synced
 }
 
+async function isolatedFailure(caught: unknown, input: {
+  cleanupCreated?: () => Promise<void>
+  hydrated: boolean
+  signal?: AbortSignal
+  maxOutput: number
+  startedAt: number
+}): Promise<ShellResult> {
+  let failure = caught
+  if (input.cleanupCreated && (!input.hydrated || input.signal?.aborted)) {
+    try { await input.cleanupCreated() } catch { failure = new Error("新建隔离沙箱清理未确认") }
+  }
+  return {
+    stdout: "",
+    stderr: sanitizeCommandOutput(redactSensitive(errorMessage(failure))).slice(0, input.maxOutput),
+    exitCode: 1,
+    durationMs: Date.now() - input.startedAt,
+    timedOut: false,
+    blocked: false,
+    backend: "isolated",
+  }
+}
+
 export async function runInIsolatedWorkspace(
   supabase: SupabaseClient,
   userId: string,
@@ -275,19 +323,7 @@ export async function runInIsolatedWorkspace(
     const { sandbox } = connection
     cleanupCreated = connection.cleanupCreated
     if (cleanupCreated) removeLifecycleCancellation = sandboxCancellation(sandbox, opts.signal, cleanupCreated)
-    opts.signal?.throwIfAborted()
-    const hydration = await hydrateIsolatedWorkspace(
-      sandbox,
-      userId,
-      taskId,
-      connection.syncInitialized,
-    )
-    opts.signal?.throwIfAborted()
-    if (hydration.initial) {
-      const saved = await mergeTaskMeta(supabase, userId, taskId, { e2bSyncVersion: E2B_SYNC_VERSION })
-      if (!saved) throw new Error("无法持久化隔离沙箱同步协议版本")
-    }
-    opts.signal?.throwIfAborted()
+    const hydration = await initializeSandbox(connection, supabase, userId, taskId, opts.signal)
     hydrated = true
 
     const execution = await executeSandboxCommand(sandbox, command, opts, timeoutMs, cleanupCreated)
@@ -314,18 +350,6 @@ export async function runInIsolatedWorkspace(
       backend: "isolated",
     }
   } catch (caught) {
-    let failure = caught
-    if (cleanupCreated && (!hydrated || opts.signal?.aborted)) {
-      try { await cleanupCreated() } catch { failure = new Error("新建隔离沙箱清理未确认") }
-    }
-    return {
-      stdout: "",
-      stderr: sanitizeCommandOutput(redactSensitive(errorMessage(failure))).slice(0, maxOutput),
-      exitCode: 1,
-      durationMs: Date.now() - startedAt,
-      timedOut: false,
-      blocked: false,
-      backend: "isolated",
-    }
+    return await isolatedFailure(caught, { cleanupCreated, hydrated, signal: opts.signal, maxOutput, startedAt })
   } finally { removeLifecycleCancellation() }
 }
