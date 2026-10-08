@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseProcessLiveMessage } from '../lib/jobs/process-live-events'
+import { parseProcessJobWakeMessage } from '../lib/jobs/process-worker-wake'
 import {
   resolveRuntimeConfiguration,
   runtimeRole,
@@ -25,6 +26,22 @@ type StartProductionOptions = {
 }
 
 export const resolveRuntimeRole = runtimeRole
+
+export function wireLocalProcessRelay(
+  web: ChildProcess | undefined,
+  worker: ChildProcess | undefined,
+): void {
+  worker?.on('message', value => {
+    const message = parseProcessLiveMessage(value)
+    if (!message || !web?.connected) return
+    try { web.send(message, () => undefined) } catch { /* Durable/cross-host fallback is still active. */ }
+  })
+  web?.on('message', value => {
+    const message = parseProcessJobWakeMessage(value)
+    if (!message || !worker?.connected) return
+    try { worker.send(message, () => undefined) } catch { /* Bounded polling remains the fallback. */ }
+  })
+}
 
 export function servicesForRuntimeRole(
   role: RuntimeRole | string | undefined,
@@ -67,11 +84,7 @@ export async function startProduction(options: StartProductionOptions = {}): Pro
   }))
   const web = children.find(service => service.name === 'web')?.child
   const worker = children.find(service => service.name === 'worker')?.child
-  worker?.on('message', value => {
-    const message = parseProcessLiveMessage(value)
-    if (!message || !web?.connected) return
-    try { web.send(message, () => undefined) } catch { /* Durable/cross-host fallback is still active. */ }
-  })
+  wireLocalProcessRelay(web, worker)
 
   let stopping = false
   let exitCode = 0

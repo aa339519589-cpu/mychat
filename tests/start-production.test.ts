@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict'
+import type { ChildProcess } from 'node:child_process'
+import { EventEmitter } from 'node:events'
+import { randomUUID } from 'node:crypto'
 import test from 'node:test'
 import {
   resolveRuntimeRole,
   servicesForRuntimeRole,
+  wireLocalProcessRelay,
 } from '../scripts/start-production'
 
 test('production runtime role defaults to the co-located deployment', () => {
@@ -33,4 +37,23 @@ test('production runtime role fails closed on deployment typos', () => {
     () => resolveRuntimeRole('api'),
     /Invalid MYCHAT_RUNTIME_ROLE.*expected all, web, or worker/,
   )
+})
+
+test('co-located supervisor forwards only validated durable enqueue wakes to the worker', () => {
+  const web = Object.assign(new EventEmitter(), { connected: true }) as unknown as ChildProcess
+  const worker = Object.assign(new EventEmitter(), { connected: true }) as unknown as ChildProcess
+  const forwarded: unknown[] = []
+  worker.send = ((message: unknown) => { forwarded.push(message); return true }) as ChildProcess['send']
+  web.send = (() => true) as ChildProcess['send']
+  wireLocalProcessRelay(web, worker)
+
+  web.emit('message', {
+    type: 'mychat.job.wake.v1', queue: 'chat', jobId: randomUUID(), publishedAt: Date.now(),
+  })
+  web.emit('message', {
+    type: 'mychat.job.wake.v1', queue: '../chat', jobId: randomUUID(), publishedAt: Date.now(),
+  })
+
+  assert.equal(forwarded.length, 1)
+  assert.equal((forwarded[0] as { queue?: string }).queue, 'chat')
 })

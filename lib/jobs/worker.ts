@@ -15,6 +15,7 @@ import {
   nextJobBackoff, nextJobLeaseRenewalDelay,
 } from './worker-config'
 import { createActiveExecution, type ActiveExecution } from './worker-execution'
+import { JobWorkerIdleWake } from './worker-idle-wake'
 import {
   createJobExecutionContext,
   observeJobFinalization,
@@ -24,6 +25,7 @@ import type { JobExecutionContext, JobHandler, JobWorkerOptions } from './worker
 
 export type { JobExecutionContext, JobHandler, JobHandlerResult, JobWorkerOptions } from './worker-types'
 export { nextJobBackoff } from './worker-config'
+export { parseProcessJobWakeMessage } from './process-worker-wake'
 export class JobWorker {
   private readonly repository: JobRepository
   private readonly workerId: string
@@ -42,6 +44,7 @@ export class JobWorker {
   private readonly sleep: (milliseconds: number, signal: AbortSignal) => Promise<void>
   private readonly onFinalized?: JobWorkerOptions['onFinalized']
   private readonly claimAbort = new AbortController()
+  private readonly idleWake = new JobWorkerIdleWake()
   private readonly active = new Map<string, ActiveExecution>()
   private stopping = false
   private running: Promise<void> | null = null
@@ -123,10 +126,12 @@ export class JobWorker {
     await this.running
   }
 
+  wake(): void { if (!this.stopping) this.idleWake.notify() }
+
   private beginShutdown(reason: unknown): void {
     if (this.stopping) return
     this.stopping = true
-    this.claimAbort.abort(reason)
+    this.claimAbort.abort(reason); this.idleWake.shutdown(reason)
     if (this.active.size === 0) return
     this.shutdownTimer = setTimeout(() => {
       for (const execution of this.active.values()) {
@@ -146,7 +151,7 @@ export class JobWorker {
         })
         if (this.stopping) return
         if (claim.acquired && claim.job) {
-          backoffMs = this.idleBackoffMinimumMs
+          this.idleWake.clear(); backoffMs = this.idleBackoffMinimumMs
           await this.execute(claim.job)
           continue
         }
@@ -160,14 +165,13 @@ export class JobWorker {
         })
       }
       const backoff = nextJobBackoff(
-        backoffMs,
-        this.idleBackoffMaximumMs,
-        this.backoffJitter,
-        this.random,
+        backoffMs, this.idleBackoffMaximumMs, this.backoffJitter, this.random,
       )
       backoffMs = backoff.nextMs
       try {
-        await this.sleep(backoff.waitMs, this.claimAbort.signal)
+        const outcome = await this.idleWake.wait(backoff.waitMs, this.sleep, this.claimAbort.signal)
+        if (outcome === 'shutdown') return
+        if (outcome === 'wake') backoffMs = this.idleBackoffMinimumMs
       } catch {
         if (!this.stopping) throw new JobRuntimeError('JOB_INTERNAL', 'Job worker backoff failed')
       }

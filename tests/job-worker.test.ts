@@ -121,6 +121,133 @@ test('worker permits only one local claim winner and fences every mutation', asy
   assert.ok(counts.claimCount >= 2)
 })
 
+test('durable enqueue wake interrupts an idle backoff without busy polling', async () => {
+  const shutdown = new AbortController()
+  let claimCount = 0
+  let jobReady = false
+  let claimed = false
+  let idleStarted!: () => void
+  const idle = new Promise<void>(resolve => { idleStarted = resolve })
+  const repository = fakeRepository({
+    claim: async () => {
+      claimCount += 1
+      if (jobReady && !claimed) {
+        claimed = true
+        return { acquired: true, reason: 'claimed', job: claimedJob() }
+      }
+      return { acquired: false, reason: 'empty', job: null }
+    },
+    finalize: async request => {
+      shutdown.abort()
+      return { accepted: true, replayed: false, status: request.status,
+        result: request.result ?? null, error: request.error ?? null, eventSeq: 2 }
+    },
+  })
+  const worker = new JobWorker({
+    repository,
+    workerId: 'worker-1',
+    queues: ['chat'],
+    handlers: { 'chat.generation': async () => ({ status: 'completed' }) },
+    idleBackoffMinimumMs: 5_000,
+    idleBackoffMaximumMs: 5_000,
+    backoffJitter: 0,
+    sleep: async (_milliseconds, signal) => {
+      idleStarted()
+      await new Promise<void>((_resolve, reject) => {
+        if (signal.aborted) reject(signal.reason)
+        else signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+      })
+    },
+  })
+
+  const running = worker.run(shutdown.signal)
+  await idle
+  assert.equal(claimCount, 1)
+  jobReady = true
+  worker.wake()
+  await running
+
+  assert.equal(claimed, true)
+  assert.equal(claimCount, 2)
+})
+
+test('wake never aborts an active fenced execution', async () => {
+  const shutdown = new AbortController()
+  let claimCount = 0
+  let activeSignalAborted = false
+  let handlerStarted!: () => void
+  let releaseHandler!: () => void
+  const started = new Promise<void>(resolve => { handlerStarted = resolve })
+  const released = new Promise<void>(resolve => { releaseHandler = resolve })
+  const repository = fakeRepository({
+    claim: async () => {
+      claimCount += 1
+      return claimCount === 1
+        ? { acquired: true, reason: 'claimed', job: claimedJob() }
+        : { acquired: false, reason: 'empty', job: null }
+    },
+    finalize: async request => {
+      shutdown.abort()
+      return { accepted: true, replayed: false, status: request.status,
+        result: request.result ?? null, error: request.error ?? null, eventSeq: 2 }
+    },
+  })
+  const worker = new JobWorker({
+    repository,
+    workerId: 'worker-1',
+    queues: ['chat'],
+    handlers: {
+      'chat.generation': async context => {
+        context.signal.addEventListener('abort', () => { activeSignalAborted = true }, { once: true })
+        handlerStarted()
+        await released
+        return { status: 'completed' }
+      },
+    },
+  })
+
+  const running = worker.run(shutdown.signal)
+  await started
+  worker.wake()
+  assert.equal(activeSignalAborted, false)
+  releaseHandler()
+  await running
+  assert.equal(activeSignalAborted, false)
+})
+
+test('shutdown cancels idle waits and a later wake cannot restart claims', async () => {
+  const shutdown = new AbortController()
+  let claimCount = 0
+  let idleStarted!: () => void
+  const idle = new Promise<void>(resolve => { idleStarted = resolve })
+  const worker = new JobWorker({
+    repository: fakeRepository({
+      claim: async () => {
+        claimCount += 1
+        return { acquired: false, reason: 'empty', job: null }
+      },
+    }),
+    workerId: 'worker-1',
+    queues: ['chat'],
+    handlers: {},
+    sleep: async (_milliseconds, signal) => {
+      idleStarted()
+      await new Promise<void>((_resolve, reject) => {
+        if (signal.aborted) reject(signal.reason)
+        else signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+      })
+    },
+  })
+
+  const running = worker.run(shutdown.signal)
+  await idle
+  shutdown.abort()
+  await running
+  worker.wake()
+  await Promise.resolve()
+  assert.equal(claimCount, 1)
+})
+
 test('worker checkpoints pending usage atomically and final-persist sends only the unacked delta', async () => {
   const controller = new AbortController()
   const checkpointEntries: Array<readonly import('../lib/jobs/repository').JobAccounting[]> = []
