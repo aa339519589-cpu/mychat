@@ -56,7 +56,7 @@ async function readFile(context: CodeToolContext, params: ToolParams): Promise<s
       : `读取失败：${result.error}`
   }
   if (!context.repo) return '尚未选择仓库。'
-  const result = await readGithubFile(context.token, context.repo, path)
+  const result = await readGithubFile(context.token, context.repo, path, undefined, context.defaultBranch ?? undefined)
   return 'error' in result
     ? `读取失败：${result.error}`
     : `文件 ${path} 内容：\n\`\`\`\n${result.content}\n\`\`\``
@@ -107,7 +107,7 @@ async function planRemoteWrites(context: CodeToolContext, files: unknown[]): Pro
     if (!path) continue
     let oldContent = ''
     if (context.repo) {
-      const result = await readGithubFile(context.token, context.repo, path)
+      const result = await readGithubFile(context.token, context.repo, path, undefined, context.defaultBranch ?? undefined)
       if (!('error' in result)) oldContent = result.content
     }
     context.emit({ step: { kind: 'edit', label: `写入 ${path}` } })
@@ -142,7 +142,7 @@ async function editWorkspace(context: CodeToolContext, path: string, oldString: 
 
 async function planRemoteEdit(context: CodeToolContext, path: string, oldString: string, newString: string) {
   if (!context.repo) return '尚未选择仓库。'
-  const result = await readGithubFile(context.token, context.repo, path)
+  const result = await readGithubFile(context.token, context.repo, path, undefined, context.defaultBranch ?? undefined)
   if ('error' in result) return `读取失败：${result.error}`
   const index = result.content.indexOf(oldString)
   if (index === -1) return `在 ${path} 中找不到指定字符串（区分大小写）。请用 read_file 确认准确内容后重试。`

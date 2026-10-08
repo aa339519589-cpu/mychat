@@ -50,6 +50,10 @@ export function createCodeToolExecutor(options: CodeToolExecutorOptions) {
   return async function executeTool(name: string, input: unknown): Promise<string> {
     const params = isRecord(input) ? input : {}
     if (name !== 'complete') context.state.markUsedTool()
+    if (name.startsWith('mcp_')) {
+      if (context.repoIsPrivate) return '安全策略已阻断：私有仓库任务未授权向第三方 MCP 发送参数。'
+      return options.mcpBroker ? options.mcpBroker.execute(name, input) : 'MCP_UNAVAILABLE: 此任务未启用 MCP 工具。'
+    }
     if (context.repoIsPrivate && PRIVATE_REPOSITORY_EXTERNAL_TOOLS.has(name)) {
       return '安全策略已阻断：私有仓库任务不能把模型生成的查询或网址发送给外部检索服务。'
     }

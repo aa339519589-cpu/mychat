@@ -64,7 +64,7 @@ async function cloudInspection(context: CodeToolContext, command: string, label:
   context.emit({ step: { kind: 'read', label } })
   const remaining = context.sandboxTimeoutMs?.()
   return commandOutput(await runInWorkspace(context.supabase, context.wsUserId, context.wsTaskId,
-    command, { repoIsPrivate: context.repoIsPrivate, maxOutputChars: 8_000,
+    command, { repoIsPrivate: context.repoIsPrivate, maxOutputChars: 8_000, signal: context.signal,
       timeoutMs: Math.max(1, Math.min(30_000, remaining ?? 30_000)) }))
 }
 

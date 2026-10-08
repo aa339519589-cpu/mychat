@@ -135,7 +135,7 @@ export function validatePath(
   }
 
   // 3) 路径穿越拒绝
-  if (trimmed.includes("..")) {
+  if (trimmed.split(/[/\\]/).includes('..')) {
     return { ok: false, error: `路径包含 ".."，禁止穿越：${trimmed}` }
   }
 
@@ -148,7 +148,7 @@ export function validatePath(
   const normalized = normalize(trimmed).replace(/^[/\\]+/, "")
 
   // 6) 再次检查穿越（normalize 可能合并 ..）
-  if (normalized.includes("..")) {
+  if (normalized.split(/[/\\]/).includes('..')) {
     return { ok: false, error: `路径经过规范化后仍包含 ".."：${normalized}` }
   }
 

@@ -43,7 +43,7 @@ test("isolated upload blocks private package-manager and Docker credentials", t 
 
 test("isolated upload blocks detected secrets and oversized files", t => {
   const secret = workspace(t)
-  writeFileSync(`${secret.root}/config.txt`, "Authorization: Bearer sk-test-secret-value-1234567890")
+  writeFileSync(`${secret.root}/config.txt`, 'Authorization: Bearer ' + 'sk-' + 'Z'.repeat(32))
   assert.throws(() => collectIsolatedWorkspaceFiles(secret.userId, secret.taskId), /疑似密钥/)
 
   const oversized = workspace(t)

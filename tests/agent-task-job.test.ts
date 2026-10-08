@@ -209,16 +209,14 @@ test('repository-less planning never exposes workspace-only or unusable execute 
   const context = executionContext()
   const runtime = createAgentRuntime(
     context.value,
-    agentInput(),
+    { ...agentInput(), readOnlyPlan: true },
     new JobEventWriter(context.value),
   )
   const names = runtime.tools.map(tool => tool.function.name)
 
   assert.equal(runtime.canExecute, false)
-  assert.ok(names.includes('create_repo'))
-  assert.ok(names.includes('write_files'))
-  assert.ok(names.includes('enable_pages'))
-  for (const unavailable of ['execute', 'apply_patch', 'search_files', 'git_diff', 'verify', 'publish']) {
+  assert.ok(names.includes('read_file'))
+  for (const unavailable of ['create_repo', 'write_files', 'enable_pages', 'execute', 'apply_patch', 'search_files', 'git_diff', 'verify', 'publish']) {
     assert.equal(names.includes(unavailable), false)
   }
 })

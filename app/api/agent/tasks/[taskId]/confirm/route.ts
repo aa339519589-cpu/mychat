@@ -10,7 +10,7 @@ import { readJson, requestErrorResponse } from "@/lib/api/request"
 import { isRecord } from '@/lib/unknown-value'
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
-  const auth = await resolveAuth()
+  const auth = await resolveAuth(req)
   const supabase = auth.supabase
   const userId = auth.userId
   if (!supabase || !userId) return json({ error: "未登录" }, 401)
@@ -52,7 +52,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tas
 
 // GET: 查询当前 pending confirmation
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
-  const auth = await resolveAuth()
+  const auth = await resolveAuth(_req)
   const supabase = auth.supabase
   const userId = auth.userId
   if (!supabase || !userId) return json({ error: "未登录" }, 401)

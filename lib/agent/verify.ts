@@ -23,6 +23,11 @@ type VerifyStep = {
   parsedErrors: VerificationErrors
 }
 
+function verificationTimeout(options: { totalTimeoutMs?: number }) {
+  const deadline = options.totalTimeoutMs === undefined ? null : Date.now() + Math.max(1, options.totalTimeoutMs)
+  return (maximum: number) => deadline === null ? maximum : Math.max(1, Math.min(maximum, deadline - Date.now()))
+}
+
 export type VerifyResult = {
   ok: boolean
   steps: VerifyStep[]
@@ -41,11 +46,13 @@ async function runCommand(
   command: string,
   timeoutMs = 120_000,
   repoIsPrivate = false,
+  signal?: AbortSignal,
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut: boolean }> {
   const result = await runInWorkspace(supabase, userId, taskId, command, {
     repoIsPrivate,
     timeoutMs,
     maxOutputChars: 100_000,
+    signal,
   })
   return {
     stdout: result.stdout,
@@ -62,6 +69,7 @@ export async function runVerification(
   userId: string,
   supabase: SupabaseClient,
   options: {
+    signal?: AbortSignal
     install?: boolean
     steps?: ("lint" | "typecheck" | "test" | "build")[]
     timeoutPerStep?: number
@@ -77,12 +85,7 @@ export async function runVerification(
   const detected = detectProjectCommands(taskId, userId)
   const stepNames = options.steps ?? ["lint", "typecheck", "test", "build"]
   const timeout = options.timeoutPerStep ?? 120_000
-  const deadline = options.totalTimeoutMs === undefined
-    ? null
-    : Date.now() + Math.max(1, options.totalTimeoutMs)
-  const remainingTimeout = (maximum: number) => deadline === null
-    ? maximum
-    : Math.max(1, Math.min(maximum, deadline - Date.now()))
+  const remainingTimeout = verificationTimeout(options)
 
   // 写入 detected commands artifact
   await addArtifact(supabase, userId, {
@@ -119,6 +122,7 @@ export async function runVerification(
       detected.installCommand,
       remainingTimeout(180_000),
       options.repoIsPrivate === true,
+      options.signal,
     )
     if (ir.exitCode !== 0) {
       return {
@@ -180,6 +184,7 @@ export async function runVerification(
       command,
       remainingTimeout(timeout),
       options.repoIsPrivate === true,
+      options.signal,
     )
     const duration = Date.now() - start
 

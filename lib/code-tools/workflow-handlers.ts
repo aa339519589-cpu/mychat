@@ -10,6 +10,7 @@ import { readPage } from '@/lib/tools/fetch-url'
 import { commandOutput } from './format'
 import { rememberCodeMemory } from './memory'
 import { searchExternalCodeContext } from './search'
+import { verifyWithCommand } from './verification-command'
 import type { CodeToolContext, ToolHandlers, ToolParams } from './executor-types'
 
 const VERIFICATION_STEPS = ['lint', 'typecheck', 'test', 'build'] as const
@@ -58,6 +59,7 @@ async function executeCommand(context: CodeToolContext, params: ToolParams): Pro
     command,
     {
       repoIsPrivate: context.repoIsPrivate,
+      signal: context.signal,
       timeoutMs: Math.max(1, Math.min(requestedTimeout, remaining ?? requestedTimeout)),
       ...(typeof params.cwd === 'string' ? { cwd: params.cwd } : {}),
       ...(typeof params.max_output_chars === 'number' && Number.isFinite(params.max_output_chars)
@@ -70,6 +72,10 @@ async function executeCommand(context: CodeToolContext, params: ToolParams): Pro
 async function verifyWorkspace(context: CodeToolContext, params: ToolParams): Promise<string> {
   if (!context.canExecute) return '当前运行环境未启用项目验证。'
   if (!context.wsReady || !context.supabase) return 'verify 需要 workspace。'
+  if (params.command !== undefined) {
+    return typeof params.command === 'string'
+      ? verifyWithCommand(context, params.command) : '验证 command 必须是字符串。'
+  }
   const requested = Array.isArray(params.steps)
     ? params.steps.filter(isVerificationStep)
     : undefined
@@ -77,6 +83,7 @@ async function verifyWorkspace(context: CodeToolContext, params: ToolParams): Pr
   const remaining = context.sandboxTimeoutMs?.()
   const result = await runVerification(context.wsTaskId, context.wsUserId, context.supabase, {
     repoIsPrivate: context.repoIsPrivate,
+    signal: context.signal,
     install: params.install !== false,
     steps: requested?.length ? requested : undefined,
     ...(remaining == null ? {} : { totalTimeoutMs: Math.max(1, remaining) }),

@@ -8,6 +8,7 @@ import { createWorkspaceSnapshot } from "./snapshot"
 import { workspacePath } from "./workspace"
 import { redactSensitive, validatePath } from "./path-security"
 import { sanitizeCommandOutput } from "./command-security"
+import { containsSourceCredential } from './source-credentials'
 import type { ShellOptions, ShellResult } from "./shell"
 import { mergeTaskMeta } from "./meta"
 import { errorMessage, recordText } from '@/lib/unknown-value'
@@ -31,6 +32,31 @@ const SANDBOX_TIMEOUT = 30 * 60_000
 const MAX_COMMAND_TIMEOUT = 15 * 60_000
 const MAX_SYNC_FILES = 500
 const E2B_SYNC_VERSION = 1
+
+function sandboxCancellation(sandbox: Sandbox, signal?: AbortSignal): () => void {
+  signal?.throwIfAborted()
+  const cancel = () => { void sandbox.kill().catch(() => {}) }
+  signal?.addEventListener('abort', cancel, { once: true })
+  return () => signal?.removeEventListener('abort', cancel)
+}
+
+async function executeSandboxCommand(sandbox: Sandbox, command: string, opts: ShellOptions, timeoutMs: number) {
+  const removeCancellation = sandboxCancellation(sandbox, opts.signal)
+  try {
+    const result = await sandbox.commands.run(command, {
+      cwd: opts.cwd ? `${REMOTE_WORKSPACE_ROOT}/${opts.cwd}` : REMOTE_WORKSPACE_ROOT,
+      timeoutMs, requestTimeoutMs: timeoutMs + 30_000,
+      envs: { GIT_AUTHOR_NAME: 'mychat-agent', GIT_AUTHOR_EMAIL: 'mychat-agent@users.noreply.github.com',
+        GIT_COMMITTER_NAME: 'mychat-agent', GIT_COMMITTER_EMAIL: 'mychat-agent@users.noreply.github.com' },
+    })
+    return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode, error: '' }
+  } catch (caught) {
+    const exitCode = Number(recordText(caught, 'exitCode'))
+    return { stdout: recordText(caught, 'stdout'), stderr: recordText(caught, 'stderr'),
+      error: recordText(caught, 'error') || errorMessage(caught, '命令执行失败'),
+      exitCode: Number.isInteger(exitCode) ? exitCode : 1 }
+  } finally { removeCancellation() }
+}
 
 export const isolatedShellConfigured = (
   environment: AgentExecutionEnvironment = process.env,
@@ -168,7 +194,7 @@ async function syncWorkspace(
     const data = new Uint8Array(bytes)
     if (!data.includes(0)) {
       const text = new TextDecoder("utf-8", { fatal: false }).decode(data)
-      if (redactSensitive(text) !== text) throw new Error(`沙箱文件包含疑似密钥：${path}`)
+      if (containsSourceCredential(text)) throw new Error(`沙箱文件包含疑似密钥：${path}`)
     }
     pending.push({
       kind: "write",
@@ -232,32 +258,10 @@ export async function runInIsolatedWorkspace(
       if (!saved) throw new Error("无法持久化隔离沙箱同步协议版本")
     }
 
-    let stdout = ""
-    let stderr = ""
-    let exitCode = 0
-    let error = ""
-    try {
-      const result = await sandbox.commands.run(command, {
-        cwd: opts.cwd ? `${REMOTE_WORKSPACE_ROOT}/${opts.cwd}` : REMOTE_WORKSPACE_ROOT,
-        timeoutMs,
-        requestTimeoutMs: timeoutMs + 30_000,
-        envs: {
-          GIT_AUTHOR_NAME: "mychat-agent",
-          GIT_AUTHOR_EMAIL: "mychat-agent@users.noreply.github.com",
-          GIT_COMMITTER_NAME: "mychat-agent",
-          GIT_COMMITTER_EMAIL: "mychat-agent@users.noreply.github.com",
-        },
-      })
-      stdout = result.stdout
-      stderr = result.stderr
-      exitCode = result.exitCode
-    } catch (caught) {
-      stdout = recordText(caught, 'stdout')
-      stderr = recordText(caught, 'stderr')
-      error = recordText(caught, 'error') || errorMessage(caught, "命令执行失败")
-      const caughtExitCode = Number(recordText(caught, 'exitCode'))
-      exitCode = Number.isInteger(caughtExitCode) ? caughtExitCode : 1
-    }
+    const execution = await executeSandboxCommand(sandbox, command, opts, timeoutMs)
+    let stdout = execution.stdout
+    const { stderr, exitCode, error } = execution
+    opts.signal?.throwIfAborted()
 
     const synced = await syncWorkspace(
       sandbox,
