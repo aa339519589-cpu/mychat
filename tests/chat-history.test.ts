@@ -86,3 +86,20 @@ test('history lookup remains enabled for every contextual or factual request', (
     assert.equal(needsCrossConversationHistory(query), true, query)
   }
 })
+
+test('a stalled optional history branch is cancelled and does not hold the main model for its lease', async () => {
+  let aborted = false
+  const result = await prepareChatHistory({
+    supabase: null, userId, conversationId, tier: '绝句', deadlineMs: 15,
+    historyRetrievalEnabled: true, customEndpoint: false, deferIndexing: true,
+    messages: [{ role: 'user', content: '请解释月亮的形状为什么变化' }],
+  }, {
+    prepareSummary: async () => ({ conversationId, renderedSummary: 'current context' }),
+    retrieveHistory: options => new Promise((_resolve, reject) => {
+      options.signal?.addEventListener('abort', () => { aborted = true; reject(options.signal?.reason) }, { once: true })
+    }),
+  })
+  assert.equal(result.degraded, true)
+  assert.equal(result.renderedContext, 'current context')
+  assert.equal(aborted, true)
+})

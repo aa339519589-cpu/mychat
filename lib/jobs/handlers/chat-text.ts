@@ -191,8 +191,9 @@ async function prepareChat(
   }
   const modelMessages: AgentLoopOpts['messages'] = [
     { role: 'system', content: buildChatSystem(input, latestBeijingDate, history.renderedContext) },
-    ...buildModelContext(preparedMessages, selection.capability),
+    ...buildModelContext(history.degraded ? input.context.messages : preparedMessages, selection.capability),
   ]
+  if (history.degraded) runtime.emit({ error: '其他历史检索暂时不可用，已保留当前对话与已读记忆。' })
   await timedChatPreparation(context.job.id, 'attachments', () => appendAttachments(context, input, runtime, dependencies, modelMessages))
   appendNativeHealthContext(modelMessages, command.healthContext)
   const baseLength = await restoreChatTrajectory(context, runtime.writer, modelMessages)
