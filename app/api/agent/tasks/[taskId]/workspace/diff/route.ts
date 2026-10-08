@@ -2,6 +2,7 @@ import { type NextRequest } from 'next/server'
 import { resolveAuth } from '@/lib/api/guard'
 import { json } from '@/lib/api/response'
 import { readWorkspaceAuthorityView } from '@/lib/agent/workspace-authority-view'
+import { summarizeWorkspaceChanges } from '@/lib/agent/workspace-change-summary'
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
   const auth = await resolveAuth(_request)
@@ -9,18 +10,13 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   const { taskId } = await params
   try {
     const view = await readWorkspaceAuthorityView(auth.supabase, auth.userId, taskId)
-    if (!view) return json({ diff: '', changedFiles: [], summary: { added: 0, modified: 0, deleted: 0 }, hasChanges: false })
-    const changedFiles = view.manifest.entries.map(entry => ({
-      path: entry.path,
-      status: entry.kind === 'deleted' ? 'deleted' : 'modified',
-    }))
-    const deleted = view.manifest.entries.filter(entry => entry.kind === 'deleted').length
-    const modified = view.manifest.entries.length - deleted
+    if (!view) return json({ diff: '', diffFormat: 'cas-change-summary', ...summarizeWorkspaceChanges([]) })
+    const changes = summarizeWorkspaceChanges(view.manifest.entries)
     return json({
-      diff: `DB-authoritative CAS ${view.authority.manifestDigest}\n${changedFiles.map(file => `${file.status}\t${file.path}`).join('\n')}`,
-      changedFiles,
-      summary: { added: 0, modified, deleted },
-      hasChanges: changedFiles.length > 0,
+      diff: `DB-authoritative CAS ${view.authority.manifestDigest}\n${changes.changedFiles.map(file => `${file.status}\t${file.path}`).join('\n')}`,
+      // This compatibility string is a CAS change summary, never patch hunks.
+      diffFormat: 'cas-change-summary',
+      ...changes,
       snapshotId: view.authority.snapshotId,
       head: view.authority.head,
       manifestDigest: view.authority.manifestDigest,

@@ -2,9 +2,10 @@ import { type NextRequest } from 'next/server'
 import { resolveAuth } from '@/lib/api/guard'
 import { json } from '@/lib/api/response'
 import { readWorkspaceAuthorityView } from '@/lib/agent/workspace-authority-view'
+import { summarizeWorkspaceChanges, workspaceGitChangeStatus } from '@/lib/agent/workspace-change-summary'
 
-export async function GET(_request: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
-  const auth = await resolveAuth()
+export async function GET(request: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
+  const auth = await resolveAuth(request)
   if (!auth.supabase || !auth.userId) return json({ error: '未登录' }, 401)
   const { taskId } = await params
   try {
@@ -14,14 +15,15 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       readWorkspaceAuthorityView(auth.supabase, auth.userId, taskId),
     ])
     if (!view) return json({ ok: true, hasChanges: false, changedFiles: [], commitSha: null })
+    const changes = summarizeWorkspaceChanges(view.manifest.entries)
     return json({
       ok: true,
       currentBranch: task?.agent_branch ?? null,
-      changedFiles: view.manifest.entries.map(entry => ({
-        path: entry.path,
-        status: entry.kind === 'deleted' ? 'D' : entry.kind === 'file' || entry.kind === 'symlink' ? 'M' : 'M',
+      changedFiles: changes.changedFiles.map(file => ({
+        path: file.path,
+        status: workspaceGitChangeStatus[file.status],
       })),
-      hasChanges: view.manifest.entries.length > 0,
+      hasChanges: changes.hasChanges,
       commitSha: view.authority.head,
       authoritySnapshotId: view.authority.snapshotId,
       authorityVersion: view.authority.version,
