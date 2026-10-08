@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@/lib/supabase/types'
+import { log } from '@/lib/logger'
 import { isJobStatus, isJsonValue, type JobStatus, type JsonObject, type JsonValue } from './contracts'
 
 const READ_TIMEOUT_MS = 8_000
@@ -64,6 +65,16 @@ function boundedReadSignal(signal?: AbortSignal): AbortSignal {
   return signal ? AbortSignal.any([signal, timeout]) : timeout
 }
 
+function readFailure(operation: string, error: unknown) {
+  const row = object(error)
+  log.warn('jobs', 'Job read dependency failed', {
+    operation,
+    databaseCode: typeof row?.code === 'string' ? row.code : null,
+    databaseMessage: typeof row?.message === 'string' ? row.message : null,
+  })
+  return { ok: false as const, kind: 'unavailable' as const }
+}
+
 function publicJob(value: unknown): PublicJobSnapshot | null {
   const row = object(value)
   if (!row) return null
@@ -122,7 +133,7 @@ export async function readOwnedJob(
   ].join(','))
     .abortSignal(boundedReadSignal(signal))
     .eq('id', jobId).eq('principal_id', principalId).maybeSingle()
-  if (error) return { ok: false, kind: 'unavailable' }
+  if (error) return readFailure('job snapshot', error)
   if (!data) return { ok: false, kind: 'not_found' }
   const parsed = publicJob(data)
   return parsed ? { ok: true, value: parsed } : { ok: false, kind: 'malformed' }
@@ -146,7 +157,7 @@ export async function readLatestOwnedConversationJob(
     .limit(1)
     .abortSignal(boundedReadSignal(signal))
     .maybeSingle()
-  if (error) return { ok: false, kind: 'unavailable' }
+  if (error) return readFailure('conversation job snapshot', error)
   if (!data) return { ok: true, value: null }
   const parsed = publicJob(data)
   return parsed ? { ok: true, value: parsed } : { ok: false, kind: 'malformed' }
@@ -165,7 +176,7 @@ export async function readOwnedJobEvents(
     .eq('job_id', jobId).eq('principal_id', principalId)
     .gt('seq', afterSequence).order('seq', { ascending: true }).limit(limit)
     .abortSignal(boundedReadSignal(signal))
-  if (error) return { ok: false, kind: 'unavailable' }
+  if (error) return readFailure('job events', error)
   const events: PublicJobEvent[] = []
   for (const value of data ?? []) {
     const row = object(value)
