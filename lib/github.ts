@@ -3,6 +3,9 @@
 // Code 的 agentic loop（/api/code/chat）与执行端点（/api/code/apply）都复用这一份，杜绝重复实现。
 import { isRecord, type UnknownRecord } from '@/lib/unknown-value'
 import { safeModelEndpointFetch } from '@/lib/llm/openai-compatible/safe-fetch'
+import { githubApiFetch as boundedFetch } from '@/lib/github-api-fetch'
+
+export { githubApiFetch } from '@/lib/github-api-fetch'
 
 const GH = 'https://api.github.com'
 
@@ -11,23 +14,6 @@ async function responseRecord(response: Response | null | undefined): Promise<Un
   const value = await response.json().catch(() => null)
   return isRecord(value) ? value : null
 }
-
-function boundedFetch(input: string, init: RequestInit = {}, timeoutMs = 30_000): Promise<Response> {
-  const parsed = new URL(input)
-  if (parsed.protocol !== 'https:' || parsed.hostname !== 'api.github.com'
-    || parsed.username || parsed.password || parsed.port || parsed.hash) {
-    throw new Error('GitHub API URL is outside the permitted origin')
-  }
-  // Rebuild from a fixed origin: caller input can only supply path/query,
-  // never the network destination or credentials.
-  const target = new URL('https://api.github.com')
-  target.pathname = parsed.pathname
-  target.search = parsed.search
-  const signals = [init.signal, AbortSignal.timeout(timeoutMs)].filter(Boolean) as AbortSignal[]
-  return fetch(target, { ...init, redirect: 'error', signal: signals.length === 1 ? signals[0] : AbortSignal.any(signals) })
-}
-
-export { boundedFetch as githubApiFetch }
 
 function ghHeaders(token: string, json = false): Record<string, string> {
   const h: Record<string, string> = {
