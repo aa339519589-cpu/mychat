@@ -1,5 +1,6 @@
 import type { SupabaseServer } from '@/lib/api/guard'
 import type { DurableChatRequestBody } from '@/lib/llm/chat-request'
+import { getSharedClaudeCatalogRoute } from '@/lib/llm/models'
 
 const TRIAL_INPUT_TOKEN_LIMIT = 20_000
 const APPROX_CHARS_PER_TOKEN = 3
@@ -47,10 +48,13 @@ export function clampTrialInput(body: DurableChatRequestBody): DurableChatReques
 type TrialReservation = { allowed?: unknown; remaining?: unknown; duplicate?: unknown }
 
 export async function reserveTrialCall(supabase: SupabaseServer, userId: string, generationId: string, modelId: string): Promise<{ allowed: boolean; remaining: number; duplicate: boolean }> {
+  // The quota ledger stores the stable provider/model catalog identity, not
+  // a gateway's configurable wire alias (e.g. claude-haiku-5-5).
+  const catalogId = getSharedClaudeCatalogRoute(modelId)?.catalogId ?? modelId
   const { data, error } = await rpcClient(supabase).rpc('reserve_medium_model_trial', {
     input_principal_id: userId,
     input_generation_id: generationId,
-    input_model_id: modelId,
+    input_model_id: catalogId,
   })
   if (error || !data || typeof data !== 'object' || Array.isArray(data)) throw new Error('中档模型免费额度服务暂时不可用')
   const result = data as TrialReservation
