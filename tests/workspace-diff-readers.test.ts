@@ -16,8 +16,8 @@ const api = 'https://api.github.com/repos/acme/repo'
 function config() {
   return { scope: { userId: 'alice', taskId: 'task-a', repository: 'acme/repo', snapshotId: 'snapshot-a',
     manifestDigest: '4'.repeat(64), head, version: 1 }, path: 'src/file.txt', snapshot: { digest, size: newContent.length },
-    github: { ownerId: 'alice', token: 'fixture-github-token' },
-    storage: { ownerId: 'alice', token: 'fixture-user-session', apiKey: 'fixture-public-key', origin: 'https://fixture.supabase.co' } }
+    github: { ownerId: 'alice', token: 'synthetic-github-token' },
+    storage: { ownerId: 'alice', token: 'test-token', apiKey: 'ci-public-anon-key', origin: 'https://fixture.supabase.co' } }
 }
 
 function baseline(maxBytes = 1024) { return { repository: 'acme/repo', head, path: 'src/file.txt', maxBytes } }
@@ -53,7 +53,7 @@ test('baseline traversal is pinned commit → direct trees → exact immutable b
   for (const request of source.requests) {
     assert.equal(request.init.method, 'GET'); assert.equal(request.init.redirect, 'error')
     assert.equal(request.init.credentials, 'omit'); assert.equal(request.init.cache, 'no-store')
-    assert.equal(new Headers(request.init.headers).get('Authorization'), 'Bearer fixture-github-token')
+    assert.equal(new Headers(request.init.headers).get('Authorization'), 'Bearer synthetic-github-token')
     assert.equal(new URL(request.url).origin, 'https://api.github.com')
     assert.equal(new URL(request.url).search, '')
   }
@@ -65,8 +65,8 @@ test('CAS download uses the bound user session and owner/task/digest object path
   assert.equal(source.requests.length, 1)
   assert.equal(source.requests[0]!.url, `https://fixture.supabase.co/storage/v1/object/authenticated/agent-snapshots/alice/task-a/blobs/${digest}`)
   const headers = new Headers(source.requests[0]!.init.headers)
-  assert.equal(headers.get('authorization'), 'Bearer fixture-user-session')
-  assert.equal(headers.get('apikey'), 'fixture-public-key')
+  assert.equal(headers.get('authorization'), 'Bearer test-token')
+  assert.equal(headers.get('apikey'), 'ci-public-anon-key')
 })
 
 test('wrong owner, repository, HEAD, path and snapshot bindings are rejected before network access', async () => {

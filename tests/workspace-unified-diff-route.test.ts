@@ -36,7 +36,7 @@ function fixture(scenario: Scenario = {}) {
   const client = {
     auth: { async getSession() {
       calls.sessions++
-      return { data: { session: { access_token: 'fixture-cookie-session', user: { id: scenario.sessionWrongOwner ? 'other' : userId } } }, error: null }
+      return { data: { session: { access_token: 'test-secret', user: { id: scenario.sessionWrongOwner ? 'other' : userId } } }, error: null }
     } },
     from(table: string) {
       assert.equal(table, 'agent_tasks')
@@ -76,7 +76,7 @@ function fixture(scenario: Scenario = {}) {
     async getGitHubSession(options: unknown) {
       calls.github.push(options)
       return scenario.disconnected ? null : { userId: scenario.credentialWrongOwner ? 'other' : userId,
-        token: 'fixture-github-token', login: 'fixture-login' }
+        token: 'synthetic-github-token', login: 'fixture-login' }
     },
     createWorkspaceDiffReaders(value: unknown) {
       calls.readers.push(value)
@@ -98,7 +98,7 @@ function fixture(scenario: Scenario = {}) {
   const route = factory(...Object.values(dependencies)) as
     (request: Request, id: string, overrides?: object) => Promise<Response>
   const invoke = (request: Request, id = taskId) => route(request, id, {
-    storage: () => ({ origin: 'https://fixture.supabase.co', apiKey: 'fixture-public-key' }),
+    storage: () => ({ origin: 'https://fixture.supabase.co', apiKey: 'ci-public-anon-key' }),
   })
   const query = new URLSearchParams({ format: 'unified', path: entry.path, snapshotId,
     manifestDigest: manifest.manifestDigest, head: manifest.head, version: '7' })
@@ -106,7 +106,7 @@ function fixture(scenario: Scenario = {}) {
     const values = new URLSearchParams(query)
     for (const [key, value] of Object.entries(changes)) values.set(key, value)
     return new Request(`https://fixture.invalid/api/agent/tasks/${taskId}/workspace/diff?${values}`, {
-      headers: bearer ? { Authorization: 'Bearer fixture-user-session' } : {}, signal,
+      headers: bearer ? { Authorization: 'Bearer test-token' } : {}, signal,
     })
   }
   return { invoke, calls, query, request, manifest, authority }
@@ -118,7 +118,7 @@ async function privateBody(response: Response, expected: number) {
   assert.equal(response.headers.get('vary'), 'Authorization, Cookie')
   assert.equal(response.headers.get('x-content-type-options'), 'nosniff')
   const body = await response.json()
-  assert.doesNotMatch(JSON.stringify(body), /fixture-(?:github-token|user-session|cookie-session|secret)/)
+  assert.doesNotMatch(JSON.stringify(body), /synthetic-github-token|test-token|test-secret|fixture-secret/)
   return body
 }
 
@@ -132,7 +132,7 @@ test('native opt-in reads an owned pinned change and returns an uncached real pa
   assert.deepEqual(value.calls.github, [{ request, purpose: 'workspace.diff.read', requestId: 'fixture-request-id' }])
   assert.equal(value.calls.authority.length, 2); assert.equal(value.calls.downloads, 2); assert.equal(value.calls.sessions, 0)
   const reader = value.calls.readers[0] as { scope: { repository: string }; storage: { token: string; origin: string } }
-  assert.equal(reader.scope.repository, 'acme/repo'); assert.equal(reader.storage.token, 'fixture-user-session')
+  assert.equal(reader.scope.repository, 'acme/repo'); assert.equal(reader.storage.token, 'test-token')
   assert.equal(reader.storage.origin, 'https://fixture.supabase.co')
   const input = value.calls.diff[0] as { maxFileBytes: number; maxPatchBytes: number; signal: AbortSignal }
   assert.equal(input.maxFileBytes, 256 * 1024); assert.equal(input.maxPatchBytes, 1024 * 1024)
@@ -144,7 +144,7 @@ test('verified browser cookie sessions can read without creating another auth sy
   await privateBody(await value.invoke(value.request({}, false)), 200)
   assert.equal(value.calls.sessions, 1)
   const reader = value.calls.readers[0] as { storage: { token: string } }
-  assert.equal(reader.storage.token, 'fixture-cookie-session')
+  assert.equal(reader.storage.token, 'test-secret')
 })
 
 test('invalid, duplicate and caller-controlled identity/source query fields fail before auth/data reads', async () => {
