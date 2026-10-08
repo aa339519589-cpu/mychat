@@ -89,6 +89,9 @@ async function ownedWorkspace(auth: SignedIn, taskId: string, signal: AbortSigna
   if (!data || data.id !== taskId || data.user_id !== auth.userId) {
     throw new DiffRouteError(404, 'TASK_NOT_FOUND', '任务不存在')
   }
+  if (typeof data.repo !== 'string' || !data.repo) {
+    throw new DiffRouteError(409, 'REPOSITORY_UNAVAILABLE', '任务尚未绑定仓库')
+  }
   if (!view) throw new DiffRouteError(409, 'WORKSPACE_NOT_READY', '工作区尚无可读取的固定快照')
   return { task: { id: data.id, userId: data.user_id, repository: data.repo }, view }
 }

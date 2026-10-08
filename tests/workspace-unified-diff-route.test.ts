@@ -19,6 +19,7 @@ type Scenario = {
   taskWrongOwner?: boolean; taskError?: boolean; noAuthority?: boolean; authorityError?: boolean;
   staleAfterRead?: boolean; disconnected?: boolean; credentialWrongOwner?: boolean; sessionWrongOwner?: boolean;
   rate?: 'denied' | 'unavailable'; oversized?: boolean; symlink?: boolean; diffError?: Error;
+  repository?: string | null;
 }
 
 function fixture(scenario: Scenario = {}) {
@@ -47,7 +48,8 @@ function fixture(scenario: Scenario = {}) {
         async maybeSingle() {
           calls.filters.push({ ...filters })
           return { error: scenario.taskError ? { message: 'fixture-secret-database-error' } : null,
-            data: scenario.taskMissing ? null : { id: taskId, user_id: scenario.taskWrongOwner ? 'other' : userId, repo: 'acme/repo' } }
+            data: scenario.taskMissing ? null : { id: taskId, user_id: scenario.taskWrongOwner ? 'other' : userId,
+              repo: Object.hasOwn(scenario, 'repository') ? scenario.repository : 'acme/repo' } }
         },
       }
     },
@@ -200,6 +202,16 @@ test('unhydrated, stale or nonmember paths are rejected before touching credenti
     const value = fixture()
     await privateBody(await value.invoke(value.request(changes)), changes.path ? 404 : 409)
     assert.equal(value.calls.github.length, 0); assert.equal(value.calls.downloads, 0)
+  }
+})
+
+test('tasks without a repository are rejected without substituting one or reading Git/CAS', async () => {
+  for (const repository of [null, '']) {
+    const value = fixture({ repository })
+    const body = await privateBody(await value.invoke(value.request()), 409)
+    assert.equal(body.code, 'REPOSITORY_UNAVAILABLE')
+    assert.equal(value.calls.github.length, 0); assert.equal(value.calls.readers.length, 0)
+    assert.equal(value.calls.downloads, 0)
   }
 })
 
