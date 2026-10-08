@@ -1,6 +1,7 @@
 import { randomUUID, randomBytes } from 'node:crypto'
 import { sealGitHubCredential } from '../lib/github-credential.ts'
 import { runCloudCodeMcpAcceptance } from './cloud-code-mcp-acceptance.mjs'
+import { cleanupAcceptanceAccount, provisionAcceptanceQuota, safeAcceptanceApiFailure } from './cleanup-cloud-code-acceptance.mjs'
 
 // Only workflow_dispatch runs this bounded production acceptance. No real
 // user's credentials or rows are read. Tokens never leave process memory.
@@ -48,7 +49,14 @@ async function api(path, method = 'GET', body, expected = 200) {
     method, headers: { Authorization: `Bearer ${account.token}`, 'Content-Type': 'application/json' },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(30_000),
   })
-  if (response.status !== expected) throw new Error(`Acceptance API ${path}: HTTP ${response.status}`)
+  if (response.status !== expected) {
+    const failure = await response.json().catch(() => null)
+    const error = new Error(`Acceptance API ${path}: HTTP ${response.status}`)
+    error.safeDiagnostics = safeAcceptanceApiFailure(response, failure, path)
+    report.apiFailures ??= []
+    report.apiFailures.push(error.safeDiagnostics)
+    throw error
+  }
   return response.json()
 }
 async function createAccount() {
@@ -61,6 +69,7 @@ async function createAccount() {
     body: JSON.stringify({ email, password }), signal: AbortSignal.timeout(30_000),
   }), 'Acceptance sign-in')
   account.token = session.access_token
+  report.testQuota = await provisionAcceptanceQuota(database, account.id)
   const metadata = await github('')
   const identity = metadata.owner
   await database('/rest/v1/rpc/upsert_github_connection', 'POST', {
@@ -71,16 +80,14 @@ async function createAccount() {
   }, true)
   return metadata
 }
-async function submit(marker, mode = 'code') {
+async function submit(marker) {
   const sessionId = randomUUID(), taskId = randomUUID(), responseId = randomUUID()
-  const prompt = mode === 'plan'
-    ? `先规划修复 ${fixture} 的sum错误。保持Plan只读，不能写入或执行。`
-    : `这是授权的单文件云验收。只允许修改 ${fixture}，不改变其他文件、不部署、不合并。读取真实文件，把sum(a,b)修复成相加并加入独立标记 ${marker}。使用 execute 运行 node ${fixture}，再使用 verify 的 command 参数运行相同命令。用 git_diff 查看唯一文件差异，然后 publish(deploy_pages=false) 等待人工批准。不要调用其他外部工具。`
+  const prompt = `这是授权的单文件云验收。只允许修改 ${fixture}，不改变其他文件、不部署、不合并。读取真实文件，把sum(a,b)修复成相加并加入独立标记 ${marker}。使用 execute 运行 node ${fixture}，再使用 verify 的 command 参数运行相同命令。用 git_diff 查看唯一文件差异，然后 publish(deploy_pages=false) 等待人工批准。不要调用其他外部工具。`
   await database('/rest/v1/code_sessions', 'POST', { id: sessionId, user_id: account.id, repo, title: `Cloud acceptance ${marker}` })
   await database('/rest/v1/code_messages', 'POST', { id: randomUUID(), session_id: sessionId, user_id: account.id,
     role: 'user', content: prompt, meta: { taskId } })
-  const admission = await api('/api/code/chat', 'POST', { repo, branch, mode,
-    modelId: process.env.CODE_PROBE_MODEL ?? 'deepseek-v4-flash', sessionId, taskId, responseId,
+  const admission = await api('/api/code/chat', 'POST', { repo, branch, mode: 'code',
+    modelId: 'anthropic/claude-haiku-5.5', reasoningEffort: 'medium', sessionId, taskId, responseId,
     messages: [{ role: 'user', content: prompt }] }, 202)
   const task = { ...admission, sessionId, marker }
   tasks.push(task)
@@ -157,11 +164,11 @@ async function main() {
   const metadata = await createAccount()
   stage = 'product-mcp-install-and-model-call'
   report.mcp = await runCloudCodeMcpAcceptance({ api, run,
-    modelId: process.env.CODE_PROBE_MODEL ?? 'deepseek-v4-flash', disposableAccount: true,
+    modelId: 'anthropic/claude-haiku-5.5', disposableAccount: true,
     waitJob, registerTask: task => tasks.push(task),
-    createPlanSession: async ({ sessionId, taskId, userMessageId, repo: planRepo, prompt }) => {
+    createCodeSession: async ({ sessionId, taskId, userMessageId, repo: codeRepo, prompt }) => {
       await database('/rest/v1/code_sessions', 'POST', { id: sessionId, user_id: account.id,
-        repo: planRepo, title: 'Public MCP Plan acceptance' })
+        repo: codeRepo, title: 'Public MCP Code acceptance' })
       await database('/rest/v1/code_messages', 'POST', { id: userMessageId, session_id: sessionId,
         user_id: account.id, role: 'user', content: prompt, meta: { taskId } })
     },
@@ -229,13 +236,22 @@ async function main() {
 }
 main().catch(error => {
   report.stage = stage; report.error = error instanceof Error ? error.message : 'Unknown acceptance error'
+  report.apiFailure = error.safeDiagnostics ?? null
   process.exitCode = 1
 }).finally(async () => {
-  if (account?.token) for (const task of tasks) {
-    await api(`/api/v1/jobs/${task.jobId}/cancel`, 'POST', { reason: 'Acceptance cleanup' }).catch(() => undefined)
+  report.admittedJobs = tasks.map(task => ({ jobId: task.jobId, taskId: task.taskId, sessionId: task.sessionId ?? null }))
+  if (config && account?.id) {
+    try {
+      report.cleanup = await cleanupAcceptanceAccount({ database, principalId: account.id, run,
+        verifyOldSession: account.token ? async () => {
+          const response = await fetch(`${config.url}/auth/v1/user`, { headers: {
+            apikey: config.anonKey, Authorization: `Bearer ${account.token}` }, signal: AbortSignal.timeout(15_000) })
+          return response.status === 401 || response.status === 403
+        } : null,
+      })
+      if (!report.cleanup.ok) process.exitCode = 1
+    }
+    catch { report.cleanupError = 'Scoped account deactivation requires retry; audit retained'; process.exitCode = 1 }
   }
-  if (config && account?.id) await database(`/auth/v1/admin/users/${account.id}`, 'DELETE', undefined, true).catch(() => {
-    report.cleanupError = 'Disposable account cleanup requires retry'; process.exitCode = 1
-  })
   console.log('CLOUD_WORKSPACE_ACCEPTANCE ' + JSON.stringify(report))
 })

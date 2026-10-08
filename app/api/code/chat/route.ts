@@ -5,10 +5,11 @@ import { expensiveWriteMaintenanceResponse } from '@/lib/api/maintenance'
 import { readJson, requestId } from '@/lib/api/request'
 import { releaseTrialCall, reserveTrialCall } from '@/lib/chat/model-access'
 import { ChatModelSelectionError, type ChatModelSelection } from '@/lib/chat/model-selection'
-import { CodeAgentEnqueueContextError, parseAgentEnqueueResult, resolveCodeAgentEnqueueContext } from '@/lib/code-agent/enqueue-context'
+import { assertAgentAdmissionCredit, CodeAgentEnqueueContextError, parseAgentEnqueueResult, resolveCodeAgentEnqueueContext } from '@/lib/code-agent/enqueue-context'
 import { resolveCodeModelSelection } from '@/lib/code-agent/model-selection'
 import { parseCodeChatRequest, type CodeChatRequest } from '@/lib/code-agent/request'
 import { shouldReserveCodeTrial } from '@/lib/code-agent/runtime'
+import { agentExecutionBackend } from '@/lib/agent/execution-policy'
 import { getCurrentGitHubConnectionStatus } from '@/lib/github-session'
 import { sha256JobValue } from '@/lib/jobs/canonical'
 import type { JsonObject } from '@/lib/jobs/contracts'
@@ -51,6 +52,9 @@ async function loadContext(client: SupabaseClient, userId: string, taskId: strin
   return resolveCodeAgentEnqueueContext({ task, session, userMessage, taskId, sessionId: body.sessionId, repo: body.repo })
 }
 function contextFailure(request: NextRequest, error: CodeAgentEnqueueContextError): Response {
+  if (error.kind === 'quota') return apiFailure(request, {
+    status: 403, code: 'QUOTA_EXCEEDED', message: error.message, retryable: false,
+  })
   if (error.kind === 'dependency') return apiFailure(request, {
     status: 503, code: 'DEPENDENCY_UNAVAILABLE', message: error.message, retryable: true,
   })
@@ -182,6 +186,7 @@ async function enqueueAgentTask(input: {
     input_input_hash: sha256JobValue(payload),
     input_payload: payload,
   })
+  assertAgentAdmissionCredit(response.error)
   const result = parseAgentEnqueueResult(response.data, response.error)
   if (!result) throw new Error('atomic enqueue failed')
   return result
@@ -239,6 +244,12 @@ export async function POST(request: NextRequest): Promise<Response> {
   const rate = await enforceRequestRateLimit(auth, request)
   if (rate.response) return rate.response
   if (!auth.supabase || !auth.userId) return authFailureResponse(request, auth)
+  if (agentExecutionBackend() !== 'isolated') return apiFailure(request, {
+    status: 503,
+    code: 'CODE_CLOUD_UNAVAILABLE',
+    message: '云端编程执行环境暂时不可用',
+    retryable: true,
+  })
   let body: BoundCodeChatRequest
   try {
     body = boundRequest(parseCodeChatRequest(await readJson(request, { maxBytes: 4 * 1024 * 1024 })))

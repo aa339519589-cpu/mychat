@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { containsSourceCredential } from '../lib/agent/source-credentials'
 import { redactSensitive } from '../lib/agent/path-security'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { workspaceRoot } from '../lib/agent/workspace'
 import { collectIsolatedWorkspaceFiles } from '../lib/agent/isolated-files'
@@ -24,7 +24,7 @@ test('complete tracked repository source passes real bounded upload collection w
   mkdirSync(root, { recursive: true })
   t.after(() => rmSync(root, { recursive: true, force: true }))
   const paths = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'],
-    { encoding: 'utf8' }).split('\0').filter(Boolean)
+    { encoding: 'utf8' }).split('\0').filter(path => path.length > 0 && existsSync(path))
   for (const path of paths) {
     const target = join(root, path)
     mkdirSync(dirname(target), { recursive: true })

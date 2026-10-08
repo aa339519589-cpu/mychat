@@ -6,12 +6,12 @@ import { enqueueChatJob } from '@/lib/chat/job-command'
 import { acceptedLiveChatResponse } from '@/lib/chat/live-response'
 import { prefetchChatEndpoints } from '@/lib/chat/admission-prefetch'
 import type { ModelEndpointRow } from '@/lib/model-endpoint-server'
-import { clampTrialInput, releaseTrialCall, reserveTrialCall } from '@/lib/chat/model-access'
+import { clampTrialInput, releaseTrialCall, reserveTrialCall, shouldReserveChatModelTrial } from '@/lib/chat/model-access'
 import { ChatModelSelectionError, resolveChatModelSelection } from '@/lib/chat/model-selection'
 import { hasScannedPdfAttachment } from '@/lib/chat/attachments'
 import { resolveDeepTierImageConfig, resolveDeepTierVideoConfig } from '@/lib/llm/models'
 import { requireDurableChatIdentity, validateChatRequest } from '@/lib/llm/chat-request'
-import { normalizeSearchMode } from '@/lib/search-mode'
+import { chatRequestSearchMode } from '@/lib/search-mode'
 import { isJobRuntimeError } from '@/lib/jobs/errors'
 import { JobPayloadStorageError } from '@/lib/jobs/payload-storage'
 import { expensiveWriteMaintenanceResponse } from '@/lib/api/maintenance'
@@ -137,7 +137,7 @@ export async function POST(request: NextRequest) {
   if (!selection || policy.usingBalance === undefined) return configurationError(request, '聊天准入策略暂时不可用')
   let trialReserved = false
   let trialRemaining: number | null = null
-  if (body.modelId && selection.accessClass !== 'quota' && auth.isOwner !== true) {
+  if (shouldReserveChatModelTrial(selection, auth.isOwner === true)) {
     try {
       const trial = await reserveTrialCall(auth.supabase, auth.userId, body.generationId, selection.model)
       trialRemaining = trial.remaining
@@ -159,7 +159,7 @@ export async function POST(request: NextRequest) {
   if (selection.capability.provider.id === 'deep-tier' && selection.outputKind === 'image' && !resolveDeepTierImageConfig()) return configurationError(request, '平台生图服务尚未配置')
   if (selection.capability.provider.id === 'deep-tier' && selection.outputKind === 'video' && !resolveDeepTierVideoConfig()) return configurationError(request, '平台视频服务尚未配置')
 
-  const searchMode = body.searchMode === 'web' ? 'web' : normalizeSearchMode(body.webSearch)
+  const searchMode = chatRequestSearchMode(body.searchMode, body.webSearch)
   try {
     const enqueued = await enqueueChatJob({ body, userId: auth.userId, isAnonymous: auth.isAnonymous, usingBalance: policy.usingBalance, searchMode, outputKind: selection.outputKind, accessClass: selection.accessClass, requestId: traceId })
     return acceptedChatResponse({ request, auth, body, enqueued, outputKind: selection.outputKind, requestId: traceId, startedAt, authenticatedAt, rateLimitedAt, parsedAt, policyResolvedAt, trialRemaining })

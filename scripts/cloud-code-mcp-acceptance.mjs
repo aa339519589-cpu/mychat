@@ -48,8 +48,8 @@ async function installAndVerify(api, run, evidence) {
 
 function modelEvidence(detail, evidence) {
   const task = detail.task
-  if (!task || task.mode !== 'plan' || task.workspace || task.pullRequestUrl) {
-    throw new Error('MCP Plan acquired write or workspace authority')
+  if (!task || task.mode !== 'auto' || task.workspace || task.pullRequestUrl) {
+    throw new Error('MCP Code acceptance exceeded its document-only scope')
   }
   const allowed = new Set([...evidence.map(item => item.toolId), 'complete'])
   if (task.toolCalls?.some(call => !allowed.has(call.toolName))) {
@@ -75,10 +75,10 @@ function modelEvidence(detail, evidence) {
 
 /** Receives scoped callbacks only, never tokens, DB clients or admin credentials.
  * The caller creates and later deletes this run's disposable test principal.
- * Exactly one repository-free Plan model task; no sandbox or GitHub resources. */
+ * Exactly one repository-free Code model task; no repository mutation. */
 export async function runCloudCodeMcpAcceptance(options) {
   if (options.disposableAccount !== true || !options.run || !options.modelId
-    || !['api', 'createPlanSession', 'waitJob', 'registerTask'].every(key => typeof options[key] === 'function')) {
+    || !['api', 'createCodeSession', 'waitJob', 'registerTask'].every(key => typeof options[key] === 'function')) {
     throw new Error('MCP acceptance requires a scoped disposable account')
   }
   const result = { ok: false, healthPassed: false, modelCallsVerified: false,
@@ -92,17 +92,17 @@ export async function runCloudCodeMcpAcceptance(options) {
       const args = PUBLIC_SERVICES.find(item => item.serverUrl === service.serverUrl).arguments
       return `调用 ${service.toolId}，参数严格为 ${JSON.stringify(args)}。`
     }).join('\n')
-    const prompt = `这是公开文档只读 MCP 验收。保持 Plan，不创建仓库、工作区、文件、Shell、发布、记忆或其他网络操作。\n${instructions}\n必须实际调用上述两个工具各一次，然后调用 complete，最终用不超过100字总结返回内容。不要改用内置搜索，不要模拟工具结果。`
-    await options.createPlanSession({ sessionId, taskId, userMessageId, repo, prompt })
+    const prompt = `这是公开文档 MCP 验收，仅授权指定文档查询。不得创建仓库、工作区、文件、运行 Shell、发布或修改记忆。\n${instructions}\n必须实际调用上述两个工具各一次，然后调用 complete，最终用不超过100字总结返回内容。不要改用内置搜索，不要模拟工具结果。`
+    await options.createCodeSession({ sessionId, taskId, userMessageId, repo, prompt })
     const admission = await options.api('/api/code/chat', 'POST', {
-      repo, mode: 'plan', modelId: options.modelId, sessionId, taskId, responseId,
+      repo, mode: 'code', modelId: 'anthropic/claude-haiku-5.5', reasoningEffort: 'medium', sessionId, taskId, responseId,
       messages: [{ role: 'user', content: prompt }],
     }, 202)
-    if (admission.taskId !== taskId || !UUID.test(admission.jobId ?? '')) throw new Error('MCP Plan admission binding failed')
-    options.registerTask({ ...admission, sessionId, marker: 'PUBLIC_MCP_PLAN' })
+    if (admission.taskId !== taskId || !UUID.test(admission.jobId ?? '')) throw new Error('MCP Code admission binding failed')
+    options.registerTask({ ...admission, sessionId, marker: 'PUBLIC_MCP_CODE' })
     result.taskId = taskId; result.jobId = admission.jobId
     const job = await options.waitJob(admission.jobId, 240_000)
-    if (job.status !== 'completed') throw new Error('MCP Plan model task did not complete')
+    if (job.status !== 'completed') throw new Error('MCP Code model task did not complete')
     const detail = await options.api(`/api/code/tasks/${taskId}`)
     modelEvidence(detail, result.services)
     result.modelCallsVerified = true; result.ok = true

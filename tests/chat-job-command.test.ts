@@ -240,6 +240,22 @@ test('new native turns use one atomic direct durable admission RPC', async () =>
   assert.equal(calls[0]?.args.input_user_content, 'first native turn')
   assert.equal(typeof calls[0]?.args.input_payload, 'object')
   assert.deepEqual(wakes, [{ queue: 'chat', jobId: generationId }])
+  const payload = calls[0]?.args.input_payload as { command: { renderEnabled: boolean; historyRetrieval: boolean; memoryEnabled: boolean } }
+  assert.equal(payload.command.renderEnabled, true)
+  assert.equal(payload.command.historyRetrieval, true)
+  assert.equal(payload.command.memoryEnabled, true)
+})
+
+test('explicit rendering and history opt-outs remain disabled in durable command defaults', async () => {
+  const input = directTurnInput(true)
+  input.body.renderEnabled = false
+  input.body.historyRetrieval = false
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = []
+  await enqueueChatJob(input, { persistPayload: async () => { throw new Error('inline') },
+    removePayload: async () => undefined, createAdminClient: () => directTurnClient(input, calls) })
+  const payload = calls[0]?.args.input_payload as { command: { renderEnabled: boolean; historyRetrieval: boolean } }
+  assert.equal(payload.command.renderEnabled, false)
+  assert.equal(payload.command.historyRetrieval, false)
 })
 
 test('existing native conversations use the same atomic admission RPC', async () => {

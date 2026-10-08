@@ -29,7 +29,8 @@ import type { SupabaseClient } from '@/lib/supabase/types'
 import { JobRuntimeError } from '../errors'
 import type { JobExecutionContext } from '../worker'
 import { loadAgentMessageHistory } from './agent-message-history'
-import { loadReadOnlyPlan, persistCodeTaskMode, provisionalPlanInput } from './agent-plan-input'
+import { persistCodeTaskMode, provisionalAgentInput } from './agent-plan-input'
+import { agentExecutionBackend } from '@/lib/agent/execution-policy'
 import { currentWorkspaceBranch } from './agent-workspace-branch'
 
 type AgentIdentity = {
@@ -72,7 +73,6 @@ export type LoadedAgentJob = {
   memoryEnabled: boolean
   sensitiveMemoryEnabled: boolean
   mode: CodeAgentMode
-  readOnlyPlan?: boolean
   workspaceReady: boolean
   selection: ChatModelSelection
   usingBalance: boolean
@@ -333,14 +333,15 @@ export async function loadAgentJob(
   const dependencies = { ...DEFAULT_DEPENDENCIES, ...overrides }
   const client = dependencies.client()
   const value = identity(context)
+  parseCodeMode(object(context.job.input).mode)
+  if (agentExecutionBackend() !== 'isolated') throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'Cloud Code requires an isolated cloud execution backend', { class: 'policy', retryable: false })
   const model = await selectedModel(context, client, value.userId)
   const provisional = isProvisionalRepositoryForSession(value.wireRepo, value.sessionId)
-  const requestedMode = parseCodeMode(object(context.job.input).mode)
-  const mode = requestedMode === 'plan' ? 'plan' : codeAgentMode(!provisional)
+  const mode = codeAgentMode(!provisional)
   const { task, source, memories, userMemoryContext } = await authorityRows(
     client, value, mode === 'workspace', dependencies.loadSharedMemoryContext,
   )
-  await persistCodeTaskMode(client, value, requestedMode)
+  if (object(context.job.input).mode !== undefined) await persistCodeTaskMode(client, value, 'code')
   const messages = await loadAgentMessageHistory(client, value, source, mode)
   const memory = {
     userMemories: userMemoryContext.memories, memoryEnabled: userMemoryContext.memoryEnabled,
@@ -349,18 +350,12 @@ export async function loadAgentJob(
   if (provisional) {
     const connection = await dependencies.githubIdentity(context, value.userId)
     return {
-      ...provisionalPlanInput({ client, identity: value, login: connection.login,
-        messages, memory, readOnlyPlan: requestedMode === 'plan' }),
+      ...provisionalAgentInput({ client, identity: value, login: connection.login,
+        messages, memory }),
       ...model,
     }
   }
   const credential = await dependencies.credential(context, value.userId)
-  if (mode === 'plan') {
-    return {
-      ...await loadReadOnlyPlan({ context, client, identity: value, credential,
-        agentBranch: task.agent_branch, messages, memories, memory }), ...model,
-    }
-  }
   const workspace = await dependencies.prepareWorkspace(context, client, value, task, credential)
   return {
     client,
@@ -374,7 +369,6 @@ export async function loadAgentJob(
     memoryEnabled: userMemoryContext.memoryEnabled,
     sensitiveMemoryEnabled: userMemoryContext.sensitiveMemoryEnabled,
     mode,
-    readOnlyPlan: false,
     workspaceReady: true,
     ...workspace,
     ...model,

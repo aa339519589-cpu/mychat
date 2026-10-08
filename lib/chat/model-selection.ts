@@ -247,21 +247,8 @@ export async function resolveChatModelSelection(options: {
       platformTierLabel: tierConfig.label,
     }
   }
-  const modelKey = tierConfig.id === '鸿篇' ? 'platform-deep' : tierConfig.model
-  const capability = getModelCapability(modelKey)
-  const apiKeyEnvironment = capability.provider.apiKeyEnv
-  const apiKey = apiKeyEnvironment ? process.env[apiKeyEnvironment] ?? '' : ''
-  if (!apiKey) throw new ChatModelSelectionError(500, { error: `服务未配置（${apiKeyEnvironment ?? '模型 API Key'} 未设置）` }, true, `${apiKeyEnvironment ?? 'model key'} not configured`)
-  return {
-    customEndpoint: false,
-    model: capability.id,
-    thinking: capability.supportsThinking && tierConfig.thinking,
-    reasoningEffort: null,
-    accessClass: 'legacy',
-    capability,
-    apiKey,
-    authType: capability.provider.authType,
-    outputKind: 'chat',
-    platformTierLabel: tierConfig.label,
-  }
+  const selection = resolveSharedClaudeSelection({ modelId: 'anthropic/claude-haiku-5.5',
+    reasoningEffort: options.reasoningEffort, allowPremium: options.allowPremium })
+  if (!selection) throw new ChatModelSelectionError(500, { error: '默认模型配置不可用' })
+  return selection
 }

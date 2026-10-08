@@ -116,7 +116,7 @@ const SHARED_CLAUDE_CATALOG_ROUTES: Record<string, SharedClaudeCatalogRoute> = {
     catalogId: 'anthropic/claude-haiku-5.5', defaultRuntimeModel: 'claude-haiku-5-5',
     runtimeModelEnv: 'CLAUDE_HAIKU_55_MODEL', name: 'Claude Haiku 5.5', access: 'premium',
     outputKind: 'chat', tools: true, reasoningEfforts: SHARED_CLAUDE_REASONING_EFFORTS,
-    defaultReasoningEffort: 'high', reasoningMandatory: false,
+    defaultReasoningEffort: 'medium', reasoningMandatory: false,
   },
 }
 

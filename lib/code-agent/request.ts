@@ -13,7 +13,7 @@ export type CodeChatMessage = {
 
 export type CodeChatRequest = {
   branch?: string
-  mode?: 'plan' | 'code'
+  mode?: 'code'
   repo: string | null
   modelId: string
   endpointId?: string
@@ -36,10 +36,9 @@ export function parseCodeBranch(value: unknown): string | undefined {
   return value
 }
 
-export function parseCodeMode(value: unknown): 'plan' | 'code' | undefined {
-  if (value === undefined || value === null) return undefined
-  if (value !== 'plan' && value !== 'code') throw new Error('任务模式无效')
-  return value
+export function parseCodeMode(value: unknown): 'code' {
+  if (value === undefined || value === null || value === 'code') return 'code'
+  throw new Error('Cloud Code 仅接受 code；此旧任务模式不受支持')
 }
 
 function optionalUuid(value: unknown, field: string): string | null {
@@ -107,9 +106,9 @@ export function parseCodeChatRequest(input: unknown): CodeChatRequest {
 
   return {
     ...(body.branch != null ? { branch: parseCodeBranch(body.branch) } : {}),
-    ...(body.mode != null ? { mode: parseCodeMode(body.mode) } : {}),
+    mode: parseCodeMode(body.mode),
     repo: repositoryOf(body.repo, sessionId),
-    modelId: requiredModelId(body.modelId),
+    modelId: requiredModelId(body.modelId ?? 'anthropic/claude-haiku-5.5'),
     ...(endpointId ? { endpointId } : {}),
     ...(reasoningEffort ? { reasoningEffort } : {}),
     messages: messagesOf(body.messages),
