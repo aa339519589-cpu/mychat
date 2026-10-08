@@ -3,7 +3,7 @@ export type CustomModelTransport = 'openai' | 'anthropic'
 export type CustomReasoningMode = 'none' | 'adaptive' | 'budget'
 
 export type CustomModelReasoningProfile = {
-  id: 'generic' | 'claude' | 'claude-sonnet-5' | 'claude-fable-5' | 'claude-haiku-4-5'
+  id: 'generic' | 'claude' | 'claude-sonnet-5' | 'claude-fable-5' | 'claude-opus-5' | 'claude-haiku-5' | 'claude-haiku-4-5'
   transport: CustomModelTransport
   reasoningMode: CustomReasoningMode
   reasoningEfforts: readonly ReasoningEffort[]
@@ -79,6 +79,8 @@ export function customModelReasoningProfile(modelId: string): CustomModelReasoni
   const normalized = normalizedModelId(modelId)
   if (containsModelToken(normalized, 'claude-sonnet-5')) return SONNET_5_PROFILE
   if (containsModelToken(normalized, 'claude-fable-5')) return FABLE_5_PROFILE
+  if (containsModelToken(normalized, 'claude-opus-5')) return { ...SONNET_5_PROFILE, id: 'claude-opus-5' }
+  if (containsModelToken(normalized, 'claude-haiku-5')) return { ...SONNET_5_PROFILE, id: 'claude-haiku-5' }
   if (containsModelToken(normalized, 'claude-haiku-4-5') || containsModelToken(normalized, 'claude-4-5-haiku')) {
     return HAIKU_45_PROFILE
   }

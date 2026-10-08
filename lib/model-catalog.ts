@@ -55,6 +55,7 @@ export const CURATED_OPENROUTER_MODELS: readonly CuratedModel[] = [
   { id: 'anthropic/claude-opus-4.6', name: 'Claude Opus 4.6', provider: 'Anthropic', access: 'premium', flagship: true },
   { id: 'anthropic/claude-sonnet-5', name: 'Claude Sonnet 5', provider: 'Anthropic', access: 'premium', flagship: true },
   { id: 'anthropic/claude-sonnet-4.6', name: 'Claude Sonnet 4.6', provider: 'Anthropic', access: 'trial', flagship: false },
+  { id: 'anthropic/claude-haiku-5.5', name: 'Claude Haiku 5.5', provider: 'Anthropic', access: 'premium', flagship: true },
   { id: 'anthropic/claude-haiku-4.5', name: 'Claude Haiku 4.5', provider: 'Anthropic', access: 'trial', flagship: false },
   { id: 'google/gemini-3.1-pro', name: 'Gemini 3.1 Pro', provider: 'Google', access: 'premium', flagship: true },
   { id: 'google/gemini-3.6-flash', name: 'Gemini 3.6 Flash', provider: 'Google', access: 'trial', flagship: false },

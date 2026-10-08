@@ -8,8 +8,11 @@ import { isModelOutputKind, type EndpointAuthType, type ModelOutputKind } from '
 import {
   customModelCapability,
   getDirectDeepSeekCatalogRoute,
+  getSharedClaudeCatalogRoute,
   getModelCapability,
   openRouterModelCapability,
+  resolveSharedClaudeProviderConfig,
+  sharedClaudeModelCapability,
   type ModelCapability,
 } from '@/lib/llm/models'
 import { ModelEndpointError, validateModelEndpointNetwork } from '@/lib/llm/openai-compatible'
@@ -87,6 +90,45 @@ function resolveDirectDeepSeekSelection(options: {
   }
 }
 
+function resolveSharedClaudeSelection(options: {
+  modelId: string
+  reasoningEffort?: string
+  allowPremium?: boolean
+}): ChatModelSelection | null {
+  const route = getSharedClaudeCatalogRoute(options.modelId)
+  if (!route) return null
+  if (options.allowPremium !== true) {
+    throw new ChatModelSelectionError(403, { error: '该模型需要会员' })
+  }
+  const requested = options.reasoningEffort?.toLowerCase()
+  if (requested && !route.reasoningEfforts.includes(requested)) {
+    throw new ChatModelSelectionError(409, { error: '当前模型不支持所选思考深度' })
+  }
+  const config = resolveSharedClaudeProviderConfig()
+  if (!config) {
+    throw new ChatModelSelectionError(
+      500,
+      { error: '共享 Claude 模型服务尚未配置' },
+      true,
+      'Shared Claude API not configured',
+    )
+  }
+  const effort = requested ?? route.defaultReasoningEffort
+  const capability = sharedClaudeModelCapability(route, config)
+  return {
+    customEndpoint: false,
+    model: capability.id,
+    thinking: effort !== 'none',
+    reasoningEffort: effort,
+    accessClass: route.access,
+    capability,
+    apiKey: config.apiKey,
+    authType: config.authType,
+    outputKind: route.outputKind,
+    platformTierLabel: route.name,
+  }
+}
+
 function customReasoningEffort(model: string, requestedValue: string | undefined): ReasoningEffort | null {
   const profile = customModelReasoningProfile(model)
   const requested = requestedValue === undefined ? null : normalizeReasoningEffort(requestedValue)
@@ -106,6 +148,10 @@ function customReasoningEffort(model: string, requestedValue: string | undefined
   return resolved
 }
 
+function resolveDirectSelection(options: { modelId: string; reasoningEffort?: string; allowPremium?: boolean }) {
+  return resolveSharedClaudeSelection(options) ?? resolveDirectDeepSeekSelection(options)
+}
+
 function ownedEndpointWithPrefetch(client: SupabaseServer, userId: string, endpointId: string,
   rows: readonly ModelEndpointRow[] | null | undefined, dependencies: ModelSelectionDependencies) {
   const owned = rows?.find(row => row.id.toLowerCase() === endpointId.toLowerCase() && row.user_id === userId)
@@ -123,7 +169,7 @@ export async function resolveChatModelSelection(options: {
   prefetchedEndpoints?: readonly ModelEndpointRow[] | null
 }, dependencies: ModelSelectionDependencies = DEFAULT_DEPENDENCIES): Promise<ChatModelSelection> {
   if (options.modelId) {
-    const directDeepSeek = resolveDirectDeepSeekSelection({
+    const directDeepSeek = resolveDirectSelection({
       modelId: options.modelId,
       reasoningEffort: options.reasoningEffort,
       allowPremium: options.allowPremium,
