@@ -3,8 +3,13 @@ import { resolveAuth } from '@/lib/api/guard'
 import { json } from '@/lib/api/response'
 import { readWorkspaceAuthorityView } from '@/lib/agent/workspace-authority-view'
 import { summarizeWorkspaceChanges } from '@/lib/agent/workspace-change-summary'
+import { handleWorkspaceUnifiedDiff } from '@/lib/agent/workspace-unified-diff-route'
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
+  if (new URL(_request.url).searchParams.has('format')) {
+    const { taskId } = await params
+    return handleWorkspaceUnifiedDiff(_request, taskId)
+  }
   const auth = await resolveAuth(_request)
   if (!auth.supabase || !auth.userId) return json({ error: '未登录' }, 401)
   const { taskId } = await params

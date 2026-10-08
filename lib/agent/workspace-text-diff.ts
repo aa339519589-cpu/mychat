@@ -80,7 +80,8 @@ function verifiedManifest(scope: DiffScope, authority: Authority, raw: unknown):
   return verified.manifest
 }
 
-function checkedEntry(scope: DiffScope, task: OwnedTask, authority: Authority, raw: unknown, path: string): SnapshotEntry {
+export function verifiedWorkspaceDiffEntry(scope: DiffScope, task: OwnedTask,
+  authority: Authority, raw: unknown, path: string): SnapshotEntry {
   if (task.id !== scope.taskId || task.userId !== scope.userId || task.repository !== scope.repository) {
     throw new WorkspaceDiffError('WRONG_TASK_SCOPE', 'The repository is not bound to this owned task')
   }
@@ -156,7 +157,8 @@ async function renderPatch(entry: SnapshotEntry, oldContent: Buffer, newContent:
     let patch: string
     try {
       const result = await run('git', args, { cwd: root, encoding: 'utf8', timeout: 2_000, maxBuffer: maximum,
-        signal, env: { PATH: process.env.PATH, HOME: root, LANG: 'C', LC_ALL: 'C', GIT_CONFIG_NOSYSTEM: '1',
+        signal, env: { PATH: process.env.PATH, NODE_ENV: process.env.NODE_ENV ?? 'production',
+          HOME: root, LANG: 'C', LC_ALL: 'C', GIT_CONFIG_NOSYSTEM: '1',
           GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null', GIT_ATTR_NOSYSTEM: '1' } })
       patch = result.stdout
     } catch (error) {
@@ -192,7 +194,7 @@ export async function workspaceTextDiff(input: {
   const scope = { ...input.scope }
   const maximum = boundedLimit(input.maxFileBytes, DEFAULT_FILE_BYTES, 1024 * 1024)
   const patchMaximum = boundedLimit(input.maxPatchBytes, DEFAULT_PATCH_BYTES, 4 * 1024 * 1024)
-  const entry = checkedEntry(scope, input.task, input.authority, input.manifest, input.path)
+  const entry = verifiedWorkspaceDiffEntry(scope, input.task, input.authority, input.manifest, input.path)
   const omitted = (reason: Omission): WorkspaceTextDiff => ({ status: 'omitted', format: 'none',
     scope, path: entry.path, reason })
   if (entry.kind === 'symlink') return omitted('symlink')
