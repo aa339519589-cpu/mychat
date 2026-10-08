@@ -1,0 +1,30 @@
+name: Verify Real Cloud Code Workspace
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+concurrency:
+  group: cloud-code-workspace-acceptance
+  cancel-in-progress: false
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+      - run: npm ci --ignore-scripts --legacy-peer-deps
+      - name: Isolated account, real model tools, offline recovery and limited PR
+        env:
+          PRODUCTION_URL: https://mychat-nm6x.onrender.com
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          CODE_PROBE_REPOSITORY: ${{ github.repository }}
+          CODE_PROBE_CONFIRM_PR: 'true'
+        run: npx tsx scripts/probe-cloud-code-workspace.mjs
