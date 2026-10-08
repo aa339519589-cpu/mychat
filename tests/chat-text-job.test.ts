@@ -122,6 +122,32 @@ function baseDependencies(run: ChatTextDependencies['runAgentLoop']): Partial<Ch
   }
 }
 
+test('a greeting retains conversation, user instructions, thinking and normal output budget', async () => {
+  const context = executionContext()
+  const input = chatInput()
+  input.context.messages = [{ role: 'user', content: '我的名字叫 Jim' },
+    { role: 'assistant', content: '记住了' }, { role: 'user', content: '你好' }]
+  input.context.customSystemPrompt = '使用正式语气'
+  input.selection.thinking = true
+  input.selection.reasoningEffort = 'high'
+  let historyPrepared = false
+  const result = await runChatTextJob(context.value, input, {
+    ...baseDependencies(async options => {
+      assert.equal(options.thinking, true)
+      assert.equal(options.reasoningEffort, 'high')
+      assert.ok((options.turnOptions?.maxOutputTokens ?? 0) >= 10_000)
+      assert.ok(JSON.stringify(options.messages).includes('我的名字叫 Jim'))
+      assert.ok(JSON.stringify(options.messages).includes('使用正式语气'))
+      assert.doesNotMatch(JSON.stringify(options.messages), /只是简短问候|自然回复一到两句/)
+      options.emit({ text: '你好，Jim。' })
+      return { totalTokens: 0 }
+    }),
+    prepareHistory: async () => { historyPrepared = true; return { conversationId: input.conversationId, renderedContext: '' } },
+  })
+  assert.equal(historyPrepared, true)
+  assert.equal(result.status, 'completed')
+})
+
 test('chat history index is atomically scheduled with completion instead of delaying model output or terminal', async () => {
   const context = executionContext()
   const input = chatInput()

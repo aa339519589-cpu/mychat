@@ -19,7 +19,6 @@ import { JobEventWriter } from '../event-writer'
 import { executeFencedToolEffect } from '../tool-effects'
 import type { JobExecutionContext, JobHandlerResult } from '../worker'
 import type { LoadedChatJob } from './chat-input'
-import { instantModelMessages } from './chat-instant'
 import {
   CHAT_MEDIA_PERSISTENCE_DEFAULTS,
   type ChatMediaPersistenceDependencies,
@@ -41,7 +40,6 @@ import {
 const SAFETY_ROUNDS = 16
 const MAX_OUTPUT_TOKENS = 40_000
 const TRIAL_MAX_OUTPUT_TOKENS = 10_000
-const INSTANT_MAX_OUTPUT_TOKENS = 96
 const REPLAY_SAFE_TOOLS = new Set(['web_search', 'fetch_url', 'search_connector_tools'])
 
 export type ChatTextDependencies = ChatMediaPersistenceDependencies & {
@@ -147,15 +145,6 @@ async function prepareChat(
   const { selection, command } = input
   const project = input.context.project
   const latestBeijingDate = latestBeijingDateFromMessages(input.context.messages)
-  const instantMessages = instantModelMessages(input)
-  if (instantMessages) {
-    appendNativeHealthContext(instantMessages, command.healthContext)
-    const [configuredTools, baseLength] = await Promise.all([
-      timedChatPreparation(context.job.id, 'tools', () => buildChatTools(context, input, latestBeijingDate, true)),
-      restoreChatTrajectory(context, runtime.writer, instantMessages),
-    ])
-    return { ...configuredTools, modelMessages: instantMessages, baseLength, instant: true }
-  }
   // Connector discovery, cross-conversation retrieval and image context are
   // independent reads. Do not put all three round trips before the first model
   // request in series; still await every required input before calling it.
@@ -317,8 +306,8 @@ async function runPreparedChat(
     apiKey: selection.apiKey,
     model: selection.model,
     adapter: selection.capability.provider.adapter,
-    thinking: prepared.instant ? false : selection.thinking,
-    reasoningEffort: prepared.instant ? null : selection.reasoningEffort as ReasoningEffort | null,
+    thinking: selection.thinking,
+    reasoningEffort: selection.reasoningEffort as ReasoningEffort | null,
     messages: prepared.modelMessages,
     tools: toOpenAITools(prepared.tools),
     emit: event => {
@@ -332,19 +321,17 @@ async function runPreparedChat(
       runtime.emit(event)
     },
     executeTool: createToolExecutor(context, input, runtime, prepared, dependencies),
-    maxRounds: prepared.instant ? 1 : SAFETY_ROUNDS,
-    leakedRetry: !prepared.instant,
-    autoContinue: prepared.instant || trial ? undefined : { maxContinuations: 4 },
+    maxRounds: SAFETY_ROUNDS,
+    leakedRetry: true,
+    autoContinue: trial ? undefined : { maxContinuations: 4 },
     onUsage: usageHandler(context, input, runtime),
     onCheckpoint: checkpointHandler(runtime, prepared.baseLength),
     turnOptions: {
       signal: context.signal,
-      timeoutMs: prepared.instant ? 20_000 : 120_000,
+      timeoutMs: 120_000,
       authType: selection.authType,
-      logTiming: prepared.instant || isDeepTierProxy || process.env.DEBUG_LLM_TIMING === '1',
-      maxOutputTokens: prepared.instant
-        ? INSTANT_MAX_OUTPUT_TOKENS
-        : trial ? TRIAL_MAX_OUTPUT_TOKENS : MAX_OUTPUT_TOKENS,
+      logTiming: isDeepTierProxy || process.env.DEBUG_LLM_TIMING === '1',
+      maxOutputTokens: trial ? TRIAL_MAX_OUTPUT_TOKENS : MAX_OUTPUT_TOKENS,
       idempotencyNamespace: context.job.id,
     },
     onTurn: logTurn(context.job.id),
