@@ -123,7 +123,11 @@ function accountMemoryTools(enabled: boolean): FunctionTool[] {
 function executionTools(options: CodeToolOptions): FunctionTool[] {
   if (!options.canExecute) return []
   return [functionTool('execute', `${options.executePermission}。改完代码后使用 verify 完整校验。`, {
-    properties: { command: { type: 'string', description: '要执行的命令' } }, required: ['command'],
+    properties: { command: { type: 'string', description: '要执行的命令' },
+      cwd: { type: 'string', description: 'workspace 内的相对子目录' },
+      timeout_ms: { type: 'integer', minimum: 1, maximum: 900000 },
+      max_output_chars: { type: 'integer', minimum: 1024, maximum: 32000 },
+    }, required: ['command'],
   })]
 }
 
@@ -141,7 +145,18 @@ function networkTools(): FunctionTool[] {
 function workspaceTools(options: CodeToolOptions): FunctionTool[] {
   if (!options.isWorkspace) return []
   const tools = [functionTool('git_diff', '查看 workspace 当前完整 git diff 和变更文件。修改后、发布前必须用它核对真实改动。')]
+  tools.push(
+    functionTool('find_files', '按相对路径模式查找真实项目文件，支持 *、**、?；结果带截断标记。', {
+      properties: { pattern: { type: 'string' } }, required: ['pattern'],
+    }),
+    functionTool('read_file_lines', '按行号读取真实文件的一部分。大文件优先分段读，不猜测未读内容。', {
+      properties: { path: { type: 'string' }, start_line: { type: 'integer', minimum: 1 },
+        line_count: { type: 'integer', minimum: 1, maximum: 400 } }, required: ['path'],
+    }),
+  )
   if (options.canExecute) {
+    tools.push(functionTool('inspect_environment', '读取隔离云端的实际工作目录与 Node、Python、Git 版本，不读取环境密钥。'),
+      functionTool('git_status', '读取云端隔离 workspace 的实际 Git 分支和变更状态。'))
     tools.push(functionTool('verify', '自动识别项目并运行可用的 lint、类型检查、测试和构建。默认在需要时安装依赖；发布前必须验证通过。', {
       properties: { install: { type: 'boolean', description: '缺少依赖时是否自动安装，默认 true' }, steps: {
         type: 'array', items: { type: 'string', enum: ['lint', 'typecheck', 'test', 'build'] },

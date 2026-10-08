@@ -49,6 +49,8 @@ async function executeCommand(context: CodeToolContext, params: ToolParams): Pro
   context.emit({ step: { kind: 'read', label: `执行：${command.slice(0, 60)}` } })
   if (!context.wsReady || !context.supabase) return '命令执行需要已就绪的隔离 workspace。'
   const remaining = context.sandboxTimeoutMs?.()
+  const requestedTimeout = typeof params.timeout_ms === 'number' && Number.isFinite(params.timeout_ms)
+    ? Math.max(1, Math.min(900_000, Math.floor(params.timeout_ms))) : 900_000
   const result = await runInWorkspace(
     context.supabase,
     context.wsUserId,
@@ -56,7 +58,10 @@ async function executeCommand(context: CodeToolContext, params: ToolParams): Pro
     command,
     {
       repoIsPrivate: context.repoIsPrivate,
-      ...(remaining == null ? {} : { timeoutMs: Math.max(1, remaining) }),
+      timeoutMs: Math.max(1, Math.min(requestedTimeout, remaining ?? requestedTimeout)),
+      ...(typeof params.cwd === 'string' ? { cwd: params.cwd } : {}),
+      ...(typeof params.max_output_chars === 'number' && Number.isFinite(params.max_output_chars)
+        ? { maxOutputChars: Math.max(1_024, Math.min(32_000, Math.floor(params.max_output_chars))) } : {}),
     },
   )
   return commandOutput(result)

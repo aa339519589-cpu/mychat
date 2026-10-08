@@ -30,6 +30,7 @@ import { completeChatTextRun, rethrowChatTextFailure } from './chat-text-complet
 import { buildChatSystem, buildChatTools, type ActiveChatTools } from './chat-text-context'
 import {
   chatTokenAccounting,
+  nativeHealthContextMetadata,
   restoreChatTrajectory,
   timedChatPreparation,
   withHistoryIndexOutbox,
@@ -377,6 +378,7 @@ export async function runChatTextJob(
     log.info('jobs', 'Chat model input preparation timing', {
       jobId: context.job.id, preparationMs: Date.now() - preparedStartedAt,
       instant: prepared.instant, tools: prepared.tools.length,
+      ...nativeHealthContextMetadata(input.command.healthContext),
     })
     await runPreparedChat(context, input, runtime, prepared, dependencies)
     const result = await completeChatTextRun(context, input, runtime, dependencies)

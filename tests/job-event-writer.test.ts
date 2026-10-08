@@ -26,6 +26,24 @@ function context(options: { rejectAppend?: boolean; progress?: JsonObject } = {}
   return { value, batches, checkpoints }
 }
 
+test('summary deltas have independent immediate offsets and durable recovery without exposing raw thinking', async () => {
+  const target = context()
+  const live: Array<{ kind: string; offset?: number; payload: JsonObject }> = []
+  const writer = new JobEventWriter(target.value, event => { live.push(event) })
+  writer.emit({ thinking: 'private reasoning' })
+  writer.emit({ reasoningSummary: '读取' })
+  writer.emit({ reasoningSummary: '文件' })
+  writer.emit({ text: '首' })
+  assert.deepEqual(live.filter(event => event.kind === 'reasoning.summary.delta').map(event => event.offset), [0, 2])
+  assert.equal(live.at(-1)?.payload.text, '首')
+  assert.equal(target.batches.length, 0, 'Live delivery must not wait for durable persistence')
+  assert.equal(writer.thinking(), '[[mychat:reasoning-summary:v1]]\n读取文件')
+  await writer.drain()
+  assert.equal(writer.snapshot().reasoningSummary, '读取文件')
+  const restored = new JobEventWriter(context({ progress: writer.snapshot() }).value, () => undefined)
+  assert.equal(restored.thinking(), writer.thinking())
+})
+
 test('job event writer coalesces deltas and checkpoints the materialized snapshot', async () => {
   const target = context()
   const writer = new JobEventWriter(target.value)

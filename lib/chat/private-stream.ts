@@ -32,6 +32,7 @@ const MAX_OUTPUT_TOKENS = 4096
 function privateEvent(event: ChatEvent): { kind: string; payload: object } | null {
   if ('text' in event) return { kind: 'text.delta', payload: { text: event.text } }
   if ('thinking' in event) return { kind: 'thinking.delta', payload: { thinking: event.thinking } }
+  if ('reasoningSummary' in event) return { kind: 'reasoning.summary.delta', payload: { reasoningSummary: event.reasoningSummary } }
   if ('search' in event) return { kind: 'tool.search', payload: { search: event.search } }
   return null
 }
@@ -53,6 +54,7 @@ class PrivateStreamSession {
   private closed = false
   private text = ''
   private thinking = ''
+  private reasoningSummary = ''
   private rawTokens = 0
   private fallbackInputTokens = 0
   private tokenUsage: TokenUsage | undefined
@@ -72,7 +74,8 @@ class PrivateStreamSession {
   private emit(event: ChatEvent): void {
     if ('text' in event) this.text += event.text
     if ('thinking' in event) this.thinking += event.thinking
-    if (this.text.length + this.thinking.length > 1_000_000) {
+    if ('reasoningSummary' in event) this.reasoningSummary += event.reasoningSummary
+    if (this.text.length + this.thinking.length + this.reasoningSummary.length > 1_000_000) {
       this.abort.abort(new Error('Private output limit'))
       return
     }
@@ -135,7 +138,7 @@ class PrivateStreamSession {
 
   private async settle(status: Terminal): Promise<void> {
     const { selection, lease, usingBalance, tokenLimit } = this.options
-    const outputChars = this.text.length + this.thinking.length
+    const outputChars = this.text.length + this.thinking.length + this.reasoningSummary.length
     const usageEstimated = this.rawTokens === 0 && outputChars > 0
     if (usageEstimated) this.rawTokens = Math.min(tokenLimit, this.fallbackInputTokens + Math.ceil(outputChars / 2))
     const weighted = weightedTokenUsage(this.rawTokens, selection.model, selection.thinking)
@@ -155,14 +158,16 @@ class PrivateStreamSession {
   private async finish(status: Terminal): Promise<void> {
     try {
       await this.settle(status)
-      this.send('job.terminal', { status, result: { content: this.text, thinking: this.thinking, tokenUsage: this.tokenUsage },
+      this.send('job.terminal', { status, result: { content: this.text,
+        thinking: this.reasoningSummary ? `[[mychat:reasoning-summary:v1]]\n${this.reasoningSummary}` : this.thinking,
+        tokenUsage: this.tokenUsage },
         ...(status === 'failed' ? { errorCode: 'JOB_DEPENDENCY_UNAVAILABLE' } : {}) })
     } catch {
       // An expired single-attempt lease releases the hold after a process/database failure.
       this.send('job.terminal', { status: 'failed', errorCode: 'JOB_DEPENDENCY_UNAVAILABLE' })
     }
     if (!this.closed) { this.closed = true; this.controller.close() }
-    this.text = ''; this.thinking = ''
+    this.text = ''; this.thinking = ''; this.reasoningSummary = ''
   }
 
   async run(): Promise<void> {

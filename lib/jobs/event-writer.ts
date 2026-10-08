@@ -1,4 +1,5 @@
 import type { ChatEvent } from '@/lib/llm/events'
+import { randomUUID } from 'node:crypto'
 import { createAdminClient } from '@/lib/supabase/admin'
 import type { JobEventDraft, JsonObject, JsonValue } from './contracts'
 import { LiveJobPublisher, type LiveJobEventInput } from './live-events'
@@ -8,8 +9,8 @@ const FLUSH_INTERVAL_MS = 12
 const FLUSH_BATCH_SIZE = 16
 const MAX_COALESCED_DELTA_CHARS = 64
 
-type DeltaValue = { field: 'text' | 'thinking'; value: string }
-type EventOffsets = { text: number; thinking: number; isText: boolean }
+type DeltaValue = { field: 'text' | 'thinking' | 'reasoningSummary'; value: string }
+type EventOffsets = { text: number; thinking: number; reasoningSummary: number; isText: boolean }
 
 function jsonObject(value: object): JsonObject {
   const parsed: unknown = JSON.parse(JSON.stringify(value))
@@ -20,6 +21,7 @@ function jsonObject(value: object): JsonObject {
 function eventDraft(event: ChatEvent): JobEventDraft | null {
   if ('text' in event) return { kind: 'text.delta', payload: { text: event.text } }
   if ('thinking' in event) return { kind: 'thinking.delta', payload: { thinking: event.thinking } }
+  if ('reasoningSummary' in event) return { kind: 'reasoning.summary.delta', payload: { reasoningSummary: event.reasoningSummary } }
   if ('media' in event) return { kind: 'media.uploaded', payload: { media: jsonObject(event.media) } }
   if ('memory' in event) return { kind: 'tool.memory', payload: { memory: jsonObject(event.memory) } }
   if ('search' in event) return { kind: 'tool.search', payload: { search: jsonObject(event.search) } }
@@ -29,7 +31,7 @@ function eventDraft(event: ChatEvent): JobEventDraft | null {
   if ('imageSummary' in event) {
     return { kind: 'context.image_summary', payload: { imageSummary: jsonObject(event.imageSummary) } }
   }
-  if ('step' in event) return { kind: 'agent.step', payload: { step: jsonObject(event.step) } }
+  if ('step' in event) return { kind: 'agent.step', payload: { step: jsonObject({ ...event.step, eventID: randomUUID() }) } }
   if ('plan' in event) return { kind: 'agent.plan', payload: { plan: jsonObject(event.plan) } }
   if ('error' in event) return { kind: 'job.warning', payload: { message: event.error } }
   return null
@@ -41,6 +43,9 @@ function deltaValue(event: JobEventDraft): DeltaValue | null {
   }
   if (event.kind === 'thinking.delta' && typeof event.payload.thinking === 'string') {
     return { field: 'thinking', value: event.payload.thinking }
+  }
+  if (event.kind === 'reasoning.summary.delta' && typeof event.payload.reasoningSummary === 'string') {
+    return { field: 'reasoningSummary', value: event.payload.reasoningSummary }
   }
   return null
 }
@@ -93,6 +98,7 @@ export class JobEventWriter {
   private timer: ReturnType<typeof setTimeout> | null = null
   private fullText = ''
   private fullThinking = ''
+  private fullReasoningSummary = ''
   private firstTextFlushed = false
 
   constructor(
@@ -106,6 +112,7 @@ export class JobEventWriter {
     const progress = context.job.checkpoint?.progress
     this.fullText = materializedText(progress, 'content', 'contentParts')
     this.fullThinking = materializedText(progress, 'thinking', 'thinkingParts')
+    this.fullReasoningSummary = typeof progress?.reasoningSummary === 'string' ? progress.reasoningSummary : ''
     this.firstTextFlushed = this.fullText.length > 0
   }
 
@@ -125,6 +132,7 @@ export class JobEventWriter {
       thinking: this.fullThinking,
       contentParts: this.fullText ? [{ type: 'text', text: this.fullText }] : [],
       thinkingParts: this.fullThinking ? [{ type: 'text', text: this.fullThinking }] : [],
+      ...(this.fullReasoningSummary ? { reasoningSummary: this.fullReasoningSummary } : {}),
       ...extra,
     }
   }
@@ -134,7 +142,8 @@ export class JobEventWriter {
   }
 
   thinking(): string {
-    return this.fullThinking
+    return this.fullReasoningSummary
+      ? `[[mychat:reasoning-summary:v1]]\n${this.fullReasoningSummary}` : this.fullThinking
   }
 
   async append(kind: string, payload: JsonObject, idempotencyKey?: string): Promise<void> {
@@ -192,19 +201,24 @@ export class JobEventWriter {
     const offsets = {
       text: this.fullText.length,
       thinking: this.fullThinking.length,
+      reasoningSummary: this.fullReasoningSummary.length,
       isText: 'text' in event && event.text.length > 0,
     }
     if ('text' in event) this.fullText += event.text
     if ('thinking' in event) this.fullThinking += event.thinking
+    if ('reasoningSummary' in event) this.fullReasoningSummary += event.reasoningSummary
     return offsets
   }
 
   private relayDelta(draft: JobEventDraft, current: DeltaValue | null, offsets: EventOffsets): void {
-    if (!current) return
+    if (!current) {
+      if (draft.kind === 'agent.step') this.publishLive({ kind: draft.kind, payload: draft.payload })
+      return
+    }
     this.publishLive({
       kind: draft.kind,
       payload: draft.payload,
-      offset: current.field === 'text' ? offsets.text : offsets.thinking,
+      offset: offsets[current.field],
     })
   }
 

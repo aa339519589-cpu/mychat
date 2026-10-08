@@ -15,6 +15,7 @@ import type {
 import type { ModelMessage, ModelToolCall } from './types'
 
 type AnthropicAccumulatorOptions = {
+  summarizedThinking?: boolean
   model: string
   emit: Emit
   timingEnabled: boolean
@@ -143,7 +144,7 @@ export class AnthropicTurnAccumulator {
     if (typeof value !== 'string' || !value) return
     const text = this.boundedText(value)
     this.reasoningContent += text
-    this.options.emit({ thinking: text })
+    this.options.emit(this.options.summarizedThinking ? { reasoningSummary: text } : { thinking: text })
   }
 
   private acceptUsage(value: unknown): void {
