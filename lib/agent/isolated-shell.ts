@@ -33,15 +33,17 @@ const MAX_COMMAND_TIMEOUT = 15 * 60_000
 const MAX_SYNC_FILES = 500
 const E2B_SYNC_VERSION = 1
 
-function sandboxCancellation(sandbox: Sandbox, signal?: AbortSignal): () => void {
+function sandboxCancellation(sandbox: Sandbox, signal?: AbortSignal, cleanupCreated?: () => Promise<void>): () => void {
+  if (signal?.aborted && cleanupCreated) void cleanupCreated().catch(() => {})
   signal?.throwIfAborted()
-  const cancel = () => { void sandbox.kill().catch(() => {}) }
+  const cancel = () => { void (cleanupCreated ? cleanupCreated() : sandbox.kill()).catch(() => {}) }
   signal?.addEventListener('abort', cancel, { once: true })
   return () => signal?.removeEventListener('abort', cancel)
 }
 
-async function executeSandboxCommand(sandbox: Sandbox, command: string, opts: ShellOptions, timeoutMs: number) {
-  const removeCancellation = sandboxCancellation(sandbox, opts.signal)
+async function executeSandboxCommand(sandbox: Sandbox, command: string, opts: ShellOptions, timeoutMs: number,
+  cleanupCreated?: () => Promise<void>) {
+  const removeCancellation = sandboxCancellation(sandbox, opts.signal, cleanupCreated)
   try {
     const result = await sandbox.commands.run(command, {
       cwd: opts.cwd ? `${REMOTE_WORKSPACE_ROOT}/${opts.cwd}` : REMOTE_WORKSPACE_ROOT,
@@ -96,6 +98,16 @@ export async function cleanupIsolatedWorkspace(
 type SandboxConnection = {
   sandbox: Sandbox
   syncInitialized: boolean
+  // Only the exact resource returned by this invocation's create call is owned for setup cleanup.
+  cleanupCreated?: () => Promise<void>
+}
+
+function createdSandboxCleanup(sandbox: Sandbox): () => Promise<void> {
+  let pending: Promise<void> | undefined
+  return () => {
+    pending ??= Promise.resolve().then(() => sandbox.kill()).then(() => undefined)
+    return pending
+  }
 }
 
 async function getSandbox(
@@ -103,9 +115,12 @@ async function getSandbox(
   userId: string,
   taskId: string,
   repoIsPrivate: boolean,
+  signal?: AbortSignal,
 ): Promise<SandboxConnection> {
+  signal?.throwIfAborted()
   const allowOut = sandboxEgressForRepository(repoIsPrivate)
   const meta = await taskMeta(supabase, userId, taskId)
+  signal?.throwIfAborted()
   const existingId = typeof meta.e2bSandboxId === "string" ? meta.e2bSandboxId : null
   const syncVersion = meta.e2bSyncVersion
   if (syncVersion !== undefined && syncVersion !== null && syncVersion !== E2B_SYNC_VERSION) {
@@ -114,9 +129,15 @@ async function getSandbox(
   if (existingId) {
     try {
       const existing = await Sandbox.connect(existingId, { timeoutMs: SANDBOX_TIMEOUT })
+      signal?.throwIfAborted()
       await existing.updateNetwork({ allowOut })
+      signal?.throwIfAborted()
       return { sandbox: existing, syncInitialized: syncVersion === E2B_SYNC_VERSION }
-    } catch { /* expired, unreachable, or unable to enforce the egress policy */ }
+    } catch {
+      // Cancellation cannot become an instruction to provision a replacement.
+      signal?.throwIfAborted()
+      /* expired, unreachable, or unable to enforce the egress policy */
+    }
   }
 
   const options = {
@@ -129,20 +150,21 @@ async function getSandbox(
   const sandbox = template
     ? await Sandbox.create(template, options)
     : await Sandbox.create(options)
-
-  const saved = await mergeTaskMeta(
-    supabase,
-    userId,
-    taskId,
-    { e2bSandboxId: sandbox.sandboxId, executionBackend: "e2b" },
-    ["e2bSyncVersion"],
-  )
-  if (!saved) {
-    try { await sandbox.kill() } catch { /* best-effort cleanup after failed ownership persistence */ }
-    throw new Error("无法持久化隔离沙箱所有权")
+  const cleanupCreated = createdSandboxCleanup(sandbox)
+  try {
+    signal?.throwIfAborted()
+    const saved = await mergeTaskMeta(
+      supabase, userId, taskId,
+      { e2bSandboxId: sandbox.sandboxId, executionBackend: "e2b" },
+      ["e2bSyncVersion"],
+    )
+    if (!saved) throw new Error("无法持久化隔离沙箱所有权")
+    signal?.throwIfAborted()
+    return { sandbox, syncInitialized: false, cleanupCreated }
+  } catch (error) {
+    try { await cleanupCreated() } catch { throw new Error("新建隔离沙箱清理未确认") }
+    throw error
   }
-
-  return { sandbox, syncInitialized: false }
 }
 
 async function syncWorkspace(
@@ -243,22 +265,32 @@ export async function runInIsolatedWorkspace(
   const startedAt = Date.now()
   const maxOutput = opts.maxOutputChars ?? 10_000
   const timeoutMs = Math.min(opts.timeoutMs ?? 5 * 60_000, MAX_COMMAND_TIMEOUT)
+  let cleanupCreated: (() => Promise<void>) | undefined
+  let hydrated = false
+  let removeLifecycleCancellation = () => {}
 
   try {
-    const connection = await getSandbox(supabase, userId, taskId, opts.repoIsPrivate === true)
+    opts.signal?.throwIfAborted()
+    const connection = await getSandbox(supabase, userId, taskId, opts.repoIsPrivate === true, opts.signal)
     const { sandbox } = connection
+    cleanupCreated = connection.cleanupCreated
+    if (cleanupCreated) removeLifecycleCancellation = sandboxCancellation(sandbox, opts.signal, cleanupCreated)
+    opts.signal?.throwIfAborted()
     const hydration = await hydrateIsolatedWorkspace(
       sandbox,
       userId,
       taskId,
       connection.syncInitialized,
     )
+    opts.signal?.throwIfAborted()
     if (hydration.initial) {
       const saved = await mergeTaskMeta(supabase, userId, taskId, { e2bSyncVersion: E2B_SYNC_VERSION })
       if (!saved) throw new Error("无法持久化隔离沙箱同步协议版本")
     }
+    opts.signal?.throwIfAborted()
+    hydrated = true
 
-    const execution = await executeSandboxCommand(sandbox, command, opts, timeoutMs)
+    const execution = await executeSandboxCommand(sandbox, command, opts, timeoutMs, cleanupCreated)
     let stdout = execution.stdout
     const { stderr, exitCode, error } = execution
     opts.signal?.throwIfAborted()
@@ -270,6 +302,7 @@ export async function runInIsolatedWorkspace(
       taskId,
       hydration.manifestText,
     )
+    opts.signal?.throwIfAborted()
     if (synced.length) stdout += `${stdout ? "\n" : ""}已同步 ${synced.length} 个文件回 workspace。`
     return {
       stdout: sanitizeCommandOutput(redactSensitive(stdout)).slice(0, maxOutput),
@@ -281,14 +314,18 @@ export async function runInIsolatedWorkspace(
       backend: "isolated",
     }
   } catch (caught) {
+    let failure = caught
+    if (cleanupCreated && (!hydrated || opts.signal?.aborted)) {
+      try { await cleanupCreated() } catch { failure = new Error("新建隔离沙箱清理未确认") }
+    }
     return {
       stdout: "",
-      stderr: sanitizeCommandOutput(redactSensitive(errorMessage(caught))).slice(0, maxOutput),
+      stderr: sanitizeCommandOutput(redactSensitive(errorMessage(failure))).slice(0, maxOutput),
       exitCode: 1,
       durationMs: Date.now() - startedAt,
       timedOut: false,
       blocked: false,
       backend: "isolated",
     }
-  }
+  } finally { removeLifecycleCancellation() }
 }
