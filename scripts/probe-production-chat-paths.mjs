@@ -130,7 +130,8 @@ async function probe(config, test) {
   let reachedTerminal = false
   try {
     const photo = test.kind === 'photo' ? diagnosticPhoto() : null
-    const body = { tier: '绝句', modelId: test.model, reasoningEffort: 'none',
+    const body = { tier: '绝句', modelId: test.model,
+      ...(test.model !== 'anthropic/claude-fable-5.1' ? { reasoningEffort: 'none' } : {}),
       messages: [{ id: userMessageId, role: 'user', content: test.prompt, ts: new Date().toISOString(), ...(photo ? { images: [photo] } : {}) }],
       searchMode: test.kind === 'web' ? 'web' : 'off', historyRetrieval: false, renderEnabled: false,
       connectorIds: [], conversationId: randomUUID(), userMessageId, generationId, assistantMessageId: randomUUID(),

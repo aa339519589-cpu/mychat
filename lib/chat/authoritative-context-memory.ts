@@ -64,8 +64,9 @@ export async function loadGlobalMemories(
   client: SupabaseClient,
   userId: string,
   conversationMemoryEnabled: boolean,
+  prefetchedPreferences?: Promise<MemoryPreferences>,
 ): Promise<{ enabled: boolean; sensitiveEnabled: boolean; memories: Memory[] }> {
-  const preferences = await loadMemoryPreferences(client, userId)
+  const preferences = await (prefetchedPreferences ?? loadMemoryPreferences(client, userId))
   if (!preferences.enabled || !conversationMemoryEnabled) {
     return { ...preferences, enabled: false, memories: [] }
   }

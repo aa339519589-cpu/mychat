@@ -36,6 +36,7 @@ type LoadContextInput = {
   conversationId: string
   userMessageId: string
   allowInstant?: boolean
+  preferences?: Promise<MemoryPreferences>
 }
 
 type AuthoritativeChatContext = {
@@ -130,11 +131,12 @@ async function loadProjectContext(
   userId: string,
   projectId: string,
   conversationMemoryEnabled: boolean,
+  prefetchedPreferences?: Promise<MemoryPreferences>,
 ): Promise<{ project: ProjectContext; preferences: MemoryPreferences }> {
   const [projectResult, preferences] = await Promise.all([
     client.from('projects').select('id, instructions').eq('id', projectId)
       .eq('user_id', userId).maybeSingle(),
-    loadMemoryPreferences(client, userId),
+    prefetchedPreferences ?? loadMemoryPreferences(client, userId),
   ])
   if (projectResult.error || !projectResult.data) {
     throw new AuthoritativeContextError('CONTEXT_UNAVAILABLE', '项目上下文暂时不可用')
@@ -280,7 +282,7 @@ async function fullContext(
   if (projectId) {
     const [messages, loadedProject] = await Promise.all([
       loadMessageHistory(historyInput),
-      loadProjectContext(input.client, input.userId, projectId, conversationMemoryEnabled),
+      loadProjectContext(input.client, input.userId, projectId, conversationMemoryEnabled, input.preferences),
     ])
     assertContextBudget({ messages, project: loadedProject.project })
     return {
@@ -293,7 +295,7 @@ async function fullContext(
   }
   const [messages, globalMemory] = await Promise.all([
     loadMessageHistory(historyInput),
-    loadGlobalMemories(input.client, input.userId, conversationMemoryEnabled),
+    loadGlobalMemories(input.client, input.userId, conversationMemoryEnabled, input.preferences),
   ])
   assertContextBudget({ messages, memories: globalMemory.memories })
   return {
