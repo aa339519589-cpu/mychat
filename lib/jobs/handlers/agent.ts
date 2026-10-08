@@ -2,6 +2,8 @@ import { codeContinuationPrompt } from '@/lib/agent/continuation'
 import { saveAgentRunState } from '@/lib/agent/run-state'
 import { finalCodeTaskStatus, isCodeReplyComplete } from '@/lib/code-agent/runtime'
 import { buildCodeSystem } from '@/lib/code-agent/system-prompt'
+import { modelToolCallingDriver } from '@/lib/code-agent/driver'
+import { createCodeMcpBroker } from '@/lib/code-tools/mcp-broker'
 import { runAgentLoop, type AgentLoopOpts } from '@/lib/llm/agent-loop'
 import { chatCompletionsUrl, toOpenAI } from '@/lib/llm/openai'
 import type { ReasoningEffort } from '@/lib/llm/provider-adapters'
@@ -72,7 +74,7 @@ export type AgentTaskDependencies = {
 
 const DEFAULT_DEPENDENCIES: AgentTaskDependencies = {
   createRuntime: createAgentRuntime,
-  runLoop: runAgentLoop,
+  runLoop: modelToolCallingDriver.run,
   saveRunState: saveAgentRunState,
 }
 
@@ -97,6 +99,7 @@ function prepareAgentRun(
     input.userMemories,
     input.memoryEnabled,
     input.sensitiveMemoryEnabled,
+    input.readOnlyPlan === true,
   )
   const messages: ModelMessage[] = [{ role: 'system', content: system }, ...toOpenAI(input.messages)]
   const baseLength = messages.length
@@ -183,6 +186,14 @@ function agentLoopOptions(input: {
       maxContinuations: trial ? 6 : 20,
       prompt: ({ turn }) => {
         const progress = runtime.progress.snapshot(job.workspaceReady)
+        if (job.readOnlyPlan === true) {
+          if (!turn.failed && !turn.truncated && !turn.leaked && !turn.hasIncompleteToolCall
+            && turn.toolCalls.length === 0 && turn.content.trim()) {
+            runtime.progress.toolState.markCompleted()
+            return null
+          }
+          return progress.completed || progress.waitingForUser ? null : '继续只读分析并给出完整计划，然后调用 complete。禁止创建仓库、写文件或执行命令。'
+        }
         if (isCodeReplyComplete(progress, turn)) {
           runtime.progress.toolState.markCompleted()
           return null
@@ -212,7 +223,7 @@ async function completeAgentRun(input: {
   const { context, job, runtime, writer, attemptTokens } = input
   const content = writer.text()
   const state = runtime.progress.snapshot(job.workspaceReady)
-  const taskStatus = finalCodeTaskStatus(false, state)
+  const taskStatus = job.readOnlyPlan === true && state.completed ? 'waiting_for_user' : finalCodeTaskStatus(false, state)
   if (taskStatus === 'running') {
     throw new JobRuntimeError('JOB_INTERNAL', 'Agent stopped before a durable completion point')
   }
@@ -250,7 +261,13 @@ export async function runAgentTaskJob(
 ): Promise<JobHandlerResult> {
   const dependencies = { ...DEFAULT_DEPENDENCIES, ...overrides }
   const writer = new JobEventWriter(context)
-  const runtime = dependencies.createRuntime(context, input, writer)
+  const broker = dependencies.createRuntime === createAgentRuntime ? await createCodeMcpBroker({
+    userId: input.userId, supabase: input.client,
+    mode: input.mode === 'plan' ? 'plan' : 'code',
+    allowExternalNetwork: !input.repoIsPrivate, signal: context.signal,
+    audit: event => { void writer.append('tool.mcp_audit', { ...event }) },
+  }) : undefined
+  const runtime = dependencies.createRuntime(context, input, writer, broker)
   await runtime.recorder.setTaskStatus('running')
   const prepared = prepareAgentRun(context, input, runtime.canExecute)
   const callbacks = createAgentLoopCallbacks({

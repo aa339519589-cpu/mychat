@@ -246,7 +246,7 @@
     },
     "lib/agent/shell.ts": {
       "complexity": [
-        17
+        16
       ]
     },
     "lib/agent/snapshot/cas-capture.ts": {
@@ -267,10 +267,10 @@
     },
     "lib/agent/verify.ts": {
       "complexity": [
-        25
+        24
       ],
       "maxLines": [
-        160
+        158
       ]
     },
     "lib/agent/workspace-inspection.ts": {

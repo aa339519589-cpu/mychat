@@ -81,12 +81,20 @@ function endpointUrl(input: string | URL): URL {
  * and HTTPS SNI retain the original hostname while lookup stays pinned to the
  * address that passed the SSRF policy.
  */
+async function resolveFetchEndpoint(url: URL, signal: AbortSignal | null | undefined, policy: { publicOnly?: boolean }) {
+  const target = await resolveModelEndpoint(url, signal ?? undefined)
+  if (policy.publicOnly && classifyModelEndpointAddress(target.address) !== 'public') {
+    throw new ModelEndpointError('MCP 仅允许访问公网地址', 'network', 'private_url', 403)
+  }
+  return target
+}
+
 export async function safeModelEndpointFetch(
   input: string | URL,
-  init: RequestInit = {},
+  init: RequestInit = {}, policy: { publicOnly?: boolean } = {},
 ): Promise<Response> {
   const url = endpointUrl(input)
-  const target = await resolveModelEndpoint(url, init.signal ?? undefined)
+  const target = await resolveFetchEndpoint(url, init.signal, policy)
   const headers = new Headers(init.headers)
   headers.delete('host')
   const sendsCredential = ['authorization', 'x-api-key', 'api-key']

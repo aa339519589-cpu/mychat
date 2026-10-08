@@ -12,6 +12,8 @@ export type CodeChatMessage = {
 }
 
 export type CodeChatRequest = {
+  branch?: string
+  mode?: 'plan' | 'code'
   repo: string | null
   modelId: string
   endpointId?: string
@@ -20,6 +22,24 @@ export type CodeChatRequest = {
   taskId: string | null
   responseId: string | null
   sessionId: string | null
+}
+
+export function parseCodeBranch(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined
+  if (typeof value !== 'string' || value.length > 240 || !value.length
+    || value.startsWith('-') || value.startsWith('/') || value.endsWith('/')
+    || /[\s~^:?*\[\\\u0000-\u001f\u007f]/.test(value)
+    || value.includes('..') || value.includes('@{') || value.includes('//')
+    || value.split('/').some(part => part.startsWith('.') || part.endsWith('.') || part.endsWith('.lock'))) {
+    throw new Error('分支参数无效')
+  }
+  return value
+}
+
+export function parseCodeMode(value: unknown): 'plan' | 'code' | undefined {
+  if (value === undefined || value === null) return undefined
+  if (value !== 'plan' && value !== 'code') throw new Error('任务模式无效')
+  return value
 }
 
 function optionalUuid(value: unknown, field: string): string | null {
@@ -86,6 +106,8 @@ export function parseCodeChatRequest(input: unknown): CodeChatRequest {
   const reasoningEffort = optionalReasoningEffort(body.reasoningEffort)
 
   return {
+    ...(body.branch != null ? { branch: parseCodeBranch(body.branch) } : {}),
+    ...(body.mode != null ? { mode: parseCodeMode(body.mode) } : {}),
     repo: repositoryOf(body.repo, sessionId),
     modelId: requiredModelId(body.modelId),
     ...(endpointId ? { endpointId } : {}),

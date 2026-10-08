@@ -50,6 +50,7 @@ const ALLOWED_COMMANDS: RegExp[] = [
   /^git\s+(status|diff|branch|log|stash|add|checkout|commit|merge|remote|config|rev-parse|show|restore|reset|switch)(?:\s|$)/i,
   /^node\s+(--version|-v)(?:\s|$)/i,
   /^node\s+--check\s+[^\s]+(?:\s|$)/i,
+  /^node\s+(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+\.(?:mjs|cjs|js)$/,
   /^npm\s+(--version|-v|ci|install|test)(?:\s|$)/i,
   /^npm\s+run\s+(build|lint|typecheck|test|start|dev)(?:\s|$)/i,
   /^pnpm\s+(--version|install|build|test|lint|typecheck)(?:\s|$)/i,

@@ -7,10 +7,11 @@ import { join } from "path"
 import type { SupabaseClient } from "@/lib/supabase/types"
 import { workspacePath } from "./workspace"
 import { checkCommand, sanitizeCommandOutput } from "./command-security"
-import { safeResolve } from "./path-security"
+import { safeResolve, validatePath } from "./path-security"
 import { createRecorder } from "./recorder"
 import { runInIsolatedWorkspace } from "./isolated-shell"
 import { agentExecutionBackend } from "./execution-policy"
+import type { ExecutionBackend } from './execution-backend'
 
 export { localWorkspaceExecutionAllowed } from "./execution-policy"
 
@@ -30,6 +31,7 @@ export type ShellResult = {
 }
 
 export type ShellOptions = {
+  signal?: AbortSignal
   cwd?: string
   timeoutMs?: number
   maxOutputChars?: number
@@ -49,6 +51,14 @@ export function workspaceProcessEnv(): NodeJS.ProcessEnv {
   }
 }
 
+function workspaceCommandVerdict(command: string, root: string) {
+  const nodeScript = /^node\s+((?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+\.(?:mjs|cjs|js))$/.exec(command.trim())
+  if (nodeScript && !validatePath(root, nodeScript[1]).ok) {
+    return { allowed: false as const, reason: 'Node 脚本路径越界或通过符号链接' }
+  }
+  return checkCommand(command)
+}
+
 // ── 执行命令 ──
 
 export async function runInWorkspace(
@@ -58,6 +68,7 @@ export async function runInWorkspace(
   command: string,
   opts: ShellOptions = {},
 ): Promise<ShellResult> {
+  opts.signal?.throwIfAborted()
   // ① 校验 task 归属 + workspace
   const { data: task } = await supabase
     .from("agent_tasks").select("id, repo").eq("id", taskId).eq("user_id", userId).single()
@@ -78,7 +89,7 @@ export async function runInWorkspace(
   if (backend === "disabled") {
     return blockedOut("本机命令执行已关闭；请配置 E2B_API_KEY 使用隔离沙箱")
   }
-  const verdict = checkCommand(command)
+  const verdict = workspaceCommandVerdict(command, cwd)
   if (!verdict.allowed) return blockedOut(verdict.reason)
 
   // ③ recorder
@@ -90,14 +101,20 @@ export async function runInWorkspace(
 
   // Selecting the backend once is intentional: an E2B error is returned as an
   // isolated failure and can never cause the command to be retried on the host.
-  const result = backend === "isolated"
-    ? await runInIsolatedWorkspace(supabase, userId, taskId, command, opts)
-    : await execCommand(
-        command,
+  const selectedBackend: ExecutionBackend = backend === 'isolated' ? {
+    id: 'isolated', location: 'cloud',
+    execute: (value, options) => runInIsolatedWorkspace(supabase, userId, taskId, value, options),
+  } : {
+    id: 'local', location: 'local_test',
+    execute: (value, options) => execCommand(
+        value,
         cwd,
-        Math.min(opts.timeoutMs ?? DEFAULT_TIMEOUT, MAX_TIMEOUT),
-        opts.maxOutputChars ?? DEFAULT_MAX_OUTPUT,
-      )
+        Math.min(options.timeoutMs ?? DEFAULT_TIMEOUT, MAX_TIMEOUT),
+        options.maxOutputChars ?? DEFAULT_MAX_OUTPUT,
+        options.signal,
+      ),
+  }
+  const result = await selectedBackend.execute(command, opts)
 
   // 写入 tool_call（已通过 recorder）
   await recorder.recordToolCall("execute", safeInput, () =>
@@ -129,7 +146,7 @@ function formatShellResult(r: ShellResult): string {
 // ── 底层 spawn 执行 ──
 
 async function execCommand(
-  command: string, cwd: string, timeoutMs: number, maxOutput: number,
+  command: string, cwd: string, timeoutMs: number, maxOutput: number, signal?: AbortSignal,
 ): Promise<ShellResult> {
   return new Promise((resolve) => {
     const start = Date.now()
@@ -144,11 +161,13 @@ async function execCommand(
       timeout: timeoutMs,
       env: workspaceProcessEnv(),
       stdio: ["ignore", "pipe", "pipe"],
+      signal,
     })
 
     const finish = () => {
       if (done) return
       done = true
+      clearTimeout(timer)
       const durationMs = Date.now() - start
       resolve({
         stdout: sanitizeCommandOutput(stdout.slice(0, maxOutput)),
@@ -174,7 +193,7 @@ async function execCommand(
     child.on("close", (code) => { exitCode = code; finish() })
     child.on("error", (err) => { stderr += err.message; exitCode = exitCode ?? 1; finish() })
 
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       if (!done) {
         timedOut = true
         exitCode = exitCode ?? 124

@@ -3,7 +3,7 @@ import { resolveAuth } from '@/lib/api/guard'
 import { json } from '@/lib/api/response'
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ taskId: string }> }) {
-  const auth = await resolveAuth()
+  const auth = await resolveAuth(_request)
   if (!auth.supabase || !auth.userId) return json({ error: '未登录' }, 401)
   const { taskId } = await params
   const [{ data: task }, { data: head, error }] = await Promise.all([

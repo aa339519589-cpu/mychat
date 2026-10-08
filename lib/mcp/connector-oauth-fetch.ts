@@ -42,7 +42,7 @@ async function requestOptions(input: Parameters<FetchLike>[0], init: RequestInit
 /** All discovery, registration, token and revocation URLs use the SSRF policy. */
 export const connectorOAuthFetch: FetchLike = async (input, init) => {
   const { url, options } = await requestOptions(input, init)
-  const response = await safeModelEndpointFetch(url, options)
+  const response = await safeModelEndpointFetch(url, options, { publicOnly: true })
   // Never follow a metadata redirect with credentials or redeem tokens at it.
   if (response.status >= 300 && response.status < 400) {
     await response.body?.cancel(); throw new ConnectorOAuthError('OAuth 服务返回了不受支持的重定向', 502)

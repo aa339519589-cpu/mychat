@@ -1,7 +1,6 @@
 import { existsSync } from 'node:fs'
 import type { SupabaseServer } from '@/lib/api/guard'
 import { getTaskDetail } from '@/lib/agent/data'
-import { runGit } from '@/lib/agent/git-publish/git-command'
 import { isValidGitHubRepository } from '@/lib/agent/git-publish/shared'
 import { createWorkspaceForTask } from '@/lib/agent/workspace'
 import {
@@ -10,7 +9,6 @@ import {
   readWorkspaceAuthority,
   restoreWorkspaceAuthority,
 } from '@/lib/agent/workspace-authority'
-import { workspaceRoot } from '@/lib/agent/workspace-paths'
 import {
   ChatModelSelectionError,
   type ChatModelSelection,
@@ -18,7 +16,7 @@ import {
 import { codeAgentMode, type CodeAgentMode } from '@/lib/code-agent/context'
 import { resolveCodeModelSelection } from '@/lib/code-agent/model-selection'
 import { isProvisionalRepositoryForSession } from '@/lib/code-agent/provisional-repository'
-import type { CodeChatMessage } from '@/lib/code-agent/request'
+import { parseCodeBranch, parseCodeMode, type CodeChatMessage } from '@/lib/code-agent/request'
 import {
   getGitHubConnectionStatusForUser,
   getGitHubCredentialForUser,
@@ -31,6 +29,8 @@ import type { SupabaseClient } from '@/lib/supabase/types'
 import { JobRuntimeError } from '../errors'
 import type { JobExecutionContext } from '../worker'
 import { loadAgentMessageHistory } from './agent-message-history'
+import { loadReadOnlyPlan, persistCodeTaskMode, provisionalPlanInput } from './agent-plan-input'
+import { currentWorkspaceBranch } from './agent-workspace-branch'
 
 type AgentIdentity = {
   userId: string
@@ -47,6 +47,7 @@ type AgentTaskRow = {
   goal: string | null
   status: string
   agent_branch: string | null
+  branch?: string
 }
 
 type AgentSourceRow = { id: string; created_at: string }
@@ -71,6 +72,7 @@ export type LoadedAgentJob = {
   memoryEnabled: boolean
   sensitiveMemoryEnabled: boolean
   mode: CodeAgentMode
+  readOnlyPlan?: boolean
   workspaceReady: boolean
   selection: ChatModelSelection
   usingBalance: boolean
@@ -181,7 +183,7 @@ async function authorityRows(
   loadSharedMemoryContext: typeof loadSharedUserMemoryContext,
 ) {
   const [taskResult, sourceResult, memories, userMemoryContext] = await Promise.all([
-    client.from('agent_tasks').select('id,repo,goal,status,agent_branch')
+    client.from('agent_tasks').select('id,repo,goal,status,agent_branch,branch')
       .eq('id', value.taskId).eq('user_id', value.userId).maybeSingle(),
     client.from('code_messages').select('id,created_at').eq('id', value.userMessageId)
       .eq('session_id', value.sessionId).eq('user_id', value.userId).eq('role', 'user').maybeSingle(),
@@ -270,26 +272,6 @@ async function ensureWorkspace(
   return created && !('error' in created) ? created.agentBranch : null
 }
 
-async function currentWorkspaceBranch(
-  context: JobExecutionContext,
-  value: AgentIdentity,
-  taskBranch: string | null,
-  createdBranch: string | null,
-): Promise<string> {
-  if (taskBranch) return taskBranch
-  if (createdBranch) return createdBranch
-  try {
-    return (await runGit(['rev-parse', '--abbrev-ref', 'HEAD'], {
-      cwd: workspaceRoot(value.taskId, value.userId),
-      timeoutMs: 10_000,
-      signal: context.signal,
-    })).trim()
-  } catch {
-    context.signal.throwIfAborted()
-    throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'Workspace branch cannot be determined')
-  }
-}
-
 async function prepareWorkspace(
   context: JobExecutionContext,
   client: SupabaseClient,
@@ -307,8 +289,16 @@ async function prepareWorkspace(
     })
   }
   const authority = await readWorkspaceAuthority(client, value.userId, value.taskId)
+  const baseBranch = parseCodeBranch(object(context.job.input).branch)
+    ?? (task.agent_branch ? task.branch : undefined) ?? metadata.defaultBranch
+  if (task.agent_branch && task.branch && task.branch !== baseBranch) {
+    throw new JobRuntimeError('JOB_CONFLICT', 'Existing workspace is bound to a different base branch; create a new task')
+  }
+  const binding = await client.from('agent_tasks').update({ branch: baseBranch, mode: 'auto' })
+    .eq('id', value.taskId).eq('user_id', value.userId)
+  if (binding.error) throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'Cannot persist workspace base branch')
   const createdBranch = await ensureWorkspace(
-    context, client, value, task, credential, metadata.defaultBranch, !authority,
+    context, client, value, task, credential, baseBranch, !authority,
   )
   const rawBranch = await currentWorkspaceBranch(context, value, task.agent_branch, createdBranch)
   const branch = await bindWorkspaceBranch(context, client, rawBranch)
@@ -325,7 +315,7 @@ async function prepareWorkspace(
   } else {
     await advanceWorkspaceAuthority(context, client, value.userId, value.taskId, 'initial-worker-hydration')
   }
-  return { defaultBranch: metadata.defaultBranch, repoIsPrivate: metadata.isPrivate }
+  return { defaultBranch: baseBranch, repoIsPrivate: metadata.isPrivate }
 }
 
 const DEFAULT_DEPENDENCIES: AgentInputDependencies = {
@@ -345,45 +335,37 @@ export async function loadAgentJob(
   const value = identity(context)
   const model = await selectedModel(context, client, value.userId)
   const provisional = isProvisionalRepositoryForSession(value.wireRepo, value.sessionId)
-  const mode = codeAgentMode(!provisional)
+  const requestedMode = parseCodeMode(object(context.job.input).mode)
+  const mode = requestedMode === 'plan' ? 'plan' : codeAgentMode(!provisional)
   const { task, source, memories, userMemoryContext } = await authorityRows(
     client, value, mode === 'workspace', dependencies.loadSharedMemoryContext,
   )
+  await persistCodeTaskMode(client, value, requestedMode)
   const messages = await loadAgentMessageHistory(client, value, source, mode)
+  const memory = {
+    userMemories: userMemoryContext.memories, memoryEnabled: userMemoryContext.memoryEnabled,
+    sensitiveMemoryEnabled: userMemoryContext.sensitiveMemoryEnabled,
+  }
   if (provisional) {
     const connection = await dependencies.githubIdentity(context, value.userId)
     return {
-      client,
-      userId: value.userId,
-      taskId: value.taskId,
-      repo: null,
-      sessionId: value.sessionId,
-      responseId: value.responseId,
-      userMessageId: value.userMessageId,
-      messages,
-      token: '',
-      login: connection.login,
-      defaultBranch: null,
-      repoIsPrivate: false,
-      memories: [],
-      userMemories: userMemoryContext.memories,
-      memoryEnabled: userMemoryContext.memoryEnabled,
-      sensitiveMemoryEnabled: userMemoryContext.sensitiveMemoryEnabled,
-      mode,
-      workspaceReady: false,
+      ...provisionalPlanInput({ client, identity: value, login: connection.login,
+        messages, memory, readOnlyPlan: requestedMode === 'plan' }),
       ...model,
     }
   }
   const credential = await dependencies.credential(context, value.userId)
+  if (mode === 'plan') {
+    return {
+      ...await loadReadOnlyPlan({ context, client, identity: value, credential,
+        agentBranch: task.agent_branch, messages, memories, memory }), ...model,
+    }
+  }
   const workspace = await dependencies.prepareWorkspace(context, client, value, task, credential)
   return {
     client,
-    userId: value.userId,
-    taskId: value.taskId,
+    ...value,
     repo: value.wireRepo,
-    sessionId: value.sessionId,
-    responseId: value.responseId,
-    userMessageId: value.userMessageId,
     messages,
     token: credential.token,
     login: credential.login,
@@ -392,6 +374,7 @@ export async function loadAgentJob(
     memoryEnabled: userMemoryContext.memoryEnabled,
     sensitiveMemoryEnabled: userMemoryContext.sensitiveMemoryEnabled,
     mode,
+    readOnlyPlan: false,
     workspaceReady: true,
     ...workspace,
     ...model,

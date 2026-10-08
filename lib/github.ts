@@ -3,6 +3,9 @@
 // Code 的 agentic loop（/api/code/chat）与执行端点（/api/code/apply）都复用这一份，杜绝重复实现。
 import { isRecord, type UnknownRecord } from '@/lib/unknown-value'
 import { safeModelEndpointFetch } from '@/lib/llm/openai-compatible/safe-fetch'
+import { githubApiFetch as boundedFetch } from '@/lib/github-api-fetch'
+
+export { githubApiFetch } from '@/lib/github-api-fetch'
 
 const GH = 'https://api.github.com'
 
@@ -10,11 +13,6 @@ async function responseRecord(response: Response | null | undefined): Promise<Un
   if (!response) return null
   const value = await response.json().catch(() => null)
   return isRecord(value) ? value : null
-}
-
-function boundedFetch(input: string, init: RequestInit = {}, timeoutMs = 30_000): Promise<Response> {
-  const signals = [init.signal, AbortSignal.timeout(timeoutMs)].filter(Boolean) as AbortSignal[]
-  return fetch(input, { ...init, signal: signals.length === 1 ? signals[0] : AbortSignal.any(signals) })
 }
 
 function ghHeaders(token: string, json = false): Record<string, string> {
@@ -78,8 +76,9 @@ export async function listTree(token: string, repo: string, branch: string, limi
 export type FileContent = { content: string; sha: string }
 
 // 读单个文件内容（解码 base64）+ sha（提交时防并发覆盖必须用到）
-export async function readFile(token: string, repo: string, path: string, maxBytes = 120_000): Promise<FileContent | { error: string }> {
-  const res = await boundedFetch(`${GH}/repos/${repo}/contents/${encodeURIComponent(path).replace(/%2F/g, '/')}`, { headers: ghHeaders(token) }).catch(() => null)
+export async function readFile(token: string, repo: string, path: string, maxBytes = 120_000, ref?: string): Promise<FileContent | { error: string }> {
+  const query = ref ? `?ref=${encodeURIComponent(ref)}` : ''
+  const res = await boundedFetch(`${GH}/repos/${repo}/contents/${encodeURIComponent(path).replace(/%2F/g, '/')}${query}`, { headers: ghHeaders(token) }).catch(() => null)
   if (!res?.ok) return { error: res?.status === 404 ? '文件不存在' : '文件读取失败' }
   const payload: unknown = await res.json().catch(() => null)
   if (Array.isArray(payload)) return { error: '这是一个目录，不是文件' }

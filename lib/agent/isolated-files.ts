@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto"
 import { readFileSync, statSync } from "node:fs"
 import { listWorkspaceFiles, workspacePath } from "./workspace"
-import { redactSensitive, validatePath } from "./path-security"
+import { validatePath } from "./path-security"
+import { containsSourceCredential } from './source-credentials'
 
 export const REMOTE_WORKSPACE_ROOT = "/home/user/workspace"
 export const MAX_ISOLATED_FILE_BYTES = 5 * 1024 * 1024
@@ -38,7 +39,7 @@ export function collectIsolatedWorkspaceFiles(userId: string, taskId: string): I
     if (total > MAX_UPLOAD_BYTES) throw new Error("Workspace 源文件超过 50MB，无法进入沙箱")
     const data = readFileSync(checked.absolute!)
     const text = data.includes(0) ? null : data.toString("utf-8")
-    if (text !== null && redactSensitive(text) !== text) {
+    if (text !== null && containsSourceCredential(text)) {
       throw new Error(`检测到疑似密钥，文件不会上传到沙箱：${path}`)
     }
     files.push({

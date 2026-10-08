@@ -157,9 +157,10 @@ async function taskAuthority(
   taskId: string,
 ): Promise<TaskAuthority> {
   const { data, error } = await client.from('agent_tasks')
-    .select('id,repo,branch,agent_branch,meta').eq('id', taskId).eq('user_id', userId).maybeSingle()
+    .select('id,repo,branch,agent_branch,meta,mode').eq('id', taskId).eq('user_id', userId).maybeSingle()
   if (error) throw new Error('任务权威状态暂时不可用')
   if (!data) throw new Error('任务不存在或无权访问')
+  if (data.mode === 'plan') throw new Error('Plan 模式不能发布；请先切换 Code 模式并执行任务')
   return {
     id: String(data.id),
     repo: typeof data.repo === 'string' ? data.repo : null,

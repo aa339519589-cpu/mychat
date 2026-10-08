@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@/lib/supabase/types"
 import { errorMessage, isRecord } from "@/lib/unknown-value"
-import { redactSensitive } from "../path-security"
+import { containsSourceCredential } from '../source-credentials'
 import type { SnapshotRecord } from "../types"
 import { parseAndVerifyManifest, recordFromManifest, sha256, verifyBundle } from "./cas-integrity"
 import { SNAPSHOT_BUCKET, type SnapshotBundle, type SnapshotManifest, type SnapshotStoreResult } from "./cas-types"
@@ -45,7 +45,7 @@ function containsSensitiveText(blob: Buffer): boolean {
   const sample = blob.subarray(0, Math.min(blob.byteLength, 8192))
   if (sample.includes(0)) return false
   const text = blob.toString("utf-8")
-  return redactSensitive(text) !== text
+  return containsSourceCredential(text)
 }
 
 export async function persistSnapshotArtifact(

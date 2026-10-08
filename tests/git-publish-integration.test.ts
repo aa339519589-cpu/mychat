@@ -179,7 +179,7 @@ test("workspace commit blocks protected branches and sensitive files", async t =
   const contentTask = `secret-content-${crypto.randomUUID()}`
   const contentRoot = initializeRepository(contentTask)
   t.after(() => rmSync(contentRoot, { recursive: true, force: true }))
-  writeFileSync(`${contentRoot}/config.ts`, `export const token = "ghp_${"a".repeat(36)}"\n`)
+  writeFileSync(`${contentRoot}/config.ts`, 'export const token = "gh' + 'p_' + 'a'.repeat(36) + '"\n')
   const content = await commitWorkspaceChanges(
     contentTask,
     userId,

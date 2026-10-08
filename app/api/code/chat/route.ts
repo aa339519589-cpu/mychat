@@ -155,6 +155,8 @@ async function enqueueAgentTask(input: {
   const payload: JsonObject = {
     schemaVersion: 1,
     repo: input.body.repo,
+    ...(input.body.branch ? { branch: input.body.branch } : {}),
+    ...(input.body.mode ? { mode: input.body.mode } : {}),
     modelId: input.selection.model,
     accessClass: input.selection.accessClass,
     ...(input.body.endpointId ? { endpointId: input.body.endpointId } : {}),
