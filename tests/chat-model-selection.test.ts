@@ -157,6 +157,46 @@ test('curated DeepSeek chat models use the official DeepSeek transport', async (
   }
 })
 
+test('current Claude models share the configured Claude Messages API and never use OpenRouter transport', async () => {
+  const names = [
+    'CLAUDE_API_BASE_URL', 'CLAUDE_API_KEY', 'CLAUDE_API_AUTH_TYPE',
+    'CLAUDE_FABLE_51_MODEL', 'CLAUDE_OPUS_55_MODEL',
+    'CLAUDE_SONNET_55_MODEL', 'CLAUDE_HAIKU_55_MODEL', 'OPENROUTER_API_KEY',
+  ] as const
+  const previous = new Map(names.map(name => [name, process.env[name]]))
+  process.env.CLAUDE_API_BASE_URL = 'https://claude-gateway.example/v1'
+  process.env.CLAUDE_API_KEY = 'shared-claude-key'
+  process.env.CLAUDE_API_AUTH_TYPE = 'bearer'
+  process.env.CLAUDE_FABLE_51_MODEL = 'provider-fable-5-1'
+  process.env.CLAUDE_OPUS_55_MODEL = 'provider-opus-5-5'
+  process.env.CLAUDE_SONNET_55_MODEL = 'provider-sonnet-5-5'
+  process.env.CLAUDE_HAIKU_55_MODEL = 'provider-haiku-5-5'
+  process.env.OPENROUTER_API_KEY = 'must-not-be-used'
+  try {
+    const expected = new Map([
+      ['anthropic/claude-fable-5.1', 'provider-fable-5-1'],
+      ['anthropic/claude-opus-5.5', 'provider-opus-5-5'],
+      ['anthropic/claude-sonnet-5.5', 'provider-sonnet-5-5'],
+      ['anthropic/claude-haiku-5.5', 'provider-haiku-5-5'],
+    ])
+    for (const [catalogId, runtimeModel] of expected) {
+      const result = await resolveChatModelSelection({
+        tier: '绝句', modelId: catalogId, reasoningEffort: 'medium',
+        supabase: null, userId: null, allowPremium: true,
+      })
+      assert.equal(result.model, runtimeModel)
+      assert.equal(result.apiKey, 'shared-claude-key')
+      assert.equal(result.authType, 'bearer')
+      assert.equal(result.capability.provider.id, 'anthropic')
+      assert.equal(result.capability.provider.adapter, 'anthropic-messages')
+      assert.equal(result.capability.provider.baseUrl, 'https://claude-gateway.example/v1/messages')
+      assert.notEqual(result.capability.provider.id, 'openrouter')
+    }
+  } finally {
+    for (const name of names) restoreEnvironment(name, previous.get(name))
+  }
+})
+
 test('DeepSeek Code selection bypasses OpenRouter and keeps official credentials', async () => {
   const previousDeepSeekKey = process.env.DEEPSEEK_API_KEY
   const previousOpenRouterKey = process.env.OPENROUTER_API_KEY

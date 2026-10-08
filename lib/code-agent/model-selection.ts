@@ -4,7 +4,7 @@ import {
   resolveChatModelSelection,
   type ChatModelSelection,
 } from '@/lib/chat/model-selection'
-import { getDirectDeepSeekCatalogRoute } from '@/lib/llm/models'
+import { getDirectDeepSeekCatalogRoute, getSharedClaudeCatalogRoute } from '@/lib/llm/models'
 import { getOpenRouterModel } from '@/lib/openrouter-catalog'
 
 const DIRECT_DEEPSEEK_RUNTIME_MODELS: Readonly<Record<string, string>> = {
@@ -44,7 +44,8 @@ export async function resolveCodeModelSelection(options: {
 
   const modelId = codeCatalogModelId(options.modelId)
   const directDeepSeek = getDirectDeepSeekCatalogRoute(modelId)
-  if (!directDeepSeek) {
+  const sharedClaude = getSharedClaudeCatalogRoute(modelId)
+  if (!directDeepSeek && !sharedClaude) {
     const catalogModel = await getOpenRouterModel(modelId)
     if (!catalogModel) {
       throw new ChatModelSelectionError(404, { error: '该模型当前未在 OpenRouter 提供' })

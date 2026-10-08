@@ -1,5 +1,7 @@
 import { resolveAuth } from '@/lib/api/guard'
 import { getOpenRouterCatalog } from '@/lib/openrouter-catalog'
+import { getSharedClaudeCatalog } from '@/lib/shared-claude-catalog'
+import { getSharedClaudeCatalogRoute, resolveSharedClaudeProviderConfig } from '@/lib/llm/models'
 import { createAdminClient } from '@/lib/supabase/admin'
 
 const SHARED_TRIAL_LIMIT = 3
@@ -19,15 +21,17 @@ async function resolveTrialRemaining(userId: string | null, owner: boolean): Pro
 
 export async function GET(request: Request) {
   try {
-    const [models, auth] = await Promise.all([
-      getOpenRouterCatalog(),
+    const [openRouter, sharedClaude, auth] = await Promise.all([
+      getOpenRouterCatalog().catch(() => []),
+      getSharedClaudeCatalog(),
       resolveAuth(request),
     ])
+    const models = [...sharedClaude, ...openRouter.filter(model => !getSharedClaudeCatalogRoute(model.id))]
     const owner = auth.isOwner === true
     const trialRemaining = await resolveTrialRemaining(auth.userId, owner)
     return Response.json({
       schemaVersion: 1,
-      configured: Boolean(process.env.OPENROUTER_API_KEY?.trim()),
+      configured: Boolean(resolveSharedClaudeProviderConfig() || process.env.OPENROUTER_API_KEY?.trim()),
       owner,
       trialLimit: SHARED_TRIAL_LIMIT,
       trialRemaining,
@@ -55,7 +59,7 @@ export async function GET(request: Request) {
   } catch (error) {
     return Response.json({
       schemaVersion: 1,
-      configured: Boolean(process.env.OPENROUTER_API_KEY?.trim()),
+      configured: Boolean(resolveSharedClaudeProviderConfig() || process.env.OPENROUTER_API_KEY?.trim()),
       owner: false,
       trialLimit: SHARED_TRIAL_LIMIT,
       trialRemaining: null,

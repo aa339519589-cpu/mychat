@@ -25,6 +25,20 @@ services:
         sync: false
       - key: OPENROUTER_API_KEY
         sync: false
+      - key: CLAUDE_API_BASE_URL
+        sync: false
+      - key: CLAUDE_API_KEY
+        sync: false
+      - key: CLAUDE_API_AUTH_TYPE
+        sync: false
+      - key: CLAUDE_FABLE_51_MODEL
+        sync: false
+      - key: CLAUDE_OPUS_55_MODEL
+        sync: false
+      - key: CLAUDE_SONNET_55_MODEL
+        sync: false
+      - key: CLAUDE_HAIKU_55_MODEL
+        sync: false
       - key: DEEP_TIER_BASE_URL
         sync: false
       - key: DEEP_TIER_API_KEY
