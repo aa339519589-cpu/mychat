@@ -3,6 +3,7 @@ import type { ProjectContext } from "@/lib/project-data"
 import type { Attachment, RawMsg } from "./types"
 import { RequestError } from "@/lib/api/request"
 import { isRecord } from '@/lib/unknown-value'
+import { validatedHealthContext } from '@/lib/chat/native-health-context'
 
 const MAX_MESSAGES = 500
 const MAX_MESSAGE_CHARS = 100_000
@@ -23,6 +24,8 @@ export type ChatRequestBody = {
   messages: RawMsg[]
   memories?: Memory[]
   attachments?: Attachment[]
+  /** Authorized native HealthKit snapshot; not transcript text or system policy. */
+  healthContext?: string
   searchMode?: unknown
   webSearch?: unknown
   renderEnabled?: boolean
@@ -327,6 +330,7 @@ function validateConnectorFields(body: Record<string, unknown>): void {
 }
 
 function validateScalarFields(body: Record<string, unknown>): void {
+  validatedHealthContext(body.healthContext)
   validateIdentityFields(body)
   validateBooleanFields(body)
   validateModelFields(body)

@@ -147,6 +147,7 @@ test('ordinary text jobs keep their tiny command inline without storage round tr
   let uploads = 0
   const acceptedInputs: Record<string, unknown>[] = []
   const input = command()
+  input.body.healthContext = '心率：70；睡眠：420分钟'
   const client = {
     rpc: async (_name: string, args: Record<string, unknown>) => {
       acceptedInputs.push(args.input_payload as Record<string, unknown>)
@@ -170,6 +171,7 @@ test('ordinary text jobs keep their tiny command inline without storage round tr
   assert.equal(result.created, true)
   assert.equal(uploads, 0)
   assert.equal(typeof acceptedInputs[0]?.command, 'object')
+  assert.equal((acceptedInputs[0]?.command as Record<string, unknown>).healthContext, input.body.healthContext)
   assert.equal(acceptedInputs[0]?.payloadRef, undefined)
   assert.match(String(acceptedInputs[0]?.payloadHash), /^[0-9a-f]{64}$/)
 })
