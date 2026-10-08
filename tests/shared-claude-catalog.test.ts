@@ -25,7 +25,7 @@ test('shared Claude catalog uses gateway IDs and gateway prices independently of
     assert.deepEqual(models.map(model => model.name), ['Claude Fable 5.1', 'Claude Opus 5.5', 'Claude Sonnet 5.5', 'Claude Haiku 5.5'])
     assert.equal(models.at(-1)?.id, 'anthropic/claude-haiku-5.5')
     assert.equal(models.at(-1)?.promptPrice, 0.08)
-    assert.equal(models.at(-1)?.completionPrice, 0.4)
+    assert.ok(Math.abs((models.at(-1)?.completionPrice ?? 0) - 0.4) < 1e-9)
     assert.equal(models.at(-1)?.vision, true)
     assert.equal(models.at(-1)?.tools, true)
     const code = await resolveChatModelSelection({ tier: '绝句', modelId: 'claude-haiku-5-5',
