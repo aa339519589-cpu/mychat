@@ -32,6 +32,7 @@ export type ShellResult = {
 
 export type ShellOptions = {
   signal?: AbortSignal
+  assertAuthority?: () => void
   cwd?: string
   timeoutMs?: number
   maxOutputChars?: number
@@ -68,10 +69,12 @@ export async function runInWorkspace(
   command: string,
   opts: ShellOptions = {},
 ): Promise<ShellResult> {
-  opts.signal?.throwIfAborted()
+  const assertActive = () => { opts.signal?.throwIfAborted(); opts.assertAuthority?.() }
+  assertActive()
   // ① 校验 task 归属 + workspace
   const { data: task } = await supabase
     .from("agent_tasks").select("id, repo").eq("id", taskId).eq("user_id", userId).single()
+  assertActive()
   if (!task) return blockedOut("任务不存在或不属于当前用户")
 
   const wsPath = workspacePath(userId, taskId)
@@ -96,6 +99,7 @@ export async function runInWorkspace(
   const recorder = createRecorder({ supabase, userId, taskId })
 
   await recorder.step("tool_call", `执行: ${command.slice(0, 80)}`)
+  assertActive()
 
   const safeInput = { command, cwd: opts.cwd ?? ".", backend }
 
@@ -115,11 +119,13 @@ export async function runInWorkspace(
       ),
   }
   const result = await selectedBackend.execute(command, opts)
+  assertActive()
 
   // 写入 tool_call（已通过 recorder）
   await recorder.recordToolCall("execute", safeInput, () =>
     Promise.resolve(formatShellResult(result))
   )
+  assertActive()
 
   if (result.blocked) {
     await recorder.step("blocked", `命令被拦截: ${result.blockedReason}`)

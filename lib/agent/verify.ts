@@ -47,12 +47,14 @@ async function runCommand(
   timeoutMs = 120_000,
   repoIsPrivate = false,
   signal?: AbortSignal,
+  assertAuthority?: () => void,
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut: boolean }> {
   const result = await runInWorkspace(supabase, userId, taskId, command, {
     repoIsPrivate,
     timeoutMs,
     maxOutputChars: 100_000,
     signal,
+    assertAuthority,
   })
   return {
     stdout: result.stdout,
@@ -62,32 +64,19 @@ async function runCommand(
   }
 }
 
-// ───────────── 主入口 ─────────────
+type VerificationOptions = {
+  signal?: AbortSignal
+  assertAuthority?: () => void
+  install?: boolean
+  steps?: ("lint" | "typecheck" | "test" | "build")[]
+  timeoutPerStep?: number
+  totalTimeoutMs?: number
+  repoIsPrivate?: boolean
+}
 
-export async function runVerification(
-  taskId: string,
-  userId: string,
-  supabase: SupabaseClient,
-  options: {
-    signal?: AbortSignal
-    install?: boolean
-    steps?: ("lint" | "typecheck" | "test" | "build")[]
-    timeoutPerStep?: number
-    totalTimeoutMs?: number
-    repoIsPrivate?: boolean
-  } = {},
-): Promise<VerifyResult> {
-  const root = workspaceRoot(taskId, userId)
-  if (!existsSync(root)) {
-    return { ok: false, steps: [], failedStep: null, totalDurationMs: 0, summary: "Workspace 不存在", taskStatus: "failed" }
-  }
-
-  const detected = detectProjectCommands(taskId, userId)
-  const stepNames = options.steps ?? ["lint", "typecheck", "test", "build"]
-  const timeout = options.timeoutPerStep ?? 120_000
-  const remainingTimeout = verificationTimeout(options)
-
-  // 写入 detected commands artifact
+async function recordProjectDetection(supabase: SupabaseClient, userId: string, taskId: string,
+  detected: ReturnType<typeof detectProjectCommands>, assertActive: () => void): Promise<void> {
+  assertActive()
   await addArtifact(supabase, userId, {
     taskId,
     kind: "build_report",
@@ -108,13 +97,109 @@ export async function runVerification(
     },
   })
 
-  // Install（可选）
+  assertActive()
+}
+
+async function recordVerificationReport(supabase: SupabaseClient, userId: string, taskId: string,
+  step: VerifyStep, r: Awaited<ReturnType<typeof runCommand>>, assertActive: () => void): Promise<void> {
+  assertActive()
+  const { name, command, passed, durationMs: duration, parsedErrors: parsed } = step
+  await addArtifact(supabase, userId, {
+    taskId,
+    kind: name === "build" ? "build_report" : name === "test" ? "test_report" : "log",
+    title: `${name} ${passed ? "✓" : "✗"} (${duration}ms)`,
+    content: [
+      `Command: ${command}`,
+      `Exit: ${r.exitCode}`,
+      passed ? "✓ 通过" : `✗ 失败：${parsed.summary}`,
+      "",
+      "```",
+      redactSensitive(r.stderr || r.stdout).slice(0, 5000),
+      "```",
+    ].join("\n"),
+    meta: {
+      command, name, passed, durationMs: duration, exitCode: r.exitCode,
+      totalErrors: parsed.totalErrors, totalWarnings: parsed.totalWarnings,
+      files: [...new Set(parsed.errors.map(e => e.file).filter(Boolean))],
+    },
+  })
+  assertActive()
+}
+
+async function runVerificationStep(name: string, command: string | null, input: {
+  supabase: SupabaseClient; userId: string; taskId: string; options: VerificationOptions
+  assertActive: () => void; remainingTimeout: (maximum: number) => number; timeout: number
+}): Promise<VerifyStep> {
+  const { supabase, userId, taskId, options, assertActive, remainingTimeout, timeout } = input
+  assertActive()
+
+  if (!command) {
+    const skipped: VerifyStep = {
+      name, command: null, skipped: true,
+      skipReason: "未检测到可用命令",
+      passed: true, durationMs: 0,
+      stdout: "", stderr: "", exitCode: null,
+      parsedErrors: { totalErrors: 0, totalWarnings: 0, errors: [], summary: "" },
+    }
+    await addStep(supabase, userId, taskId, {
+      kind: "info",
+      label: `跳过 ${name}`,
+      detail: "未检测到命令",
+    })
+    assertActive()
+    return skipped
+  }
+
+  await addStep(supabase, userId, taskId, {
+    kind: "tool_call",
+    label: `运行 ${name}`,
+    detail: command,
+  })
+  assertActive()
+
+  const start = Date.now()
+  const r = await runCommand(
+    supabase,
+    userId,
+    taskId,
+    command,
+    remainingTimeout(timeout),
+    options.repoIsPrivate === true,
+    options.signal,
+    options.assertAuthority,
+  )
+  assertActive()
+  const duration = Date.now() - start
+
+  const parsed = parseAllErrors(r.stdout, r.stderr, command)
+  const passed = r.exitCode === 0 && parsed.totalErrors === 0
+
+  const step: VerifyStep = {
+    name, command, skipped: false,
+    passed, durationMs: duration,
+    stdout: redactSensitive(r.stdout),
+    stderr: redactSensitive(r.stderr),
+    exitCode: r.exitCode,
+    parsedErrors: parsed,
+  }
+
+  await recordVerificationReport(supabase, userId, taskId, step, r, assertActive)
+  assertActive()
+
+  return step
+}
+
+async function prepareDependencies(supabase: SupabaseClient, userId: string, taskId: string,
+  detected: ReturnType<typeof detectProjectCommands>, options: VerificationOptions,
+  remainingTimeout: (maximum: number) => number, assertActive: () => void): Promise<VerifyResult | null> {
+  assertActive()
   if (options.install && detected.installCommand) {
     await addStep(supabase, userId, taskId, {
       kind: "tool_call",
       label: `安装依赖：${detected.installCommand}`,
       detail: detected.packageManager,
     })
+    assertActive()
     const ir = await runCommand(
       supabase,
       userId,
@@ -123,7 +208,9 @@ export async function runVerification(
       remainingTimeout(180_000),
       options.repoIsPrivate === true,
       options.signal,
+      options.assertAuthority,
     )
+    assertActive()
     if (ir.exitCode !== 0) {
       return {
         ok: false,
@@ -141,6 +228,38 @@ export async function runVerification(
     }
   }
 
+  return null
+}
+
+// ───────────── 主入口 ─────────────
+
+export async function runVerification(
+  taskId: string,
+  userId: string,
+  supabase: SupabaseClient,
+  options: VerificationOptions = {},
+): Promise<VerifyResult> {
+  const assertActive = () => { options.signal?.throwIfAborted(); options.assertAuthority?.() }
+  assertActive()
+  const root = workspaceRoot(taskId, userId)
+  if (!existsSync(root)) {
+    return { ok: false, steps: [], failedStep: null, totalDurationMs: 0, summary: "Workspace 不存在", taskStatus: "failed" }
+  }
+
+  const detected = detectProjectCommands(taskId, userId)
+  const stepNames = options.steps ?? ["lint", "typecheck", "test", "build"]
+  const timeout = options.timeoutPerStep ?? 120_000
+  const remainingTimeout = verificationTimeout(options)
+
+  await recordProjectDetection(supabase, userId, taskId, detected, assertActive)
+  assertActive()
+
+  const dependencyFailure = await prepareDependencies(
+    supabase, userId, taskId, detected, options, remainingTimeout, assertActive,
+  )
+  assertActive()
+  if (dependencyFailure) return dependencyFailure
+
   const stepMap: Record<string, string | null> = {
     lint: detected.lintCommand,
     typecheck: detected.typecheckCommand,
@@ -153,76 +272,12 @@ export async function runVerification(
   let anyFailed = false
 
   for (const name of stepNames) {
-    const command = stepMap[name]
-    if (!command) {
-      results.push({
-        name, command: null, skipped: true,
-        skipReason: "未检测到可用命令",
-        passed: true, durationMs: 0,
-        stdout: "", stderr: "", exitCode: null,
-        parsedErrors: { totalErrors: 0, totalWarnings: 0, errors: [], summary: "" },
-      })
-      await addStep(supabase, userId, taskId, {
-        kind: "info",
-        label: `跳过 ${name}`,
-        detail: "未检测到命令",
-      })
-      continue
-    }
-
-    await addStep(supabase, userId, taskId, {
-      kind: "tool_call",
-      label: `运行 ${name}`,
-      detail: command,
+    const step = await runVerificationStep(name, stepMap[name], {
+      supabase, userId, taskId, options, assertActive, remainingTimeout, timeout,
     })
-
-    const start = Date.now()
-    const r = await runCommand(
-      supabase,
-      userId,
-      taskId,
-      command,
-      remainingTimeout(timeout),
-      options.repoIsPrivate === true,
-      options.signal,
-    )
-    const duration = Date.now() - start
-
-    const parsed = parseAllErrors(r.stdout, r.stderr, command)
-    const passed = r.exitCode === 0 && parsed.totalErrors === 0
-
-    const step: VerifyStep = {
-      name, command, skipped: false,
-      passed, durationMs: duration,
-      stdout: redactSensitive(r.stdout),
-      stderr: redactSensitive(r.stderr),
-      exitCode: r.exitCode,
-      parsedErrors: parsed,
-    }
+    assertActive()
     results.push(step)
-
-    // 写入 artifact
-    await addArtifact(supabase, userId, {
-      taskId,
-      kind: name === "build" ? "build_report" : name === "test" ? "test_report" : "log",
-      title: `${name} ${passed ? "✓" : "✗"} (${duration}ms)`,
-      content: [
-        `Command: ${command}`,
-        `Exit: ${r.exitCode}`,
-        passed ? "✓ 通过" : `✗ 失败：${parsed.summary}`,
-        "",
-        "```",
-        redactSensitive(r.stderr || r.stdout).slice(0, 5000),
-        "```",
-      ].join("\n"),
-      meta: {
-        command, name, passed, durationMs: duration, exitCode: r.exitCode,
-        totalErrors: parsed.totalErrors, totalWarnings: parsed.totalWarnings,
-        files: [...new Set(parsed.errors.map(e => e.file).filter(Boolean))],
-      },
-    })
-
-    if (!passed) { anyFailed = true; break }
+    if (!step.passed) { anyFailed = true; break }
   }
 
   const totalDuration = Date.now() - totalStart

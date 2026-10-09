@@ -42,6 +42,7 @@ export type CodeToolExecutorOptions = {
   emit: Emit
   state: ToolState
   signal?: AbortSignal
+  assertAuthority?: () => void
   canExecute: boolean
   memoryEnabled?: boolean
   sensitiveMemoryEnabled?: boolean

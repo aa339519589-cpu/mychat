@@ -216,14 +216,6 @@
         95
       ]
     },
-    "lib/agent/isolated-shell.ts": {
-      "complexity": [
-        22
-      ],
-      "maxLines": [
-        81
-      ]
-    },
     "lib/agent/isolated-sync.ts": {
       "complexity": [
         19
@@ -244,11 +236,6 @@
         18
       ]
     },
-    "lib/agent/shell.ts": {
-      "complexity": [
-        16
-      ]
-    },
     "lib/agent/snapshot/cas-capture.ts": {
       "complexity": [
         18
@@ -263,14 +250,6 @@
     "lib/agent/snapshot/create.ts": {
       "complexity": [
         22
-      ]
-    },
-    "lib/agent/verify.ts": {
-      "complexity": [
-        24
-      ],
-      "maxLines": [
-        158
       ]
     },
     "lib/agent/workspace-inspection.ts": {

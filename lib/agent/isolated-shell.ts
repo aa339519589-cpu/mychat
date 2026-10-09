@@ -114,25 +114,25 @@ async function connectExistingSandbox(
   existingId: string,
   syncInitialized: boolean,
   allowOut: string[],
-  signal?: AbortSignal,
+  assertActive: () => void,
 ): Promise<SandboxConnection | null> {
   try {
     const existing = await Sandbox.connect(existingId, { timeoutMs: SANDBOX_TIMEOUT })
-    signal?.throwIfAborted()
+    assertActive()
     await existing.updateNetwork({ allowOut })
-    signal?.throwIfAborted()
+    assertActive()
     return { sandbox: existing, syncInitialized }
   } catch {
     // Cancellation cannot become an instruction to provision a replacement.
-    signal?.throwIfAborted()
+    assertActive()
     return null // expired, unreachable, or unable to enforce the egress policy
   }
 }
 
 async function createOwnedSandbox(
-  supabase: SupabaseClient, userId: string, taskId: string, allowOut: string[], signal?: AbortSignal,
+  supabase: SupabaseClient, userId: string, taskId: string, allowOut: string[], assertActive: () => void,
 ): Promise<SandboxConnection> {
-  signal?.throwIfAborted()
+  assertActive()
   const options = {
     timeoutMs: SANDBOX_TIMEOUT,
     lifecycle: { onTimeout: "pause" as const, autoResume: false },
@@ -145,14 +145,14 @@ async function createOwnedSandbox(
     : await Sandbox.create(options)
   const cleanupCreated = createdSandboxCleanup(sandbox)
   try {
-    signal?.throwIfAborted()
+    assertActive()
     const saved = await mergeTaskMeta(
       supabase, userId, taskId,
       { e2bSandboxId: sandbox.sandboxId, executionBackend: "e2b" },
       ["e2bSyncVersion"],
     )
     if (!saved) throw new Error("无法持久化隔离沙箱所有权")
-    signal?.throwIfAborted()
+    assertActive()
     return { sandbox, syncInitialized: false, cleanupCreated }
   } catch (error) {
     try { await cleanupCreated() } catch { throw new Error("新建隔离沙箱清理未确认") }
@@ -161,36 +161,86 @@ async function createOwnedSandbox(
 }
 
 async function getSandbox(
-  supabase: SupabaseClient, userId: string, taskId: string, repoIsPrivate: boolean, signal?: AbortSignal,
+  supabase: SupabaseClient, userId: string, taskId: string, repoIsPrivate: boolean, assertActive: () => void,
 ): Promise<SandboxConnection> {
-  signal?.throwIfAborted()
+  assertActive()
   const allowOut = sandboxEgressForRepository(repoIsPrivate)
   const meta = await taskMeta(supabase, userId, taskId)
-  signal?.throwIfAborted()
+  assertActive()
   const existingId = typeof meta.e2bSandboxId === "string" ? meta.e2bSandboxId : null
   const syncVersion = meta.e2bSyncVersion
   if (syncVersion !== undefined && syncVersion !== null && syncVersion !== E2B_SYNC_VERSION) {
     throw new Error("沙箱同步协议版本非法，拒绝连接")
   }
   if (existingId) {
-    const connected = await connectExistingSandbox(existingId, syncVersion === E2B_SYNC_VERSION, allowOut, signal)
+    const connected = await connectExistingSandbox(existingId, syncVersion === E2B_SYNC_VERSION, allowOut, assertActive)
     if (connected) return connected
   }
-  return createOwnedSandbox(supabase, userId, taskId, allowOut, signal)
+  return createOwnedSandbox(supabase, userId, taskId, allowOut, assertActive)
 }
 
 async function initializeSandbox(
-  connection: SandboxConnection, supabase: SupabaseClient, userId: string, taskId: string, signal?: AbortSignal,
+  connection: SandboxConnection, supabase: SupabaseClient, userId: string, taskId: string, assertActive: () => void,
 ) {
-  signal?.throwIfAborted()
+  assertActive()
   const hydration = await hydrateIsolatedWorkspace(connection.sandbox, userId, taskId, connection.syncInitialized)
-  signal?.throwIfAborted()
+  assertActive()
   if (hydration.initial) {
     const saved = await mergeTaskMeta(supabase, userId, taskId, { e2bSyncVersion: E2B_SYNC_VERSION })
     if (!saved) throw new Error("无法持久化隔离沙箱同步协议版本")
   }
-  signal?.throwIfAborted()
+  assertActive()
   return hydration
+}
+
+type PendingChange =
+  | { kind: "delete"; path: string; absolute: string }
+  | { kind: "write"; path: string; absolute: string; data: Uint8Array; mode: number }
+
+async function readPendingChange(sandbox: Sandbox, root: string, path: string,
+  assertActive: () => void): Promise<PendingChange> {
+  assertActive()
+  const checked = validatePath(root, path)
+  if (!checked.ok || !checked.absolute) {
+    throw new Error(`沙箱返回了不安全的同步路径：${path}`)
+  }
+  const remotePath = `${REMOTE_WORKSPACE_ROOT}/${path}`
+  const remoteExists = await sandbox.files.exists(remotePath, { requestTimeoutMs: 30_000 })
+  assertActive()
+  if (!remoteExists) {
+    return { kind: "delete", path, absolute: checked.absolute }
+  }
+
+  const info = await sandbox.files.getInfo(remotePath, { requestTimeoutMs: 30_000 })
+  assertActive()
+  if (
+    info.symlinkTarget
+    || info.type !== "file"
+    || !Number.isSafeInteger(info.size)
+    || info.size < 0
+    || info.size > MAX_ISOLATED_FILE_BYTES
+    || !Number.isInteger(info.mode)
+  ) {
+    throw new Error(`沙箱返回了不安全的文件：${path}`)
+  }
+  const bytes = await sandbox.files.read(remotePath, {
+    format: "bytes",
+    requestTimeoutMs: 120_000,
+  })
+  assertActive()
+  if (bytes.byteLength !== info.size) throw new Error(`沙箱文件读取长度不一致：${path}`)
+  const data = new Uint8Array(bytes)
+  if (!data.includes(0)) {
+    const text = new TextDecoder("utf-8", { fatal: false }).decode(data)
+    if (containsSourceCredential(text)) throw new Error(`沙箱文件包含疑似密钥：${path}`)
+  }
+  return {
+    kind: "write",
+    path,
+    absolute: checked.absolute,
+    data,
+    mode: info.mode & 0o777,
+  }
 }
 
 async function syncWorkspace(
@@ -199,83 +249,56 @@ async function syncWorkspace(
   userId: string,
   taskId: string,
   expectedManifestText: string,
+  assertActive: () => void,
 ): Promise<string[]> {
+  assertActive()
   await assertIsolatedManifestUnchanged(sandbox, expectedManifestText)
+  assertActive()
   const paths = await changedIsolatedWorkspacePaths(sandbox)
+  assertActive()
   if (!paths.length) return []
   if (paths.length > MAX_SYNC_FILES) throw new Error(`命令改动了 ${paths.length} 个文件，超过同步上限`)
-
-  type PendingChange =
-    | { kind: "delete"; path: string; absolute: string }
-    | { kind: "write"; path: string; absolute: string; data: Uint8Array; mode: number }
 
   const root = workspacePath(userId, taskId)
   const pending: PendingChange[] = []
   for (const path of paths) {
-    const checked = validatePath(root, path)
-    if (!checked.ok || !checked.absolute) {
-      throw new Error(`沙箱返回了不安全的同步路径：${path}`)
-    }
-    const remotePath = `${REMOTE_WORKSPACE_ROOT}/${path}`
-    const remoteExists = await sandbox.files.exists(remotePath, { requestTimeoutMs: 30_000 })
-    if (!remoteExists) {
-      pending.push({ kind: "delete", path, absolute: checked.absolute })
-      continue
-    }
-
-    const info = await sandbox.files.getInfo(remotePath, { requestTimeoutMs: 30_000 })
-    if (
-      info.symlinkTarget
-      || info.type !== "file"
-      || !Number.isSafeInteger(info.size)
-      || info.size < 0
-      || info.size > MAX_ISOLATED_FILE_BYTES
-      || !Number.isInteger(info.mode)
-    ) {
-      throw new Error(`沙箱返回了不安全的文件：${path}`)
-    }
-    const bytes = await sandbox.files.read(remotePath, {
-      format: "bytes",
-      requestTimeoutMs: 120_000,
-    })
-    if (bytes.byteLength !== info.size) throw new Error(`沙箱文件读取长度不一致：${path}`)
-    const data = new Uint8Array(bytes)
-    if (!data.includes(0)) {
-      const text = new TextDecoder("utf-8", { fatal: false }).decode(data)
-      if (containsSourceCredential(text)) throw new Error(`沙箱文件包含疑似密钥：${path}`)
-    }
-    pending.push({
-      kind: "write",
-      path,
-      absolute: checked.absolute,
-      data,
-      mode: info.mode & 0o777,
-    })
+    pending.push(await readPendingChange(sandbox, root, path, assertActive))
+    assertActive()
   }
+  assertActive()
 
   const snapshot = await createWorkspaceSnapshot(taskId, userId, "auto: before isolated command sync", supabase)
+  assertActive()
   if (!snapshot.ok) throw new Error(`Snapshot 失败：${snapshot.error}`)
 
   const synced: string[] = []
   for (const change of pending) {
+    assertActive()
+    const checked = validatePath(root, change.path)
+    if (!checked.ok || checked.absolute !== change.absolute) throw new Error("同步路径已改变，拒绝回写")
     if (change.kind === "delete") {
-      if (existsSync(change.absolute)) unlinkSync(change.absolute)
+      if (existsSync(change.absolute)) { assertActive(); unlinkSync(change.absolute) }
       synced.push(change.path)
       continue
     }
     mkdirSync(dirname(change.absolute), { recursive: true })
+    assertActive()
     writeFileSync(change.absolute, change.data)
+    assertActive()
     chmodSync(change.absolute, change.mode)
     synced.push(change.path)
   }
 
   if (synced.length) {
+    assertActive()
     await persistCurrentIsolatedManifest(sandbox, userId, taskId)
+    assertActive()
     const updated = await supabase
       .from("agent_workspaces")
       .update({ status: "dirty", updated_at: new Date().toISOString() })
       .eq("task_id", taskId)
       .eq("user_id", userId)
+    assertActive()
     if (updated.error) throw new Error("无法持久化 workspace 同步状态")
   }
   return synced
@@ -311,6 +334,7 @@ export async function runInIsolatedWorkspace(
   opts: ShellOptions = {},
 ): Promise<ShellResult> {
   const startedAt = Date.now()
+  const assertActive = () => { opts.signal?.throwIfAborted(); opts.assertAuthority?.(); opts.signal?.throwIfAborted() }
   const maxOutput = opts.maxOutputChars ?? 10_000
   const timeoutMs = Math.min(opts.timeoutMs ?? 5 * 60_000, MAX_COMMAND_TIMEOUT)
   let cleanupCreated: (() => Promise<void>) | undefined
@@ -318,18 +342,19 @@ export async function runInIsolatedWorkspace(
   let removeLifecycleCancellation = () => {}
 
   try {
-    opts.signal?.throwIfAborted()
-    const connection = await getSandbox(supabase, userId, taskId, opts.repoIsPrivate === true, opts.signal)
+    assertActive()
+    const connection = await getSandbox(supabase, userId, taskId, opts.repoIsPrivate === true, assertActive)
     const { sandbox } = connection
     cleanupCreated = connection.cleanupCreated
     if (cleanupCreated) removeLifecycleCancellation = sandboxCancellation(sandbox, opts.signal, cleanupCreated)
-    const hydration = await initializeSandbox(connection, supabase, userId, taskId, opts.signal)
+    const hydration = await initializeSandbox(connection, supabase, userId, taskId, assertActive)
     hydrated = true
 
+    assertActive()
     const execution = await executeSandboxCommand(sandbox, command, opts, timeoutMs, cleanupCreated)
     let stdout = execution.stdout
     const { stderr, exitCode, error } = execution
-    opts.signal?.throwIfAborted()
+    assertActive()
 
     const synced = await syncWorkspace(
       sandbox,
@@ -337,8 +362,9 @@ export async function runInIsolatedWorkspace(
       userId,
       taskId,
       hydration.manifestText,
+      assertActive,
     )
-    opts.signal?.throwIfAborted()
+    assertActive()
     if (synced.length) stdout += `${stdout ? "\n" : ""}已同步 ${synced.length} 个文件回 workspace。`
     return {
       stdout: sanitizeCommandOutput(redactSensitive(stdout)).slice(0, maxOutput),

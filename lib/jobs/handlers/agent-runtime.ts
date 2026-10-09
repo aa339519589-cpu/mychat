@@ -41,6 +41,7 @@ function createWorkspaceToolExecutor(
     tavilyApiKey: process.env.TAVILY_API_KEY ?? '',
     emit: events.emit,
     signal: context.signal,
+    assertAuthority: context.assertAuthority,
     canExecute,
     memoryEnabled: input.memoryEnabled,
     sensitiveMemoryEnabled: input.sensitiveMemoryEnabled,

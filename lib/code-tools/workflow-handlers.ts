@@ -16,6 +16,11 @@ import type { CodeToolContext, ToolHandlers, ToolParams } from './executor-types
 const VERIFICATION_STEPS = ['lint', 'typecheck', 'test', 'build'] as const
 type VerificationStep = typeof VERIFICATION_STEPS[number]
 
+function assertToolActive(context: CodeToolContext): void {
+  context.signal?.throwIfAborted()
+  context.assertAuthority?.()
+}
+
 function isVerificationStep(value: unknown): value is VerificationStep {
   return typeof value === 'string'
     && (VERIFICATION_STEPS as readonly string[]).includes(value)
@@ -44,6 +49,7 @@ function enablePages(context: CodeToolContext): string {
 }
 
 async function executeCommand(context: CodeToolContext, params: ToolParams): Promise<string> {
+  assertToolActive(context)
   const command = String(params.command ?? '').trim()
   if (!command) return '缺少 command。'
   if (!context.canExecute) return '当前运行环境未启用命令执行。'
@@ -60,16 +66,19 @@ async function executeCommand(context: CodeToolContext, params: ToolParams): Pro
     {
       repoIsPrivate: context.repoIsPrivate,
       signal: context.signal,
+      assertAuthority: context.assertAuthority,
       timeoutMs: Math.max(1, Math.min(requestedTimeout, remaining ?? requestedTimeout)),
       ...(typeof params.cwd === 'string' ? { cwd: params.cwd } : {}),
       ...(typeof params.max_output_chars === 'number' && Number.isFinite(params.max_output_chars)
         ? { maxOutputChars: Math.max(1_024, Math.min(32_000, Math.floor(params.max_output_chars))) } : {}),
     },
   )
+  assertToolActive(context)
   return commandOutput(result)
 }
 
 async function verifyWorkspace(context: CodeToolContext, params: ToolParams): Promise<string> {
+  assertToolActive(context)
   if (!context.canExecute) return '当前运行环境未启用项目验证。'
   if (!context.wsReady || !context.supabase) return 'verify 需要 workspace。'
   if (params.command !== undefined) {
@@ -84,10 +93,12 @@ async function verifyWorkspace(context: CodeToolContext, params: ToolParams): Pr
   const result = await runVerification(context.wsTaskId, context.wsUserId, context.supabase, {
     repoIsPrivate: context.repoIsPrivate,
     signal: context.signal,
+    assertAuthority: context.assertAuthority,
     install: params.install !== false,
     steps: requested?.length ? requested : undefined,
     ...(remaining == null ? {} : { totalTimeoutMs: Math.max(1, remaining) }),
   })
+  assertToolActive(context)
   context.state.setVerifiedDiff(result.ok
     ? getWorkspaceDiff(context.wsTaskId, context.wsUserId)
     : null)
