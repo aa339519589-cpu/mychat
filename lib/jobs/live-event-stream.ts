@@ -16,14 +16,12 @@ import {
   type PublicJobEvent,
   type PublicJobSnapshot,
 } from './read-model'
-
 const DATABASE_RECOVERY_INTERVAL_MS = 125
 const HEARTBEAT_INTERVAL_MS = 10_000
 const ADMISSION_RENEW_INTERVAL_MS = 15_000
 const EVENT_BATCH_SIZE = 200
 const MAX_PENDING_LIVE_DELTAS = 512
 const encoder = new TextEncoder()
-
 type RealtimeChannel = ReturnType<SupabaseClient['channel']>
 type DeltaField = 'content' | 'thinking' | 'reasoningSummary'
 const DELTA_LENGTH_FIELDS = {
@@ -41,7 +39,6 @@ type LiveStreamState = {
   databaseReasoningSummaryLength: number
 }
 type StreamEmitter = (kind: string, payload: JsonObject) => void
-
 type LiveJobEventStreamOptions = {
   client: SupabaseClient
   principalId: string
