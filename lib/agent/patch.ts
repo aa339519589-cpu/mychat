@@ -8,6 +8,7 @@ import { workspaceRoot, getWorkspaceDiff } from "./workspace"
 import { createWorkspaceSnapshot } from "./snapshot"
 import { validatePath, redactSensitive } from "./path-security"
 import { errorMessage, recordText } from '@/lib/unknown-value'
+import { assertWorkspaceMutationActive, type WorkspaceMutationAuthority } from './workspace-types'
 
 // ───────────── 类型 ─────────────
 
@@ -182,24 +183,28 @@ export async function applyWorkspacePatch(
   taskId: string,
   userId: string,
   patch: string,
-  opts: { skipSnapshot?: boolean; supabase?: SupabaseClient } = {},
+  opts: WorkspaceMutationAuthority & { skipSnapshot?: boolean; supabase?: SupabaseClient } = {},
 ): Promise<PatchResult> {
+  assertWorkspaceMutationActive(opts)
   const root = workspaceRoot(taskId, userId)
   if (!existsSync(root)) return { ok: false, error: `Workspace 不存在`, dryRun: false }
 
   // 1) 先 dry-run 检查
   const dry = dryRunWorkspacePatch(taskId, userId, patch)
+  assertWorkspaceMutationActive(opts)
   if (!dry.ok) return { ...dry, dryRun: false }
 
   // 2) 自动 snapshot
   if (!opts.skipSnapshot) {
     const files = dry.changedFiles.join(", ")
     const snap = await createWorkspaceSnapshot(taskId, userId, `auto: before apply_patch (${files})`, opts.supabase)
+    assertWorkspaceMutationActive(opts)
     if (!snap.ok) return { ok: false, error: `Snapshot 失败，拒绝 apply patch：${snap.error}`, dryRun: false }
   }
 
   // 3) 实际 apply
   try {
+    assertWorkspaceMutationActive(opts)
     execSync("git apply", {
       cwd: root,
       timeout: 60_000,
@@ -217,6 +222,7 @@ export async function applyWorkspacePatch(
   }
 
   // 4) 返回 diff summary
+  assertWorkspaceMutationActive(opts)
   const diff = getWorkspaceDiff(taskId, userId)
   return {
     ok: true,
@@ -225,3 +231,4 @@ export async function applyWorkspacePatch(
     diffSummary: redactSensitive(diff).slice(0, 10000) || "Patch 已应用（无 diff 输出）",
   }
 }
+

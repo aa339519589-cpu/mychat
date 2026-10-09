@@ -10,7 +10,7 @@ import type { SupabaseClient } from "@/lib/supabase/types"
 import { validatePath, isBinaryFile, fileTooBig, redactSensitive } from "./path-security"
 import { createWorkspaceSnapshot } from "./snapshot"
 import { workspacePath, workspaceRoot } from "./workspace-paths"
-import type { WorkspaceResult } from "./workspace-types"
+import { assertWorkspaceMutationActive, type WorkspaceMutationAuthority, type WorkspaceResult } from "./workspace-types"
 import { getChangedFiles, getFileDiff } from "./workspace-inspection"
 import { errorMessage } from '@/lib/unknown-value'
 
@@ -59,7 +59,9 @@ export async function writeWorkspaceFile(
   rawPath: string,
   content: string,
   supabase?: SupabaseClient,
+  authority: WorkspaceMutationAuthority = {},
 ): Promise<WorkspaceResult<{ path: string; created: boolean; diff: string; snapshotId?: string }>> {
+  assertWorkspaceMutationActive(authority)
   const root = workspaceRoot(taskId, userId)
   const chk = validatePath(root, rawPath)
   if (!chk.ok) return { ok: false, error: chk.error! }
@@ -75,13 +77,15 @@ export async function writeWorkspaceFile(
 
   // 自动 snapshot（async）
   const snap = await createWorkspaceSnapshot(taskId, userId, `auto: before write ${chk.normalized}`, supabase)
+  assertWorkspaceMutationActive(authority)
   if (!snap.ok) return { ok: false, error: `Snapshot 失败，拒绝写入：${snap.error}` }
 
   try {
     // 确保父目录存在
     const dir = dirname(abs)
+    assertWorkspaceMutationActive(authority)
     mkdirSync(dir, { recursive: true })
-
+    assertWorkspaceMutationActive(authority)
     writeFileSync(abs, content, "utf-8")
   } catch (error) {
     return { ok: false, error: `写入失败：${errorMessage(error)}` }
@@ -110,7 +114,9 @@ export async function editWorkspaceFile(
   oldString: string,
   newString: string,
   supabase?: SupabaseClient,
+  authority: WorkspaceMutationAuthority = {},
 ): Promise<WorkspaceResult<{ path: string; replaced: number; diff: string; snapshotId?: string }>> {
+  assertWorkspaceMutationActive(authority)
   const root = workspaceRoot(taskId, userId)
   const chk = validatePath(root, rawPath)
   if (!chk.ok) return { ok: false, error: chk.error! }
@@ -140,11 +146,13 @@ export async function editWorkspaceFile(
 
   // 自动 snapshot
   const snap = await createWorkspaceSnapshot(taskId, userId, `auto: before edit ${chk.normalized}`, supabase)
+  assertWorkspaceMutationActive(authority)
   if (!snap.ok) return { ok: false, error: `Snapshot 失败，拒绝编辑：${snap.error}` }
 
   const newContent = content.slice(0, idx) + newString + content.slice(idx + oldString.length)
 
   try {
+    assertWorkspaceMutationActive(authority)
     writeFileSync(abs, newContent, "utf-8")
   } catch (error) {
     return { ok: false, error: `写入失败：${errorMessage(error)}` }
@@ -170,7 +178,9 @@ export async function deleteWorkspaceFile(
   userId: string,
   rawPath: string,
   supabase?: SupabaseClient,
+  authority: WorkspaceMutationAuthority = {},
 ): Promise<WorkspaceResult<{ path: string; diff: string; snapshotId?: string }>> {
+  assertWorkspaceMutationActive(authority)
   const root = workspaceRoot(taskId, userId)
   const chk = validatePath(root, rawPath)
   if (!chk.ok) return { ok: false, error: chk.error! }
@@ -188,9 +198,11 @@ export async function deleteWorkspaceFile(
 
   // 自动 snapshot
   const snap = await createWorkspaceSnapshot(taskId, userId, `auto: before delete ${chk.normalized}`, supabase)
+  assertWorkspaceMutationActive(authority)
   if (!snap.ok) return { ok: false, error: `Snapshot 失败，拒绝删除：${snap.error}` }
 
   try {
+    assertWorkspaceMutationActive(authority)
     unlinkSync(abs)
   } catch (error) {
     return { ok: false, error: `删除失败：${errorMessage(error)}` }
@@ -296,3 +308,4 @@ export async function createWorkspaceForTask(
 }
 
 const MAX_FILE_SIZE = 2 * 1024 * 1024 // 2MB
+

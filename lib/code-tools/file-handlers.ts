@@ -12,6 +12,7 @@ import { applyWorkspacePatch, dryRunWorkspacePatch } from '@/lib/agent/patch'
 import { redactSensitive } from '@/lib/agent/path-security'
 import { classifyFileRisk } from '@/lib/agent/risk'
 import { isRecord } from '@/lib/unknown-value'
+import { assertWorkspaceMutationActive } from '@/lib/agent/workspace-types'
 import type { CodeToolContext, ToolHandlers, ToolParams } from './executor-types'
 
 async function listFiles(context: CodeToolContext): Promise<string> {
@@ -74,6 +75,7 @@ function inputPaths(files: unknown[]): string[] {
 }
 
 async function writeWorkspaceFiles(context: CodeToolContext, files: unknown[]): Promise<string> {
+  assertWorkspaceMutationActive(context)
   const risk = classifyFileRisk(inputPaths(files))
   if (risk.blocked) return `安全策略已阻断写入：${risk.reason}`
   if (risk.needsConfirmation) {
@@ -82,13 +84,15 @@ async function writeWorkspaceFiles(context: CodeToolContext, files: unknown[]): 
   }
   const results: string[] = []
   for (const file of files) {
+    assertWorkspaceMutationActive(context)
     const item = isRecord(file) ? file : {}
     const path = String(item.path ?? '').trim()
     if (!path) continue
     context.emit({ step: { kind: 'edit', label: `写入 ${path}` } })
     const result = await writeWorkspaceFile(
-      context.wsTaskId, context.wsUserId, path, String(item.content ?? ''), context.supabase ?? undefined,
+      context.wsTaskId, context.wsUserId, path, String(item.content ?? ''), context.supabase ?? undefined, context,
     )
+    assertWorkspaceMutationActive(context)
     results.push(result.ok
       ? `✅ ${path}（${result.data.created ? '新建' : '覆盖'}）\n${result.data.diff.slice(0, 500)}`
       : `❌ ${path}：${result.error}`)
@@ -126,6 +130,7 @@ async function writeFiles(context: CodeToolContext, params: ToolParams): Promise
 }
 
 async function editWorkspace(context: CodeToolContext, path: string, oldString: string, newString: string) {
+  assertWorkspaceMutationActive(context)
   const risk = classifyFileRisk([path])
   if (risk.blocked) return `安全策略已阻断编辑：${risk.reason}`
   if (risk.needsConfirmation) {
@@ -133,8 +138,9 @@ async function editWorkspace(context: CodeToolContext, path: string, oldString: 
     return `高风险编辑未执行：${risk.reason}。该操作只能由客户端通过数据库单次确认门提交。`
   }
   const result = await editWorkspaceFile(
-    context.wsTaskId, context.wsUserId, path, oldString, newString, context.supabase ?? undefined,
+    context.wsTaskId, context.wsUserId, path, oldString, newString, context.supabase ?? undefined, context,
   )
+  assertWorkspaceMutationActive(context)
   return result.ok
     ? `✅ 已在 workspace 编辑 ${path}（替换 1 处）\n${result.data.diff.slice(0, 500)}`
     : `编辑失败：${result.error}`
@@ -168,6 +174,7 @@ async function editFile(context: CodeToolContext, params: ToolParams): Promise<s
 }
 
 async function deleteWorkspaceFiles(context: CodeToolContext, paths: unknown[]): Promise<string> {
+  assertWorkspaceMutationActive(context)
   const normalized = paths.map(item => String(item ?? '').trim()).filter(Boolean)
   const risk = classifyFileRisk(normalized)
   if (risk.blocked) return `安全策略已阻断删除：${risk.reason}`
@@ -177,10 +184,12 @@ async function deleteWorkspaceFiles(context: CodeToolContext, paths: unknown[]):
   }
   const results: string[] = []
   for (const path of normalized) {
+    assertWorkspaceMutationActive(context)
     context.emit({ step: { kind: 'edit', label: `删除 ${path}` } })
     const result = await deleteWorkspaceFile(
-      context.wsTaskId, context.wsUserId, path, context.supabase ?? undefined,
+      context.wsTaskId, context.wsUserId, path, context.supabase ?? undefined, context,
     )
+    assertWorkspaceMutationActive(context)
     results.push(result.ok ? `✅ 删除 ${path}` : `❌ ${path}：${result.error}`)
   }
   return `已在 workspace 删除文件：\n${results.join('\n')}`
@@ -211,7 +220,9 @@ function patchPreview(context: CodeToolContext, patch: string): string {
 }
 
 async function applyPatch(context: CodeToolContext, patch: string): Promise<string> {
+  assertWorkspaceMutationActive(context)
   const preview = dryRunWorkspacePatch(context.wsTaskId, context.wsUserId, patch)
+  assertWorkspaceMutationActive(context)
   if (!preview.ok) return `❌ Dry-run 失败：${preview.error}`
   const risk = classifyFileRisk(preview.changedFiles)
   if (risk.blocked) return `安全策略已阻断 Patch：${risk.reason}`
@@ -221,7 +232,9 @@ async function applyPatch(context: CodeToolContext, patch: string): Promise<stri
   }
   const result = await applyWorkspacePatch(context.wsTaskId, context.wsUserId, patch, {
     supabase: context.supabase ?? undefined,
+    signal: context.signal, assertAuthority: context.assertAuthority,
   })
+  assertWorkspaceMutationActive(context)
   if (!result.ok) return `❌ Apply patch 失败：${result.error}`
   const changed = getChangedFiles(context.wsTaskId, context.wsUserId)
   const files = changed.ok
@@ -264,3 +277,4 @@ export function createFileToolHandlers(context: CodeToolContext): ToolHandlers {
     git_diff: () => gitDiff(context),
   }
 }
+
