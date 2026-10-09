@@ -3,6 +3,12 @@ import { isRecord } from '@/lib/unknown-value'
 import { BillingReconciliationMonitor } from './billing-reconciliation'
 
 type RpcResult = { data: unknown; error: unknown }
+export type AdmissionReconciliationTiming = {
+  firstRpcMs: number | null
+  reconciliationMs: number | null
+  retryRpcMs: number | null
+  reconciliationHealthy: boolean | null
+}
 const refreshing = new WeakMap<SupabaseClient, Promise<boolean>>()
 
 export function isBillingReconciliationUnavailable(error: unknown): boolean {
@@ -32,9 +38,28 @@ async function reconcile(client: SupabaseClient): Promise<boolean> {
 export async function withAdmissionReconciliation<T extends RpcResult>(
   client: SupabaseClient,
   invoke: () => PromiseLike<T>,
+  onTiming?: (timing: AdmissionReconciliationTiming) => void,
 ): Promise<T> {
-  const response = await invoke()
-  if (!isBillingReconciliationUnavailable(response.error)) return response
-  if (!await reconcile(client)) return response
-  return invoke()
+  const timing: AdmissionReconciliationTiming = {
+    firstRpcMs: null, reconciliationMs: null, retryRpcMs: null, reconciliationHealthy: null,
+  }
+  async function measure<Result>(
+    phase: 'firstRpcMs' | 'reconciliationMs' | 'retryRpcMs',
+    operation: () => PromiseLike<Result>,
+  ): Promise<Result> {
+    const startedAt = performance.now()
+    try { return await operation() } finally {
+      timing[phase] = Math.max(0, Math.round(performance.now() - startedAt))
+    }
+  }
+  try {
+    const response = await measure('firstRpcMs', invoke)
+    if (!isBillingReconciliationUnavailable(response.error)) return response
+    timing.reconciliationHealthy = await measure('reconciliationMs', () => reconcile(client))
+    if (!timing.reconciliationHealthy) return response
+    return await measure('retryRpcMs', invoke)
+  } finally {
+    // Diagnostics must never turn an accepted durable command into a failed response.
+    try { onTiming?.(timing) } catch { /* Keep the authority's original result. */ }
+  }
 }

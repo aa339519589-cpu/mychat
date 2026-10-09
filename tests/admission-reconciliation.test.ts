@@ -60,3 +60,50 @@ test('unrelated RPC errors are not replayed', async () => {
   const receipt = { data: null, error: { code: '23505', message: 'conflict' } }
   assert.equal(await withAdmissionReconciliation(client, async () => receipt), receipt)
 })
+
+test('admission timing separates original RPC, reconciliation and retry without extra reads', async t => {
+  let now = 0
+  t.mock.method(performance, 'now', () => now)
+  let timing: unknown
+  const client = { rpc: async () => { now += 30; return snapshot(true) } } as unknown as SupabaseClient
+  let admissions = 0
+  const result = await withAdmissionReconciliation(client, async () => {
+    now += ++admissions === 1 ? 10 : 20
+    return admissions === 1 ? { data: null, error: stale } : { data: 'accepted', error: null }
+  }, value => { timing = value })
+  assert.deepEqual(result, { data: 'accepted', error: null })
+  assert.deepEqual(timing, {
+    firstRpcMs: 10, reconciliationMs: 30, retryRpcMs: 20, reconciliationHealthy: true,
+  })
+  assert.equal(admissions, 2)
+})
+
+test('warm timing leaves unexecuted guards null and cannot replace a durable success', async t => {
+  let now = 0
+  t.mock.method(performance, 'now', () => now)
+  let timing: unknown
+  const client = { rpc: () => { throw new Error('unexpected refresh') } } as unknown as SupabaseClient
+  const receipt = { data: 'accepted', error: null }
+  assert.equal(await withAdmissionReconciliation(client, async () => {
+    now += 37
+    return receipt
+  }, value => { timing = value; throw new Error('diagnostic failure') }), receipt)
+  assert.deepEqual(timing, {
+    firstRpcMs: 37, reconciliationMs: null, retryRpcMs: null, reconciliationHealthy: null,
+  })
+})
+
+test('thrown RPC timing preserves the original error without retrying', async t => {
+  let now = 0
+  t.mock.method(performance, 'now', () => now)
+  let timing: unknown
+  const failure = new Error('transport failed')
+  const client = { rpc: () => { throw new Error('unexpected refresh') } } as unknown as SupabaseClient
+  await assert.rejects(withAdmissionReconciliation(client, async () => {
+    now += 51
+    throw failure
+  }, value => { timing = value }), error => error === failure)
+  assert.deepEqual(timing, {
+    firstRpcMs: 51, reconciliationMs: null, retryRpcMs: null, reconciliationHealthy: null,
+  })
+})

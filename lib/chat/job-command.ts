@@ -97,7 +97,10 @@ async function enqueueAuthoritativeRegeneration(input: { client: NonNullable<Ret
       input_queue: input.queue,
       input_max_attempts: input.maxAttempts,
       input_cleanup_object_keys: cleanupObjectKeys,
-    }) as unknown as PromiseLike<AuthoritativeRpcResponse>),
+    }) as unknown as PromiseLike<AuthoritativeRpcResponse>, timing => log.info('jobs', 'Chat admission authority timing', {
+      jobId: body.generationId, requestId: input.command.requestId,
+      rpc: 'enqueue_chat_regeneration_v1', ...timing,
+    })),
   })
 }
 
@@ -226,11 +229,14 @@ function logChatAdmission(input: {
   prepared: PreparedChatPayload
   startedAt: number
   payloadPreparedAt: number
+  result: { created: boolean; job: ChatJobAdmission }
 }): void {
   log.info('jobs', 'Chat job admission timing', {
     jobId: input.command.body.generationId,
     requestId: input.command.requestId,
     payloadMode: input.prepared.mode,
+    created: input.result.created,
+    jobStatus: input.result.job.status,
     payloadMs: input.payloadPreparedAt - input.startedAt,
     admissionMs: Date.now() - input.payloadPreparedAt,
     totalMs: Date.now() - input.startedAt,
@@ -253,6 +259,6 @@ export async function enqueueChatJob(input: EnqueueChatJobInput, dependencyOverr
   })
   recordChatAdmission(result, outputKind)
   if (result.created) dependencies.publishWake(policy.queue, result.job.id)
-  logChatAdmission({ command: input, prepared, startedAt, payloadPreparedAt })
+  logChatAdmission({ command: input, prepared, startedAt, payloadPreparedAt, result })
   return result
 }

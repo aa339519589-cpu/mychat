@@ -1,3 +1,4 @@
+import { log } from '@/lib/logger'
 import type { SupabaseClient } from '@/lib/supabase/types'
 import { createLiveJobEventStream } from '@/lib/jobs/live-event-stream'
 import { readOwnedJob } from '@/lib/jobs/read-model'
@@ -50,6 +51,30 @@ function acquired(
   return value.acquired
 }
 
+async function setupLiveChat(input: {
+  client: SupabaseClient; principalId: string; jobId: string; address: string; signal: AbortSignal; requestId?: string
+}, dependencies: LiveResponseDependencies) {
+  const startedAt = performance.now()
+  let snapshotMs = 0
+  let leaseMs = 0
+  const [job, admission] = await Promise.all([
+    dependencies.readJob(input.client, input.principalId, input.jobId, input.signal)
+      .catch(() => ({ ok: false as const, kind: 'unavailable' as const }))
+      .finally(() => { snapshotMs = Math.round(performance.now() - startedAt) }),
+    dependencies.acquireStream({
+      principalId: input.principalId, jobId: input.jobId, address: input.address, signal: input.signal,
+    })
+      .catch(() => ({ acquired: false as const, kind: 'unavailable' as const, retryAfterSeconds: 5 }))
+      .finally(() => { leaseMs = Math.round(performance.now() - startedAt) }),
+  ])
+  try { log.info('jobs', 'Chat live stream setup timing', {
+    jobId: input.jobId, requestId: input.requestId, snapshotMs, leaseMs,
+    totalMs: Math.round(performance.now() - startedAt),
+    ownedJobRead: job.ok, leaseAcquired: admission.acquired,
+  }) } catch { /* Diagnostics cannot reject a successfully fenced stream. */ }
+  return { job, admission }
+}
+
 /**
  * Reuses the admission POST as the browser's live SSE connection. The accepted
  * comment flushes response headers immediately; durable GET reconnect remains
@@ -61,6 +86,7 @@ export function acceptedLiveChatResponse(input: {
   principalId: string
   address: string
   accepted: AcceptedLiveChat
+  requestId?: string
 }, dependencyOverrides: Partial<LiveResponseDependencies> = {}): Response {
   const dependencies = { ...DEFAULT_DEPENDENCIES, ...dependencyOverrides }
   const lifetime = new AbortController()
@@ -71,20 +97,10 @@ export function acceptedLiveChatResponse(input: {
     start(controller) {
       controller.enqueue(encoder.encode(': accepted\n\n'))
       void (async () => {
-        const [job, admission] = await Promise.all([
-          dependencies.readJob(
-            input.client,
-            input.principalId,
-            input.accepted.jobId,
-            signal,
-          ),
-          dependencies.acquireStream({
-            principalId: input.principalId,
-            jobId: input.accepted.jobId,
-            address: input.address,
-            signal,
-          }),
-        ])
+        const { job, admission } = await setupLiveChat({
+          client: input.client, principalId: input.principalId,
+          jobId: input.accepted.jobId, address: input.address, signal, requestId: input.requestId,
+        }, dependencies)
         if (!job.ok || !acquired(admission) || signal.aborted) {
           if (acquired(admission)) await admission.lease.release()
           return

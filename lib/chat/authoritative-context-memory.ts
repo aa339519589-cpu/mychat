@@ -4,8 +4,9 @@ import { isRecord } from '@/lib/unknown-value'
 
 export const MAX_MEMORIES = 200
 export const MAX_AUTHORITATIVE_CONTEXT_BYTES = 256 * 1024
-// Keep bounded pagination without serializing a typical turn behind many tiny database round trips.
-export const CONTEXT_PAGE_SIZE = 32
+// The callers already cap history at 48 and memories at 200 rows. Read that
+// bounded set in one round trip without changing any context or byte limits.
+export const CONTEXT_PAGE_SIZE = 200
 const encoder = new TextEncoder()
 
 export type MemoryPreferences = { enabled: boolean; sensitiveEnabled: boolean }

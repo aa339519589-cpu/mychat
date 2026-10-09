@@ -1,5 +1,5 @@
 import type { GeneratedMedia } from '@/lib/generated-media'
-import { tokenUsageTotal, type TokenUsage } from '@/lib/token-usage'
+import { providerUsageDetails, tokenUsageTotal, type TokenUsage } from '@/lib/token-usage'
 import { isRecord } from '@/lib/unknown-value'
 import type { Emit } from './events'
 import { makeContentFilter } from './sanitize'
@@ -17,6 +17,7 @@ import type { ModelMessage, ModelToolCall } from './types'
 type AnthropicAccumulatorOptions = {
   summarizedThinking?: boolean
   model: string
+  traceId?: string
   emit: Emit
   timingEnabled: boolean
   startedAt: number
@@ -84,6 +85,7 @@ export class AnthropicTurnAccumulator {
   private streamError: string | null = null
   private inputTokens: number | null = null
   private outputTokens: number | null = null
+  private usageDetails: ReturnType<typeof providerUsageDetails> = {}
   private acceptedOutputChars = 0
   private accumulatedTextChars = 0
   private firstEventAt: number | null = null
@@ -108,6 +110,7 @@ export class AnthropicTurnAccumulator {
     if (!this.options.timingEnabled || this.firstEventAt !== null) return
     this.firstEventAt = Date.now()
     console.info('[llm/timing] first upstream event', {
+      traceId: this.options.traceId ?? null,
       model: this.options.model,
       ms: this.firstEventAt - this.options.startedAt,
       type: value.type ?? typeof value,
@@ -118,6 +121,7 @@ export class AnthropicTurnAccumulator {
     if (!this.options.timingEnabled || this.firstTextAt !== null) return
     this.firstTextAt = Date.now()
     console.info('[llm/timing] first text', {
+      traceId: this.options.traceId ?? null,
       model: this.options.model,
       ms: this.firstTextAt - this.options.startedAt,
     })
@@ -153,6 +157,8 @@ export class AnthropicTurnAccumulator {
     const output = tokenCount(value.output_tokens)
     if (input !== null) this.inputTokens = input
     if (output !== null) this.outputTokens = output
+    // message_delta counters are cumulative; replace present fields, retain omitted ones.
+    Object.assign(this.usageDetails, providerUsageDetails(value))
   }
 
   private startBlock(index: number, value: unknown): void {
@@ -301,12 +307,19 @@ export class AnthropicTurnAccumulator {
     }
   }
 
+  private usageSnapshot(): TokenUsage | null {
+    if (this.inputTokens === null || this.outputTokens === null) return null
+    const details = this.usageDetails
+    const completeCache = details.cachedInputTokens !== undefined && details.cacheCreationInputTokens !== undefined
+    return { inputTokens: this.inputTokens, outputTokens: this.outputTokens, ...details,
+      ...(completeCache ? { totalInputTokens: this.inputTokens + details.cachedInputTokens! + details.cacheCreationInputTokens! } : {}),
+    }
+  }
+
   finish(input: { sawDone: boolean; callerLimitReached: boolean }): TurnAccumulationResult {
     if (input.callerLimitReached) this.finishReason = 'caller_limit'
     this.flushVisibleTail()
-    const tokenUsage: TokenUsage | null = this.inputTokens !== null && this.outputTokens !== null
-      ? { inputTokens: this.inputTokens, outputTokens: this.outputTokens }
-      : null
+    const tokenUsage = this.usageSnapshot()
     const totalTokens = tokenUsage ? tokenUsageTotal(tokenUsage) : 0
     if (this.streamError) {
       return {

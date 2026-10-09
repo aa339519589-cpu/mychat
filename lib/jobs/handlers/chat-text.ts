@@ -6,7 +6,7 @@ import {
 } from '@/lib/chat/request-context'
 import { log } from '@/lib/logger'
 import { runAgentLoop, type AgentLoopOpts, type ExecuteTool } from '@/lib/llm/agent-loop'
-import { buildModelContext, appendNativeHealthContext } from '@/lib/llm/context'
+import { buildModelContext, prepareNativeHealthContext } from '@/lib/llm/context'
 import type { ChatEvent } from '@/lib/llm/events'
 import { ensureImageSummaries } from '@/lib/llm/image-context'
 import { chatCompletionsUrl, injectAttachmentsOpenAI } from '@/lib/llm/openai'
@@ -26,7 +26,7 @@ import {
   type GeneratedMedia,
 } from './chat-media-persistence'
 import { completeChatTextRun, rethrowChatTextFailure } from './chat-text-completion'
-import { buildChatSystem, buildChatTools, type ActiveChatTools } from './chat-text-context'
+import { buildChatSystemMessages, buildChatTools, type ActiveChatTools } from './chat-text-context'
 import {
   chatTokenAccounting,
   nativeHealthContextMetadata,
@@ -180,12 +180,14 @@ async function prepareChat(
     })
   }
   const modelMessages: AgentLoopOpts['messages'] = [
-    { role: 'system', content: buildChatSystem(input, latestBeijingDate, history.renderedContext) },
+    ...buildChatSystemMessages(input, latestBeijingDate, history.renderedContext),
     ...buildModelContext(history.degraded ? input.context.messages : preparedMessages, selection.capability),
   ]
-  if (history.degraded) runtime.emit({ error: '其他历史检索暂时不可用，已保留当前对话与已读记忆。' })
+  if (history.degraded) runtime.emit({ error: history.sources?.length
+    ? '历史检索未全部完成，已保留查到的片段、当前对话与已读记忆。'
+    : '其他历史检索暂时不可用，已保留当前对话与已读记忆。' })
   await timedChatPreparation(context.job.id, 'attachments', () => appendAttachments(context, input, runtime, dependencies, modelMessages))
-  appendNativeHealthContext(modelMessages, command.healthContext)
+  prepareNativeHealthContext(modelMessages, command.healthContext, selection.capability.provider.adapter)
   const baseLength = await restoreChatTrajectory(context, runtime.writer, modelMessages)
   return { ...configuredTools, modelMessages, baseLength, instant: false }
 }
@@ -271,6 +273,8 @@ function logTurn(jobId: string): NonNullable<AgentLoopOpts['onTurn']> {
     providerStatus: turn.errorStatus ?? null,
     toolCalls: turn.toolCalls.length,
     contentLength: turn.content.length,
+    totalTokens: turn.totalTokens,
+    ...(turn.tokenUsage ? { tokenUsage: turn.tokenUsage } : {}),
   })
 }
 
@@ -282,7 +286,6 @@ async function runPreparedChat(
   dependencies: ChatTextDependencies,
 ): Promise<void> {
   const { selection } = input
-  const isDeepTierProxy = selection.capability.provider.id === 'deep-tier'
   const trial = selection.accessClass === 'trial'
   const providerStartedAt = Date.now()
   let firstTextLogged = false
@@ -330,7 +333,7 @@ async function runPreparedChat(
       signal: context.signal,
       timeoutMs: 120_000,
       authType: selection.authType,
-      logTiming: isDeepTierProxy || process.env.DEBUG_LLM_TIMING === '1',
+      logTiming: true,
       maxOutputTokens: trial ? TRIAL_MAX_OUTPUT_TOKENS : MAX_OUTPUT_TOKENS,
       idempotencyNamespace: context.job.id,
     },

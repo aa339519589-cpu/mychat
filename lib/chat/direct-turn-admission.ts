@@ -154,6 +154,9 @@ export async function enqueueDirectTurn(
       input_budget: input.budget,
       input_queue: input.queue,
       input_max_attempts: input.maxAttempts,
+    }), timing => log.info('jobs', 'Chat admission authority timing', {
+      jobId: body.generationId, requestId: input.payload.requestId,
+      rpc: 'admit_chat_turn_v3', ...timing,
     }))
   } catch (error) {
     throw directAdmissionError(error)

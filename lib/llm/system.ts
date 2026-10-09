@@ -263,12 +263,12 @@ function renderGlobalMemorySection(memories: Memory[] | undefined, memoryEnabled
 ${renderMemoryBlock(memories)}`
 }
 
-function renderSearchSection(flags?: SystemFlags): string {
+function renderSearchDateAnchor(flags?: SystemFlags): string {
   if (!flags?.searchMode || flags.searchMode === 'off') return ''
   const dateAnchor = flags.latestBeijingDate
     ? `本轮最新时间锚点是 ${flags.latestBeijingDate} 北京时间。`
     : '本轮没有明确时间锚点，优先检索当前最新资料。'
-  return `\n${SEARCH_RULES}\n${dateAnchor}`
+  return `\n${dateAnchor}`
 }
 
 function renderProjectContext(project: ProjectContext | undefined, memoryEnabled: boolean): string {
@@ -304,19 +304,29 @@ ${blocks.join('\n\n')}`)
 ${parts.join('\n\n')}`
 }
 
-// 拼装系统提示词：基础规则 + 模型身份 + 当前位置 + 按需记忆 + 按需联网 + 按需渲染 + 项目背景
-export function buildSystem(memories?: Memory[], flags?: SystemFlags): string {
+// Preserve the original prompt ordering while exposing the stable prefix before
+// the per-turn date anchor. Memories remain complete and are cacheable until
+// their actual content changes; retrieval and HealthKit stay outside this boundary.
+export function buildSystemParts(memories?: Memory[], flags?: SystemFlags): { prefix: string; suffix: string } {
   const memoryEnabled = flags?.memoryEnabled !== false
   const isInProject = Boolean(flags?.project)
-  return [
+  const prefix = [
     BASE_SYSTEM,
     renderModelIdentity(flags),
     renderMemoryPolicy(memoryEnabled, flags?.sensitiveMemoryEnabled),
     renderConversationScope(isInProject, memoryEnabled),
     renderGlobalMemorySection(memories, memoryEnabled, isInProject),
-    renderSearchSection(flags),
+  ].join('')
+  const tail = [
     flags?.renderProfile === 'native-v1' ? `\n${NATIVE_DOCUMENT_RULES}` : '',
     flags?.renderRules ? `\n${flags.renderProfile === 'native-v1' ? NATIVE_RENDER_RULES : RENDER_RULES}` : '',
     renderProjectContext(flags?.project, memoryEnabled),
   ].join('')
+  if (!flags?.searchMode || flags.searchMode === 'off') return { prefix: prefix + tail, suffix: '' }
+  return { prefix: `${prefix}\n${SEARCH_RULES}`, suffix: renderSearchDateAnchor(flags) + tail }
+}
+
+export function buildSystem(memories?: Memory[], flags?: SystemFlags): string {
+  const { prefix, suffix } = buildSystemParts(memories, flags)
+  return prefix + suffix
 }

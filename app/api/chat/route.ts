@@ -60,6 +60,7 @@ function acceptedChatResponse(input: { request: NextRequest; auth: AuthCtx; body
   if (acceptsLiveChat(input.request, input.outputKind) && input.auth.supabase && input.auth.userId) {
     return acceptedLiveChatResponse({
       request: input.request,
+      requestId: input.requestId,
       client: input.auth.supabase,
       principalId: input.auth.userId,
       address: clientAddress(input.request),
