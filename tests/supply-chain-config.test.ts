@@ -250,9 +250,9 @@ test('critical release and migration surfaces have explicit owners', () => {
   }
 })
 
-test('production keepalive binds readiness to main and protected authoritative metrics', () => {
+test('production keepalive binds readiness to the exact live revision and protected authoritative metrics', () => {
   const keepalive = read('.github/workflows/render-keepalive.yml')
-  assert.match(keepalive, /EXPECTED_REVISION:\s*\$\{\{ github\.sha \}\}/)
+  assert.match(keepalive, /EXPECTED_REVISION:\s*a3d48f155fea806a61858c0e66e6a20a5f92eb12\s*\n/)
   assert.match(keepalive, /secrets\.METRICS_BEARER_TOKEN/)
   assert.match(keepalive, /mychat_authoritative_worker_fleet_ready 1/)
   assert.match(keepalive, /mychat_authoritative_billing_release_ready 1/)
