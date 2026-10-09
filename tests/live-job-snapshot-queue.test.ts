@@ -46,7 +46,7 @@ function fixture(status: 'running' | 'completed' = 'running') {
         reads += 1;
         const gate = reads === 1 ? firstRead.promise : status === 'completed' ? Promise.resolve() : new Promise<void>(done => {
           if (abort.signal.aborted) done();
-          else abort.signal.addEventListener('abort', done, { once: true });
+          else abort.signal.addEventListener('abort', () => done(), { once: true });
         });
         return gate.then(() => ({ data: [], error: null })).then(resolve, reject);
       };
