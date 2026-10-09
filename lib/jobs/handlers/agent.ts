@@ -290,7 +290,7 @@ export async function runAgentTaskJob(
       context, job: input, runtime, writer, attemptTokens: callbacks.tracking.attemptTokens,
     })
   } catch (error) {
-    rethrowAgentError(error, context.signal)
+    return rethrowAgentError(error, context.signal)
   } finally { await runtime.dispose?.() }
 }
 
