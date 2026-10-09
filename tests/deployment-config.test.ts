@@ -64,13 +64,14 @@ test('worker deployment has queue bulkheads and lease-relative renewal', () => {
   assert.match(supervisor, /process\.argv\.slice\(2\)/)
   assert.match(supervisor, /job-worker\.ts/)
   assert.match(supervisor, /child\.kill\(signal\)/)
-  assert.match(keepalive, /cron:\s*'\*\/10 \* \* \* \*'/)
+  assert.match(keepalive, /cron:\s*'3,13,23,33,43,53 \* \* \* \*'/)
+  assert.match(keepalive, /EXPECTED_REVISION:\s*a3d48f155fea806a61858c0e66e6a20a5f92eb12/)
   assert.match(keepalive, /actions\/checkout@[0-9a-f]{40}\s+# v7\.0\.0/)
   assert.match(keepalive, /actions\/setup-node@[0-9a-f]{40}\s+# v7\.0\.0[\s\S]*node-version:\s*24/)
   assert.match(keepalive, /node scripts\/check-production-health\.mjs https:\/\/mychat-nm6x\.onrender\.com\/api\/ready/)
   assert.match(healthVerifier, /payload\.status !== "ok"/)
   assert.match(healthVerifier, /payload\.ready !== true/)
-  for (const check of ['auth', 'database', 'distributedRateLimit', 'queue', 'worker', 'stream', 'sandbox']) {
+  for (const check of ['auth', 'database', 'distributedRateLimit', 'queue', 'worker', 'stream', 'observability', 'sandbox']) {
     assert.match(healthVerifier, new RegExp(`"${check}"`))
   }
 })

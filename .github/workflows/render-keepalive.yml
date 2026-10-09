@@ -2,7 +2,7 @@ name: Keep Render Runtime Active
 
 on:
   schedule:
-    - cron: '*/10 * * * *'
+    - cron: '3,13,23,33,43,53 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -27,7 +27,8 @@ jobs:
 
       - name: Keep the free web and embedded worker process ready
         env:
-          EXPECTED_REVISION: ${{ github.sha }}
+          # Production is an exact-commit release independent of the main checkout.
+          EXPECTED_REVISION: a3d48f155fea806a61858c0e66e6a20a5f92eb12
           HEALTH_CHECK_ATTEMPTS: '5'
           HEALTH_CHECK_RETRY_MS: '10000'
           HEALTH_CHECK_TIMEOUT_MS: '20000'
