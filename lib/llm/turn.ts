@@ -224,6 +224,7 @@ function createAccumulator(input: {
 }): ActiveAccumulator {
   const common = {
     model: input.model,
+    traceId: input.options?.idempotencyNamespace,
     emit: input.emit,
     timingEnabled: input.opened.timingEnabled,
     startedAt: input.opened.startedAt,

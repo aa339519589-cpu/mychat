@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { modelRequestMetrics } from './request-metrics'
 import type { EndpointAuthType } from '@/lib/model-endpoints'
 import { safeModelEndpointFetch } from './openai-compatible'
 import {
@@ -72,11 +73,14 @@ function logRequestTiming(
   const enabled = options.logTiming === true || process.env.DEBUG_LLM_TIMING === '1'
   if (!enabled) return false
   console.info('[llm/timing] request started', {
+    traceId: options.idempotencyNamespace ?? null,
     model: input.model,
     adapter: options.adapter,
     reasoningEffort: options.reasoningEffort ?? null,
     at: startedAt,
     bodyKeys: Object.keys(body),
+    maxOutputTokens: options.maxOutputTokens ?? null,
+    ...modelRequestMetrics(body),
   })
   return true
 }
@@ -99,6 +103,10 @@ export async function openTurnResponse(input: TurnTransportInput): Promise<OpenT
     body: JSON.stringify(request.body),
     redirect: generic ? 'manual' : 'follow',
     signal,
+  })
+  if (timingEnabled) console.info('[llm/timing] response headers', {
+    traceId: options.idempotencyNamespace ?? null, model: input.model,
+    ms: Date.now() - startedAt, status: response.status,
   })
   return { response, generic, signal, timingEnabled, startedAt }
 }

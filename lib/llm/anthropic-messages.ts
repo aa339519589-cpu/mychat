@@ -137,13 +137,30 @@ function appendMessage(messages: AnthropicMessage[], role: AnthropicMessage['rol
   messages.push({ role, content: blocks })
 }
 
-function anthropicMessages(messages: ModelMessage[]): { system?: string; messages: AnthropicMessage[] } {
-  const systemParts: string[] = []
+function systemBlocks(content: unknown, cacheEnabled: boolean): AnthropicContentBlock[] {
+  if (!Array.isArray(content)) {
+    const text = stringContent(content).trim()
+    return text ? [{ type: 'text', text }] : []
+  }
+  const blocks: AnthropicContentBlock[] = []
+  for (const part of content) {
+    if (!isRecord(part) || part.type !== 'text' || typeof part.text !== 'string' || !part.text) continue
+    blocks.push({ type: 'text', text: part.text,
+      ...(cacheEnabled && isRecord(part.cache_control) && part.cache_control.type === 'ephemeral'
+        ? { cache_control: { type: 'ephemeral' } } : {}),
+    })
+  }
+  return blocks
+}
+
+function anthropicMessages(messages: ModelMessage[], cacheEnabled: boolean): { system?: string | AnthropicContentBlock[]; messages: AnthropicMessage[] } {
+  const systemParts: AnthropicContentBlock[] = []
+  let structuredSystem = false
   const converted: AnthropicMessage[] = []
   for (const message of messages) {
     if (message.role === 'system') {
-      const text = stringContent(message.content).trim()
-      if (text) systemParts.push(text)
+      structuredSystem ||= Array.isArray(message.content)
+      systemParts.push(...systemBlocks(message.content, cacheEnabled))
       continue
     }
     if (message.role === 'tool') {
@@ -159,7 +176,8 @@ function anthropicMessages(messages: ModelMessage[]): { system?: string; message
   }
   while (converted[0]?.role === 'assistant') converted.shift()
   return {
-    ...(systemParts.length ? { system: systemParts.join('\n\n') } : {}),
+    ...(systemParts.length ? { system: structuredSystem
+      ? systemParts : systemParts.map(part => part.text).join('\n\n') } : {}),
     messages: converted,
   }
 }
@@ -213,8 +231,13 @@ export function buildAnthropicMessagesRequest(options: AnthropicRequestOptions):
   body: Record<string, unknown>
 } {
   const maxTokens = Math.max(1, Math.min(65_536, Math.floor(options.maxOutputTokens ?? 4_096)))
-  const converted = anthropicMessages(options.messages)
-  const tools = anthropicTools(options.tools)
+  // Explicit 5-minute boundaries avoid paying a cache-write premium for the
+  // unique latest user/health suffix. A proxy can opt out without retrying a
+  // potentially billable request or changing model/reasoning/context.
+  const cacheEnabled = process.env.ANTHROPIC_PROMPT_CACHE !== 'off'
+  const converted = anthropicMessages(options.messages, cacheEnabled)
+  const tools = anthropicTools(options.tools).sort((left, right) => String(left.name).localeCompare(String(right.name), 'en'))
+  if (cacheEnabled && tools.length) tools[tools.length - 1].cache_control = { type: 'ephemeral' }
   const body: Record<string, unknown> = {
     model: options.model,
     max_tokens: maxTokens,

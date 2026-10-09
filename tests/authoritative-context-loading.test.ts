@@ -230,7 +230,7 @@ test('global authoritative context scopes history and normalizes durable media a
     ['seq<=', 7],
   ])
   assert.equal(historyCall.orders[0]?.[0], 'seq')
-  assert.deepEqual(historyCall.range, [0, 31])
+  assert.deepEqual(historyCall.range, [0, 47])
 })
 
 test('conversation memory opt-out excludes saved global and project memories', async () => {
@@ -391,7 +391,7 @@ test('history and project collections are fetched in bounded pages and skip over
     call.table === 'messages' && call.selected.includes('content_parts')
   ))
   assert.equal(historyCalls.length, 1)
-  assert.deepEqual(historyCalls[0]?.range, [0, 31])
+  assert.deepEqual(historyCalls[0]?.range, [0, 47])
 
   const projectId = '87000000-0000-4000-8000-000000000005'
   const files = Array.from({ length: 17 }, (_, index) => ({

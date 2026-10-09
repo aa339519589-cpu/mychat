@@ -34,6 +34,7 @@ export type TurnAccumulationResult = {
 type TurnAccumulatorOptions = {
   generic: boolean
   model: string
+  traceId?: string
   emit: Emit
   timingEnabled: boolean
   startedAt: number
@@ -126,6 +127,7 @@ export class TurnAccumulator {
     if (!this.options.timingEnabled || this.firstTextAt !== null) return
     this.firstTextAt = Date.now()
     console.info('[llm/timing] first text', {
+      traceId: this.options.traceId ?? null,
       model: this.options.model,
       ms: this.firstTextAt - this.options.startedAt,
     })
@@ -209,6 +211,7 @@ export class TurnAccumulator {
     if (!this.options.timingEnabled || this.firstEventAt !== null) return
     this.firstEventAt = Date.now()
     console.info('[llm/timing] first upstream event', {
+      traceId: this.options.traceId ?? null,
       model: this.options.model,
       ms: this.firstEventAt - this.options.startedAt,
       type: value.type ?? (value.choices ? 'chat.completion.chunk' : typeof value),

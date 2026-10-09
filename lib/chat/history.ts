@@ -174,7 +174,14 @@ export async function prepareChatHistory(options: HistoryOptions,
       return result
     },
     retrieveHistory: async input => {
-      const result = await dependencies.retrieveHistory(input)
+      const result = await dependencies.retrieveHistory({ ...input,
+        onPartial: result => {
+          // A slow semantic branch must not erase completed keyword/user reads
+          // when the shared optional-history deadline is reached.
+          completedHistory = result
+          input.onPartial?.(result)
+        },
+      })
       completedHistory = result
       return result
     },

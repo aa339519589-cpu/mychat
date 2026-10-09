@@ -69,3 +69,17 @@ test('Anthropic text deltas stream as visible output and map max_tokens to lengt
   assert.equal(result.totalTokens, 5)
   assert.deepEqual(events, [{ text: 'hello' }])
 })
+
+
+test('cumulative cache counters overwrite once while omitted delta fields retain start usage', () => {
+  const accumulator = new AnthropicTurnAccumulator({ model: 'claude-haiku-5-5', emit: () => {}, timingEnabled: false, startedAt: 0 })
+  accumulator.handle({ type: 'message_start', message: { usage: { input_tokens: 12, output_tokens: 1,
+    cache_read_input_tokens: 500, cache_creation_input_tokens: 100,
+    cache_creation: { ephemeral_5m_input_tokens: 100, ephemeral_1h_input_tokens: 0 } } } })
+  accumulator.handle({ type: 'message_delta', usage: { output_tokens: 30, cache_read_input_tokens: 600 }, delta: { stop_reason: 'end_turn' } })
+  accumulator.handle({ type: 'message_delta', usage: { output_tokens: 30, cache_read_input_tokens: 600 }, delta: { stop_reason: 'end_turn' } })
+  const result = accumulator.finish({ sawDone: true, callerLimitReached: false })
+  assert.deepEqual(result.tokenUsage, { inputTokens: 12, outputTokens: 30, totalInputTokens: 712,
+    cachedInputTokens: 600, cacheCreationInputTokens: 100, cacheCreation5mInputTokens: 100, cacheCreation1hInputTokens: 0 })
+  assert.equal(result.totalTokens, 42)
+})
