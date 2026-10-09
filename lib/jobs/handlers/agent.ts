@@ -268,12 +268,12 @@ export async function runAgentTaskJob(
     audit: event => { void writer.append('tool.mcp_audit', { ...event }) },
   }) : undefined
   const runtime = dependencies.createRuntime(context, input, writer, broker)
-  await runtime.recorder.setTaskStatus('running')
-  const prepared = prepareAgentRun(context, input, runtime.canExecute)
-  const callbacks = createAgentLoopCallbacks({
-    context, job: input, writer, prepared, saveRunState: dependencies.saveRunState,
-  })
   try {
+    await runtime.recorder.setTaskStatus('running')
+    const prepared = prepareAgentRun(context, input, runtime.canExecute)
+    const callbacks = createAgentLoopCallbacks({
+      context, job: input, writer, prepared, saveRunState: dependencies.saveRunState,
+    })
     if (!input.selection.apiKey.trim()) throw new JobRuntimeError(
       'JOB_DEPENDENCY_UNAVAILABLE', 'Selected model provider is not configured',
       { class: 'policy', retryable: false },
@@ -291,9 +291,10 @@ export async function runAgentTaskJob(
     })
   } catch (error) {
     rethrowAgentError(error, context.signal)
-  }
+  } finally { await runtime.dispose?.() }
 }
 
 export const handleAgentTask: JobHandler = async context => (
   runAgentTaskJob(context, await loadAgentJob(context))
 )
+

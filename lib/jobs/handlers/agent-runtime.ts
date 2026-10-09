@@ -13,9 +13,23 @@ import type { JobExecutionContext } from '../worker'
 import type { LoadedAgentJob } from './agent-input'
 import { codePlanToolAllowed, executeCodePlanTool } from '@/lib/code-agent/plan-policy'
 import type { CodeMcpBroker } from '@/lib/code-tools/mcp-broker'
+import { createIsolatedSandboxScope, type IsolatedSandboxScope } from '@/lib/agent/isolated-sandbox-scope'
 
 const SAFE_TOOLS = new Set(['list_files', 'search_files', 'read_file', 'git_diff', 'search', 'fetch_url'])
 const CHECKPOINT_TOOLS = new Set(['write_files', 'edit_file', 'delete_files', 'apply_patch', 'execute', 'verify'])
+
+function runtimeSandboxScope(context: JobExecutionContext, input: LoadedAgentJob, enabled: boolean) {
+  if (!enabled) return undefined
+  const owner = { ...context.fence, userId: input.userId, taskId: input.taskId }
+  return createIsolatedSandboxScope({
+    owner, signal: context.signal, assertAuthority: context.assertAuthority,
+    withCreationReceipt: execute => executeFencedToolEffect({
+      client: input.client, fence: context.fence,
+      toolCallId: `sandbox:${context.fence.leaseVersion}`, toolName: 'isolated_sandbox.create',
+      args: owner, replaySafe: false, execute,
+    }),
+  })
+}
 
 function createWorkspaceToolExecutor(
   context: JobExecutionContext,
@@ -25,6 +39,7 @@ function createWorkspaceToolExecutor(
   events: ReturnType<typeof createCodeEventCollector>,
   progress: ReturnType<typeof createCodeRunProgress>,
   mcpBroker?: CodeMcpBroker,
+  sandboxScope?: IsolatedSandboxScope,
 ) {
   return createCodeToolExecutor({
     mcpBroker,
@@ -42,6 +57,7 @@ function createWorkspaceToolExecutor(
     emit: events.emit,
     signal: context.signal,
     assertAuthority: context.assertAuthority,
+    sandboxScope,
     canExecute,
     memoryEnabled: input.memoryEnabled,
     sensitiveMemoryEnabled: input.sensitiveMemoryEnabled,
@@ -61,6 +77,7 @@ export function createAgentRuntime(
   const readOnlyPlan = input.readOnlyPlan === true
   const hasWorkspace = input.workspaceReady && Boolean(input.repo)
   const canExecute = !readOnlyPlan && hasWorkspace && executionBackend !== 'disabled'
+  const sandboxScope = runtimeSandboxScope(context, input, canExecute && executionBackend === 'isolated')
   const tools = buildCodeTools({
     remoteTools: mcpBroker?.listTools(),
     isWorkspace: hasWorkspace,
@@ -82,7 +99,7 @@ export function createAgentRuntime(
     return changed.ok && changed.data.files.length > 0
   }
   const progress = createCodeRunProgress(workspaceHasChanges)
-  const executeImpl = createWorkspaceToolExecutor(context, input, hasWorkspace, canExecute, events, progress, mcpBroker)
+  const executeImpl = createWorkspaceToolExecutor(context, input, hasWorkspace, canExecute, events, progress, mcpBroker, sandboxScope)
   const executeTool: ExecuteTool = async (name, args, execution) => {
     context.signal.throwIfAborted()
     context.budget.consumeToolCall()
@@ -118,5 +135,6 @@ export function createAgentRuntime(
     }, `${toolCallId}:completed`)
     return effect.result
   }
-  return { recorder, canExecute, tools, events, progress, executeTool }
+  const dispose = async () => { await sandboxScope?.dispose() }
+  return { recorder, canExecute, tools, events, progress, executeTool, dispose }
 }

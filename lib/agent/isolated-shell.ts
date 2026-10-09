@@ -10,6 +10,10 @@ import { redactSensitive, validatePath } from "./path-security"
 import { sanitizeCommandOutput } from "./command-security"
 import { containsSourceCredential } from './source-credentials'
 import type { ShellOptions, ShellResult } from "./shell"
+import {
+  isIsolatedSandboxScope, sandboxCancellation, createdSandboxCleanup,
+  type IsolatedSandboxScope, type SandboxScopeOwner,
+} from './isolated-sandbox-scope'
 import { mergeTaskMeta } from "./meta"
 import { errorMessage, recordText } from '@/lib/unknown-value'
 import {
@@ -32,14 +36,6 @@ const SANDBOX_TIMEOUT = 30 * 60_000
 const MAX_COMMAND_TIMEOUT = 15 * 60_000
 const MAX_SYNC_FILES = 500
 const E2B_SYNC_VERSION = 1
-
-function sandboxCancellation(sandbox: Sandbox, signal?: AbortSignal, cleanupCreated?: () => Promise<void>): () => void {
-  if (signal?.aborted && cleanupCreated) void cleanupCreated().catch(() => {})
-  signal?.throwIfAborted()
-  const cancel = () => { void (cleanupCreated ? cleanupCreated() : sandbox.kill()).catch(() => {}) }
-  signal?.addEventListener('abort', cancel, { once: true })
-  return () => signal?.removeEventListener('abort', cancel)
-}
 
 async function executeSandboxCommand(sandbox: Sandbox, command: string, opts: ShellOptions, timeoutMs: number,
   cleanupCreated?: () => Promise<void>) {
@@ -103,14 +99,6 @@ type SandboxConnection = {
   cleanupCreated?: () => Promise<void>
 }
 
-function createdSandboxCleanup(sandbox: Sandbox): () => Promise<void> {
-  let pending: Promise<void> | undefined
-  return () => {
-    pending ??= Promise.resolve().then(() => sandbox.kill()).then(() => undefined)
-    return pending
-  }
-}
-
 async function connectExistingSandbox(
   existingId: string,
   syncInitialized: boolean,
@@ -132,12 +120,15 @@ async function connectExistingSandbox(
 
 async function createOwnedSandbox(
   supabase: SupabaseClient, userId: string, taskId: string, allowOut: string[], assertActive: () => void,
+  owner?: SandboxScopeOwner,
 ): Promise<SandboxConnection> {
   assertActive()
+  const metadata: Record<string, string> = { taskId }
+  if (owner) Object.assign(metadata, { jobId: owner.jobId, workerId: owner.workerId, leaseVersion: String(owner.leaseVersion) })
   const options = {
     timeoutMs: SANDBOX_TIMEOUT,
     lifecycle: { onTimeout: "pause" as const, autoResume: false },
-    metadata: { taskId },
+    metadata,
     network: { allowOut },
   }
   const template = process.env.E2B_TEMPLATE?.trim()
@@ -145,6 +136,7 @@ async function createOwnedSandbox(
     ? await Sandbox.create(template, options)
     : await Sandbox.create(options)
   const cleanupCreated = createdSandboxCleanup(sandbox)
+  if (owner) return { sandbox, syncInitialized: false, cleanupCreated }
   try {
     assertActive()
     const saved = await mergeTaskMeta(
@@ -163,9 +155,17 @@ async function createOwnedSandbox(
 
 async function getSandbox(
   supabase: SupabaseClient, userId: string, taskId: string, repoIsPrivate: boolean, assertActive: () => void,
+  scope?: IsolatedSandboxScope,
 ): Promise<SandboxConnection> {
   assertActive()
   const allowOut = sandboxEgressForRepository(repoIsPrivate)
+  if (scope) {
+    return scope.acquire(userId, taskId, async owner => {
+      const resource = await createOwnedSandbox(supabase, userId, taskId, allowOut, assertActive, owner)
+      if (!resource.cleanupCreated) throw new Error('隔离沙箱创建未返回清理句柄')
+      return { ...resource, cleanupCreated: resource.cleanupCreated }
+    })
+  }
   const meta = await taskMeta(supabase, userId, taskId)
   assertActive()
   const existingId = typeof meta.e2bSandboxId === "string" ? meta.e2bSandboxId : null
@@ -182,14 +182,16 @@ async function getSandbox(
 
 async function initializeSandbox(
   connection: SandboxConnection, supabase: SupabaseClient, userId: string, taskId: string, assertActive: () => void,
+  scoped: boolean,
 ) {
   assertActive()
   const hydration = await hydrateIsolatedWorkspace(connection.sandbox, userId, taskId, connection.syncInitialized)
   assertActive()
-  if (hydration.initial) {
+  if (hydration.initial && !scoped) {
     const saved = await mergeTaskMeta(supabase, userId, taskId, { e2bSyncVersion: E2B_SYNC_VERSION })
     if (!saved) throw new Error("无法持久化隔离沙箱同步协议版本")
   }
+  connection.syncInitialized = true
   assertActive()
   return hydration
 }
@@ -327,7 +329,7 @@ async function isolatedFailure(caught: unknown, input: {
   }
 }
 
-export async function runInIsolatedWorkspace(
+async function runIsolatedCommand(
   supabase: SupabaseClient,
   userId: string,
   taskId: string,
@@ -344,11 +346,11 @@ export async function runInIsolatedWorkspace(
 
   try {
     assertActive()
-    const connection = await getSandbox(supabase, userId, taskId, opts.repoIsPrivate === true, assertActive)
+    const connection = await getSandbox(supabase, userId, taskId, opts.repoIsPrivate === true, assertActive, opts.sandboxScope)
     const { sandbox } = connection
     cleanupCreated = connection.cleanupCreated
     if (cleanupCreated) removeLifecycleCancellation = sandboxCancellation(sandbox, opts.signal, cleanupCreated)
-    const hydration = await initializeSandbox(connection, supabase, userId, taskId, assertActive)
+    const hydration = await initializeSandbox(connection, supabase, userId, taskId, assertActive, Boolean(opts.sandboxScope))
     hydrated = true
 
     assertActive()
@@ -379,4 +381,19 @@ export async function runInIsolatedWorkspace(
   } catch (caught) {
     return await isolatedFailure(caught, { cleanupCreated, hydrated, signal: opts.signal, maxOutput, startedAt })
   } finally { removeLifecycleCancellation() }
+}
+
+export async function runInIsolatedWorkspace(
+  supabase: SupabaseClient, userId: string, taskId: string, command: string, opts: ShellOptions = {},
+): Promise<ShellResult> {
+  const startedAt = Date.now()
+  try {
+    if (opts.sandboxScope !== undefined && !isIsolatedSandboxScope(opts.sandboxScope)) {
+      throw new Error('隔离沙箱 lease 必须由 Worker 创建')
+    }
+    const run = () => runIsolatedCommand(supabase, userId, taskId, command, opts)
+    return opts.sandboxScope ? await opts.sandboxScope.run(userId, taskId, run) : await run()
+  } catch (caught) {
+    return isolatedFailure(caught, { hydrated: false, maxOutput: opts.maxOutputChars ?? 10_000, startedAt })
+  }
 }

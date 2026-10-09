@@ -1,5 +1,6 @@
 import type { CodePlan, Emit, MemoryEvent } from "@/lib/llm/events"
 import type { SupabaseClient } from '@/lib/supabase/types'
+import type { IsolatedSandboxScope } from '@/lib/agent/isolated-sandbox-scope'
 import { memoryTools } from '@/lib/tools/memory'
 import type { CodeMcpBroker } from './mcp-broker'
 import type { CodeToolMetadata } from './registry'
@@ -43,6 +44,7 @@ export type CodeToolExecutorOptions = {
   state: ToolState
   signal?: AbortSignal
   assertAuthority?: () => void
+  sandboxScope?: IsolatedSandboxScope
   canExecute: boolean
   memoryEnabled?: boolean
   sensitiveMemoryEnabled?: boolean
@@ -218,3 +220,4 @@ export function buildCodeTools(options: CodeToolOptions): FunctionTool[] {
   const unavailable = unavailableToolNames(options)
   return tools.filter(tool => !unavailable.has(tool.function.name))
 }
+

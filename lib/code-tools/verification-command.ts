@@ -44,6 +44,7 @@ export async function verifyWithCommand(context: CodeToolContext, command: strin
   const result = await dependencies.runInWorkspace(context.supabase, context.wsUserId, context.wsTaskId, command, {
     repoIsPrivate: context.repoIsPrivate, signal: context.signal,
     assertAuthority: context.assertAuthority,
+    sandboxScope: context.sandboxScope,
     timeoutMs: Math.max(1, Math.min(120_000, context.sandboxTimeoutMs?.() ?? 120_000)),
     maxOutputChars: 16_000,
   })

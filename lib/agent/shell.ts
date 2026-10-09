@@ -12,6 +12,7 @@ import { createRecorder } from "./recorder"
 import { runInIsolatedWorkspace } from "./isolated-shell"
 import { agentExecutionBackend } from "./execution-policy"
 import type { ExecutionBackend } from './execution-backend'
+import type { IsolatedSandboxScope } from './isolated-sandbox-scope'
 
 export { localWorkspaceExecutionAllowed } from "./execution-policy"
 
@@ -33,6 +34,7 @@ export type ShellResult = {
 export type ShellOptions = {
   signal?: AbortSignal
   assertAuthority?: () => void
+  sandboxScope?: IsolatedSandboxScope
   cwd?: string
   timeoutMs?: number
   maxOutputChars?: number

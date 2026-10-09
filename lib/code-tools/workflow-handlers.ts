@@ -67,6 +67,7 @@ async function executeCommand(context: CodeToolContext, params: ToolParams): Pro
       repoIsPrivate: context.repoIsPrivate,
       signal: context.signal,
       assertAuthority: context.assertAuthority,
+      sandboxScope: context.sandboxScope,
       timeoutMs: Math.max(1, Math.min(requestedTimeout, remaining ?? requestedTimeout)),
       ...(typeof params.cwd === 'string' ? { cwd: params.cwd } : {}),
       ...(typeof params.max_output_chars === 'number' && Number.isFinite(params.max_output_chars)
@@ -94,6 +95,7 @@ async function verifyWorkspace(context: CodeToolContext, params: ToolParams): Pr
     repoIsPrivate: context.repoIsPrivate,
     signal: context.signal,
     assertAuthority: context.assertAuthority,
+    sandboxScope: context.sandboxScope,
     install: params.install !== false,
     steps: requested?.length ? requested : undefined,
     ...(remaining == null ? {} : { totalTimeoutMs: Math.max(1, remaining) }),

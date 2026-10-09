@@ -13,7 +13,7 @@ function loadFunctions(path: string, dependencies: Record<string, unknown>, expo
 }
 
 function toolPipeline(runIsolated: (...args: unknown[]) => Promise<unknown>, client: unknown,
-  context: Record<string, unknown>, at: (name: string) => Promise<void>) {
+  context: Record<string, unknown>, at: (name: string) => Promise<void>, scopeFunctions: Record<string, unknown>) {
   const unavailable = () => { throw new Error('Unexpected external effect') }
   const isRecord = (value: unknown) => value !== null && typeof value === 'object' && !Array.isArray(value)
   const createRecorder = () => ({ step: async () => {}, recordToolCall: async (_name: string, _args: unknown, run: () => Promise<unknown>) => run() })
@@ -51,6 +51,7 @@ function toolPipeline(runIsolated: (...args: unknown[]) => Promise<unknown>, cli
   }, 'createCodeToolExecutor')
   const progress = loadFunctions('lib/code-agent/runtime.ts', {}, '({ createCodeRunProgress, createCodeEventCollector })')
   const createAgentRuntime = loadFunctions('lib/jobs/handlers/agent-runtime.ts', {
+    ...scopeFunctions,
     process: { env: {} }, agentExecutionBackend: () => 'isolated', createRecorder,
     getChangedFiles: () => ({ ok: true, data: { files: [] } }),
     advanceWorkspaceAuthority: async () => { (context.assertAuthority as () => void)(); await at('authority_checkpoint') },
@@ -70,6 +71,8 @@ function fixture(options: {
   expireOnHostMkdir?: boolean
 } = {}) {
   const controller = new AbortController()
+  const scopeFunctions = loadFunctions('lib/agent/isolated-sandbox-scope.ts', {},
+    '({ createIsolatedSandboxScope, isIsolatedSandboxScope, sandboxCancellation, createdSandboxCleanup })')
   const calls: string[] = []
   const killed: string[] = []
   let clock = 50
@@ -116,13 +119,14 @@ function fixture(options: {
   const client = {
     from: (table: string) => table === 'agent_workspaces' ? {
       update: () => ({ eq: () => ({ eq: async () => { await at('workspace_save'); return { error: null } } }) }),
-    } : ({ select: () => ({ eq: () => ({ eq: () => ({ single: async () => {
-      await at('metadata'); return { data: { meta: options.existing ? { e2bSandboxId: borrowed.sandboxId, e2bSyncVersion: 1 } : {} } }
+    } : ({ select: (fields: string) => ({ eq: () => ({ eq: () => ({ single: async () => {
+      await at(fields === 'meta' ? 'metadata' : 'task_owner')
+      return { data: { meta: options.existing ? { e2bSandboxId: borrowed.sandboxId, e2bSyncVersion: 1 } : {} } }
     } }) }) }) }),
   }
   const unavailable = () => { throw new Error('Unexpected host filesystem effect') }
   const dependencies = {
-    process: { env: {} },
+    process: { env: {} }, ...scopeFunctions,
     Sandbox: { create: async () => { await at('create'); return created }, connect: async () => { await at('connect'); return borrowed } },
     chmodSync: () => { calls.push('chmod_host') }, existsSync: unavailable,
     mkdirSync: () => { calls.push('mkdir_host'); if (options.expireOnHostMkdir) clock = 101 }, unlinkSync: unavailable,
@@ -142,13 +146,14 @@ function fixture(options: {
     persistCurrentIsolatedManifest: async () => { await at('remote_manifest_save') },
   }
   const run = loadFunctions('lib/agent/isolated-shell.ts', dependencies, 'runInIsolatedWorkspace')
-  const pipeline = toolPipeline(run, client, context, at)
+  const pipeline = toolPipeline(run, client, context, at, scopeFunctions)
   if (options.before) controller.abort()
   return { calls, killed, paused, release, abort: () => controller.abort(), expireLease: () => { clock = 101 },
     replaceHostContent: (value: string) => { hostContent = value }, getHostContent: () => hostContent,
     isAborted: () => controller.signal.aborted,
     changeHostPath: () => { pathChanged = true },
     runTool: (name: string, params: unknown) => pipeline.executeTool(name, params, { toolCallId: 'synthetic-tool-call' }),
+    dispose: () => pipeline.dispose(),
     verifiedDiff: () => pipeline.progress.toolState.getVerifiedDiff(),
     run: () => run(client, 'synthetic-user', 'synthetic-task', 'node test.js', {
       signal: controller.signal, assertAuthority: context.assertAuthority,
@@ -228,7 +233,7 @@ for (const [name, params] of [
     assert.equal(value.getHostContent(), 'new lease data')
     assert.equal(value.calls.includes('workspace_save'), false)
     assert.equal(value.verifiedDiff(), null)
-    assert.deepEqual(value.killed, [])
+    assert.deepEqual(value.killed, ['synthetic-created-sandbox'])
   })
 }
 
@@ -274,4 +279,28 @@ test('a synchronous filesystem boundary that crosses the lease deadline cannot p
   assert.equal(value.calls.includes('chmod_host'), false)
   assert.equal(value.calls.includes('workspace_save'), false)
   assert.deepEqual(value.killed, [])
+})
+
+test('execute and both verification routes share only their worker lease instance', async () => {
+  const value = fixture({ existing: true })
+  await value.runTool('execute', { command: 'node test.js' })
+  await value.runTool('verify', { command: 'node test.js' })
+  await value.runTool('verify', { steps: ['test'], install: false })
+  assert.equal(value.calls.filter(name => name === 'create').length, 1)
+  assert.equal(value.calls.includes('connect'), false)
+  assert.equal(value.calls.includes('metadata'), false)
+  assert.equal(value.verifiedDiff(), 'synthetic-diff')
+  await value.dispose()
+  assert.deepEqual(value.killed, ['synthetic-created-sandbox'])
+})
+
+test('model tool arguments cannot replace the server-owned scope or select a provider sandbox', async () => {
+  const value = fixture({ existing: true })
+  await value.runTool('execute', { command: 'node test.js', sandboxScope: { userId: 'other-owner' },
+    e2bSandboxId: 'synthetic-foreign-sandbox', leaseVersion: 99 })
+  assert.equal(value.calls.filter(name => name === 'create').length, 1)
+  assert.equal(value.calls.includes('connect'), false)
+  assert.equal(value.calls.includes('metadata'), false)
+  await value.dispose()
+  assert.deepEqual(value.killed, ['synthetic-created-sandbox'])
 })

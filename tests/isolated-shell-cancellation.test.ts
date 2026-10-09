@@ -7,6 +7,7 @@ import { stripTypeScriptTypes } from 'node:module'
 // No package install, external sandbox, credential, model or network is used.
 function fixture(options: {
   before?: boolean; abortDuring?: string; existing?: boolean; failDuring?: string | string[]; pauseAt?: string; resourceID?: string
+  scoped?: boolean
 } = {}) {
   const controller = new AbortController()
   const calls: string[] = []
@@ -37,7 +38,17 @@ function fixture(options: {
     } }) }) }) }),
   }
   const unavailable = () => { throw new Error('Unexpected host filesystem effect') }
+  const scopeSource = stripTypeScriptTypes(readFileSync(new URL('../lib/agent/isolated-sandbox-scope.ts', import.meta.url), 'utf8'), { mode: 'strip' })
+    .replace(/^import\s[\s\S]*?from\s+["'][^"']+["']\s*;?\s*$/gm, '').replace(/^export\s+/gm, '')
+  const scopeFunctions = new Function(scopeSource +
+    '\nreturn { sandboxCancellation, createdSandboxCleanup, createIsolatedSandboxScope, isIsolatedSandboxScope };')()
+  const scope = options.scoped ? scopeFunctions.createIsolatedSandboxScope({
+    owner: { userId: 'synthetic-user', taskId: 'synthetic-task', jobId: 'synthetic-job',
+      workerId: 'synthetic-worker', leaseVersion: 1 }, signal: controller.signal, assertAuthority: () => {},
+    withCreationReceipt: async (create: () => Promise<string>) => ({ result: await create(), replayed: false }),
+  }) : undefined
   const dependencies = {
+    ...scopeFunctions,
     process: { env: {} },
     Sandbox: { create: async () => { await at('create'); return created }, connect: async () => { await at('connect'); return borrowed } },
     chmodSync: unavailable, existsSync: unavailable, mkdirSync: unavailable, unlinkSync: unavailable,
@@ -59,7 +70,7 @@ function fixture(options: {
   const run = new Function(...Object.keys(dependencies), stripped + '\nreturn runInIsolatedWorkspace;')(...Object.values(dependencies))
   if (options.before) controller.abort()
   return { calls, killed, paused, release, abort: () => controller.abort(),
-    run: () => run(client, 'synthetic-user', 'synthetic-task', 'node test.js', { signal: controller.signal }) }
+    run: () => run(client, 'synthetic-user', 'synthetic-task', 'node test.js', { signal: controller.signal, sandboxScope: scope }) }
 }
 
 test('already-cancelled execution performs no sandbox acquisition or hydration', async () => {
@@ -192,4 +203,41 @@ test('cancellation during metadata read never begins SDK acquisition', async () 
   const value = fixture({ abortDuring: 'metadata' })
   assert.equal((await value.run()).exitCode, 1)
   assert.deepEqual(value.calls, ['metadata'])
+})
+
+test('scoped hydration failure releases only the lease instance and prevents replacement', async () => {
+  const value = fixture({ scoped: true, existing: true, failDuring: 'hydrate' })
+  assert.equal((await value.run()).exitCode, 1)
+  assert.equal((await value.run()).exitCode, 1)
+  assert.deepEqual(value.calls, ['create', 'hydrate', 'kill'])
+  assert.deepEqual(value.killed, ['synthetic-created-sandbox'])
+})
+
+test('scoped cancellation while creating releases the late instance without adopting task metadata', async () => {
+  const value = fixture({ scoped: true, existing: true, pauseAt: 'create' })
+  const pending = value.run()
+  await value.paused
+  value.abort(); value.release()
+  assert.equal((await pending).exitCode, 1)
+  assert.deepEqual(value.calls, ['create', 'kill'])
+  assert.deepEqual(value.killed, ['synthetic-created-sandbox'])
+})
+
+test('scoped cancellation during hydration shares one cleanup request across all listeners', async () => {
+  const value = fixture({ scoped: true, existing: true, pauseAt: 'hydrate' })
+  const pending = value.run()
+  await value.paused
+  value.abort(); value.abort(); value.release()
+  assert.equal((await pending).exitCode, 1)
+  assert.deepEqual(value.calls, ['create', 'hydrate', 'kill'])
+  assert.deepEqual(value.killed, ['synthetic-created-sandbox'])
+})
+
+test('scoped cleanup failure remains uncertain and does not connect or create a replacement', async () => {
+  const value = fixture({ scoped: true, existing: true, failDuring: ['hydrate', 'kill'] })
+  const result = await value.run()
+  assert.equal(result.exitCode, 1)
+  assert.match(result.stderr, /清理未确认/)
+  assert.equal((await value.run()).exitCode, 1)
+  assert.deepEqual(value.calls, ['create', 'hydrate', 'kill'])
 })

@@ -36,8 +36,10 @@ function fixture(outcome: Outcome) {
       meta: { e2bSandboxId: sandbox.sandboxId, e2bSyncVersion: 1 } } }),
   }) }) }) }) }
   const unknownValue = loadFunctions('lib/unknown-value.ts', {}, '({ errorMessage, recordText })')
+  const scopeFunctions = loadFunctions('lib/agent/isolated-sandbox-scope.ts', {},
+    '({ sandboxCancellation, createdSandboxCleanup })')
   const runInIsolatedWorkspace = loadFunctions('lib/agent/isolated-shell.ts', {
-    process: { env: {} }, Sandbox: { create: unavailable, connect: async () => sandbox },
+    ...scopeFunctions, process: { env: {} }, Sandbox: { create: unavailable, connect: async () => sandbox },
     chmodSync: unavailable, existsSync: unavailable, mkdirSync: unavailable, unlinkSync: unavailable,
     writeFileSync: unavailable, dirname: unavailable, createWorkspaceSnapshot: unavailable, workspacePath: unavailable,
     redactSensitive: identity, validatePath: unavailable, sanitizeCommandOutput: identity,

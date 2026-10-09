@@ -9,6 +9,7 @@ import { parseAllErrors, type VerificationErrors } from "./error-parser"
 import { redactSensitive } from "./path-security"
 import { addStep, addArtifact } from "./data"
 import { runInWorkspace } from "./shell"
+import type { IsolatedSandboxScope } from './isolated-sandbox-scope'
 
 type VerifyStep = {
   name: string
@@ -48,6 +49,7 @@ async function runCommand(
   repoIsPrivate = false,
   signal?: AbortSignal,
   assertAuthority?: () => void,
+  sandboxScope?: IsolatedSandboxScope,
 ): Promise<{ stdout: string; stderr: string; exitCode: number | null; timedOut: boolean }> {
   const result = await runInWorkspace(supabase, userId, taskId, command, {
     repoIsPrivate,
@@ -55,6 +57,7 @@ async function runCommand(
     maxOutputChars: 100_000,
     signal,
     assertAuthority,
+    sandboxScope,
   })
   return {
     stdout: result.stdout,
@@ -67,6 +70,7 @@ async function runCommand(
 type VerificationOptions = {
   signal?: AbortSignal
   assertAuthority?: () => void
+  sandboxScope?: IsolatedSandboxScope
   install?: boolean
   steps?: ("lint" | "typecheck" | "test" | "build")[]
   timeoutPerStep?: number
@@ -167,6 +171,7 @@ async function runVerificationStep(name: string, command: string | null, input: 
     options.repoIsPrivate === true,
     options.signal,
     options.assertAuthority,
+    options.sandboxScope,
   )
   assertActive()
   const duration = Date.now() - start
@@ -209,6 +214,7 @@ async function prepareDependencies(supabase: SupabaseClient, userId: string, tas
       options.repoIsPrivate === true,
       options.signal,
       options.assertAuthority,
+      options.sandboxScope,
     )
     assertActive()
     if (ir.exitCode !== 0) {
