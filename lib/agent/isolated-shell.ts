@@ -53,7 +53,8 @@ async function executeSandboxCommand(sandbox: Sandbox, command: string, opts: Sh
     })
     return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode, error: '' }
   } catch (caught) {
-    const exitCode = Number(recordText(caught, 'exitCode'))
+    const exitCodeText = recordText(caught, 'exitCode').trim()
+    const exitCode = exitCodeText === '' ? Number.NaN : Number(exitCodeText)
     return { stdout: recordText(caught, 'stdout'), stderr: recordText(caught, 'stderr'),
       error: recordText(caught, 'error') || errorMessage(caught, '命令执行失败'),
       exitCode: Number.isInteger(exitCode) ? exitCode : 1 }
