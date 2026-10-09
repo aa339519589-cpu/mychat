@@ -75,6 +75,7 @@ function fixture(options: {
     '({ createIsolatedSandboxScope, isIsolatedSandboxScope, sandboxCancellation, createdSandboxCleanup })')
   const calls: string[] = []
   const killed: string[] = []
+  const connected: string[] = []
   let clock = 50
   let hostContent = 'before'
   let pathChanged = false
@@ -127,7 +128,9 @@ function fixture(options: {
   const unavailable = () => { throw new Error('Unexpected host filesystem effect') }
   const dependencies = {
     process: { env: {} }, ...scopeFunctions,
-    Sandbox: { create: async () => { await at('create'); return created }, connect: async () => { await at('connect'); return borrowed } },
+    Sandbox: { create: async () => { await at('create'); return created }, connect: async (id: string) => {
+      await at('connect'); connected.push(id); return id === created.sandboxId ? created : borrowed
+    } },
     chmodSync: () => { calls.push('chmod_host') }, existsSync: unavailable,
     mkdirSync: () => { calls.push('mkdir_host'); if (options.expireOnHostMkdir) clock = 101 }, unlinkSync: unavailable,
     writeFileSync: (_path: string, value: Uint8Array) => { calls.push('write_host'); hostContent = new TextDecoder().decode(value) },
@@ -148,7 +151,7 @@ function fixture(options: {
   const run = loadFunctions('lib/agent/isolated-shell.ts', dependencies, 'runInIsolatedWorkspace')
   const pipeline = toolPipeline(run, client, context, at, scopeFunctions)
   if (options.before) controller.abort()
-  return { calls, killed, paused, release, abort: () => controller.abort(), expireLease: () => { clock = 101 },
+  return { calls, killed, connected, paused, release, abort: () => controller.abort(), expireLease: () => { clock = 101 },
     replaceHostContent: (value: string) => { hostContent = value }, getHostContent: () => hostContent,
     isAborted: () => controller.signal.aborted,
     changeHostPath: () => { pathChanged = true },
@@ -287,7 +290,7 @@ test('execute and both verification routes share only their worker lease instanc
   await value.runTool('verify', { command: 'node test.js' })
   await value.runTool('verify', { steps: ['test'], install: false })
   assert.equal(value.calls.filter(name => name === 'create').length, 1)
-  assert.equal(value.calls.includes('connect'), false)
+  assert.deepEqual(value.connected, ['synthetic-created-sandbox', 'synthetic-created-sandbox'])
   assert.equal(value.calls.includes('metadata'), false)
   assert.equal(value.verifiedDiff(), 'synthetic-diff')
   await value.dispose()

@@ -12,7 +12,7 @@ import { containsSourceCredential } from './source-credentials'
 import type { ShellOptions, ShellResult } from "./shell"
 import {
   isIsolatedSandboxScope, sandboxCancellation, createdSandboxCleanup,
-  type IsolatedSandboxScope, type SandboxScopeOwner,
+  type IsolatedSandboxScope, type SandboxScopeOwner, type ScopedSandbox,
 } from './isolated-sandbox-scope'
 import { mergeTaskMeta } from "./meta"
 import { errorMessage, recordText } from '@/lib/unknown-value'
@@ -121,7 +121,7 @@ async function connectExistingSandbox(
 async function createOwnedSandbox(
   supabase: SupabaseClient, userId: string, taskId: string, allowOut: string[], assertActive: () => void,
   owner?: SandboxScopeOwner,
-): Promise<SandboxConnection> {
+): Promise<ScopedSandbox> {
   assertActive()
   const metadata: Record<string, string> = { taskId }
   if (owner) Object.assign(metadata, { jobId: owner.jobId, workerId: owner.workerId, leaseVersion: String(owner.leaseVersion) })
@@ -160,11 +160,11 @@ async function getSandbox(
   assertActive()
   const allowOut = sandboxEgressForRepository(repoIsPrivate)
   if (scope) {
-    return scope.acquire(userId, taskId, async owner => {
-      const resource = await createOwnedSandbox(supabase, userId, taskId, allowOut, assertActive, owner)
-      if (!resource.cleanupCreated) throw new Error('隔离沙箱创建未返回清理句柄')
-      return { ...resource, cleanupCreated: resource.cleanupCreated }
-    })
+    const resource = await scope.acquire(userId, taskId,
+      owner => createOwnedSandbox(supabase, userId, taskId, allowOut, assertActive, owner))
+    return resource.syncInitialized
+      ? scope.resume(userId, taskId, id => Sandbox.connect(id, { timeoutMs: SANDBOX_TIMEOUT, requestTimeoutMs: 30_000 }))
+      : resource
   }
   const meta = await taskMeta(supabase, userId, taskId)
   assertActive()

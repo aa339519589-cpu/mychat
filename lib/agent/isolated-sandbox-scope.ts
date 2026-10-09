@@ -13,6 +13,7 @@ export type IsolatedSandboxScope = {
   run: <T>(userId: string, taskId: string, operation: () => Promise<T>) => Promise<T>
   acquire: (userId: string, taskId: string,
     create: (owner: SandboxScopeOwner) => Promise<ScopedSandbox>) => Promise<ScopedSandbox>
+  resume: (userId: string, taskId: string, connect: (sandboxId: string) => Promise<Sandbox>) => Promise<ScopedSandbox>
   dispose: () => Promise<void>
 }
 
@@ -22,18 +23,45 @@ export function isIsolatedSandboxScope(value: unknown): value is IsolatedSandbox
   return typeof value === 'object' && value !== null && registeredScopes.has(value)
 }
 
-/** One trusted worker lease owns one provider instance. A different lease never adopts it. */
-export function createIsolatedSandboxScope(input: {
+async function resumeOwnedSandbox(input: {
+  resource: Promise<ScopedSandbox> | undefined
+  sandboxId: string | undefined
+  assertActive: () => void
+  dispose: () => Promise<void>
+  connect: (sandboxId: string) => Promise<Sandbox>
+}): Promise<ScopedSandbox> {
+  try {
+    input.assertActive()
+    if (!input.resource || !input.sandboxId) throw new Error('隔离沙箱 lease 尚未创建实例')
+    const resource = await input.resource
+    input.assertActive()
+    if (resource.sandbox.sandboxId !== input.sandboxId) throw new Error('隔离沙箱实例归属不匹配')
+    const connected = await input.connect(input.sandboxId)
+    input.assertActive()
+    if (connected.sandboxId !== input.sandboxId) throw new Error('隔离沙箱恢复返回了不同实例')
+    resource.sandbox = connected
+    return resource
+  } catch (error) {
+    await input.dispose()
+    throw error
+  }
+}
+
+type SandboxScopeInput = {
   owner: SandboxScopeOwner
   signal: AbortSignal
   assertAuthority: () => void
   withCreationReceipt: (create: () => Promise<string>) => Promise<{ result: string; replayed: boolean }>
-}): IsolatedSandboxScope {
+}
+
+/** One trusted worker lease owns one provider instance. A different lease never adopts it. */
+export function createIsolatedSandboxScope(input: SandboxScopeInput): IsolatedSandboxScope {
   const owner = Object.freeze({ ...input.owner })
   let closed = false
   let acquisition: Promise<ScopedSandbox> | undefined
   let providerCreation: Promise<ScopedSandbox> | undefined
   let providerStarted = false
+  let sandboxId: string | undefined
   let cleanup: Promise<void> | undefined
   let queue: Promise<void> = Promise.resolve()
 
@@ -68,6 +96,7 @@ export function createIsolatedSandboxScope(input: {
         assertActive()
         providerCreation = Promise.resolve().then(() => { assertActive(); providerStarted = true; return create(owner) })
         const created = await providerCreation
+        sandboxId = created.sandbox.sandboxId
         assertActive()
         return JSON.stringify({ schemaVersion: 1, ...owner, sandboxId: created.sandbox.sandboxId })
       })
@@ -94,6 +123,10 @@ export function createIsolatedSandboxScope(input: {
       assertActive()
       acquisition ??= acquire(create)
       return acquisition
+    },
+    resume: (userId, taskId, connect) => {
+      assertOwner(userId, taskId)
+      return resumeOwnedSandbox({ resource: acquisition, sandboxId, assertActive, dispose, connect })
     },
     dispose,
   }

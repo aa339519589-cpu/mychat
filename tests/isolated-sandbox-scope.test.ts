@@ -221,3 +221,96 @@ test('a late create whose cancellation cleanup fails remains uncertain across re
   await assert.rejects(value.scope.dispose(), /清理未确认/)
   assert.equal(value.calls.filter(call => call.startsWith('kill:')).length, 1)
 })
+
+test('resume uses only the immutable sandbox ID captured by this lease and keeps one cleanup handle', async () => {
+  const value = fixture()
+  const resource = await value.acquire()
+  const connected: string[] = []
+  const renewed = { sandboxId: 'synthetic-owned-sandbox' }
+  const resumed = await value.scope.resume('synthetic-owner', 'synthetic-task', async (id: string) => {
+    connected.push(id); return renewed
+  })
+  assert.strictEqual(resumed, resource)
+  assert.strictEqual(resumed.sandbox, renewed)
+  assert.deepEqual(connected, ['synthetic-owned-sandbox'])
+  assert.equal(value.calls.filter(call => call === 'create').length, 1)
+  await resumed.cleanupCreated(); await value.scope.dispose()
+  assert.equal(value.calls.filter(call => call.startsWith('kill:')).length, 1)
+})
+
+test('a foreign user or task cannot trigger resume or retire the current lease resource', async () => {
+  const value = fixture()
+  await value.acquire()
+  let invoked = false
+  await assert.rejects(async () => value.scope.resume('other-owner', 'synthetic-task', async () => { invoked = true }), /归属不匹配/)
+  await assert.rejects(async () => value.scope.resume('synthetic-owner', 'other-task', async () => { invoked = true }), /归属不匹配/)
+  assert.equal(invoked, false)
+  assert.equal(value.calls.some(call => call.startsWith('kill:')), false)
+  await value.scope.dispose()
+})
+
+test('a mismatched resume response is rejected without killing or adopting the foreign instance', async () => {
+  const value = fixture()
+  await value.acquire()
+  let foreignKills = 0
+  await assert.rejects(value.scope.resume('synthetic-owner', 'synthetic-task', async (id: string) => {
+    assert.equal(id, 'synthetic-owned-sandbox')
+    return { sandboxId: 'synthetic-new-lease-sandbox', kill: async () => { foreignKills++ } }
+  }), /恢复返回了不同实例/)
+  await assert.rejects(async () => value.acquire(), /已关闭/)
+  assert.equal(foreignKills, 0)
+  assert.equal(value.calls.filter(call => call === 'create').length, 1)
+  assert.equal(value.calls.filter(call => call.startsWith('kill:')).length, 1)
+})
+
+test('a replaced cached SDK object cannot change the recorded resume target', async () => {
+  const value = fixture()
+  const resource = await value.acquire()
+  resource.sandbox = { sandboxId: 'synthetic-foreign-sandbox' }
+  let invoked = false
+  await assert.rejects(value.scope.resume('synthetic-owner', 'synthetic-task', async () => { invoked = true }), /实例归属不匹配/)
+  assert.equal(invoked, false)
+  assert.deepEqual(value.calls.filter(call => call.startsWith('kill:')), ['kill:synthetic-owned-sandbox'])
+})
+
+test('authority loss before resume prevents any provider request', async () => {
+  const value = fixture()
+  await value.acquire()
+  value.expire()
+  let invoked = false
+  await assert.rejects(value.scope.resume('synthetic-owner', 'synthetic-task', async () => { invoked = true }), /Synthetic lease expired/)
+  assert.equal(invoked, false)
+  assert.equal(value.calls.filter(call => call.startsWith('kill:')).length, 1)
+})
+
+for (const loss of ['abort', 'authority'] as const) {
+  test(loss + ' while resume is in flight cannot publish the returned SDK object', async () => {
+    const value = fixture(), entered = gate(), release = gate()
+    const resource = await value.acquire(), original = resource.sandbox
+    const pending = value.scope.resume('synthetic-owner', 'synthetic-task', async () => {
+      entered.open(); await release.promise; return { sandboxId: 'synthetic-owned-sandbox' }
+    })
+    const rejected = assert.rejects(pending)
+    await entered.promise
+    if (loss === 'abort') value.controller.abort()
+    else value.expire()
+    release.open(); await rejected
+    assert.strictEqual(resource.sandbox, original)
+    assert.equal(value.calls.filter(call => call.startsWith('kill:')).length, 1)
+    assert.equal(value.calls.filter(call => call === 'create').length, 1)
+  })
+}
+
+test('resume failure closes the lease instead of provisioning another instance', async () => {
+  const value = fixture()
+  await value.acquire()
+  await assert.rejects(value.scope.resume('synthetic-owner', 'synthetic-task', async () => {
+    throw new Error('Synthetic resume unavailable')
+  }), /Synthetic resume unavailable/)
+  await assert.rejects(async () => value.acquire(), /已关闭/)
+  let invoked = false
+  await assert.rejects(value.scope.resume('synthetic-owner', 'synthetic-task', async () => { invoked = true }), /已关闭/)
+  assert.equal(invoked, false)
+  assert.equal(value.calls.filter(call => call === 'create').length, 1)
+  assert.equal(value.calls.filter(call => call.startsWith('kill:')).length, 1)
+})
