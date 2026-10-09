@@ -241,18 +241,20 @@ class LiveJobEventStreamSession {
     }
   }
 
-  private drainPendingDeltas(field: DeltaField): void {
+  private drainPendingDeltas(field?: DeltaField): void {
     let progressed = true
     while (progressed) {
       progressed = false
-      this.pendingLiveDeltas.sort((left, right) =>
-        (left.offset ?? Number.MAX_SAFE_INTEGER) - (right.offset ?? Number.MAX_SAFE_INTEGER)
-          || left.revision - right.revision)
+      if (field !== undefined) {
+        this.pendingLiveDeltas.sort((left, right) =>
+          (left.offset ?? Number.MAX_SAFE_INTEGER) - (right.offset ?? Number.MAX_SAFE_INTEGER)
+            || left.revision - right.revision)
+      }
       const index = this.pendingLiveDeltas.findIndex(event => {
         const delta = liveDelta(event)
-        return delta?.field === field
+        return delta !== null && (field === undefined || delta.field === field)
           && event.offset !== undefined
-          && event.offset <= this.state[field].length
+          && event.offset <= this.state[delta.field].length
       })
       if (index < 0) return
       const [event] = this.pendingLiveDeltas.splice(index, 1)
@@ -330,6 +332,7 @@ class LiveJobEventStreamSession {
     this.state.thinking = typeof payload.thinking === 'string' ? payload.thinking : this.state.thinking
     this.state.reasoningSummary = typeof payload.reasoningSummary === 'string' ? payload.reasoningSummary : this.state.reasoningSummary
     this.emit('job.snapshot', payload)
+    if (!terminal(job.status)) this.drainPendingDeltas()
   }
 
   private async finishIfTerminal(job: PublicJobSnapshot): Promise<boolean> {
