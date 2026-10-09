@@ -60,10 +60,17 @@ export type CodeMcpBrokerOptions = {
   connectorIds?: readonly string[]
   allowExternalNetwork?: boolean
   signal?: AbortSignal
+  assertAuthority?: () => void
   fetchImpl?: ConnectorFetch
   loadConnectors?: () => Promise<RemoteConnector[]>
   authorize?: (invocation: CodeMcpInvocation) => Promise<boolean>
   audit?: (event: CodeMcpAudit) => void
+}
+
+function assertBrokerActive(options: CodeMcpBrokerOptions): void {
+  options.signal?.throwIfAborted()
+  options.assertAuthority?.()
+  options.signal?.throwIfAborted()
 }
 
 async function currentOwnedConnector(entry: Entry, userId: string, load: () => Promise<RemoteConnector[]>) {
@@ -81,24 +88,33 @@ async function currentOwnedConnector(entry: Entry, userId: string, load: () => P
 
 async function callVerifiedRemote(entry: Entry, args: Record<string, unknown>, options: CodeMcpBrokerOptions,
   load: () => Promise<RemoteConnector[]>, beforeEffect: () => void) {
+  assertBrokerActive(options)
   const client = createRemoteClient()
   try {
     const current = await currentOwnedConnector(entry, options.userId, load)
+    assertBrokerActive(options)
     const token = current.resolveAccessToken ? await current.resolveAccessToken() : current.accessToken
+    assertBrokerActive(options)
     await client.connect(createRemoteTransport({ ...current, accessToken: token }, options.signal, options.fetchImpl))
+    assertBrokerActive(options)
     const live = (await client.listTools()).tools.map(mapRemoteTool).find(tool => tool?.name === entry.tool.name)
+    assertBrokerActive(options)
     if (!live || toolSchemaHash(live) !== entry.metadata.schemaHash) {
       throw new RemoteConnectorError('远程工具 Schema 已变化，请刷新并重新批准', 409)
     }
     // Revoke authority immediately before effects after a slow handshake.
     await currentOwnedConnector(entry, options.userId, load)
+    assertBrokerActive(options)
     beforeEffect()
+    assertBrokerActive(options)
     const result = await client.callTool({ name: entry.tool.name, arguments: args })
+    assertBrokerActive(options)
     return { result, token }
   } finally { await client.close().catch(() => undefined) }
 }
 
 export async function createCodeMcpBroker(options: CodeMcpBrokerOptions): Promise<CodeMcpBroker> {
+  assertBrokerActive(options)
   const load = options.loadConnectors ?? (() => options.supabase
     ? loadRemoteConnectors(options.supabase, options.userId, options.connectorIds) : Promise.resolve([]))
   const entries = new Map<string, Entry>()
@@ -128,6 +144,7 @@ export async function createCodeMcpBroker(options: CodeMcpBrokerOptions): Promis
       }
     }))
   }
+  assertBrokerActive(options)
   return {
     listTools: () => [...entries.values()].map(entry => structuredClone(entry.metadata)),
     connectionHealth: () => structuredClone(health),
@@ -145,7 +162,7 @@ export async function createCodeMcpBroker(options: CodeMcpBrokerOptions): Promis
         ...invocation, status, durationMs: Date.now() - startedAt, ...(errorCode ? { errorCode } : {}),
       })
       try {
-        options.signal?.throwIfAborted()
+        assertBrokerActive(options)
         validateArguments(entry.tool, input)
         const argumentsSnapshot = JSON.parse(JSON.stringify(input)) as Record<string, unknown>
         invocation.inputHash = createHash('sha256').update(JSON.stringify(argumentsSnapshot)).digest('hex')
@@ -164,6 +181,7 @@ export async function createCodeMcpBroker(options: CodeMcpBrokerOptions): Promis
           }
         }
         const { result, token } = await callVerifiedRemote(entry, argumentsSnapshot, options, load, () => audit('started'))
+        assertBrokerActive(options)
         audit(result.isError === true ? 'failed' : 'succeeded', result.isError === true ? 'REMOTE_TOOL_ERROR' : undefined)
         return resultText(result, token)
       } catch (error) {
@@ -175,3 +193,4 @@ export async function createCodeMcpBroker(options: CodeMcpBrokerOptions): Promis
     },
   }
 }
+

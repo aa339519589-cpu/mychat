@@ -265,6 +265,7 @@ export async function runAgentTaskJob(
     userId: input.userId, supabase: input.client,
     mode: input.mode === 'plan' ? 'plan' : 'code',
     allowExternalNetwork: !input.repoIsPrivate, signal: context.signal,
+    assertAuthority: context.assertAuthority,
     audit: event => { void writer.append('tool.mcp_audit', { ...event }) },
   }) : undefined
   const runtime = dependencies.createRuntime(context, input, writer, broker)
@@ -297,4 +298,5 @@ export async function runAgentTaskJob(
 export const handleAgentTask: JobHandler = async context => (
   runAgentTaskJob(context, await loadAgentJob(context))
 )
+
 
