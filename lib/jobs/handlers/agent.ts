@@ -6,6 +6,7 @@ import { modelToolCallingDriver } from '@/lib/code-agent/driver'
 import { createCodeMcpBroker } from '@/lib/code-tools/mcp-broker'
 import { runAgentLoop, type AgentLoopOpts } from '@/lib/llm/agent-loop'
 import { chatCompletionsUrl, toOpenAI } from '@/lib/llm/openai'
+import { ProviderResponseError } from '@/lib/llm/turn-response'
 import type { ReasoningEffort } from '@/lib/llm/provider-adapters'
 import { weightedTokenUsage } from '@/lib/quota'
 import { log } from '@/lib/logger'
@@ -99,7 +100,6 @@ function prepareAgentRun(
     input.userMemories,
     input.memoryEnabled,
     input.sensitiveMemoryEnabled,
-    input.readOnlyPlan === true,
   )
   const messages: ModelMessage[] = [{ role: 'system', content: system }, ...toOpenAI(input.messages)]
   const baseLength = messages.length
@@ -139,6 +139,8 @@ function createAgentLoopCallbacks(input: {
     onTurn: ({ phase, round, turn }) => log.info('jobs', 'Agent model turn', {
       jobId: context.job.id, phase, round: round ?? null,
       finishReason: turn.finishReason, tools: turn.toolCalls.map(call => call.name),
+      failed: turn.failed, providerStatus: turn.errorStatus ?? null,
+      model: job.selection.model, adapter: job.selection.capability.provider.adapter,
     }),
     onCheckpoint: async latestMessages => {
       tracking.checkpointRound++
@@ -186,14 +188,6 @@ function agentLoopOptions(input: {
       maxContinuations: trial ? 6 : 20,
       prompt: ({ turn }) => {
         const progress = runtime.progress.snapshot(job.workspaceReady)
-        if (job.readOnlyPlan === true) {
-          if (!turn.failed && !turn.truncated && !turn.leaked && !turn.hasIncompleteToolCall
-            && turn.toolCalls.length === 0 && turn.content.trim()) {
-            runtime.progress.toolState.markCompleted()
-            return null
-          }
-          return progress.completed || progress.waitingForUser ? null : '继续只读分析并给出完整计划，然后调用 complete。禁止创建仓库、写文件或执行命令。'
-        }
         if (isCodeReplyComplete(progress, turn)) {
           runtime.progress.toolState.markCompleted()
           return null
@@ -223,7 +217,7 @@ async function completeAgentRun(input: {
   const { context, job, runtime, writer, attemptTokens } = input
   const content = writer.text()
   const state = runtime.progress.snapshot(job.workspaceReady)
-  const taskStatus = job.readOnlyPlan === true && state.completed ? 'waiting_for_user' : finalCodeTaskStatus(false, state)
+  const taskStatus = finalCodeTaskStatus(false, state)
   if (taskStatus === 'running') {
     throw new JobRuntimeError('JOB_INTERNAL', 'Agent stopped before a durable completion point')
   }
@@ -250,7 +244,11 @@ function rethrowAgentError(error: unknown, signal: AbortSignal): never {
   if (error instanceof JobRuntimeError) throw error
   if (signal.aborted) throw signal.reason
   throw new JobRuntimeError('JOB_DEPENDENCY_UNAVAILABLE', 'Agent execution dependency failed', {
-    class: 'provider', cause: error,
+    class: 'provider',
+    ...(error instanceof ProviderResponseError ? {
+      retryable: error.retryable, details: { providerStatus: error.status },
+    } : {}),
+    cause: error,
   })
 }
 
@@ -263,7 +261,7 @@ export async function runAgentTaskJob(
   const writer = new JobEventWriter(context)
   const broker = dependencies.createRuntime === createAgentRuntime ? await createCodeMcpBroker({
     userId: input.userId, supabase: input.client,
-    mode: input.mode === 'plan' ? 'plan' : 'code',
+    mode: 'code',
     allowExternalNetwork: !input.repoIsPrivate, signal: context.signal,
     audit: event => { void writer.append('tool.mcp_audit', { ...event }) },
   }) : undefined

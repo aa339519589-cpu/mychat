@@ -17,20 +17,9 @@ function workspaceInstructions(repo: string | null, executePermission: string): 
 - 只有缺少登录、授权、密钥或必须由用户决定的互斥选择时，才调用 ask_user。`
 }
 
-function planInstructions(): string {
-  return `【Plan 模式】
-当前是严格只读规划阶段，不创建执行 workspace。
-- 只能读取已选仓库和分支，检索公开资料，给出实施计划。
-- 禁止任何文件写入、删除、命令执行、依赖安装、记忆写入、创建仓库或发布部署；即使用户在本轮文字要求实施，也必须先切换 Code 模式。
-- 修改前先用 list_files、read_file 获取真实内容。
-- 不得声称已经修改、验证、发布或部署尚未执行的内容。
-- 计划完整后调用 complete，输出文字计划；只有真实外部阻塞才调用 ask_user。`
-}
-
-function modeInstructions(mode: CodeAgentMode, repo: string | null, executePermission: string, readOnlyPlan: boolean) {
+function modeInstructions(mode: CodeAgentMode, repo: string | null, executePermission: string) {
   if (mode === 'workspace') return workspaceInstructions(repo, executePermission)
-  if (readOnlyPlan) return planInstructions()
-  return `【Plan 模式：新项目提案】
+  return `【新项目准备】
 当前没有执行 workspace。create_repo、write_files、edit_file、delete_files 仅生成待用户确认的提案；不得声称这些内容已执行。提案完整后调用 complete。`
 }
 
@@ -44,7 +33,6 @@ export function buildCodeSystem(
   userMemories: Memory[] = [],
   memoryEnabled = userMemories.length > 0,
   sensitiveMemoryEnabled = false,
-  readOnlyPlan = true,
 ): string {
   const executePermission = isolatedShellConfigured()
     ? '在任务独享的 Linux 沙箱中执行完整终端命令，服务器密钥不会进入沙箱'
@@ -53,7 +41,7 @@ export function buildCodeSystem(
 
   let system = `你是「${identity}」，运行在 MyChat Code。当前 GitHub 用户：${login}。
 
-${modeInstructions(mode, repo, executePermission, readOnlyPlan)}
+${modeInstructions(mode, repo, executePermission)}
 
 【执行规则】
 - 如果用户只要求问候、解释或纯文字回复，直接按要求回复并结束，不为此创建仓库、写文件或调用 complete。以下持续执行规则仅适用于需要实际工具操作的任务。

@@ -6,6 +6,13 @@ export function normalizeSearchMode(input: unknown): SearchMode {
   return 'off'
 }
 
+/** New chat defaults are online; explicit current or legacy opt-outs win. */
+export function chatRequestSearchMode(searchMode: unknown, webSearch: unknown): SearchMode {
+  if (searchMode === 'off' || searchMode === 'web') return searchMode
+  if (webSearch !== undefined) return normalizeSearchMode(webSearch)
+  return 'web'
+}
+
 export function searchSourceBudget(mode: SearchMode): { min: number; max: number; target: number } {
   if (mode === 'web') return { min: 1, max: 20, target: 12 }
   return { min: 0, max: 0, target: 0 }

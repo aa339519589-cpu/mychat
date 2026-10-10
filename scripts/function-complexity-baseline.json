@@ -12,7 +12,7 @@
     },
     "app/api/chat/route.ts": {
       "complexity": [
-        34
+        31
       ]
     },
     "app/api/chat/title/route.ts": {
@@ -296,10 +296,10 @@
     },
     "lib/chat/model-selection.ts": {
       "complexity": [
-        44
+        38
       ],
       "maxLines": [
-        104
+        91
       ]
     },
     "lib/chat/request-context.ts": {

@@ -9,6 +9,7 @@ import { JobEventWriter } from '../lib/jobs/event-writer'
 import { createCodeEventCollector, type CodeProgressSnapshot } from '../lib/code-agent/runtime'
 import type { ChatEvent } from '../lib/llm/events'
 import { getModelCapability } from '../lib/llm/models'
+import { ProviderResponseError } from '../lib/llm/turn-response'
 import type { LoadedAgentJob } from '../lib/jobs/handlers/agent-input'
 import { createAgentRuntime } from '../lib/jobs/handlers/agent-runtime'
 import {
@@ -139,7 +140,7 @@ test('agent Job durably preserves plan output and flushes accounting before chec
   const result = await runAgentTaskJob(context.value, agentInput(), {
     createRuntime: runtimeFactory(context.order, artifacts),
     runLoop: async options => {
-      assert.match(String(options.messages[0]?.content), /Plan 模式/)
+      assert.match(String(options.messages[0]?.content), /新项目准备/)
       options.emit({
         plan: {
           kind: 'create_repo',
@@ -197,6 +198,35 @@ test('agent Job refuses an explicitly non-resumable checkpoint before provider w
   assert.equal(providerCalls, 0)
 })
 
+test('agent provider rejection preserves non-retryable status without exposing its response', async () => {
+  for (const status of [400, 401, 402, 403, 422]) {
+    const context = executionContext()
+    await assert.rejects(runAgentTaskJob(context.value, agentInput(), {
+      createRuntime: runtimeFactory(context.order, []),
+      runLoop: async () => { throw new ProviderResponseError('private upstream response', status) },
+    }), error => {
+      assert.ok(error instanceof JobRuntimeError)
+      assert.equal(error.code, 'JOB_DEPENDENCY_UNAVAILABLE')
+      assert.equal(error.errorClass, 'provider')
+      assert.equal(error.retryable, false)
+      assert.deepEqual(error.details, { providerStatus: status })
+      assert.doesNotMatch(JSON.stringify(error.toFailure()), /private upstream response/)
+      return true
+    })
+  }
+})
+
+test('agent transient provider failure remains retryable', async () => {
+  for (const status of [408, 425, 429, 500, 503]) {
+    const context = executionContext()
+    await assert.rejects(runAgentTaskJob(context.value, agentInput(), {
+      createRuntime: runtimeFactory(context.order, []),
+      runLoop: async () => { throw new ProviderResponseError('temporary failure', status) },
+    }), error => error instanceof JobRuntimeError
+      && error.retryable && error.details.providerStatus === status)
+  }
+})
+
 test('repository-less planning never exposes workspace-only or unusable execute tools', {
   concurrency: false,
 }, t => {
@@ -209,14 +239,15 @@ test('repository-less planning never exposes workspace-only or unusable execute 
   const context = executionContext()
   const runtime = createAgentRuntime(
     context.value,
-    { ...agentInput(), readOnlyPlan: true },
+    agentInput(),
     new JobEventWriter(context.value),
   )
   const names = runtime.tools.map(tool => tool.function.name)
 
   assert.equal(runtime.canExecute, false)
   assert.ok(names.includes('read_file'))
-  for (const unavailable of ['create_repo', 'write_files', 'enable_pages', 'execute', 'apply_patch', 'search_files', 'git_diff', 'verify', 'publish']) {
+  assert.ok(names.includes('create_repo'))
+  for (const unavailable of ['execute', 'apply_patch', 'search_files', 'git_diff', 'verify', 'publish']) {
     assert.equal(names.includes(unavailable), false)
   }
 })

@@ -80,7 +80,7 @@ export function customModelReasoningProfile(modelId: string): CustomModelReasoni
   if (containsModelToken(normalized, 'claude-sonnet-5')) return SONNET_5_PROFILE
   if (containsModelToken(normalized, 'claude-fable-5')) return FABLE_5_PROFILE
   if (containsModelToken(normalized, 'claude-opus-5')) return { ...SONNET_5_PROFILE, id: 'claude-opus-5' }
-  if (containsModelToken(normalized, 'claude-haiku-5')) return { ...SONNET_5_PROFILE, id: 'claude-haiku-5' }
+  if (containsModelToken(normalized, 'claude-haiku-5')) return { ...SONNET_5_PROFILE, id: 'claude-haiku-5', defaultReasoningEffort: 'medium' }
   if (containsModelToken(normalized, 'claude-haiku-4-5') || containsModelToken(normalized, 'claude-4-5-haiku')) {
     return HAIKU_45_PROFILE
   }

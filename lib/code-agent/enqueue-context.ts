@@ -14,11 +14,17 @@ const AGENT_TASK_STATUSES = new Set([
 
 export class CodeAgentEnqueueContextError extends Error {
   constructor(
-    public readonly kind: 'dependency' | 'conflict' | 'terminal',
+    public readonly kind: 'dependency' | 'conflict' | 'terminal' | 'quota',
     message: string,
   ) {
     super(message)
     this.name = 'CodeAgentEnqueueContextError'
+  }
+}
+
+export function assertAgentAdmissionCredit(error: unknown): void {
+  if (isRecord(error) && error.code === 'P0001' && error.message === 'insufficient_job_credit') {
+    throw new CodeAgentEnqueueContextError('quota', '当前可用额度不足以启动此任务，请等待正在运行的任务结束或补充额度。')
   }
 }
 

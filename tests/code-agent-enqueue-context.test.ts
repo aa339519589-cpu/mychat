@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  assertAgentAdmissionCredit,
   CodeAgentEnqueueContextError,
   parseAgentEnqueueResult,
   resolveCodeAgentEnqueueContext,
@@ -19,6 +20,17 @@ const REPO = 'owner/project'
 function query(data: unknown, error: unknown = null) {
   return { data, error }
 }
+
+test('atomic credit denial becomes a quota error, not an unavailable dependency', () => {
+  assert.throws(() => assertAgentAdmissionCredit({
+    code: 'P0001', message: 'insufficient_job_credit', details: 'private database detail',
+  }), error => error instanceof CodeAgentEnqueueContextError
+    && error.kind === 'quota' && !error.message.includes('private database detail'))
+  for (const other of [null, {}, { code: 'P0001', message: 'other failure' },
+    { code: '42501', message: 'insufficient_job_credit' }]) {
+    assert.doesNotThrow(() => assertAgentAdmissionCredit(other))
+  }
+})
 
 function context(overrides: Partial<Parameters<typeof resolveCodeAgentEnqueueContext>[0]> = {}) {
   return {

@@ -86,10 +86,14 @@ function context(): JobExecutionContext {
 
 test('provisional Agent input re-resolves a persisted DeepSeek runtime model id', { concurrency: false }, async t => {
   const previousDeepSeekKey = process.env.DEEPSEEK_API_KEY
+  const previousSandboxKey = process.env.E2B_API_KEY
   process.env.DEEPSEEK_API_KEY = 'test-deepseek-key'
+  process.env.E2B_API_KEY = 'configured-for-unit-test'
   t.after(() => {
     if (previousDeepSeekKey === undefined) delete process.env.DEEPSEEK_API_KEY
     else process.env.DEEPSEEK_API_KEY = previousDeepSeekKey
+    if (previousSandboxKey === undefined) delete process.env.E2B_API_KEY
+    else process.env.E2B_API_KEY = previousSandboxKey
   })
 
   const tables: string[] = []

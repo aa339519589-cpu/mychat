@@ -114,5 +114,5 @@ test('complete Plan output waits for confirmation instead of failing internally'
     plannedFiles: 2,
   }), 'running')
   const prompt = buildCodeSystem('GPT-5.5', null, 'bo', [], 'plan', false)
-  assert.match(prompt, /计划完整后调用 complete/)
+  assert.match(prompt, /提案完整后调用 complete/)
 })

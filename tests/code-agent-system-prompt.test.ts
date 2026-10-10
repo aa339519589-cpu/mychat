@@ -31,7 +31,7 @@ test('plan prompt is injected only for plan mode and omits repository memory', (
   )
 
   assert.match(prompt, /你是「Claude Opus 5」/)
-  assert.match(prompt, /【Plan 模式】/)
+  assert.match(prompt, /【新项目准备】/)
   assert.doesNotMatch(prompt, /【Workspace 模式】/)
   assert.doesNotMatch(prompt, /【仓库记忆】/)
   assert.doesNotMatch(prompt, /不应进入 Plan Prompt/)

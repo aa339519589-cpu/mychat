@@ -8,6 +8,11 @@ const APPROX_CHARS_PER_TOKEN = 3
 type RpcResult = { data: unknown; error: unknown }
 type RpcClient = { rpc: (name: string, args: Record<string, unknown>) => PromiseLike<RpcResult> }
 
+/** Apply the same catalog entitlement whether the client named it or used the default. */
+export function shouldReserveChatModelTrial(selection: { customEndpoint: boolean; accessClass: string }, isOwner: boolean): boolean {
+  return !isOwner && !selection.customEndpoint && selection.accessClass !== 'quota' && selection.accessClass !== 'legacy'
+}
+
 function rpcClient(supabase: SupabaseServer): RpcClient {
   return supabase as unknown as RpcClient
 }
