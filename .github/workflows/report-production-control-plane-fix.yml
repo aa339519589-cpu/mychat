@@ -1,0 +1,35 @@
+name: Report production control-plane fix
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/report-production-control-plane-fix.yml
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - name: Report current production readiness
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          payload="$(curl --silent --show-error --connect-timeout 10 --max-time 60 \
+            --header 'Accept: application/json' \
+            https://mychat-nm6x.onrender.com/api/ready || true)"
+          compact="$(jq '{ready,revision,checks}' <<<"$payload" 2>/dev/null || printf '%s\n' "$payload")"
+          printf '%s\n' "$compact"
+          {
+            echo 'Current production readiness:'
+            echo
+            echo '```json'
+            printf '%s\n' "$compact"
+            echo '```'
+          } > /tmp/body.md
+          gh pr edit "${{ github.event.pull_request.number }}" --body-file /tmp/body.md
